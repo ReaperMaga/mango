@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { call, on, openExternal } from '~/composables/useBackend'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import type { PtyDataEvent, PtyExitEvent } from '~/types/ipc'
+import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
 
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
@@ -236,7 +237,7 @@ async function loadFonts(family: string) {
 onMounted(async () => {
   // Subscribe before spawning so no early output is lost.
   const subs = Promise.all([on('pty://data', handleData), on('pty://exit', handleExit)])
-  const fontFamily = cssVar('--font-mono') || 'monospace'
+  const fontFamily = terminalFontFamily(cssVar('--font-mono'))
   await loadFonts(fontFamily)
   const offs = await subs
   if (disposed) {
@@ -253,7 +254,8 @@ onMounted(async () => {
     cursorBlink: ws.terminalCursorBlink,
     cursorStyle: ws.terminalCursorStyle,
     cursorInactiveStyle: 'outline',
-    allowProposedApi: false,
+    // The unicode API (Unicode 11 widths) is still a proposed API.
+    allowProposedApi: true,
     scrollback: 5000,
     macOptionIsMeta: true,
     theme: buildTheme(),
@@ -267,6 +269,7 @@ onMounted(async () => {
     openExternal(uri).catch(() => {})
   }))
   term.open(host.value)
+  enhanceTerminal(term)
 
   term.onData((data) => {
     if (props.tab.exited) {

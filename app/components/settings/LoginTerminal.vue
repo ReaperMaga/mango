@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import { call, on, openExternal } from '~/composables/useBackend'
 import type { PtyDataEvent, PtyExitEvent } from '~/types/ipc'
+import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
 
 /**
  * A small interactive terminal that runs one command (an agent CLI's sign-in)
@@ -318,7 +319,7 @@ async function loadFonts(family: string) {
 onMounted(async () => {
   // Subscribe before spawning so no early output is lost.
   const subs = Promise.all([on('pty://data', handleData), on('pty://exit', handleExit)])
-  const fontFamily = cssVar('--font-mono') || 'monospace'
+  const fontFamily = terminalFontFamily(cssVar('--font-mono'))
   await loadFonts(fontFamily)
   const offs = await subs
   if (disposed) {
@@ -341,7 +342,8 @@ onMounted(async () => {
     cursorBlink: true,
     cursorStyle: 'bar',
     cursorInactiveStyle: 'outline',
-    allowProposedApi: false,
+    // The unicode API (Unicode 11 widths) is still a proposed API.
+    allowProposedApi: true,
     scrollback: 2000,
     macOptionIsMeta: true,
     theme: buildTheme(),
@@ -358,6 +360,7 @@ onMounted(async () => {
   }))
   term.attachCustomKeyEventHandler(keyFilter)
   term.open(host.value)
+  enhanceTerminal(term)
   if (term.textarea) term.textarea.setAttribute('aria-label', props.label)
 
   term.onData((data) => {
