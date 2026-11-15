@@ -70,21 +70,30 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          prerelease=""
-          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
-          # The list includes drafts (a lookup by tag does not), so a re-run reuses its draft.
-          find_release() {
-            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
-              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1
-          }
-          id=$(find_release)
+          prerelease=false
+          case "$VERSION" in *-*) prerelease=true ;; esac
+          # A re-run reuses the release it made before. The list includes drafts (a lookup
+          # by tag does not).
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1)
           if [ -z "$id" ]; then
-            gh release create "$GITHUB_REF_NAME" --draft $prerelease --verify-tag \
-              --title "Mango $VERSION" \
-              --notes "Installers for Windows and Linux are attached below. Install notes: https://reapermaga.github.io/mango/guide/install" \
-              --generate-notes
-            id=$(find_release)
+            # Take the id from the create response: a new draft can take a while to show
+            # up in the list, and an empty id makes every build skip its uploads.
+            notes=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+              -f tag_name="$GITHUB_REF_NAME" --jq .body)
+            intro="Installers for Windows and Linux are attached below. Install notes: https://reapermaga.github.io/mango/guide/install"
+            id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$GITHUB_REF_NAME" \
+              -f name="Mango $VERSION" \
+              -f body="$(printf '%s\n\n%s' "$intro" "$notes")" \
+              -F draft=true -F prerelease="$prerelease" \
+              --jq .id)
           fi
+          if [ -z "$id" ]; then
+            echo "::error::Could not create or find the release for $GITHUB_REF_NAME."
+            exit 1
+          fi
+          echo "Release id: $id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   build:
