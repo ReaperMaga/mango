@@ -150,6 +150,46 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/* ---------- project files (the Files view and the editor) ----------
+ * Paths are relative to the project folder, with forward slashes; the backend
+ * refuses anything that leads outside it.
+ */
+
+export interface FsEntry {
+  name: string
+  /** Relative to the project, e.g. "app/stores/files.ts". */
+  path: string
+  isDir: boolean
+  /** Matched by the repository's ignore rules (git only). */
+  ignored: boolean
+}
+
+export interface FsListing {
+  /** Folders first, then by name. `.git` is left out. */
+  entries: FsEntry[]
+  /** The folder holds more than 5000 entries; the rest are left out. */
+  truncated: boolean
+}
+
+export interface FileContent {
+  /** The file as text; null when it is binary or too large to open. */
+  text: string | null
+  binary: boolean
+  /** Over 5 MB: not opened. */
+  tooLarge: boolean
+  size: number
+  /** The file starts with a UTF-8 byte order mark (not part of `text`; written back on save). */
+  bom: boolean
+  /** ms since the epoch: hand it back on save so a change on disk is noticed. */
+  modifiedMs: number
+}
+
+export interface WriteResult {
+  /** False when the file changed on disk since `expectedModifiedMs`; nothing was written. */
+  saved: boolean
+  modifiedMs: number
+}
+
 /** A shell the terminal can run, found on this machine. */
 export interface TerminalProfile {
   /** Stable id, e.g. "zsh", "git-bash", "wsl:Ubuntu". */
@@ -286,6 +326,15 @@ export interface Commands {
    * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
    */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
+
+  /** One folder of a project (`dir` "" for the top). */
+  fs_list_dir: [{ root: string; dir: string }, FsListing]
+  fs_read_file: [{ root: string; file: string }, FileContent]
+  /**
+   * Overwrite an existing file (never creates one). With `expectedModifiedMs`, a file that
+   * changed on disk since then is left alone and `saved` is false; null writes regardless.
+   */
+  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]

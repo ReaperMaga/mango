@@ -694,6 +694,33 @@ fn has_head(root: &Path) -> Result<bool, String> {
         .ok())
 }
 
+/// Which of `paths` (relative to `dir`, forward slashes) git ignores. Empty
+/// when `dir` is not in a repository or git is missing: ignoring is a hint
+/// for the file tree, never a reason to fail a listing.
+pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let mut input = Vec::new();
+    for p in paths {
+        input.extend_from_slice(p.as_bytes());
+        input.push(0);
+    }
+    let mut cmd = git(dir).read_only().args(["check-ignore", "-z", "--stdin"]).stdin(input);
+    // check-ignore refuses literal pathspecs; the paths arrive on stdin, never as patterns.
+    cmd.cmd.env_remove("GIT_LITERAL_PATHSPECS");
+    // Exit 0: some are ignored, 1: none are, 128: not a repository.
+    match cmd.run() {
+        Ok(out) if out.ok() => out
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|s| !s.is_empty())
+            .map(lossy)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 pub(crate) fn status_of(path: &str) -> Result<GitStatus, String> {
     let dir = existing_dir(path)?;
     let Some((root, head)) = locate(&dir)? else {

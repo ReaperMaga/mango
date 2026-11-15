@@ -13,7 +13,8 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 
 - **Projects:** open a folder, create a project (with `git init`), clone a repository with live git progress, recent projects.
 - **Agents:** real Claude Code and Codex runs. Mango starts your installed `claude` / `codex` CLI for each turn, streams text, thinking and tool calls, shows diffs and command output, and asks you before edits and commands (per the chat's permission mode: Plan, Ask first, Accept edits, Full auto). Conversations resume across turns and app restarts. The model picker shows every model the installed CLI offers your account (asked from the CLI itself, without running a turn, and cached), and the effort chip next to it sets the reasoning effort per chat (Claude Code: low to max; Codex: the levels its model accepts).
-- **Changes (left sidebar, next to threads):** git status, diffs in the main pane (side by side or one column), stage / unstage / discard, commit, fetch / pull / push, branches, history.
+- **Files (left sidebar, next to threads):** the project's folders as a tree, with git status and ignored files dimmed. A click previews a file in a tab beside the chats (the next click replaces it); a double-click or an edit keeps the tab. Files open in a Monaco editor: save with `Ctrl/⌘ S`, and Mango asks before closing a tab with unsaved edits. If a file changes on disk while you edit it (an agent, the terminal), saving stops and asks whether to discard your edits or overwrite the file. Binary files and files over 5 MB are not opened.
+- **Changes (left sidebar, next to files):** git status, diffs in the main pane (side by side or one column), stage / unstage / discard, commit, fetch / pull / push, branches, history.
 - **Unity Version Control (Plastic SCM):** a folder inside a Unity VCS workspace (it has a `.plastic` folder) uses the same Changes view, diffs and branch popup, driven by your own `cm` client. Pending changes, diffs, checkin, undo, update, changeset history, and branches (`/main/...`: switch, create, rename, delete) all work. Unity VCS has no staging area: what you stage is what the next checkin takes (nothing staged takes everything), and Mango remembers that choice while it runs. There is no fetch, push, amend, merge or rebase for Unity VCS in Mango. Sign in with the Unity Version Control app or Unity Hub; Mango never handles credentials.
 - **Terminal:** a real PTY docked at the bottom, with tabs. Mango finds the shells on your machine (login shell and `/etc/shells` on Linux/macOS; PowerShell, Command Prompt, Git Bash, MSYS2/Cygwin, Nushell and WSL distributions on Windows); pick one per terminal from the arrow next to the +, and set the default, font size and cursor in Settings > Terminal.
 - **Voice input:** press the microphone in the message box (or `Ctrl/⌘ Shift Space`) and speak; press it again and the transcript lands at the caret (Esc discards). Speech is turned into text on your computer by OpenAI's Whisper (run in Rust with candle), in any of its ~100 languages, detected automatically. In Settings > Voice pick a model (Tiny 154 MB, Base 293 MB, Small 969 MB), download it once from Hugging Face (pinned and checksum-verified), choose and test the microphone, fix the language, and optionally send as soon as the transcript is in.
@@ -73,7 +74,9 @@ node scripts/try-agent.ts claude /path/to/project "say hi" --mode ask
 | `Ctrl/⌘ J` or `` Ctrl/⌘ ` `` | Toggle terminal |
 | `Ctrl/⌘ Shift T` | New terminal |
 | `Ctrl/⌘ B` | Toggle sidebar |
+| `Ctrl/⌘ Shift E` | Switch the sidebar between threads and files |
 | `Ctrl/⌘ Shift G` | Switch the sidebar between threads and changes |
+| `Ctrl/⌘ S` | Save the file in the active tab |
 | `Ctrl/⌘ ,` | Settings |
 | `Ctrl/⌘ \` | Split chat / close split |
 | `Ctrl/⌘ W` | Close tab |
@@ -86,9 +89,9 @@ node scripts/try-agent.ts claude /path/to/project "say hi" --mode ask
 app/                  Nuxt frontend
   agents/             agent adapters: claude.ts, codex.ts (CLI protocol -> events), index.ts (runtime)
   assets/css/         design tokens (tokens.css) and base styles
-  components/         titlebar, sidebar, chat, terminal, git, settings, welcome hub, dialogs, palette
+  components/         titlebar, sidebar, chat, terminal, git, files, settings, welcome hub, dialogs, palette
   composables/        useBackend (typed IPC + browser mock), useShortcuts
-  stores/             workspace (projects, layout), threads (chats, panes), git, voice
+  stores/             workspace (projects, layout), threads (chats, panes), git, files (tree, open files), voice
   types/ipc.ts        the frontend <-> Rust contract
 src-tauri/src/        Rust backend
   agent_proc.rs       starts agent CLIs, bridges their stdio as events
@@ -96,6 +99,7 @@ src-tauri/src/        Rust backend
   setup.rs            Get started: installed tools and the per-OS installer recipes
   vcs.rs              the source-control commands: picks git or Unity VCS per folder
   git.rs              git for the changes panel
+  files.rs            the Files view: list folders, read and save files inside the project
   plastic.rs          Unity Version Control (`cm`) for the same commands
   pty.rs              terminals
   projects.rs         projects, clone, recents

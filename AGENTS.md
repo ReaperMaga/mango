@@ -53,14 +53,15 @@ app/
   components/        AppTitlebar, AppSidebar, AppWorkspace, ChatArea, CommandPalette
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (sidebar Changes view), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
+    files/           FilesPanel (sidebar Files view), FilesEditorPane (Monaco editor tab)
     settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, useShortcuts.ts
-  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes), git.ts, updater.ts
+  composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, mockFiles.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
+  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes), git.ts, files.ts, updater.ts
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
-  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, time.ts, paths.ts
+  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, editorModels.ts, time.ts, paths.ts
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -68,6 +69,7 @@ src-tauri/src/
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
+  files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts

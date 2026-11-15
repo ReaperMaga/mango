@@ -2,6 +2,7 @@ mod agent_proc;
 mod agents;
 mod auth;
 mod bin;
+mod files;
 mod git;
 mod plastic;
 mod projects;
@@ -74,6 +75,9 @@ pub fn run() {
             vcs::git_rebase,
             vcs::git_branch_rename,
             vcs::git_branch_delete,
+            files::fs_list_dir,
+            files::fs_read_file,
+            files::fs_write_file,
             updater::update_check,
             updater::update_install,
             voice::voice_models,

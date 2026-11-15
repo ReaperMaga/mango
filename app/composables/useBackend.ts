@@ -1,5 +1,6 @@
 import type { Commands, Events, ProjectInfo, AgentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
 import { mockGit } from '~/composables/mockGit'
+import { mockFiles } from '~/composables/mockFiles'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -253,6 +254,7 @@ const mock = (() => {
       }
     }
     if (cmd.startsWith('git_')) return mockGit(cmd, args)
+    if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     throw new Error(`mock: unknown command ${cmd}`)
   }
 

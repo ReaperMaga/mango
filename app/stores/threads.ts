@@ -5,6 +5,8 @@ import { interruptRun, respondApproval, runAgentTurn } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
+import { useFiles } from '~/stores/files'
+import { isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { demoThreads } from '~/utils/demoThreads'
 
 const LS_KEY = 'mango.threads.v1'
@@ -59,9 +61,9 @@ export const useThreads = defineStore('threads', {
       try {
         localStorage.setItem(LS_KEY, JSON.stringify({
           threads: this.threads,
-          // Diff tabs are a view onto git state, not something to restore next time.
-          tabs: this.tabs.filter(id => !isDiffTab(id)),
-          panes: this.panes.map(p => (isDiffTab(p.threadId) ? { ...p, threadId: null } : p)),
+          // Diff and file tabs are views onto the disk, not something to restore next time.
+          tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id)),
+          panes: this.panes.map(p => (isDiffTab(p.threadId) || isFileTab(p.threadId) ? { ...p, threadId: null } : p)),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }))
       } catch { /* storage unavailable */ }
@@ -125,9 +127,16 @@ export const useThreads = defineStore('threads', {
     closeTab(id: string) {
       const i = this.tabs.indexOf(id)
       if (i === -1) return
+      // A file with unsaved edits asks first, in its own pane.
+      if (parseFileTab(id) && useFiles().isDirty(id)) {
+        this.show(id)
+        useFiles().askClose(id)
+        return
+      }
       this.tabs.splice(i, 1)
       const diff = parseDiffTab(id)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
+      if (isFileTab(id)) useFiles().forget(id)
       const fallback = this.tabs[Math.min(i, this.tabs.length - 1)] ?? null
       for (const p of this.panes) if (p.threadId === id) p.threadId = this.panes.some(o => o.threadId === fallback) ? null : fallback
       if (this.panes.length > 1) {
