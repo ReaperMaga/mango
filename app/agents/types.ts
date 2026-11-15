@@ -29,6 +29,15 @@ export type PermissionMode =
   | 'edits'  // file edits are automatic, commands still ask
   | 'auto'   // nothing asks
 
+/** An image a tool produced (a screenshot, an image file it read, a generated picture): its bytes, or where it is on disk. */
+export interface ToolImage {
+  mime: string
+  /** base64 */
+  data?: string
+  /** Absolute path, when the CLI saved it to disk instead. */
+  path?: string
+}
+
 export type AgentEvent =
   /** The CLI's own session/thread id. Persisted on the thread and passed back as `sessionId` to resume. */
   | { type: 'session'; sessionId: string }
@@ -41,8 +50,9 @@ export type AgentEvent =
   /** `label` overrides the row's verb ("Delegated", "Listed"); needed for tool 'other'. */
   | { type: 'tool-start'; id: string; tool: ToolKind; target: string; label?: string }
   /** Any subset of fields; e.g. the target once the tool input finished streaming, or live output. */
-  | { type: 'tool-update'; id: string; target?: string; summary?: string; output?: string; diff?: DiffLine[] }
-  | { type: 'tool-end'; id: string; status: 'ok' | 'error'; summary?: string; output?: string; diff?: DiffLine[] }
+  /** `images` are added to the row's images (never replace them). */
+  | { type: 'tool-update'; id: string; target?: string; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] }
+  | { type: 'tool-end'; id: string; status: 'ok' | 'error'; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] }
   /** The agent needs a yes/no from the user. Answer with `AgentRun.respondApproval(id, allow)`. */
   /** `toolId` (optional) is the tool-start id this request is about, so the UI can show it next to that row. */
   | { type: 'approval'; id: string; title: string; command: string; reason: string; toolId?: string }
@@ -51,9 +61,26 @@ export type AgentEvent =
   /** Exactly one per run, always last. */
   | { type: 'turn-end'; status: 'done' | 'error' | 'stopped'; error?: string }
 
+/** A picture sent with the prompt: PNG, JPEG, GIF or WebP. */
+export interface AgentImage {
+  name: string
+  /** Absolute path of the file on disk (outside the project). */
+  path: string
+  mime: string
+  /** The bytes as base64, within the model's size limits, for CLIs that take images inline. */
+  data: string
+}
+
 export interface AgentRunOptions {
   cwd: string
+  /**
+   * The user's message. Other attached files are already named in it by path (they live in
+   * `readDirs`); it may be empty when only images were sent.
+   */
   prompt: string
+  images?: AgentImage[]
+  /** Folders outside `cwd` the agent needs to read this turn (where attachments are stored). */
+  readDirs?: string[]
   /** A model id from the adapter's `models`, or 'default' to let the CLI choose. */
   model: string
   mode: PermissionMode

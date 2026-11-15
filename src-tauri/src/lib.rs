@@ -1,4 +1,5 @@
 mod agent_proc;
+mod attachments;
 mod agents;
 mod auth;
 mod bin;
@@ -51,6 +52,9 @@ pub fn run() {
             agent_proc::agent_write,
             agent_proc::agent_close_stdin,
             agent_proc::agent_kill,
+            attachments::attachment_save,
+            attachments::attachment_import,
+            attachments::attachment_read,
             auth::agent_auth_status,
             auth::agent_logout,
             setup::setup_check,

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ChevronRight, FileText, FilePen, FilePlus, Search, SquareTerminal, Globe, CircleAlert, Wrench } from 'lucide-vue-next'
 import type { Part } from '~/types/chat'
+import { openImage } from '~/utils/imageViewer'
 
 type ToolPart = Extract<Part, { type: 'tool' }>
 const props = defineProps<{ part: ToolPart }>()
@@ -39,6 +40,14 @@ const open = ref(props.part.status === 'error')
       <span v-if="part.summary" class="tool__sum tabular">{{ part.summary }}</span>
       <ChevronRight v-if="expandable" class="tool__caret" />
     </component>
+
+    <ul v-if="part.images?.length" class="tool__images" aria-label="Images">
+      <li v-for="(img, i) in part.images" :key="img.id">
+        <button type="button" class="tool__image" :aria-label="`View ${img.name}`" :title="img.name" @click="openImage(part.images!, i)">
+          <img v-if="img.thumb" :src="img.thumb" alt="">
+        </button>
+      </li>
+    </ul>
 
     <div v-if="open && expandable" class="tool__detail selectable">
       <div v-if="part.diff?.length" class="diff" role="table" aria-label="Diff">
@@ -97,6 +106,30 @@ button.tool__row:hover { background: var(--bg-hover); color: var(--fg-muted); }
   animation: spin 0.75s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+.tool__images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 2px 0 6px 24px;
+  padding: 0;
+  list-style: none;
+}
+.tool__image {
+  display: block;
+  height: 72px;
+  max-width: 160px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  cursor: zoom-in;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.tool__image:hover { border-color: var(--line-strong); }
+.tool__image:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.tool__image img { display: block; height: 100%; width: auto; max-width: 160px; object-fit: cover; }
 
 .tool__detail {
   margin: 4px 0 6px 24px;

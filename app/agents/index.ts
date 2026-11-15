@@ -1,8 +1,9 @@
-import type { AgentId, AgentModel, Part, Thread } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, SpawnFn, SpawnHandlers } from '~/agents/types'
+import type { AgentId, AgentModel, Attachment, Part, Thread } from '~/types/chat'
+import type { AgentAdapter, AgentEvent, AgentRun, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
+import { forAgent, makeThumb } from '~/utils/attachments'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -83,17 +84,50 @@ export async function listAgentModels(agent: AgentId, cwd: string): Promise<Agen
 }
 
 /* ------------------------------------------------------------------ */
+/* Images tools produce                                                */
+/* ------------------------------------------------------------------ */
+
+const IMAGE_EXT: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp' }
+/** More than this per tool call is noise in the chat. */
+const MAX_TOOL_IMAGES = 8
+
+/**
+ * Keeps the images a tool produced: the bytes go to the attachment store (so the chat
+ * history holds only a path and a small preview), then they appear on the tool's row.
+ */
+async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }>, images: ToolImage[]) {
+  for (const img of images) {
+    if ((part.images?.length ?? 0) >= MAX_TOOL_IMAGES) return
+    try {
+      let info, data: string
+      if (img.data) {
+        const name = `image-${Date.now().toString(36)}.${IMAGE_EXT[img.mime] ?? 'png'}`
+        info = await call('attachment_save', { name, data: img.data })
+        data = img.data
+      } else if (img.path) {
+        info = await call('attachment_import', { path: img.path })
+        data = await call('attachment_read', { path: info.path })
+      } else continue
+      const thumb = await makeThumb(info.mime, data)
+      ;(part.images ??= []).push({ ...info, thumb })
+      store.persist()
+    } catch { /* an image that can't be kept is left out; the row still says what happened */ }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* One turn                                                            */
 /* ------------------------------------------------------------------ */
 
-export async function runAgentTurn(store: Store, threadId: string, prompt: string): Promise<void> {
+/** `attachments`: files sent with `text`, already in the attachment store. */
+export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
   if (!thread) return
 
   // The browser preview has no backend to run CLIs: simulate, and say so.
   if (!isTauri()) {
     thread.simulated = true
-    return runMockAgent(store, threadId, prompt)
+    return runMockAgent(store, threadId, text.trim() || attachments.map(a => a.name).join(', '))
   }
   thread.simulated = false
 
@@ -149,6 +183,7 @@ export async function runAgentTurn(store: Store, threadId: string, prompt: strin
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
+        if (e.images?.length) void keepToolImages(store, part, e.images)
         break
       }
       case 'tool-end': {
@@ -158,6 +193,7 @@ export async function runAgentTurn(store: Store, threadId: string, prompt: strin
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
+        if (e.images?.length) void keepToolImages(store, part, e.images)
         store.persist()
         break
       }
@@ -202,9 +238,12 @@ export async function runAgentTurn(store: Store, threadId: string, prompt: strin
 
   try {
     const adapter = await adapters[thread.agent]()
+    const input = attachments.length
+      ? await forAgent(text, attachments, path => call('attachment_read', { path }))
+      : { prompt: text, images: [], readDirs: [] }
     const run = adapter.run({
       cwd: thread.projectPath,
-      prompt,
+      ...input,
       model: thread.model,
       mode: thread.mode,
       effort: thread.effort ?? null,

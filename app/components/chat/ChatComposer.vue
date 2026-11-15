@@ -1,11 +1,16 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, Gauge, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import { ArrowUp, ChevronDown, FileText, Gauge, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useWorkspace } from '~/stores/workspace'
 import { useVoice } from '~/stores/voice'
 import { useModels } from '~/stores/models'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import { AGENTS, effortLabel, type AgentId, type Thread } from '~/types/chat'
+import { AGENTS, effortLabel, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { call, isTauri, pickFiles } from '~/composables/useBackend'
+import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeThumb, pastedName } from '~/utils/attachments'
+import { baseName } from '~/utils/paths'
+import { openImage } from '~/utils/imageViewer'
 import type { MenuItem } from '~/types/ui'
 
 /**
@@ -25,7 +30,7 @@ const props = withDefaults(defineProps<{
 }>(), { effort: null, busy: false, autofocus: false, large: false })
 
 const emit = defineEmits<{
-  send: [text: string]
+  send: [text: string, attachments: Attachment[]]
   stop: []
   'update:agent': [agent: AgentId]
   'update:model': [model: string]
@@ -45,10 +50,13 @@ function autosize() {
 }
 watch(text, () => nextTick(autosize))
 
+const canSend = computed(() => !!(text.value.trim() || attachments.value.length) && !pending.value.length)
+
 function submit() {
-  if (props.busy || !text.value.trim()) return
-  emit('send', text.value)
+  if (props.busy || !canSend.value) return
+  emit('send', text.value, attachments.value)
   text.value = ''
+  attachments.value = []
 }
 
 function onKey(e: KeyboardEvent) {
@@ -69,6 +77,143 @@ function onKey(e: KeyboardEvent) {
     submit()
   }
 }
+
+/* ---------- attachments: paste, pick or drop; stored on disk by the backend ---------- */
+
+const attachments = defineModel<Attachment[]>('attachments', { default: () => [] })
+/** Files on their way into the store, shown as placeholders. */
+const pending = ref<{ key: number; name: string }[]>([])
+let pendingKey = 0
+const attachError = ref<string | null>(null)
+const fileInput = ref<HTMLInputElement | null>(null)
+const formEl = ref<HTMLFormElement | null>(null)
+const dropping = ref(false)
+
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]) {
+  if (!jobs.length) return
+  attachError.value = null
+  const room = Math.max(0, MAX_ATTACHMENTS - attachments.value.length - pending.value.length)
+  if (jobs.length > room) attachError.value = `A message can carry up to ${MAX_ATTACHMENTS} attachments.`
+  await Promise.all(jobs.slice(0, room).map(async (job) => {
+    const key = ++pendingKey
+    pending.value = [...pending.value, { key, name: job.name }]
+    try {
+      const a = await job.store()
+      attachments.value = [...attachments.value, a]
+    } catch (e) {
+      attachError.value = `Could not attach ${job.name}. ${errText(e)}`
+    } finally {
+      pending.value = pending.value.filter(p => p.key !== key)
+    }
+  }))
+  ta.value?.focus()
+}
+
+/** Bytes from the clipboard or the browser's file input. */
+const fromFile = (file: File, index: number) => {
+  const name = pastedName(file, index)
+  return {
+    name,
+    store: async (): Promise<Attachment> => {
+      if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`It is ${formatSize(file.size)}; the limit is ${formatSize(MAX_ATTACHMENT_BYTES)}.`)
+      const data = await blobToBase64(file)
+      const info = await call('attachment_save', { name, data })
+      return { ...info, thumb: await makeThumb(info.mime, data) }
+    },
+  }
+}
+
+/** A file on disk, picked natively or dropped on the window. */
+const fromPath = (path: string) => ({
+  name: baseName(path),
+  store: async (): Promise<Attachment> => {
+    const info = await call('attachment_import', { path })
+    const thumb = info.mime.startsWith('image/') ? await makeThumb(info.mime, await call('attachment_read', { path: info.path })) : undefined
+    return { ...info, thumb }
+  },
+})
+
+/** Opens the composer's images in the viewer, at `id`. */
+function viewAttachment(id: string) {
+  const images = attachments.value.filter(a => a.thumb)
+  openImage(images, images.findIndex(a => a.id === id))
+}
+
+function removeAttachment(id: string) {
+  attachments.value = attachments.value.filter(a => a.id !== id)
+  ta.value?.focus()
+}
+
+/** Pasting files (a screenshot, files copied in the file manager) attaches them; pasted text stays text. */
+function onPaste(e: ClipboardEvent) {
+  const data = e.clipboardData
+  const files = [...(data?.files ?? [])]
+  if (!files.length || data?.getData('text/plain')) return
+  e.preventDefault()
+  void attach(files.map(fromFile))
+}
+
+async function pick() {
+  if (!isTauri()) {
+    fileInput.value?.click()
+    return
+  }
+  try {
+    void attach((await pickFiles()).map(fromPath))
+  } catch (e) {
+    attachError.value = errText(e)
+  }
+}
+
+function onFileInput(e: Event) {
+  const input = e.target as HTMLInputElement
+  void attach([...(input.files ?? [])].map(fromFile))
+  input.value = ''
+}
+
+/*
+ * Dropping files from the OS. The desktop webview takes HTML5 drag and drop over (AGENTS.md),
+ * so this listens to the window's own drop events and checks whether they land on this
+ * composer's pane (the nearest [data-drop-zone], else the composer itself).
+ */
+let unlistenDrop: UnlistenFn | undefined
+let unmounted = false
+function overZone(pos: { x: number; y: number }) {
+  const zone = (formEl.value?.closest('[data-drop-zone]') ?? formEl.value) as HTMLElement | null
+  if (!zone) return false
+  const r = zone.getBoundingClientRect()
+  const x = pos.x / window.devicePixelRatio
+  const y = pos.y / window.devicePixelRatio
+  return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom
+}
+onMounted(async () => {
+  if (!isTauri()) return
+  const { getCurrentWebview } = await import('@tauri-apps/api/webview')
+  const off = await getCurrentWebview().onDragDropEvent(({ payload: p }) => {
+    if (p.type === 'leave') dropping.value = false
+    else if (p.type === 'enter' || p.type === 'over') dropping.value = overZone(p.position)
+    else if (p.type === 'drop') {
+      const hit = overZone(p.position)
+      dropping.value = false
+      if (hit) void attach(p.paths.map(fromPath))
+    }
+  })
+  if (unmounted) off()
+  else unlistenDrop = off
+})
+onBeforeUnmount(() => {
+  unmounted = true
+  unlistenDrop?.()
+})
+
+let attachErrorTimer: ReturnType<typeof setTimeout> | undefined
+watch(attachError, (msg) => {
+  clearTimeout(attachErrorTimer)
+  if (msg) attachErrorTimer = setTimeout(() => (attachError.value = null), 8000)
+})
+onBeforeUnmount(() => clearTimeout(attachErrorTimer))
 
 /* ---------- voice input ---------- */
 
@@ -208,7 +353,45 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
 </script>
 
 <template>
-  <form class="cp" :class="{ 'cp--large': large, 'is-busy': busy }" @submit.prevent="submit" @click.self="ta?.focus()">
+  <form
+    ref="formEl"
+    class="cp"
+    :class="{ 'cp--large': large, 'is-busy': busy, 'is-dropping': dropping }"
+    @submit.prevent="submit"
+    @click.self="ta?.focus()"
+  >
+    <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">
+      <li
+        v-for="a in attachments"
+        :key="a.id"
+        class="cp__file"
+        :class="{ 'cp__file--image': a.thumb }"
+        :title="`${a.name} · ${formatSize(a.size)}`"
+      >
+        <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
+          <img class="cp__thumb" :src="a.thumb" alt="">
+        </button>
+        <template v-else>
+          <FileText class="cp__file-icon" aria-hidden="true" />
+          <span class="cp__file-meta">
+            <span class="cp__file-name">{{ a.name }}</span>
+            <span class="cp__file-size tabular">{{ formatSize(a.size) }}</span>
+          </span>
+        </template>
+        <button type="button" class="cp__file-x" :aria-label="`Remove ${a.name}`" @click="removeAttachment(a.id)">
+          <X />
+        </button>
+      </li>
+      <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="`Attaching ${p.name}…`">
+        <span class="cp__spin" aria-hidden="true" />
+        <span class="cp__file-meta">
+          <span class="cp__file-name">{{ p.name }}</span>
+          <span class="cp__file-size">Attaching…</span>
+        </span>
+      </li>
+    </ul>
+    <p v-if="dropping" class="cp__drop" aria-hidden="true">Drop files to attach</p>
+    <input ref="fileInput" type="file" multiple hidden @change="onFileInput">
     <textarea
       ref="ta"
       v-model="text"
@@ -217,6 +400,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
       :placeholder="ph"
       :aria-label="ph"
       @keydown="onKey"
+      @paste="onPaste"
     />
     <div class="cp__bar">
       <UiMenu :items="agentItems" placement="top-start" :width="280" label="Agent">
@@ -276,6 +460,9 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
         <span v-else-if="dictationError" class="cp__voice-text cp__voice-text--error" :title="dictationError">
           {{ dictationError }}
         </span>
+        <span v-else-if="attachError" class="cp__voice-text cp__voice-text--error" :title="attachError">
+          {{ attachError }}
+        </span>
       </div>
       <UiIconButton
         v-if="listening"
@@ -287,7 +474,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
       >
         <X />
       </UiIconButton>
-      <UiIconButton v-else size="sm" label="Attach files (coming soon)" disabled><Paperclip /></UiIconButton>
+      <UiIconButton v-else size="sm" label="Attach files or paste an image" @click="pick"><Paperclip /></UiIconButton>
       <button
         type="button"
         class="cp__mic"
@@ -315,7 +502,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
         v-else
         type="submit"
         class="cp__send"
-        :disabled="!text.trim()"
+        :disabled="!canSend"
         aria-label="Send"
         title="Send (Enter)"
       >
@@ -340,6 +527,74 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
   transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
 }
 .cp:focus-within { border-color: var(--line-strong); box-shadow: var(--shadow-soft), 0 0 0 3px var(--accent-soft); }
+.cp.is-dropping { border-color: var(--accent-line); box-shadow: var(--shadow-soft), 0 0 0 3px var(--accent-soft); }
+.cp { position: relative; }
+.cp__drop {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  border-radius: inherit;
+  background: color-mix(in oklab, var(--bg-panel) 88%, transparent);
+  font-size: var(--text-sm);
+  font-weight: 540;
+  color: var(--accent-ink);
+  pointer-events: none;
+}
+
+.cp__files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
+  padding: 0;
+  list-style: none;
+  cursor: default;
+}
+.cp__file {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 48px;
+  max-width: 220px;
+  padding: 0 var(--space-3) 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+.cp__file--image { width: 48px; padding: 0; overflow: hidden; background: var(--bg-inset); }
+.cp__thumb-btn { display: block; width: 100%; height: 100%; padding: 0; cursor: zoom-in; }
+.cp__thumb-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md); }
+.cp__thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cp__file-icon { flex: none; width: 18px; height: 18px; stroke-width: 1.75; color: var(--fg-subtle); }
+.cp__file-meta { display: flex; flex-direction: column; min-width: 0; line-height: var(--leading-tight); }
+.cp__file-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--text-xs); font-weight: 540; color: var(--fg); }
+.cp__file-size { font-size: var(--text-2xs); color: var(--fg-subtle); }
+.cp__file.is-pending { color: var(--fg-subtle); }
+.cp__file.is-pending .cp__file-name { color: var(--fg-muted); }
+.cp__file-x {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-canvas);
+  border: 1px solid var(--line);
+  color: var(--fg-muted);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.cp__file-x svg { width: 11px; height: 11px; stroke-width: 2.25; }
+.cp__file:hover .cp__file-x, .cp__file-x:focus-visible { opacity: 1; }
+.cp__file-x:hover { color: var(--fg); }
+.cp__file-x:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
 .cp__input {
   width: 100%;
   min-height: 22px;
@@ -463,6 +718,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
 
 @media (prefers-reduced-motion: reduce) {
   .cp__rec, .cp__spin { animation: none; }
+  .cp__file-x { transition: none; }
 }
 
 .cp__send {

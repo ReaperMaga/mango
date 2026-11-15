@@ -5,6 +5,11 @@
  * Rust structs serialize with #[serde(rename_all = "camelCase")].
  */
 
+import type { Attachment } from '~/types/chat'
+
+/** A stored attachment as the backend reports it (the preview is made in the webview). */
+export type AttachmentInfo = Omit<Attachment, 'thumb'>
+
 /** Version control a project is under: git, or Unity Version Control (formerly Plastic SCM, CLI `cm`). */
 export type VcsKind = 'git' | 'plastic'
 
@@ -335,6 +340,13 @@ export interface Commands {
    * changed on disk since then is left alone and `saved` is false; null writes regardless.
    */
   fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
+
+  /** Stores pasted or browser-picked bytes (`data` is base64, at most 25 MB) as an attachment called `name`. */
+  attachment_save: [{ name: string; data: string }, AttachmentInfo]
+  /** Copies a picked or dropped file (absolute path) into the attachment store. */
+  attachment_import: [{ path: string }, AttachmentInfo]
+  /** A stored attachment's bytes as base64. Paths outside the store are refused. */
+  attachment_read: [{ path: string }, string]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]

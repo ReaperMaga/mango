@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, ToolImage } from '~/agents/types'
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
@@ -206,6 +206,17 @@ function describeError(error: Json, model: string): string {
 interface FileTool { id: string; diff: string; kind: string }
 interface OpenApproval { rpcId: string | number; respond(allow: boolean): Json }
 
+
+/**
+ * The prompt as turn input: the text, then each attached image by path (`localImage`; Codex
+ * reads the file itself). The sandbox can read the whole disk, so `readDirs` needs no grant.
+ */
+function turnInput(options: AgentRunOptions): Json[] {
+  const input: Json[] = []
+  if (options.prompt.trim() || !options.images?.length) input.push({ type: 'text', text: options.prompt, text_elements: [] })
+  for (const img of options.images ?? []) input.push({ type: 'localImage', path: img.path })
+  return input
+}
 function run(options: AgentRunOptions): AgentRun {
   const { cwd, model } = options
   const policy = POLICIES[options.mode] ?? POLICIES.ask
@@ -296,14 +307,14 @@ function run(options: AgentRunOptions): AgentRun {
 
   /* ----- tools ----- */
 
-  const startTool = (id: string, tool: ToolKind, target: string) => {
+  const startTool = (id: string, tool: ToolKind, target: string, label?: string) => {
     if (knownTools.has(id)) return
     knownTools.add(id)
     openTools.add(id)
-    emit({ type: 'tool-start', id, tool, target })
+    emit({ type: 'tool-start', id, tool, target, ...(label ? { label } : {}) })
   }
 
-  const endTool = (id: string, status: 'ok' | 'error', rest: { summary?: string; output?: string; diff?: DiffLine[] } = {}) => {
+  const endTool = (id: string, status: 'ok' | 'error', rest: { summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] } = {}) => {
     if (!openTools.delete(id)) return
     emit({ type: 'tool-end', id, status, ...rest })
   }
@@ -373,6 +384,19 @@ function run(options: AgentRunOptions): AgentRun {
     return content.map(c => (typeof c?.text === 'string' ? c.text : c?.type ? `[${c.type}]` : '')).filter(Boolean).join('\n')
   }
 
+  /** Images in an MCP result (`{type:'image', data, mimeType}`) or a dynamic tool's output (`inputImage` data URLs). */
+  const toolImages = (item: Json): ToolImage[] => {
+    const content: Json[] = item.result?.content ?? item.contentItems ?? []
+    const out: ToolImage[] = []
+    for (const c of content) {
+      if (c?.type === 'image' && typeof c.data === 'string') out.push({ mime: String(c.mimeType ?? 'image/png'), data: c.data })
+      const url = c?.type === 'inputImage' ? String(c.imageUrl ?? '') : ''
+      const m = /^data:([^;,]+);base64,(.+)$/s.exec(url)
+      if (m) out.push({ mime: m[1]!, data: m[2]! })
+    }
+    return out
+  }
+
   const webTarget = (item: Json): string => {
     const a = item.action
     if (a?.type === 'openPage' && a.url) return String(a.url)
@@ -404,6 +428,9 @@ function run(options: AgentRunOptions): AgentRun {
         break
       case 'imageView':
         startTool(item.id, 'read', relPath(String(item.path ?? ''), cwd))
+        break
+      case 'imageGeneration':
+        startTool(item.id, 'other', 'an image', 'Generated')
         break
     }
   }
@@ -460,13 +487,27 @@ function run(options: AgentRunOptions): AgentRun {
         onItemStarted(item, null)
         const ok = item.status === 'completed' && !item.error && item.success !== false
         const output = capTail(mcpOutput(item))
-        endTool(item.id, ok ? 'ok' : 'error', { ...(ok ? {} : { summary: 'failed' }), ...(output ? { output } : {}) })
+        const images = toolImages(item)
+        endTool(item.id, ok ? 'ok' : 'error', { ...(ok ? {} : { summary: 'failed' }), ...(output ? { output } : {}), ...(images.length ? { images } : {}) })
         break
       }
       case 'imageView':
         onItemStarted(item, null)
-        endTool(item.id, 'ok')
+        endTool(item.id, 'ok', item.path ? { images: [{ mime: '', path: String(item.path) }] } : {})
         break
+      case 'imageGeneration': {
+        onItemStarted(item, null)
+        const ok = item.status !== 'failed'
+        const image: ToolImage | null = item.savedPath
+          ? { mime: '', path: String(item.savedPath) }
+          : typeof item.result === 'string' && item.result ? { mime: 'image/png', data: item.result } : null
+        endTool(item.id, ok ? 'ok' : 'error', {
+          ...(item.revisedPrompt ? { output: String(item.revisedPrompt) } : {}),
+          ...(image ? { images: [image] } : {}),
+          ...(ok ? {} : { summary: 'failed' }),
+        })
+        break
+      }
     }
   }
 
@@ -710,7 +751,7 @@ function run(options: AgentRunOptions): AgentRun {
       turnRequested = true
       const started = await request('turn/start', {
         threadId,
-        input: [{ type: 'text', text: options.prompt, text_elements: [] }],
+        input: turnInput(options),
         approvalPolicy: policy.approvalPolicy,
         approvalsReviewer: 'user',
         // Reasoning summaries are what the thinking block shows; without this Codex sends none.

@@ -17,6 +17,7 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 - **Changes (left sidebar, next to files):** git status, diffs in the main pane (side by side or one column), stage / unstage / discard, commit, fetch / pull / push, branches, history.
 - **Unity Version Control (Plastic SCM):** a folder inside a Unity VCS workspace (it has a `.plastic` folder) uses the same Changes view, diffs and branch popup, driven by your own `cm` client. Pending changes, diffs, checkin, undo, update, changeset history, and branches (`/main/...`: switch, create, rename, delete) all work. Unity VCS has no staging area: what you stage is what the next checkin takes (nothing staged takes everything), and Mango remembers that choice while it runs. There is no fetch, push, amend, merge or rebase for Unity VCS in Mango. Sign in with the Unity Version Control app or Unity Hub; Mango never handles credentials.
 - **Terminal:** a real PTY docked at the bottom, with tabs. Mango finds the shells on your machine (login shell and `/etc/shells` on Linux/macOS; PowerShell, Command Prompt, Git Bash, MSYS2/Cygwin, Nushell and WSL distributions on Windows); pick one per terminal from the arrow next to the +, and set the default, font size and cursor in Settings > Terminal.
+- **Attachments:** paste a screenshot or copied files into the message box, pick files with the paperclip, or drop them on a chat. Mango keeps a copy in its app data folder; Claude Code gets images inline and other files by path (with read access to that folder), Codex gets images by path. Up to 10 per message, 25 MB each; large images are shrunk to fit the model's limits.
 - **Voice input:** press the microphone in the message box (or `Ctrl/⌘ Shift Space`) and speak; press it again and the transcript lands at the caret (Esc discards). Speech is turned into text on your computer by OpenAI's Whisper (run in Rust with candle), in any of its ~100 languages, detected automatically. In Settings > Voice pick a model (Tiny 154 MB, Base 293 MB, Small 969 MB), download it once from Hugging Face (pinned and checksum-verified), choose and test the microphone, fix the language, and optionally send as soon as the transcript is in.
 - **Updates:** checks the latest GitHub release at launch and every hour; **Update** in the titlebar downloads, verifies and installs it, then restarts Mango.
 - **Get started:** on the first launch, a dialog shows whether Claude Code, Codex and Git are installed and signed in, installs what is missing with each vendor's own installer (run in an embedded terminal, so you see and answer it), and signs you in. Open it again from the command palette.
@@ -112,7 +113,7 @@ DESIGN.md             design system
 
 ## Next
 
-- Attach files and images to a message; multiple-choice questions from agents.
+- Multiple-choice questions from agents.
 - "Always allow" rules for approvals.
 - Move chat history from localStorage to a file in the app data dir.
 - Per-thread git worktrees.

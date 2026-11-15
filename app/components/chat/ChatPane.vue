@@ -2,8 +2,8 @@
 import { MessageSquareText, Bug, GitPullRequestDraft } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
-import { AGENTS, type AgentId, type Thread } from '~/types/chat'
-import { drafts } from '~/utils/drafts'
+import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { attachmentDrafts, drafts } from '~/utils/drafts'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
 
@@ -16,11 +16,17 @@ const busy = computed(() => !!thread.value && ['running', 'queued', 'waiting'].i
 const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'], effort: null as string | null })
 watch(() => draft.agent, (a) => { draft.model = AGENTS[a].models[0]!.id; draft.effort = null; threads.defaultAgent = a })
 const draftText = ref('')
+const draftFiles = ref<Attachment[]>([])
 
 /* Unsent text is kept per thread, so switching tabs never loses a draft. */
 const text = computed({
   get: () => (thread.value ? drafts.get(thread.value.id) ?? '' : ''),
   set: (v: string) => { if (thread.value) v ? drafts.set(thread.value.id, v) : drafts.delete(thread.value.id) },
+})
+
+const files = computed({
+  get: () => (thread.value ? attachmentDrafts.get(thread.value.id) ?? [] : []),
+  set: (v: Attachment[]) => { if (thread.value) v.length ? attachmentDrafts.set(thread.value.id, v) : attachmentDrafts.delete(thread.value.id) },
 })
 
 const composer = ref<{ focus: () => void } | null>(null)
@@ -30,14 +36,14 @@ watch([() => props.pane.threadId, () => props.active], async ([, active]) => {
   composer.value?.focus()
 })
 
-async function start(text: string) {
+async function start(text: string, attachments: Attachment[]) {
   if (!ws.activeProjectPath) return
   const t = threads.create(ws.activeProjectPath, draft.agent, ws.activeProject?.branch ?? null)
   threads.setModel(t.id, draft.model)
   threads.setMode(t.id, draft.mode)
   threads.setEffort(t.id, draft.effort)
   if (threads.activePane.id !== props.pane.id) threads.show(t.id, props.pane.id)
-  await threads.send(t.id, text)
+  await threads.send(t.id, text, attachments)
 }
 
 const suggestions = [
@@ -93,7 +99,7 @@ function onKey(e: KeyboardEvent) {
 </script>
 
 <template>
-  <section class="pane" :class="{ 'is-active': active, 'is-split': split }" @keydown="onKey">
+  <section class="pane" :class="{ 'is-active': active, 'is-split': split }" data-drop-zone @keydown="onKey">
     <!-- Thread -->
     <template v-if="thread">
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
@@ -116,13 +122,14 @@ function onKey(e: KeyboardEvent) {
         <ChatComposer
           ref="composer"
           v-model:text="text"
+          v-model:attachments="files"
           :agent="thread.agent"
           :model="thread.model"
           :mode="thread.mode"
           :effort="thread.effort ?? null"
           :busy="busy"
           :autofocus="active"
-          @send="text => threads.send(thread!.id, text)"
+          @send="(text, attachments) => threads.send(thread!.id, text, attachments)"
           @stop="threads.stop(thread!.id)"
           @update:agent="a => threads.setAgent(thread!.id, a)"
           @update:model="m => threads.setModel(thread!.id, m)"
@@ -139,6 +146,7 @@ function onKey(e: KeyboardEvent) {
         <ChatComposer
           ref="composer"
           v-model:text="draftText"
+          v-model:attachments="draftFiles"
           v-model:agent="draft.agent"
           v-model:model="draft.model"
           v-model:mode="draft.mode"

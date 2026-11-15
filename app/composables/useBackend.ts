@@ -1,4 +1,6 @@
-import type { Commands, Events, ProjectInfo, AgentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import { attachmentKind, mimeFromName } from '~/utils/attachments'
+import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockFiles } from '~/composables/mockFiles'
 
@@ -40,6 +42,14 @@ export async function pickFolder(title = 'Open folder', defaultPath?: string): P
   }
   const p = window.prompt(`${title} (browser preview: type a path)`, defaultPath ?? '/home/you/Projects/')
   return p?.trim() || null
+}
+
+/** Native file picker (several files). Inside the app only; returns [] when cancelled or in the browser. */
+export async function pickFiles(title = 'Attach files'): Promise<string[]> {
+  if (!isTauri()) return []
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const res = await open({ multiple: true, directory: false, title })
+  return Array.isArray(res) ? res : typeof res === 'string' ? [res] : []
 }
 
 export async function openExternal(url: string) {
@@ -165,6 +175,19 @@ const mock = (() => {
     }
   }
 
+  /* Attachments: kept in memory, under made-up paths. */
+  const attachments = new Map<string, string>()
+  function fakeAttachment(name: string, data: string): AttachmentInfo {
+    const size = Math.floor(data.length * 3 / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0)
+    if (size > 25 * 1024 * 1024) throw new Error(`That file is ${(size / 1024 / 1024).toFixed(1)} MB; attachments can be at most 25 MB.`)
+    const id = Math.random().toString(36).slice(2, 14)
+    const clean = baseName(name).trim() || 'attachment'
+    const path = `${home}/.local/share/dev.mango.app/attachments/${id}/${clean}`
+    attachments.set(path, data)
+    const mime = mimeFromName(clean)
+    return { id, name: clean, path, mime, size, kind: attachmentKind(mime) }
+  }
+
   async function call(cmd: string, args: any): Promise<any> {
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
@@ -242,6 +265,13 @@ const mock = (() => {
           emit('update://progress', { downloaded, total })
         }
         throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
+      }
+      case 'attachment_save': return fakeAttachment(args.name, args.data)
+      case 'attachment_import': throw new Error('The browser preview cannot read files from disk; paste or pick them instead.')
+      case 'attachment_read': {
+        const data = attachments.get(args.path)
+        if (data === undefined) throw new Error('The attachment is gone from disk.')
+        return data
       }
       case 'voice_models': return voiceModels.map(m => ({ ...m }))
       case 'voice_download': return fakeVoiceDownload(args.model)
