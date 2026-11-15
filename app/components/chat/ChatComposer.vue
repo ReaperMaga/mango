@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FileText, Gauge, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import { ArrowUp, ChevronDown, FileText, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useWorkspace } from '~/stores/workspace'
 import { useVoice } from '~/stores/voice'
@@ -315,23 +315,12 @@ const modelItems = computed<MenuItem[]>(() => {
 })
 
 const efforts = computed(() => models.efforts(props.agent, props.model))
-const effortItems = computed<MenuItem[]>(() => {
-  const fallback = models.find(props.agent, props.model)?.defaultEffort
-  return [
-    {
-      label: 'Default',
-      hint: fallback ? `${AGENTS[props.agent].name} uses ${effortLabel(fallback).toLowerCase()}` : `Whatever ${AGENTS[props.agent].name} is set to`,
-      checked: !props.effort,
-      onSelect: () => emit('update:effort', null),
-    },
-    ...efforts.value.map((level, i) => ({
-      label: effortLabel(level),
-      hint: i === 0 ? 'Quickest answers, least thinking' : i === efforts.value.length - 1 ? 'Thinks longest; slowest and uses the most quota' : undefined,
-      checked: props.effort === level,
-      divider: i === 0,
-      onSelect: () => emit('update:effort', level),
-    })),
-  ]
+/** The level the CLI picks when none is chosen, when it says (Codex does). */
+const fallbackEffort = computed(() => models.find(props.agent, props.model)?.defaultEffort)
+/** How full the meter is: the chosen level, else the CLI's default (shown muted), else empty. */
+const effortMeter = computed(() => {
+  const level = props.effort ?? fallbackEffort.value
+  return { value: level ? efforts.value.indexOf(level) + 1 : 0, max: efforts.value.length, muted: !props.effort }
 })
 const effortText = computed(() => (props.effort ? effortLabel(props.effort) : 'Effort'))
 
@@ -420,7 +409,14 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
           </button>
         </template>
       </UiMenu>
-      <UiMenu v-if="efforts.length" :items="effortItems" placement="top-start" :width="260" label="Effort">
+      <ChatEffort
+        v-if="efforts.length"
+        :efforts="efforts"
+        :model-value="effort"
+        :fallback="fallbackEffort"
+        :agent-name="AGENTS[agent].name"
+        @update:model-value="e => emit('update:effort', e)"
+      >
         <template #default="{ toggle, open }">
           <button
             type="button"
@@ -429,12 +425,12 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
             :title="`Effort: ${effort ? effortLabel(effort) : 'default'}`"
             @click="toggle"
           >
-            <Gauge />
+            <UiLevel class="cp__effort" size="sm" :value="effortMeter.value" :max="effortMeter.max" :muted="effortMeter.muted" />
             <span class="cp__chip-text cp__mode-text">{{ effortText }}</span>
             <ChevronDown />
           </button>
         </template>
-      </UiMenu>
+      </ChatEffort>
       <UiMenu :items="modeItems" placement="top-start" :width="290" label="Permissions">
         <template #default="{ toggle, open }">
           <button type="button" class="cp__chip" :class="[{ 'is-open': open }, `cp__chip--mode-${mode}`]" :title="`Permissions: ${modes[mode].label}`" @click="toggle">
@@ -627,7 +623,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .cp__chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cp__bar :deep(.menu) { flex: 0 1 auto; }
+.cp__bar :deep(.menu), .cp__bar :deep(.ef-anchor) { flex: 0 1 auto; }
 .cp__bar :deep(.menu:first-child) { flex-shrink: 0; }
 .cp__chip { min-width: 0; max-width: 100%; }
 .cp__chip svg { flex: none; }
@@ -640,6 +636,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
 .cp__chip:hover, .cp__chip.is-open { background: var(--bg-hover); color: var(--fg); }
 .cp__chip svg { width: 12px; height: 12px; stroke-width: 2; opacity: 0.7; }
 .cp__chip--agent { color: var(--fg-muted); }
+.cp__effort { margin-right: 1px; }
 .cp__chip--mode-auto svg:first-child { color: var(--accent-ink); opacity: 1; }
 .cp__agent-dot { width: 8px; height: 8px; border-radius: 2px; }
 .cp__agent-dot--claude { background: var(--accent); }
