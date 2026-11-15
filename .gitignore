@@ -10,3 +10,5 @@ src-tauri/gen/schemas
 .impeccable/review
 .impeccable/config.local.json
 *.log
+docs/.vitepress/dist
+docs/.vitepress/cache

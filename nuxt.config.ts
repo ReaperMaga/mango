@@ -55,5 +55,5 @@ export default defineNuxtConfig({
       ],
     },
   },
-  ignore: ['src-tauri/**'],
+  ignore: ['src-tauri/**', 'docs/**'],
 })

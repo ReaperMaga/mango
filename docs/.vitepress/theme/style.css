@@ -1,0 +1,121 @@
+/*
+ * Mango's palette on VitePress' default theme. Values come from
+ * app/assets/css/tokens.css (Mango colour scheme): the accent is a fill with
+ * dark text on it; accent-coloured text uses the darker "ink" grade.
+ * Depth comes from lightness steps, not shadows or tints.
+ */
+
+:root {
+  /* Light theme */
+  --vp-c-bg: oklch(0.985 0.004 150);          /* --bg-canvas */
+  --vp-c-bg-alt: oklch(0.955 0.007 150);      /* --bg-app */
+  --vp-c-bg-elv: oklch(1 0 0);                /* --bg-raised */
+  --vp-c-bg-soft: oklch(0.955 0.007 150);
+
+  --vp-c-divider: oklch(0.88 0.008 150);      /* --line */
+  --vp-c-border: oklch(0.80 0.010 150);       /* --line-strong */
+  --vp-c-gutter: oklch(0.92 0.006 150);       /* --line-soft */
+
+  --vp-c-text-1: oklch(0.24 0.015 160);       /* --fg */
+  --vp-c-text-2: oklch(0.38 0.015 160);       /* --fg-muted */
+  --vp-c-text-3: oklch(0.47 0.014 160);       /* --fg-subtle */
+
+  --vp-c-brand-1: oklch(0.52 0.15 50);        /* --accent-ink: links and accent text */
+  --vp-c-brand-2: oklch(0.47 0.15 50);
+  --vp-c-brand-3: oklch(0.74 0.17 60);        /* --accent: fills */
+  --vp-c-brand-soft: oklch(0.72 0.16 60 / 0.16);
+
+  --vp-button-brand-border: transparent;
+  --vp-button-brand-text: oklch(0.22 0.04 62);          /* --accent-fg */
+  --vp-button-brand-bg: oklch(0.74 0.17 60);
+  --vp-button-brand-hover-border: transparent;
+  --vp-button-brand-hover-text: oklch(0.22 0.04 62);
+  --vp-button-brand-hover-bg: oklch(0.70 0.17 58);      /* --accent-strong */
+  --vp-button-brand-active-border: transparent;
+  --vp-button-brand-active-text: oklch(0.22 0.04 62);
+  --vp-button-brand-active-bg: oklch(0.66 0.17 56);
+
+  --vp-c-tip-1: var(--vp-c-brand-1);
+  --vp-c-tip-2: var(--vp-c-brand-2);
+  --vp-c-tip-3: var(--vp-c-brand-3);
+  --vp-c-tip-soft: var(--vp-c-brand-soft);
+
+  --vp-code-color: var(--vp-c-text-1);
+  --vp-code-link-color: var(--vp-c-brand-1);
+  --vp-code-link-hover-color: var(--vp-c-brand-2);
+  --vp-code-bg: oklch(0.92 0.006 150 / 0.7);
+  --vp-code-block-bg: oklch(0.975 0.005 150);           /* --bg-inset */
+
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+  --vp-home-hero-name-background: none;
+  --vp-home-hero-image-background-image: none;
+
+  --vp-font-family-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+.dark {
+  /* Dark theme (Mango's default) */
+  --vp-c-bg: oklch(0.195 0.010 160);          /* --bg-canvas */
+  --vp-c-bg-alt: oklch(0.165 0.010 160);      /* --bg-app */
+  --vp-c-bg-elv: oklch(0.25 0.012 160);       /* --bg-raised */
+  --vp-c-bg-soft: oklch(0.215 0.011 160);     /* --bg-panel */
+
+  --vp-c-divider: oklch(0.30 0.012 160);      /* --line */
+  --vp-c-border: oklch(0.38 0.014 160);       /* --line-strong */
+  --vp-c-gutter: oklch(0.165 0.010 160);
+
+  --vp-c-text-1: oklch(0.94 0.008 150);       /* --fg */
+  --vp-c-text-2: oklch(0.80 0.012 150);       /* --fg-muted */
+  --vp-c-text-3: oklch(0.69 0.012 150);       /* --fg-subtle */
+
+  --vp-c-brand-1: oklch(0.82 0.15 62);        /* --accent-ink */
+  --vp-c-brand-2: oklch(0.86 0.13 64);
+  --vp-c-brand-3: oklch(0.79 0.16 58);        /* --accent */
+  --vp-c-brand-soft: oklch(0.80 0.155 62 / 0.14);
+
+  --vp-button-brand-text: oklch(0.22 0.04 62);          /* --accent-fg */
+  --vp-button-brand-bg: oklch(0.79 0.16 58);
+  --vp-button-brand-hover-text: oklch(0.22 0.04 62);
+  --vp-button-brand-hover-bg: oklch(0.83 0.165 58);     /* --accent-strong */
+  --vp-button-brand-active-text: oklch(0.22 0.04 62);
+  --vp-button-brand-active-bg: oklch(0.75 0.16 58);
+
+  --vp-code-bg: oklch(0.25 0.012 160);
+  --vp-code-block-bg: oklch(0.145 0.009 160);           /* --bg-inset */
+}
+
+::selection {
+  background: oklch(0.80 0.155 62 / 0.28);
+}
+
+:focus-visible {
+  outline: 2px solid oklch(0.80 0.155 62 / 0.7);
+  outline-offset: 2px;
+}
+
+/* Tables read as data: tabular figures, no zebra stripes. */
+.vp-doc table { font-variant-numeric: tabular-nums; }
+.vp-doc tr:nth-child(2n) { background-color: transparent; }
+
+/* Key caps in the shortcut tables. */
+.vp-doc kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0 6px;
+  border: 1px solid var(--vp-c-divider);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--vp-c-bg-soft);
+  font-family: var(--vp-font-family-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  text-align: center;
+  color: var(--vp-c-text-1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

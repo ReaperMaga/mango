@@ -7,6 +7,8 @@ and Codex chats side by side, and keep a real terminal docked at the bottom.
 
 Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (SPA).
 
+**Documentation:** [reapermaga.github.io/mango](https://reapermaga.github.io/mango/): install, guides and development notes.
+
 ## Status
 
 - **Projects:** open a folder, create a project (with `git init`), clone a repository with live git progress, recent projects.
@@ -14,6 +16,7 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 - **Changes (left sidebar, next to threads):** git status, diffs in the main pane (side by side or one column), stage / unstage / discard, commit, fetch / pull / push, branches, history.
 - **Unity Version Control (Plastic SCM):** a folder inside a Unity VCS workspace (it has a `.plastic` folder) uses the same Changes view, diffs and branch popup, driven by your own `cm` client. Pending changes, diffs, checkin, undo, update, changeset history, and branches (`/main/...`: switch, create, rename, delete) all work. Unity VCS has no staging area: what you stage is what the next checkin takes (nothing staged takes everything), and Mango remembers that choice while it runs. There is no fetch, push, amend, merge or rebase for Unity VCS in Mango. Sign in with the Unity Version Control app or Unity Hub; Mango never handles credentials.
 - **Terminal:** a real PTY docked at the bottom, with tabs. Mango finds the shells on your machine (login shell and `/etc/shells` on Linux/macOS; PowerShell, Command Prompt, Git Bash, MSYS2/Cygwin, Nushell and WSL distributions on Windows); pick one per terminal from the arrow next to the +, and set the default, font size and cursor in Settings > Terminal.
+- **Updates:** checks the latest GitHub release at launch and every hour; **Update** in the titlebar downloads, verifies and installs it, then restarts Mango.
 - **Settings:** installed agents, sign in / sign out (runs the CLI's own login in an embedded terminal), default agent and permission mode, theme and color scheme (Mango, Blue, Purple, Pink, Graphite).
 - **Branches:** click the branch name (titlebar or Changes view) for a JetBrains-style popup: search, update / push / fetch, local and remote branches, and per-branch checkout, new branch from, merge, rebase, rename and delete. For Unity VCS a new branch is a child of the one it starts from (`task` from `/main` is `/main/task`).
 - **Sidebar:** shows the chats of the project picked in the titlebar, grouped by status: Working on top, Settled and Archived at the bottom of the list, where they fold away.
@@ -92,6 +95,7 @@ src-tauri/src/        Rust backend
   plastic.rs          Unity Version Control (`cm`) for the same commands
   pty.rs              terminals
   projects.rs         projects, clone, recents
+  updater.rs          self-update from GitHub releases
 scripts/try-agent.ts  run an adapter against the real CLI from a terminal
 PRODUCT.md            product context
 DESIGN.md             design system
