@@ -30,7 +30,7 @@ const width = computed(() => (ws.sidebarView === 'changes' ? Math.max(ws.sidebar
 
 /**
  * The sidebar lists the chats of the project chosen in the titlebar, grouped by
- * status: what is in play on top (always shown), then Settled and Archived,
+ * status: what is in play on top (always shown), then Settled and Archived at the bottom,
  * which fold away.
  */
 type SectionId = 'active' | 'settled' | 'archived'
@@ -449,8 +449,11 @@ const agentsNeedingAttention = computed(() => {
 .sb__new span { flex: 1; text-align: left; }
 .sb__new kbd + kbd { margin-left: -4px; }
 
-.sb__scroll { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-1) var(--space-2) var(--space-3) var(--space-3); }
+.sb__scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: var(--space-1) var(--space-2) var(--space-3) var(--space-3); }
+.sb__group { flex: none; }
 .sb__group + .sb__group { margin-top: var(--space-3); }
+/* The open chats take the free space, so Settled and Archived sit at the bottom of the list. */
+.sb__group--active { flex-grow: 1; }
 .sb__group-head { display: flex; align-items: center; height: 28px; border-radius: var(--radius-sm); }
 .sb__group-toggle {
   flex: 1;
