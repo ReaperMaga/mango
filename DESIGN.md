@@ -2,7 +2,8 @@
 name: Mango
 description: A desktop agent workbench where every thread visibly ripens, from queued to working to needs-you to done.
 colors:
-  # Dark theme (default). Source of truth: app/assets/css/tokens.css, same names with a leading "--".
+  # Dark theme (default), Mango scheme (default). Source of truth: app/assets/css/tokens.css, same names with a leading "--".
+  # The other colour schemes (blue, purple, pink, graphite) are recorded in .impeccable/design.json under extensions.schemes.
   bg-app: "oklch(0.165 0.010 160)"
   bg-canvas: "oklch(0.195 0.010 160)"
   bg-panel: "oklch(0.215 0.011 160)"
@@ -281,15 +282,17 @@ components:
 
 **Creative North Star: "The Orchard at Dusk"**
 
-Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. The ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.
+Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.
 
 The density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a "Thinking…" label, a streaming caret, a spinner.
 
 The light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.
 
+A colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, and Graphite (neutral grey grounds with the mango accent kept). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.
+
 **Key Characteristics:**
-- Leaf-shade grounds (hue 160, chroma about 0.01) in four lightness steps, plus an inset well darker than all of them.
-- One accent family, ripe mango, split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.
+- Leaf-shade grounds (hue 160, chroma about 0.01, in the default Mango scheme) in four lightness steps, plus an inset well darker than all of them.
+- One accent family per scheme (ripe mango by default), split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.
 - Status as ripeness: colour plus fill level, in a fruit-shaped mark used in the sidebar, tabs, pane headers and the titlebar counter.
 - Inter Variable at tool density with fractional weights; JetBrains Mono only where the content is machine text.
 - Radius grows with the size of the surface: 4, 6, 8, 12px.
@@ -298,7 +301,7 @@ The light theme is the same orchard in daylight: pale leaf-tinted paper, white p
 
 ## Colors
 
-A near-neutral green-black ground, one warm accent family, and a ripening scale for status. All values are authored in OKLCH in `app/assets/css/tokens.css`; the frontmatter mirrors them, with light-theme values under a `-light` suffix.
+A near-neutral green-black ground, one warm accent family, and a ripening scale for status. All values are authored in OKLCH in `app/assets/css/tokens.css`; the frontmatter mirrors the default Mango scheme, with light-theme values under a `-light` suffix. The names below are Mango's; other schemes keep the roles and change the values.
 
 ### Primary
 - **Ripe Mango** (`accent`): the accent as a fill. The primary button, the composer's send button, the active chat tab's 2px underline, the on-state of a switch, progress bar fill, the streaming caret, the app mark.
@@ -327,7 +330,18 @@ The ripening scale. Each status has a mark grade (the fruit, small dots, tinted 
 - **Hover Wash** and **Active Wash** (`bg-hover`, `bg-active`): translucent, so they work on any ground. Hover and "shown" use the first; pressed, current and selected use the second.
 - **Lines** (`line-soft`, `line`, `line-strong`): hairlines. Soft for dividers between regions, regular for the outline of a panel or control, strong for hover outlines and scrollbar thumbs.
 - **Ink** (`fg`, `fg-muted`, `fg-subtle`, `fg-faint`): four steps. Primary text; secondary text and resting row titles; meta, hints and resting icons; timestamps and placeholders. The faintest step still clears 4.5:1 on every ground in both themes.
-- **Terminal palette** (`--term-*` in tokens.css): a 16-colour ANSI set per theme, read by xterm at runtime. It is not used anywhere else.
+- **Terminal palette** (`--term-*` in tokens.css): a 16-colour ANSI set per theme, read by xterm at runtime. It is not used anywhere else. Its background and foreground follow the scheme; the ANSI colours do not.
+
+### Color Schemes
+Three root variables drive every neutral: `--hue-ground` (grounds, lines, shadows, scrim, idle stem; 160 in Mango), `--hue-ink` (text; 150 in Mango) and `--ground-tint` (a chroma multiplier; 1 in Mango, 0 is pure grey). The light theme swaps the two hues between grounds and ink. A scheme sets those three and, unless it keeps the mango accent, its own accent family (`accent`, `accent-strong`, `accent-fg`, `accent-ink`, `accent-soft`, `accent-line`, `selection`, `focus-ring`) for each theme. The per-scheme values are in the sidecar under `extensions.schemes`.
+
+- **Mango** (default): ground hue 160, ink hue 150, tint 1; ripe-mango accent.
+- **Blue:** hue 255, tint 1.3; accent at hue 252 to 260.
+- **Purple:** hue 295, tint 1.3; accent at hue 295.
+- **Pink:** hue 350, tint 1.1; accent at hue 350 to 355.
+- **Graphite:** tint 0 (neutral grey grounds and text); mango accent kept.
+
+Every scheme keeps `accent-fg` on `accent` at 4.5:1 or better and `accent-ink` at 5:1 or better on every ground. Any element carrying `data-scheme` re-derives the theme tokens from its own scheme, which is how a preview can show a scheme other than the current one.
 
 ### Named Rules
 **The Fill-or-Ink Rule.** Mango has two jobs and two tokens. As a fill it is `accent` and the text on it is `accent-fg`. As text or an icon on a ground it is `accent-ink`. Never set text in `accent`, and never fill with `accent-ink`; in the light theme the two are far apart and the wrong one fails contrast.
@@ -335,6 +349,8 @@ The ripening scale. Each status has a mark grade (the fruit, small dots, tinted 
 **The Two-Grade Rule.** A status colour drawn as a mark (the fruit, a dot, a border, a wash) uses `ripe-*`. The same status written as words uses `ripe-*-fg`.
 
 **The Ripeness Rule.** Status is never colour alone. It is colour plus fill level, in the ripeness dot, and wherever it matters it is also a word ("Working…", "Needs your approval", "Stopped with an error").
+
+**The Scheme Rule.** A scheme may change the grounds and the accent family, never the status (`ripe-*`) or diff colours. Components still read tokens only; no component knows which scheme is on.
 
 ## Typography
 
@@ -452,6 +468,7 @@ Colour changes over 220ms and the fill level over 420ms, so a status change is s
 - **Everything else:** `:focus-visible` draws a 2px `focus-ring` outline at 1px offset.
 - **Error:** a 60% error border and the hint replaced by an error message with `role="alert"`.
 - **Switch:** a 30 by 18px pill; off is Active Wash with a strong inset line and a muted thumb, on is Ripe Mango with a Mango Stone Ink thumb.
+- **Scheme picker** (Settings > Appearance, "Color scheme"): a radio group of 52 by 36px miniature workspaces, each painted in its own scheme through `data-scheme` (an app-ground rail, the canvas with two faint text lines, a small accent button), with the scheme name in 11.5px subtle ink below. Hover strengthens the preview's border; the selected one is ringed with a 2px `accent` outline at 2px offset and its name goes to primary ink at 560; keyboard focus rings it in `focus-ring`.
 - **Path preview:** an Inset Well row showing the resulting path in mono, truncated from the left so the final folder (primary ink, 600) always stays visible.
 
 ### Navigation
@@ -464,7 +481,7 @@ Colour changes over 220ms and the fill level over 420ms, so a status change is s
 ## Do's and Don'ts
 
 ### Do:
-- **Do** take every colour, size, space, radius and duration from `app/assets/css/tokens.css`. Components read tokens only; that is what makes the light theme work without a single theme branch.
+- **Do** take every colour, size, space, radius and duration from `app/assets/css/tokens.css`. Components read tokens only; that is what makes the light theme and the colour schemes work without a single theme or scheme branch.
 - **Do** use `accent` with `accent-fg` for fills and `accent-ink` for accent-coloured text and icons (The Fill-or-Ink Rule).
 - **Do** use `ripe-*` for marks, borders and washes and `ripe-*-fg` for status words (The Two-Grade Rule).
 - **Do** show thread status with the ripeness dot wherever a thread is named, and back it with a status word where there is room.
@@ -478,7 +495,8 @@ Colour changes over 220ms and the fill level over 420ms, so a status change is s
 ### Don't:
 - **Don't** set text in `accent` or fill with `accent-ink`.
 - **Don't** signal status with colour alone, and don't draw status as a plain round dot where the ripeness dot belongs.
-- **Don't** introduce a second accent hue. Colour outside the mango family and the ripening scale is reserved for the terminal's ANSI palette.
+- **Don't** introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette.
+- **Don't** let a scheme touch `ripe-*` or `diff-*` (The Scheme Rule).
 - **Don't** put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette and the composer.
 - **Don't** separate surfaces with a border alone when they are at different depths; change the ground.
 - **Don't** use monospace for anything that is not code, a path, a branch or terminal output.

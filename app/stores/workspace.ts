@@ -5,6 +5,9 @@ import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
 
 export type Theme = 'dark' | 'light' | 'system'
+/** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
+export const COLOR_SCHEMES = ['mango', 'blue', 'purple', 'pink', 'graphite'] as const
+export type ColorScheme = typeof COLOR_SCHEMES[number]
 
 export interface TerminalTab {
   id: string
@@ -46,6 +49,7 @@ export const useWorkspace = defineStore('workspace', {
       agents: [] as AgentInfo[],
 
       theme: (prefs.theme ?? 'dark') as Theme,
+      scheme: (COLOR_SCHEMES.includes(prefs.scheme) ? prefs.scheme : 'mango') as ColorScheme,
       sidebarOpen: prefs.sidebarOpen ?? true,
       sidebarWidth: (prefs.sidebarWidth ?? 264) as number,
 
@@ -96,6 +100,7 @@ export const useWorkspace = defineStore('workspace', {
       try {
         localStorage.setItem(LS_KEY, JSON.stringify({
           theme: this.theme,
+          scheme: this.scheme,
           sidebarOpen: this.sidebarOpen,
           sidebarWidth: this.sidebarWidth,
           terminalOpen: this.terminalOpen,
@@ -182,6 +187,11 @@ export const useWorkspace = defineStore('workspace', {
       this.applyTheme()
       this.persist()
     },
+    setScheme(scheme: ColorScheme) {
+      this.scheme = scheme
+      this.applyTheme()
+      this.persist()
+    },
     cycleTheme() {
       this.setTheme(this.resolvedTheme() === 'dark' ? 'light' : 'dark')
     },
@@ -191,6 +201,7 @@ export const useWorkspace = defineStore('workspace', {
     },
     applyTheme() {
       document.documentElement.dataset.theme = this.resolvedTheme()
+      document.documentElement.dataset.scheme = this.scheme
     },
 
     /* ---------- layout ---------- */

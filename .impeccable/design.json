@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-15T10:36:27Z",
+  "generatedAt": "2026-11-15T12:00:00Z",
   "title": "Design System: Mango",
   "extensions": {
     "colorMeta": {
@@ -1274,7 +1274,116 @@
         "name": "composer-narrow (container query, max-width)",
         "value": "400px"
       }
-    ]
+    ],
+    "schemes": {
+      "description": "Colour schemes, set by data-scheme on the root (Mango when absent). A scheme sets --hue-ground (grounds, lines, shadows, scrim, ripe-idle, term-bg), --hue-ink (text, term-fg) and --ground-tint (chroma multiplier for grounds and text; 0 is neutral grey); the light theme swaps the two hues between grounds and ink. Schemes with an accent override the accent family per theme. ripe-* and diff-* never change. Any element with data-scheme re-derives the theme tokens, which is how previews render a non-current scheme.",
+      "default": "mango",
+      "items": [
+        {
+          "id": "mango",
+          "label": "Mango",
+          "hueGround": 160,
+          "hueInk": 150,
+          "groundTint": 1,
+          "accent": "frontmatter (accent family as recorded in colors)"
+        },
+        {
+          "id": "blue",
+          "label": "Blue",
+          "hueGround": 255,
+          "hueInk": 255,
+          "groundTint": 1.3,
+          "accent": {
+            "dark": {
+              "accent": "oklch(0.74 0.13 252)",
+              "accent-strong": "oklch(0.78 0.115 252)",
+              "accent-fg": "oklch(0.22 0.04 252)",
+              "accent-soft": "oklch(0.74 0.13 252 / 0.16)",
+              "accent-ink": "oklch(0.78 0.11 252)",
+              "accent-line": "oklch(0.74 0.13 252 / 0.5)",
+              "selection": "oklch(0.74 0.13 252 / 0.3)",
+              "focus-ring": "oklch(0.74 0.13 252 / 0.75)"
+            },
+            "light": {
+              "accent": "oklch(0.68 0.15 255)",
+              "accent-strong": "oklch(0.63 0.16 257)",
+              "accent-fg": "oklch(0.22 0.04 255)",
+              "accent-soft": "oklch(0.68 0.15 255 / 0.16)",
+              "accent-ink": "oklch(0.50 0.17 260)",
+              "accent-line": "oklch(0.60 0.16 257 / 0.45)",
+              "selection": "oklch(0.68 0.15 255 / 0.25)",
+              "focus-ring": "oklch(0.55 0.17 258 / 0.7)"
+            }
+          }
+        },
+        {
+          "id": "purple",
+          "label": "Purple",
+          "hueGround": 295,
+          "hueInk": 295,
+          "groundTint": 1.3,
+          "accent": {
+            "dark": {
+              "accent": "oklch(0.73 0.15 295)",
+              "accent-strong": "oklch(0.77 0.13 295)",
+              "accent-fg": "oklch(0.22 0.04 295)",
+              "accent-soft": "oklch(0.73 0.15 295 / 0.16)",
+              "accent-ink": "oklch(0.78 0.12 295)",
+              "accent-line": "oklch(0.73 0.15 295 / 0.5)",
+              "selection": "oklch(0.73 0.15 295 / 0.3)",
+              "focus-ring": "oklch(0.73 0.15 295 / 0.75)"
+            },
+            "light": {
+              "accent": "oklch(0.66 0.17 295)",
+              "accent-strong": "oklch(0.64 0.18 295)",
+              "accent-fg": "oklch(0.22 0.04 295)",
+              "accent-soft": "oklch(0.66 0.17 295 / 0.16)",
+              "accent-ink": "oklch(0.50 0.20 295)",
+              "accent-line": "oklch(0.58 0.19 295 / 0.45)",
+              "selection": "oklch(0.66 0.17 295 / 0.25)",
+              "focus-ring": "oklch(0.55 0.19 295 / 0.7)"
+            }
+          }
+        },
+        {
+          "id": "pink",
+          "label": "Pink",
+          "hueGround": 350,
+          "hueInk": 350,
+          "groundTint": 1.1,
+          "accent": {
+            "dark": {
+              "accent": "oklch(0.76 0.14 350)",
+              "accent-strong": "oklch(0.80 0.13 350)",
+              "accent-fg": "oklch(0.22 0.04 350)",
+              "accent-soft": "oklch(0.76 0.14 350 / 0.16)",
+              "accent-ink": "oklch(0.80 0.12 350)",
+              "accent-line": "oklch(0.76 0.14 350 / 0.5)",
+              "selection": "oklch(0.76 0.14 350 / 0.3)",
+              "focus-ring": "oklch(0.76 0.14 350 / 0.75)"
+            },
+            "light": {
+              "accent": "oklch(0.70 0.17 355)",
+              "accent-strong": "oklch(0.65 0.19 355)",
+              "accent-fg": "oklch(0.22 0.04 355)",
+              "accent-soft": "oklch(0.70 0.17 355 / 0.16)",
+              "accent-ink": "oklch(0.52 0.19 355)",
+              "accent-line": "oklch(0.62 0.19 355 / 0.45)",
+              "selection": "oklch(0.70 0.17 355 / 0.25)",
+              "focus-ring": "oklch(0.56 0.19 355 / 0.7)"
+            }
+          }
+        },
+        {
+          "id": "graphite",
+          "label": "Graphite",
+          "hueGround": 160,
+          "hueInk": 150,
+          "groundTint": 0,
+          "accent": "mango (unchanged)"
+        }
+      ]
+    }
   },
   "components": [
     {
@@ -1368,10 +1477,10 @@
   ],
   "narrative": {
     "northStar": "The Orchard at Dusk",
-    "overview": "Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. The ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.\n\nThe density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a \"Thinking…\" label, a streaming caret, a spinner.\n\nThe light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.",
+    "overview": "Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.\n\nThe density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a \"Thinking…\" label, a streaming caret, a spinner.\n\nThe light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.\n\nA colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, and Graphite (neutral grey grounds with the mango accent kept). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.",
     "keyCharacteristics": [
-      "Leaf-shade grounds (hue 160, chroma about 0.01) in four lightness steps, plus an inset well darker than all of them.",
-      "One accent family, ripe mango, split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.",
+      "Leaf-shade grounds (hue 160, chroma about 0.01, in the default Mango scheme) in four lightness steps, plus an inset well darker than all of them.",
+      "One accent family per scheme (ripe mango by default), split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.",
       "Status as ripeness: colour plus fill level, in a fruit-shaped mark used in the sidebar, tabs, pane headers and the titlebar counter.",
       "Inter Variable at tool density with fractional weights; JetBrains Mono only where the content is machine text.",
       "Radius grows with the size of the surface: 4, 6, 8, 12px.",
@@ -1392,6 +1501,11 @@
       {
         "name": "The Ripeness Rule",
         "body": "Status is never colour alone. It is colour plus fill level, in the ripeness dot, and wherever it matters it is also a word (\"Working…\", \"Needs your approval\", \"Stopped with an error\").",
+        "section": "colors"
+      },
+      {
+        "name": "The Scheme Rule",
+        "body": "A scheme may change the grounds and the accent family, never the status (`ripe-*`) or diff colours. Components still read tokens only; no component knows which scheme is on.",
         "section": "colors"
       },
       {
@@ -1421,7 +1535,7 @@
       }
     ],
     "dos": [
-      "Do take every colour, size, space, radius and duration from `app/assets/css/tokens.css`. Components read tokens only; that is what makes the light theme work without a single theme branch.",
+      "Do take every colour, size, space, radius and duration from `app/assets/css/tokens.css`. Components read tokens only; that is what makes the light theme and the colour schemes work without a single theme or scheme branch.",
       "Do use `accent` with `accent-fg` for fills and `accent-ink` for accent-coloured text and icons (The Fill-or-Ink Rule).",
       "Do use `ripe-*` for marks, borders and washes and `ripe-*-fg` for status words (The Two-Grade Rule).",
       "Do show thread status with the ripeness dot wherever a thread is named, and back it with a status word where there is room.",
@@ -1435,7 +1549,8 @@
     "donts": [
       "Don't set text in `accent` or fill with `accent-ink`.",
       "Don't signal status with colour alone, and don't draw status as a plain round dot where the ripeness dot belongs.",
-      "Don't introduce a second accent hue. Colour outside the mango family and the ripening scale is reserved for the terminal's ANSI palette.",
+      "Don't introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette.",
+      "Don't let a scheme touch `ripe-*` or `diff-*` (The Scheme Rule).",
       "Don't put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette and the composer.",
       "Don't separate surfaces with a border alone when they are at different depths; change the ground.",
       "Don't use monospace for anything that is not code, a path, a branch or terminal output.",

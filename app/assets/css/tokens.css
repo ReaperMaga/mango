@@ -56,29 +56,39 @@
   --hue-mango: 62;
   --hue-blush: 28;
   --hue-gold: 85;
+
+  /* Colour scheme (`data-scheme` on the root; Mango when absent). A scheme sets
+     the hue and tint of the grounds and, further down, its own accent family.
+     Status colours never change with the scheme. */
+  --hue-ground: 160;   /* grounds, lines, shadows */
+  --hue-ink: 150;      /* text */
+  --ground-tint: 1;    /* chroma multiplier for grounds and text; 0 is neutral grey */
 }
 
-/* ---------- Dark (default) ---------- */
+/* ---------- Dark (default) ----------
+   `[data-scheme]` elements re-derive the theme from their own scheme hues, so a
+   preview (the swatches in Settings) can show a scheme other than the current one. */
 :root,
-:root[data-theme='dark'] {
+:root[data-theme='dark'],
+[data-scheme] {
   color-scheme: dark;
 
-  --bg-app: oklch(0.165 0.010 160);          /* titlebar, rails */
-  --bg-canvas: oklch(0.195 0.010 160);       /* main work area */
-  --bg-panel: oklch(0.215 0.011 160);        /* raised panels, composer */
-  --bg-raised: oklch(0.25 0.012 160);        /* menus, popovers */
-  --bg-hover: oklch(0.27 0.012 160 / 0.55);
-  --bg-active: oklch(0.30 0.014 160 / 0.7);
-  --bg-inset: oklch(0.145 0.009 160);        /* terminal, code */
+  --bg-app: oklch(0.165 calc(0.010 * var(--ground-tint)) var(--hue-ground));          /* titlebar, rails */
+  --bg-canvas: oklch(0.195 calc(0.010 * var(--ground-tint)) var(--hue-ground));       /* main work area */
+  --bg-panel: oklch(0.215 calc(0.011 * var(--ground-tint)) var(--hue-ground));        /* raised panels, composer */
+  --bg-raised: oklch(0.25 calc(0.012 * var(--ground-tint)) var(--hue-ground));        /* menus, popovers */
+  --bg-hover: oklch(0.27 calc(0.012 * var(--ground-tint)) var(--hue-ground) / 0.55);
+  --bg-active: oklch(0.30 calc(0.014 * var(--ground-tint)) var(--hue-ground) / 0.7);
+  --bg-inset: oklch(0.145 calc(0.009 * var(--ground-tint)) var(--hue-ground));        /* terminal, code */
 
-  --line: oklch(0.30 0.012 160);
-  --line-soft: oklch(0.26 0.011 160);
-  --line-strong: oklch(0.38 0.014 160);
+  --line: oklch(0.30 calc(0.012 * var(--ground-tint)) var(--hue-ground));
+  --line-soft: oklch(0.26 calc(0.011 * var(--ground-tint)) var(--hue-ground));
+  --line-strong: oklch(0.38 calc(0.014 * var(--ground-tint)) var(--hue-ground));
 
-  --fg: oklch(0.94 0.008 150);
-  --fg-muted: oklch(0.80 0.012 150);
-  --fg-subtle: oklch(0.69 0.012 150);
-  --fg-faint: oklch(0.64 0.012 155);
+  --fg: oklch(0.94 calc(0.008 * var(--ground-tint)) var(--hue-ink));
+  --fg-muted: oklch(0.80 calc(0.012 * var(--ground-tint)) var(--hue-ink));
+  --fg-subtle: oklch(0.69 calc(0.012 * var(--ground-tint)) var(--hue-ink));
+  --fg-faint: oklch(0.64 calc(0.012 * var(--ground-tint)) var(--hue-ink));
 
   --accent: oklch(0.79 0.16 58);
   --accent-strong: oklch(0.83 0.165 58);
@@ -92,7 +102,7 @@
   --ripe-waiting: oklch(0.72 0.15 var(--hue-blush));
   --ripe-done: oklch(0.89 0.15 92);
   --ripe-error: oklch(0.66 0.19 22);
-  --ripe-idle: oklch(0.58 0.015 155);
+  --ripe-idle: oklch(0.58 calc(0.015 * var(--ground-tint)) var(--hue-ground));
   /* Text-grade versions of the status colours (>= 4.5:1 on the grounds). */
   --ripe-queued-fg: oklch(0.78 0.11 var(--hue-leaf));
   --ripe-running-fg: oklch(0.82 0.15 var(--hue-mango));
@@ -105,16 +115,16 @@
   --diff-del-bg: oklch(0.66 0.19 22 / 0.12);
   --diff-del-fg: oklch(0.74 0.14 22);
 
-  --shadow-pop: 0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35);
-  --shadow-soft: 0 4px 14px -6px oklch(0.05 0.01 160 / 0.5);
-  --scrim: oklch(0.08 0.01 160 / 0.55);
+  --shadow-pop: 0 12px 32px -8px oklch(0.05 calc(0.01 * var(--ground-tint)) var(--hue-ground) / 0.6), 0 2px 6px oklch(0.05 calc(0.01 * var(--ground-tint)) var(--hue-ground) / 0.35);
+  --shadow-soft: 0 4px 14px -6px oklch(0.05 calc(0.01 * var(--ground-tint)) var(--hue-ground) / 0.5);
+  --scrim: oklch(0.08 calc(0.01 * var(--ground-tint)) var(--hue-ground) / 0.55);
 
   --selection: oklch(0.80 0.155 var(--hue-mango) / 0.28);
   --focus-ring: oklch(0.80 0.155 var(--hue-mango) / 0.7);
 
   /* Terminal ANSI palette (read by xterm theme) */
-  --term-bg: oklch(0.145 0.009 160);
-  --term-fg: oklch(0.90 0.008 150);
+  --term-bg: oklch(0.145 calc(0.009 * var(--ground-tint)) var(--hue-ground));
+  --term-fg: oklch(0.90 calc(0.008 * var(--ground-tint)) var(--hue-ink));
   --term-black: #1a201d;
   --term-red: #f0766b;
   --term-green: #8fcf9a;
@@ -127,25 +137,26 @@
 }
 
 /* ---------- Light ---------- */
-:root[data-theme='light'] {
+:root[data-theme='light'],
+[data-theme='light'] [data-scheme] {
   color-scheme: light;
 
-  --bg-app: oklch(0.955 0.007 150);
-  --bg-canvas: oklch(0.985 0.004 150);
+  --bg-app: oklch(0.955 calc(0.007 * var(--ground-tint)) var(--hue-ink));
+  --bg-canvas: oklch(0.985 calc(0.004 * var(--ground-tint)) var(--hue-ink));
   --bg-panel: oklch(1 0 0);
   --bg-raised: oklch(1 0 0);
-  --bg-hover: oklch(0.90 0.010 150 / 0.55);
-  --bg-active: oklch(0.88 0.014 150 / 0.75);
-  --bg-inset: oklch(0.975 0.005 150);
+  --bg-hover: oklch(0.90 calc(0.010 * var(--ground-tint)) var(--hue-ink) / 0.55);
+  --bg-active: oklch(0.88 calc(0.014 * var(--ground-tint)) var(--hue-ink) / 0.75);
+  --bg-inset: oklch(0.975 calc(0.005 * var(--ground-tint)) var(--hue-ink));
 
-  --line: oklch(0.88 0.008 150);
-  --line-soft: oklch(0.92 0.006 150);
-  --line-strong: oklch(0.80 0.010 150);
+  --line: oklch(0.88 calc(0.008 * var(--ground-tint)) var(--hue-ink));
+  --line-soft: oklch(0.92 calc(0.006 * var(--ground-tint)) var(--hue-ink));
+  --line-strong: oklch(0.80 calc(0.010 * var(--ground-tint)) var(--hue-ink));
 
-  --fg: oklch(0.24 0.015 160);
-  --fg-muted: oklch(0.38 0.015 160);
-  --fg-subtle: oklch(0.47 0.014 160);
-  --fg-faint: oklch(0.53 0.012 160);
+  --fg: oklch(0.24 calc(0.015 * var(--ground-tint)) var(--hue-ground));
+  --fg-muted: oklch(0.38 calc(0.015 * var(--ground-tint)) var(--hue-ground));
+  --fg-subtle: oklch(0.47 calc(0.014 * var(--ground-tint)) var(--hue-ground));
+  --fg-faint: oklch(0.53 calc(0.012 * var(--ground-tint)) var(--hue-ground));
 
   --accent: oklch(0.74 0.17 60);
   --accent-strong: oklch(0.70 0.17 58);
@@ -159,7 +170,7 @@
   --ripe-waiting: oklch(0.62 0.17 var(--hue-blush));
   --ripe-done: oklch(0.70 0.16 88);
   --ripe-error: oklch(0.56 0.20 25);
-  --ripe-idle: oklch(0.66 0.012 155);
+  --ripe-idle: oklch(0.66 calc(0.012 * var(--ground-tint)) var(--hue-ground));
   --ripe-queued-fg: oklch(0.46 0.12 var(--hue-leaf));
   --ripe-running-fg: oklch(0.52 0.14 50);
   --ripe-waiting-fg: oklch(0.52 0.17 var(--hue-blush));
@@ -171,15 +182,15 @@
   --diff-del-bg: oklch(0.62 0.19 25 / 0.12);
   --diff-del-fg: oklch(0.50 0.18 25);
 
-  --shadow-pop: 0 14px 34px -10px oklch(0.30 0.03 160 / 0.28), 0 2px 6px oklch(0.30 0.03 160 / 0.10);
-  --shadow-soft: 0 4px 14px -6px oklch(0.30 0.03 160 / 0.18);
-  --scrim: oklch(0.30 0.02 160 / 0.25);
+  --shadow-pop: 0 14px 34px -10px oklch(0.30 calc(0.03 * var(--ground-tint)) var(--hue-ground) / 0.28), 0 2px 6px oklch(0.30 calc(0.03 * var(--ground-tint)) var(--hue-ground) / 0.10);
+  --shadow-soft: 0 4px 14px -6px oklch(0.30 calc(0.03 * var(--ground-tint)) var(--hue-ground) / 0.18);
+  --scrim: oklch(0.30 calc(0.02 * var(--ground-tint)) var(--hue-ground) / 0.25);
 
   --selection: oklch(0.72 0.16 60 / 0.25);
   --focus-ring: oklch(0.60 0.17 52 / 0.7);
 
-  --term-bg: oklch(0.975 0.005 150);
-  --term-fg: oklch(0.28 0.015 160);
+  --term-bg: oklch(0.975 calc(0.005 * var(--ground-tint)) var(--hue-ink));
+  --term-fg: oklch(0.28 calc(0.015 * var(--ground-tint)) var(--hue-ground));
   --term-black: #2a302d;
   --term-red: #c4362c;
   --term-green: #2e8a4a;
@@ -189,4 +200,103 @@
   --term-cyan: #11807a;
   --term-white: #8a948f;
   --term-bright-black: #6b7570;
+}
+
+/* ---------- Colour schemes ----------
+   Mango is the two theme blocks above. The others retint the grounds and,
+   except Graphite, swap the accent family; status colours stay put. Each pair
+   is the same token set for dark and light. Values are in the sRGB gamut, with
+   accent-fg on accent >= 4.5:1 and accent-ink on every ground >= 5:1. */
+
+/* Spelled out so a Mango preview stays Mango inside another scheme. */
+[data-scheme='mango'] {
+  --hue-ground: 160;
+  --hue-ink: 150;
+  --ground-tint: 1;
+}
+
+:root[data-scheme='graphite'],
+[data-scheme='graphite'] {
+  --ground-tint: 0;
+}
+
+:root[data-scheme='blue'],
+[data-scheme='blue'] {
+  --hue-ground: 255;
+  --hue-ink: 255;
+  --ground-tint: 1.3;
+
+  --accent: oklch(0.74 0.13 252);
+  --accent-strong: oklch(0.78 0.115 252);
+  --accent-fg: oklch(0.22 0.04 252);
+  --accent-soft: oklch(0.74 0.13 252 / 0.16);
+  --accent-ink: oklch(0.78 0.11 252);
+  --accent-line: oklch(0.74 0.13 252 / 0.5);
+  --selection: oklch(0.74 0.13 252 / 0.3);
+  --focus-ring: oklch(0.74 0.13 252 / 0.75);
+}
+:root[data-theme='light'][data-scheme='blue'],
+[data-theme='light'] [data-scheme='blue'] {
+  --accent: oklch(0.68 0.15 255);
+  --accent-strong: oklch(0.63 0.16 257);
+  --accent-fg: oklch(0.22 0.04 255);
+  --accent-soft: oklch(0.68 0.15 255 / 0.16);
+  --accent-ink: oklch(0.50 0.17 260);
+  --accent-line: oklch(0.60 0.16 257 / 0.45);
+  --selection: oklch(0.68 0.15 255 / 0.25);
+  --focus-ring: oklch(0.55 0.17 258 / 0.7);
+}
+
+:root[data-scheme='purple'],
+[data-scheme='purple'] {
+  --hue-ground: 295;
+  --hue-ink: 295;
+  --ground-tint: 1.3;
+
+  --accent: oklch(0.73 0.15 295);
+  --accent-strong: oklch(0.77 0.13 295);
+  --accent-fg: oklch(0.22 0.04 295);
+  --accent-soft: oklch(0.73 0.15 295 / 0.16);
+  --accent-ink: oklch(0.78 0.12 295);
+  --accent-line: oklch(0.73 0.15 295 / 0.5);
+  --selection: oklch(0.73 0.15 295 / 0.3);
+  --focus-ring: oklch(0.73 0.15 295 / 0.75);
+}
+:root[data-theme='light'][data-scheme='purple'],
+[data-theme='light'] [data-scheme='purple'] {
+  --accent: oklch(0.66 0.17 295);
+  --accent-strong: oklch(0.64 0.18 295);
+  --accent-fg: oklch(0.22 0.04 295);
+  --accent-soft: oklch(0.66 0.17 295 / 0.16);
+  --accent-ink: oklch(0.50 0.20 295);
+  --accent-line: oklch(0.58 0.19 295 / 0.45);
+  --selection: oklch(0.66 0.17 295 / 0.25);
+  --focus-ring: oklch(0.55 0.19 295 / 0.7);
+}
+
+:root[data-scheme='pink'],
+[data-scheme='pink'] {
+  --hue-ground: 350;
+  --hue-ink: 350;
+  --ground-tint: 1.1;
+
+  --accent: oklch(0.76 0.14 350);
+  --accent-strong: oklch(0.80 0.13 350);
+  --accent-fg: oklch(0.22 0.04 350);
+  --accent-soft: oklch(0.76 0.14 350 / 0.16);
+  --accent-ink: oklch(0.80 0.12 350);
+  --accent-line: oklch(0.76 0.14 350 / 0.5);
+  --selection: oklch(0.76 0.14 350 / 0.3);
+  --focus-ring: oklch(0.76 0.14 350 / 0.75);
+}
+:root[data-theme='light'][data-scheme='pink'],
+[data-theme='light'] [data-scheme='pink'] {
+  --accent: oklch(0.70 0.17 355);
+  --accent-strong: oklch(0.65 0.19 355);
+  --accent-fg: oklch(0.22 0.04 355);
+  --accent-soft: oklch(0.70 0.17 355 / 0.16);
+  --accent-ink: oklch(0.52 0.19 355);
+  --accent-line: oklch(0.62 0.19 355 / 0.45);
+  --selection: oklch(0.70 0.17 355 / 0.25);
+  --focus-ring: oklch(0.56 0.19 355 / 0.7);
 }

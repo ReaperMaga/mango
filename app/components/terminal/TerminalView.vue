@@ -285,7 +285,7 @@ onMounted(async () => {
   themeObserver = new MutationObserver(() => {
     if (term) term.options.theme = buildTheme()
   })
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-scheme'] })
 
   if (props.active && props.visible) term.focus()
   await spawn()
