@@ -1,0 +1,165 @@
+# Builds the Windows and Linux installers and publishes them as a GitHub release.
+#
+#   Tag push vX.Y.Z  ->  draft release, build every platform, upload installers, publish.
+#   Manual run       ->  build every platform and keep the installers as workflow
+#                        artifacts only (no release). Use it to try a build before tagging.
+#
+# The tag must match package.json (`pnpm bump X.Y.Z` sets every copy of the version).
+# Needs the repository secret TAURI_SIGNING_PRIVATE_KEY (and _PASSWORD if the key has
+# one): the in-app updater only installs bundles signed with it.
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 10
+
+jobs:
+  prepare:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release-id: ${{ steps.release.outputs.id }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Every copy of the version agrees
+        run: node scripts/version.ts --check
+
+      - name: The updater signing key is set
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY repository secret (see docs/development/releasing.md)."
+            exit 1
+          fi
+
+      - name: Read the version
+        id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json ($version). Run 'pnpm bump $version' or retag."
+            exit 1
+          fi
+
+      # One draft release up front, so the platform builds upload to the same release
+      # instead of racing to create it. It is published once every build has succeeded.
+      - name: Create the draft release
+        id: release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          prerelease=""
+          case "$VERSION" in *-*) prerelease="--prerelease" ;; esac
+          # The list includes drafts (a lookup by tag does not), so a re-run reuses its draft.
+          find_release() {
+            gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1
+          }
+          id=$(find_release)
+          if [ -z "$id" ]; then
+            gh release create "$GITHUB_REF_NAME" --draft $prerelease --verify-tag \
+              --title "Mango $VERSION" \
+              --notes "Installers for Windows and Linux are attached below. Install notes: https://reapermaga.github.io/mango/guide/install" \
+              --generate-notes
+            id=$(find_release)
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: Linux x64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libssl-dev patchelf xdg-utils
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          # Signs the installers for the in-app updater (public key in tauri.conf.json).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tauriScript: pnpm tauri
+          # Updater bundles + .sig files are made only here, so local builds need no key.
+          args: --config src-tauri/tauri.updater.conf.json
+          releaseId: ${{ needs.prepare.outputs.release-id }}
+          # latest.json: what the in-app updater reads from the latest release.
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          retryAttempts: 1
+          # Manual runs have no release: keep the installers on the run instead.
+          uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}
+          workflowArtifactNamePattern: '[name]_[version]_[platform]_[arch]_[bundle]'
+
+  publish:
+    name: Publish release
+    needs: [prepare, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Take the release out of draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          case "$VERSION" in
+            *-*) gh release edit "$GITHUB_REF_NAME" --draft=false ;;
+            *)   gh release edit "$GITHUB_REF_NAME" --draft=false --latest ;;
+          esac
