@@ -1,0 +1,14 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "createdAt": "2026-11-15T16:47:51.796Z",
+        "reason": "Mango's own UI face per app/assets/css/tokens.css (--font-ui) and DESIGN.md; the docs AppPreview draws the app, so it must use the same font"
+      }
+    ]
+  }
+}

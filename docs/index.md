@@ -1,21 +1,12 @@
 ---
 layout: home
-
-hero:
-  name: Mango
-  text: A desktop workbench for coding agents
-  tagline: Run several Claude Code and Codex chats side by side on a project, review and commit what they change, and keep a real terminal docked at the bottom.
-  actions:
-    - theme: brand
-      text: Download
-      link: /guide/install
-    - theme: alt
-      text: Get started
-      link: /guide/getting-started
-    - theme: alt
-      text: GitHub
-      link: https://github.com/ReaperMaga/mango
+title: Mango
+titleTemplate: A workbench for coding agents
 ---
+
+<HomeHero />
+
+<div class="home-body">
 
 ## What Mango does
 
@@ -31,4 +22,8 @@ Mango is a calm, keyboard-first desktop app for Windows and Linux, built with Ru
 
 **A real terminal.** A PTY docked at the bottom, with tabs and any shell Mango finds on your machine: PowerShell, Command Prompt, Git Bash, WSL, Nushell, or your login shell on Linux.
 
+**Keeps itself current.** Mango checks GitHub for a new release and installs it with one click when you choose **Update**. See [Updates](/guide/updates).
+
 Current release: <ReleaseVersion />. See the [changelog](/changelog) for what is in it.
+
+</div>
