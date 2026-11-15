@@ -56,6 +56,8 @@ export interface Thread {
   agent: AgentId
   model: string
   mode: PermissionMode
+  /** Reasoning effort for the agent ("low" … "max"); null or missing leaves it to the CLI. */
+  effort?: string | null
   status: ThreadStatus
   messages: Message[]
   createdAt: number
@@ -74,29 +76,55 @@ export interface Thread {
   branch?: string | null
 }
 
-export interface AgentModel { id: string; label: string; hint?: string }
+export interface AgentModel {
+  id: string
+  label: string
+  hint?: string
+  /** Effort levels the model accepts, lowest first; empty or missing when it has none to pick. */
+  efforts?: string[]
+  /** The level the CLI uses when none is chosen. */
+  defaultEffort?: string
+}
+
+/** Names for the effort levels the CLIs use. Unknown ones show as they are. */
+export const EFFORT_LABELS: Record<string, string> = {
+  none: 'None',
+  minimal: 'Minimal',
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+}
+export const effortLabel = (level: string) => EFFORT_LABELS[level] ?? level
+
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const CODEX_EFFORTS = ['low', 'medium', 'high', 'xhigh']
 
 /**
  * Known agents. `models[0]` is the default. Model ids are what the adapter in
  * app/agents/ passes to the CLI; 'default' means "let the CLI decide".
+ * These lists are the fallback: the models store asks each installed CLI for
+ * its own list (stores/models.ts) and prefers that.
  */
 export const AGENTS: Record<AgentId, { name: string; models: AgentModel[] }> = {
   claude: {
     name: 'Claude Code',
     models: [
-      { id: 'default', label: 'Default', hint: 'Whatever Claude Code is configured to use' },
-      { id: 'opus', label: 'Opus', hint: 'Most capable' },
-      { id: 'sonnet', label: 'Sonnet', hint: 'Balanced' },
-      { id: 'haiku', label: 'Haiku', hint: 'Fastest' },
+      { id: 'default', label: 'Default', hint: 'Whatever Claude Code is configured to use', efforts: CLAUDE_EFFORTS },
+      { id: 'fable', label: 'Fable', hint: 'Most capable, for the hardest and longest tasks', efforts: CLAUDE_EFFORTS },
+      { id: 'opus', label: 'Opus', hint: 'Best for everyday, complex tasks', efforts: CLAUDE_EFFORTS },
+      { id: 'sonnet', label: 'Sonnet', hint: 'Efficient for routine tasks', efforts: CLAUDE_EFFORTS },
+      { id: 'haiku', label: 'Haiku', hint: 'Fastest', efforts: CLAUDE_EFFORTS },
     ],
   },
   codex: {
     name: 'Codex',
     models: [
-      { id: 'default', label: 'Default', hint: 'Whatever Codex is configured to use' },
-      { id: 'gpt-6-luna', label: 'GPT-6-Luna', hint: 'Fast and affordable' },
-      { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra', hint: 'Older, balanced' },
-      { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna', hint: 'Older, fast' },
+      { id: 'default', label: 'Default', hint: 'Whatever Codex is configured to use', efforts: CODEX_EFFORTS },
+      { id: 'gpt-5.5', label: 'GPT-5.5', hint: 'Frontier model for complex coding', efforts: CODEX_EFFORTS, defaultEffort: 'medium' },
+      { id: 'gpt-5.4', label: 'GPT-5.4', hint: 'Strong model for everyday coding', efforts: CODEX_EFFORTS, defaultEffort: 'medium' },
+      { id: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', hint: 'Small, fast and cost-efficient', efforts: CODEX_EFFORTS, defaultEffort: 'medium' },
     ],
   },
 }

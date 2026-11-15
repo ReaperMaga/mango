@@ -1,5 +1,5 @@
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode } from '~/agents/types'
-import type { DiffLine, ToolKind } from '~/types/chat'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn } from '~/agents/types'
+import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -668,19 +668,27 @@ function run(options: AgentRunOptions): AgentRun {
       }
       let opened: Json
       let turnModel = model && model !== 'default' ? model : null
+      let turnEffort = options.effort || null
       if (options.sessionId) {
-        // A resumed thread keeps the model of its last turn. 'default' has to mean Codex's configured
-        // model again, so look that up (both answers are local) while the thread loads.
-        const configured = turnModel
+        // A resumed thread keeps the model and effort of its last turn. 'default' has to mean Codex's
+        // configured model and effort again, so look those up (the answers are local) while the thread loads.
+        const configured = turnModel && turnEffort
           ? null
           : Promise.all([
               request('config/read', { includeLayers: false, cwd }, 10_000).catch(() => null),
               request('model/list', {}, 10_000).catch(() => null),
-            ]).then(([config, models]) => config?.config?.model ?? models?.data?.find((m: Json) => m.isDefault)?.model ?? null)
+            ]).then(([config, models]) => {
+              const list: Json[] = models?.data ?? []
+              const model = config?.config?.model ?? list.find(m => m.isDefault)?.model ?? null
+              const effort = config?.config?.model_reasoning_effort
+                ?? list.find(m => m.model === (turnModel ?? model))?.defaultReasoningEffort ?? null
+              return { model, effort }
+            })
         try {
           opened = await request('thread/resume', { threadId: options.sessionId, excludeTurns: true, ...settings }, 90_000)
-          const defaultModel = await configured
-          if (defaultModel && defaultModel !== opened.model) turnModel = defaultModel
+          const defaults = await configured
+          if (!turnModel && defaults?.model && defaults.model !== opened.model) turnModel = defaults.model
+          if (!turnEffort && defaults?.effort) turnEffort = defaults.effort
         }
         catch (e: Json) {
           if (ended) return
@@ -708,6 +716,7 @@ function run(options: AgentRunOptions): AgentRun {
         // Reasoning summaries are what the thinking block shows; without this Codex sends none.
         summary: 'auto',
         ...(turnModel ? { model: turnModel } : {}),
+        ...(turnEffort ? { effort: turnEffort } : {}),
       }, 60_000)
       if (ended) return
       if (!turnId && started?.turn?.id) turnId = started.turn.id
@@ -737,6 +746,82 @@ function run(options: AgentRunOptions): AgentRun {
   }
 }
 
-export const codexAdapter: AgentAdapter = { id: 'codex', run }
+/**
+ * Codex's own model list (`model/list` on a short-lived app-server): the models the
+ * signed-in account can use and the reasoning efforts each accepts. No turn is started.
+ */
+function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    let nextId = 1
+    const pending = new Map<number, (result: Json, error?: Json) => void>()
+    const finish = (models: AgentModel[] | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (models) resolve(models)
+      else reject(new Error(why ?? 'Codex did not list its models.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Codex took too long to list its models.'), 30_000)
+    const request = (method: string, params: Json) => new Promise<Json>((ok, fail) => {
+      const id = nextId++
+      pending.set(id, (result, error) => (error ? fail(new Error(String(error?.message ?? error))) : ok(result)))
+      transport?.write(JSON.stringify({ id, method, params })).catch(fail)
+    })
+
+    async function list() {
+      await request('initialize', { clientInfo: { name: 'mango', title: 'Mango', version: '0.1.0' }, capabilities: { experimentalApi: true } })
+      await transport?.write(JSON.stringify({ method: 'initialized' }))
+      const all: Json[] = []
+      let cursor: string | null = null
+      for (let page = 0; page < 10; page++) {
+        const res: Json = await request('model/list', cursor ? { cursor } : {})
+        all.push(...(res?.data ?? []))
+        cursor = res?.nextCursor ?? null
+        if (!cursor) break
+      }
+      const efforts = (m: Json): string[] => (m?.supportedReasoningEfforts ?? []).map((e: Json) => String(e?.reasoningEffort ?? e)).filter(Boolean)
+      const fallback = all.find(m => m.isDefault)
+      const models: AgentModel[] = [{
+        id: 'default',
+        label: 'Default',
+        hint: fallback ? `Codex's choice: ${fallback.displayName ?? fallback.model}` : 'Whatever Codex is configured to use',
+        efforts: fallback ? efforts(fallback) : [],
+        defaultEffort: fallback?.defaultReasoningEffort ?? undefined,
+      }]
+      for (const m of all) {
+        if (m.hidden || typeof m.model !== 'string') continue
+        models.push({
+          id: m.model,
+          label: String(m.displayName ?? m.model),
+          hint: m.description || undefined,
+          efforts: efforts(m),
+          defaultEffort: m.defaultReasoningEffort ?? undefined,
+        })
+      }
+      finish(models)
+    }
+
+    spawn(['app-server'], {
+      onLine(line) {
+        let m: Json
+        try { m = JSON.parse(line) } catch { return }
+        if (typeof m?.id !== 'number' || !pending.has(m.id) || m.method) return
+        const settle = pending.get(m.id)!
+        pending.delete(m.id)
+        settle(m.result, m.error)
+      },
+      onExit: () => finish(null, 'Codex exited before listing its models.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      list().catch(e => finish(null, e instanceof Error ? e.message : String(e)))
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
+export const codexAdapter: AgentAdapter = { id: 'codex', run, listModels }
 
 export default codexAdapter

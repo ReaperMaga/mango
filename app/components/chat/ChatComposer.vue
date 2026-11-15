@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, Paperclip, Square, ShieldCheck, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import { ArrowUp, ChevronDown, Gauge, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
-import { AGENTS, modelLabel, type AgentId, type Thread } from '~/types/chat'
+import { useVoice } from '~/stores/voice'
+import { useModels } from '~/stores/models'
+import { useDictation } from '~/composables/useDictation'
+import { isMod, modLabel } from '~/composables/useShortcuts'
+import { AGENTS, effortLabel, type AgentId, type Thread } from '~/types/chat'
 import type { MenuItem } from '~/types/ui'
 
 /**
@@ -12,17 +16,20 @@ const props = withDefaults(defineProps<{
   agent: AgentId
   model: string
   mode: Thread['mode']
+  /** null: the CLI's default effort */
+  effort?: string | null
   busy?: boolean
   autofocus?: boolean
   placeholder?: string
   large?: boolean
-}>(), { busy: false, autofocus: false, large: false })
+}>(), { effort: null, busy: false, autofocus: false, large: false })
 
 const emit = defineEmits<{
   send: [text: string]
   stop: []
   'update:agent': [agent: AgentId]
   'update:model': [model: string]
+  'update:effort': [effort: string | null]
   'update:mode': [mode: Thread['mode']]
 }>()
 
@@ -45,13 +52,84 @@ function submit() {
 }
 
 function onKey(e: KeyboardEvent) {
+  if (e.code === 'Space' && e.shiftKey && isMod(e)) {
+    e.preventDefault()
+    toggleDictation()
+    return
+  }
+  if (e.key === 'Escape' && listening.value) {
+    // Discard the recording; the pane's Escape (stop the agent) waits for the next press.
+    e.preventDefault()
+    e.stopPropagation()
+    dictation.cancel()
+    return
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault()
     submit()
   }
 }
 
+/* ---------- voice input ---------- */
+
+const voice = useVoice()
+
+/** Puts dictated text where the caret is, with a space on either side where needed. */
+function insertText(words: string) {
+  const el = ta.value
+  const value = text.value
+  const from = el?.selectionStart ?? value.length
+  const to = el?.selectionEnd ?? value.length
+  const before = value.slice(0, from)
+  const after = value.slice(to)
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && !/^\s/.test(after) ? ' ' : ''
+  text.value = before + lead + words + trail + after
+  const caret = (before + lead + words + trail).length
+  nextTick(() => {
+    el?.focus()
+    el?.setSelectionRange(caret, caret)
+    if (voice.sendAfter) submit()
+  })
+}
+
+const dictation = useDictation(insertText)
+const { phase: dictationPhase, error: dictationError } = dictation
+const listening = computed(() => dictationPhase.value === 'recording' || dictationPhase.value === 'starting')
+const dictationShortcut = computed(() => `${modLabel()}+Shift+Space`)
+const micLabel = computed(() => {
+  if (listening.value) return 'Stop and transcribe'
+  if (dictationPhase.value === 'transcribing') return 'Transcribing…'
+  return voice.ready ? 'Dictate' : 'Set up voice input'
+})
+const elapsed = computed(() => {
+  const s = dictation.seconds.value
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+})
+/** Five bars, each lit once the level passes its step. */
+const bars = computed(() => [0.08, 0.2, 0.35, 0.55, 0.75].map(t => dictation.level.value > t))
+
+async function toggleDictation() {
+  if (dictationPhase.value === 'idle') {
+    await voice.ensureLoaded()
+    if (!voice.ready) {
+      ws.openSettings('voice')
+      return
+    }
+  }
+  dictation.toggle()
+  ta.value?.focus()
+}
+
+let errorTimer: ReturnType<typeof setTimeout> | undefined
+watch(dictationError, (msg) => {
+  clearTimeout(errorTimer)
+  if (msg) errorTimer = setTimeout(() => (dictationError.value = null), 8000)
+})
+onBeforeUnmount(() => clearTimeout(errorTimer))
+
 onMounted(() => {
+  void voice.ensureLoaded()
   autosize()
   if (props.autofocus) ta.value?.focus()
 })
@@ -69,12 +147,48 @@ const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[])
   }
 }))
 
-const modelItems = computed<MenuItem[]>(() => AGENTS[props.agent].models.map(m => ({
-  label: m.label,
-  hint: m.hint,
-  checked: props.model === m.id,
-  onSelect: () => emit('update:model', m.id),
-})))
+/* ---------- model and effort: the lists come from the CLI itself (stores/models.ts) ---------- */
+
+const models = useModels()
+const refreshModels = () => void models.refresh(props.agent, ws.activeProjectPath)
+watch(() => props.agent, refreshModels, { immediate: true })
+
+const modelItems = computed<MenuItem[]>(() => {
+  const list = models.list(props.agent)
+  // Claude Code lists its aliases first, then pinned versions: set those apart.
+  const firstPinned = list.findIndex(m => m.id.startsWith('claude-'))
+  return list.map((m, i) => ({
+    label: m.label,
+    hint: m.hint,
+    checked: props.model === m.id,
+    divider: i > 0 && i === firstPinned,
+    onSelect: () => {
+      emit('update:model', m.id)
+      if (props.effort && !(m.efforts ?? []).includes(props.effort)) emit('update:effort', null)
+    },
+  }))
+})
+
+const efforts = computed(() => models.efforts(props.agent, props.model))
+const effortItems = computed<MenuItem[]>(() => {
+  const fallback = models.find(props.agent, props.model)?.defaultEffort
+  return [
+    {
+      label: 'Default',
+      hint: fallback ? `${AGENTS[props.agent].name} uses ${effortLabel(fallback).toLowerCase()}` : `Whatever ${AGENTS[props.agent].name} is set to`,
+      checked: !props.effort,
+      onSelect: () => emit('update:effort', null),
+    },
+    ...efforts.value.map((level, i) => ({
+      label: effortLabel(level),
+      hint: i === 0 ? 'Quickest answers, least thinking' : i === efforts.value.length - 1 ? 'Thinks longest; slowest and uses the most quota' : undefined,
+      checked: props.effort === level,
+      divider: i === 0,
+      onSelect: () => emit('update:effort', level),
+    })),
+  ]
+})
+const effortText = computed(() => (props.effort ? effortLabel(props.effort) : 'Effort'))
 
 const modes = {
   plan: { label: 'Plan', hint: 'Read-only: explores and proposes a plan', icon: MapIcon },
@@ -116,8 +230,23 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
       </UiMenu>
       <UiMenu :items="modelItems" placement="top-start" :width="270" label="Model">
         <template #default="{ toggle, open }">
-          <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="toggle">
-            <span class="cp__chip-text">{{ modelLabel(agent, model) }}</span>
+          <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="() => { toggle(); refreshModels() }">
+            <span class="cp__chip-text">{{ models.label(agent, model) }}</span>
+            <ChevronDown />
+          </button>
+        </template>
+      </UiMenu>
+      <UiMenu v-if="efforts.length" :items="effortItems" placement="top-start" :width="260" label="Effort">
+        <template #default="{ toggle, open }">
+          <button
+            type="button"
+            class="cp__chip"
+            :class="{ 'is-open': open, 'is-default': !effort }"
+            :title="`Effort: ${effort ? effortLabel(effort) : 'default'}`"
+            @click="toggle"
+          >
+            <Gauge />
+            <span class="cp__chip-text cp__mode-text">{{ effortText }}</span>
             <ChevronDown />
           </button>
         </template>
@@ -133,7 +262,45 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
       </UiMenu>
 
       <span class="cp__spacer" />
-      <UiIconButton size="sm" label="Attach files (coming soon)" disabled><Paperclip /></UiIconButton>
+      <div class="cp__voice" role="status" aria-live="polite">
+        <template v-if="listening">
+          <span class="cp__rec" aria-hidden="true" />
+          <span class="cp__time tabular" aria-label="Recording">{{ elapsed }}</span>
+          <span class="cp__meter" aria-hidden="true">
+            <span v-for="(on, i) in bars" :key="i" class="cp__level" :class="{ 'is-on': on }" />
+          </span>
+        </template>
+        <span v-else-if="dictationPhase === 'transcribing'" class="cp__voice-text">
+          <span class="cp__spin" aria-hidden="true" />Transcribing…
+        </span>
+        <span v-else-if="dictationError" class="cp__voice-text cp__voice-text--error" :title="dictationError">
+          {{ dictationError }}
+        </span>
+      </div>
+      <UiIconButton
+        v-if="listening"
+        class="cp__keep"
+        size="sm"
+        label="Discard recording"
+        shortcut="Esc"
+        @click="dictation.cancel()"
+      >
+        <X />
+      </UiIconButton>
+      <UiIconButton v-else size="sm" label="Attach files (coming soon)" disabled><Paperclip /></UiIconButton>
+      <button
+        type="button"
+        class="cp__mic"
+        :class="{ 'is-on': listening }"
+        :aria-label="micLabel"
+        :aria-pressed="listening"
+        :title="`${micLabel} (${dictationShortcut})`"
+        :disabled="dictationPhase === 'transcribing'"
+        @click="toggleDictation"
+      >
+        <Square v-if="listening" class="cp__mic-stop" />
+        <Mic v-else />
+      </button>
       <button
         v-if="busy"
         type="button"
@@ -212,7 +379,8 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
 /* Narrow panes (split view at small window sizes): keep agent and model, drop the rest to icons. */
 @container (max-width: 400px) {
   .cp__mode-text { display: none; }
-  .cp__bar :deep(.icon-btn) { display: none; }
+  .cp__bar :deep(.icon-btn:not(.cp__keep)) { display: none; }
+  .cp__voice-text--error { display: none; }
 }
 .cp__chip:hover, .cp__chip.is-open { background: var(--bg-hover); color: var(--fg); }
 .cp__chip svg { width: 12px; height: 12px; stroke-width: 2; opacity: 0.7; }
@@ -221,6 +389,81 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
 .cp__agent-dot { width: 8px; height: 8px; border-radius: 2px; }
 .cp__agent-dot--claude { background: var(--accent); }
 .cp__agent-dot--codex { background: var(--fg-muted); border-radius: 50%; }
+
+.cp__voice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  /* Gives way before the agent, model and permission chips do. */
+  flex-shrink: 100;
+  margin-right: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+}
+.cp__voice:empty { display: none; }
+.cp__voice-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.cp__voice-text--error { display: block; max-width: 36ch; color: var(--ripe-error-fg); }
+.cp__rec {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ripe-error);
+  animation: cp-rec 1.4s var(--ease-in-out) infinite;
+}
+@keyframes cp-rec { 50% { opacity: 0.35; } }
+.cp__time { color: var(--fg-muted); }
+.cp__meter { display: inline-flex; align-items: center; gap: 2px; height: 12px; }
+.cp__level {
+  width: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--line-strong);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.cp__level:nth-child(1) { height: 4px; }
+.cp__level:nth-child(2) { height: 6px; }
+.cp__level:nth-child(3) { height: 8px; }
+.cp__level:nth-child(4) { height: 10px; }
+.cp__level:nth-child(5) { height: 12px; }
+.cp__level.is-on { background: var(--fg-muted); }
+.cp__spin {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-right-color: transparent;
+  animation: cp-spin 0.7s linear infinite;
+}
+@keyframes cp-spin { to { transform: rotate(360deg); } }
+
+.cp__mic {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 2px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-subtle);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.cp__mic svg { width: 16px; height: 16px; stroke-width: 1.85; }
+.cp__mic:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.cp__mic.is-on { background: var(--bg-active); color: var(--fg); }
+.cp__mic .cp__mic-stop { width: 10px; height: 10px; fill: currentColor; }
+.cp__mic:disabled { opacity: 0.5; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cp__rec, .cp__spin { animation: none; }
+}
 
 .cp__send {
   display: grid;

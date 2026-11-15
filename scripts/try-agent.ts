@@ -2,16 +2,18 @@
  * Drive an agent adapter against the real CLI, outside the app.
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
- *        [--model id] [--session id] [--deny] [--interrupt-after ms] [--raw]
+ *        [--model id] [--effort level] [--session id] [--deny] [--interrupt-after ms] [--raw]
+ *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given.
+ * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
  */
 import { spawn } from 'node:child_process'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
-if (!agentId || !cwd || !prompt) {
+if (!agentId || !cwd || (!prompt && !process.argv.includes('--models'))) {
   console.error('usage: node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [flags]')
   process.exit(2)
 }
@@ -26,13 +28,7 @@ if (!adapter?.run) throw new Error(`app/agents/${agentId}.ts must export the ada
 let pendingText = ''
 const flush = () => { if (pendingText) { console.log(JSON.stringify({ type: 'text-delta(coalesced)', text: pendingText })); pendingText = '' } }
 
-const run = adapter.run({
-  cwd,
-  prompt,
-  model: flag('model') ?? 'default',
-  mode: flag('mode') ?? 'ask',
-  sessionId: flag('session') ?? null,
-  spawn: async (args: string[], handlers: any, env?: Record<string, string>) => {
+const spawnCli = async (args: string[], handlers: any, env?: Record<string, string>) => {
     if (raw) console.log('$$', agentId, args.join(' '))
     const p = spawn(agentId, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
     const lines = (stream: NodeJS.ReadableStream, cb?: (l: string) => void, tag = '<<') => {
@@ -56,7 +52,22 @@ const run = adapter.run({
       closeStdin: async () => { p.stdin!.end() },
       kill: async () => { p.kill('SIGTERM') },
     }
-  },
+}
+
+if (prompt === '--models' || has('models')) {
+  const models = await adapter.listModels(spawnCli)
+  for (const m of models) console.log(JSON.stringify(m))
+  process.exit(0)
+}
+
+const run = adapter.run({
+  cwd,
+  prompt,
+  model: flag('model') ?? 'default',
+  mode: flag('mode') ?? 'ask',
+  effort: flag('effort') ?? null,
+  sessionId: flag('session') ?? null,
+  spawn: spawnCli,
   emit(event: any) {
     if (event.type === 'text-delta') { pendingText += event.text; return }
     flush()

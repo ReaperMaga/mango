@@ -81,7 +81,7 @@ export const useThreads = defineStore('threads', {
       // Reuse an untouched empty chat instead of piling up "New chat" rows.
       const blank = this.threads.find(x => x.projectPath === projectPath && x.messages.length === 0 && x.title === 'New chat' && !x.archived)
       if (blank) {
-        if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id }
+        if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id; blank.effort = null }
         this.show(blank.id)
         return blank
       }
@@ -92,6 +92,7 @@ export const useThreads = defineStore('threads', {
         agent,
         model: AGENTS[agent].models[0]!.id,
         mode: useWorkspace().defaultMode,
+        effort: null,
         status: 'working',
         messages: [],
         createdAt: Date.now(),
@@ -250,6 +251,7 @@ export const useThreads = defineStore('threads', {
       if (t.agent !== agent) {
         t.agent = agent
         t.model = AGENTS[agent].models[0]!.id
+        t.effort = null
         // Each CLI keeps its own conversation; the other agent starts fresh.
         t.sessionId = null
       }
@@ -257,9 +259,18 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    setModel(id: string, model: string) {
+    /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
+    setModel(id: string, model: string, efforts?: string[]) {
       const t = this.byId(id)
-      if (t) { t.model = model; this.persist() }
+      if (!t) return
+      t.model = model
+      if (t.effort && efforts && !efforts.includes(t.effort)) t.effort = null
+      this.persist()
+    },
+
+    setEffort(id: string, effort: string | null) {
+      const t = this.byId(id)
+      if (t) { t.effort = effort; this.persist() }
     },
 
     setMode(id: string, mode: Thread['mode']) {
@@ -365,7 +376,9 @@ export const stopFlags = new Set<string>()
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'
-  const model = AGENTS[agent].models.some(m => m.id === t.model) ? t.model : AGENTS[agent].models[0]!.id
+  // Any id the CLI offered is fine (the list comes from the CLI); only junk falls back.
+  const model = typeof t.model === 'string' && t.model.trim() ? t.model : AGENTS[agent].models[0]!.id
+  const effort = typeof t.effort === 'string' && t.effort ? t.effort : null
   const mode = (['plan', 'ask', 'edits', 'auto'] as const).includes(t.mode) ? t.mode : 'ask'
   // Older builds also had an 'idle' status; it is Working now.
   const interrupted = ['running', 'queued', 'waiting', 'idle'].includes(t.status)
@@ -377,7 +390,7 @@ function normalizeLoaded(t: Thread): Thread {
       return p
     }),
   }))
-  return { ...t, agent, model, mode, messages, status: interrupted ? 'working' : t.status }
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? 'working' : t.status }
 }
 
 function titleFrom(text: string) {
