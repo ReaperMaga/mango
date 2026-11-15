@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AgentId, Message, Part, Thread } from '~/types/chat'
+import type { AgentId, Attachment, Message, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
 import { interruptRun, respondApproval, runAgentTurn } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
@@ -287,18 +287,24 @@ export const useThreads = defineStore('threads', {
       if (t) { t.mode = mode; this.persist() }
     },
 
-    /** Append a user message and start the (mock) agent. */
-    async send(id: string, text: string) {
+    /** Append a user message (text, attachments or both) and start the agent. */
+    async send(id: string, text: string, attachments: Attachment[] = []) {
       const t = this.byId(id)
-      if (!t || !text.trim() || ['running', 'queued', 'waiting'].includes(t.status)) return
+      if (!t || (!text.trim() && !attachments.length) || ['running', 'queued', 'waiting'].includes(t.status)) return
       t.archived = false // writing in an archived chat brings it back
-      const msg: Message = { id: uid('m'), role: 'user', parts: [{ type: 'text', text: text.trim() }], createdAt: Date.now() }
+      const msg: Message = {
+        id: uid('m'),
+        role: 'user',
+        parts: text.trim() ? [{ type: 'text', text: text.trim() }] : [],
+        createdAt: Date.now(),
+      }
+      if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat') t.title = titleFrom(text)
+      if (t.title === 'New chat') t.title = titleFrom(text.trim() || attachments[0]!.name)
       t.status = 'queued'
       t.updatedAt = Date.now()
       this.persist()
-      await runAgentTurn(this, t.id, text.trim())
+      await runAgentTurn(this, t.id, text.trim(), attachments)
     },
 
     /** Resolve an approval request inside a message. */
@@ -393,6 +399,7 @@ function normalizeLoaded(t: Thread): Thread {
   const interrupted = ['running', 'queued', 'waiting', 'idle'].includes(t.status)
   const messages = t.messages.map(m => ({
     ...m,
+    ...(Array.isArray(m.attachments) ? { attachments: m.attachments.filter(a => a && typeof a.path === 'string') } : { attachments: undefined }),
     parts: m.parts.map((p): Part => {
       if (p.type === 'approval' && p.state === 'pending') return { ...p, state: 'cancelled' }
       if (p.type === 'tool' && p.status === 'running') return { ...p, status: 'error', summary: 'did not finish' }

@@ -1,5 +1,5 @@
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, ToolImage } from '~/agents/types'
 
 /**
  * Claude Code adapter.
@@ -8,7 +8,7 @@ import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTranspor
  * wire format the Agent SDK uses. One process per turn; the conversation is
  * carried across turns with `--resume <session id>`.
  *
- *   stdin   {"type":"user","message":{…}}                        the prompt
+ *   stdin   {"type":"user","message":{…}}                        the prompt (image blocks, then text)
  *           {"type":"control_response",…}                        answers to permission requests
  *           {"type":"control_request","request":{"subtype":"interrupt"}}
  *   stdout  system/init, stream_event (partial deltas), assistant, user (tool results),
@@ -122,6 +122,14 @@ function resultText(content: unknown): string {
   return ''
 }
 
+/** Image blocks in a tool result: screenshots from MCP tools, image files Read, and the like. */
+function resultImages(content: unknown): ToolImage[] {
+  if (!Array.isArray(content)) return []
+  return content
+    .filter(c => c?.type === 'image' && c.source?.type === 'base64' && typeof c.source.data === 'string')
+    .map(c => ({ mime: String(c.source.media_type ?? 'image/png'), data: c.source.data as string }))
+}
+
 const clip = (s: string) => (s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n… output truncated` : s)
 
 /** Claude Code's structured patch (Edit/Write results) → diff lines with real context. */
@@ -174,6 +182,16 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
       return { title: `Claude Code wants to use ${d.target || toolName}`, command: JSON.stringify(i, null, 2).slice(0, 1200), reason: '' }
     }
   }
+}
+
+/** The prompt as message content: attached images first, then the text (an empty text block is refused). */
+function userContent(options: AgentRunOptions): unknown[] {
+  const content: unknown[] = (options.images ?? []).map(img => ({
+    type: 'image',
+    source: { type: 'base64', media_type: img.mime, data: img.data },
+  }))
+  if (options.prompt.trim() || !content.length) content.push({ type: 'text', text: options.prompt })
+  return content
 }
 
 function run(options: AgentRunOptions): AgentRun {
@@ -288,13 +306,15 @@ function run(options: AgentRunOptions): AgentRun {
       let output: string | undefined
       if (t?.shape.tool === 'bash' || isError) output = clip(text)
       else if (t?.shape.tool === 'search' || t?.shape.tool === 'other' || t?.shape.tool === 'web') output = text ? clip(text) : undefined
+      const images = resultImages(b.content)
       if (isError) summary = 'failed'
+      else if (t?.shape.tool === 'read' && images.length) summary = images.length === 1 ? 'image' : `${images.length} images`
       else if (t?.shape.tool === 'read') {
         const n = typeof extra?.file?.numLines === 'number' ? extra.file.numLines : (text ? text.split('\n').length : 0)
         summary = n ? `${n} lines` : undefined
       } else if (diff && t?.shape.tool === 'edit') summary = counts(diff)
       else if (diff && t?.shape.tool === 'write') summary = `+${diff.filter(l => l.kind === 'add').length}`
-      emit({ type: 'tool-end', id: b.tool_use_id, status: isError ? 'error' : 'ok', summary, output, diff })
+      emit({ type: 'tool-end', id: b.tool_use_id, status: isError ? 'error' : 'ok', summary, output, diff, ...(images.length ? { images } : {}) })
     }
   }
 
@@ -352,6 +372,8 @@ function run(options: AgentRunOptions): AgentRun {
   if (options.model && options.model !== 'default') args.push('--model', options.model)
   if (options.effort) args.push('--effort', options.effort)
   if (options.sessionId) args.push('--resume', options.sessionId)
+  // Attachments live outside the project: let Claude Code read them without asking.
+  for (const dir of options.readDirs ?? []) args.push('--add-dir', dir)
 
   options.spawn(args, {
     onLine,
@@ -364,7 +386,7 @@ function run(options: AgentRunOptions): AgentRun {
   }).then((t) => {
     transport = t
     if (ended) { t.kill().catch(() => {}); return }
-    send({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: options.prompt }] } })
+    send({ type: 'user', message: { role: 'user', content: userContent(options) } })
   }).catch((err) => {
     end('error', err instanceof Error ? err.message : String(err))
   })

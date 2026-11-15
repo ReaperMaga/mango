@@ -2,15 +2,18 @@
  * Drive an agent adapter against the real CLI, outside the app.
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
- *        [--model id] [--effort level] [--session id] [--deny] [--interrupt-after ms] [--raw]
+ *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--interrupt-after ms] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
+ * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
  */
 import { spawn } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { basename, dirname, extname, resolve } from 'node:path'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
 if (!agentId || !cwd || (!prompt && !process.argv.includes('--models'))) {
@@ -60,9 +63,17 @@ if (prompt === '--models' || has('models')) {
   process.exit(0)
 }
 
+const imagePath = flag('image') ? resolve(flag('image')!) : null
+const imageMime: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' }
+const images = imagePath
+  ? [{ name: basename(imagePath), path: imagePath, mime: imageMime[extname(imagePath).toLowerCase()] ?? 'image/png', data: readFileSync(imagePath).toString('base64') }]
+  : []
+
 const run = adapter.run({
   cwd,
   prompt,
+  images,
+  readDirs: imagePath ? [dirname(imagePath)] : [],
   model: flag('model') ?? 'default',
   mode: flag('mode') ?? 'ask',
   effort: flag('effort') ?? null,

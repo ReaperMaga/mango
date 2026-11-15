@@ -33,15 +33,36 @@ export type Part =
       summary?: string
       output?: string
       diff?: DiffLine[]
+      /** Images the tool produced (screenshots, images it read), kept in the attachment store. */
+      images?: Attachment[]
     }
   | { type: 'approval'; id?: string; title?: string; command: string; reason: string; state: 'pending' | 'allowed' | 'denied' | 'cancelled' }
   /** A run-level problem shown inline (CLI missing, not signed in, crashed). */
   | { type: 'notice'; level: 'error' | 'info'; text: string }
 
+/**
+ * A file sent with a user message. The bytes live in Mango's attachment store on disk
+ * (`attachment_save` / `attachment_import`); the message keeps only this and a small preview.
+ */
+export interface Attachment {
+  id: string
+  name: string
+  /** Absolute path of the stored copy, which the agent reads. */
+  path: string
+  mime: string
+  size: number
+  /** 'image': PNG, JPEG, GIF or WebP, sent to the agent as a picture. 'file': handed over by path. */
+  kind: 'image' | 'file'
+  /** Small preview of an image as a data URL. */
+  thumb?: string
+}
+
 export interface Message {
   id: string
   role: 'user' | 'agent'
   parts: Part[]
+  /** User messages: files sent along. */
+  attachments?: Attachment[]
   createdAt: number
   /** Agent messages: how long the turn took, from the user's message to the end. */
   elapsedMs?: number
