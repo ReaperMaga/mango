@@ -1,9 +1,11 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, VcsKind } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
  * commands from types/ipc.ts against fake repositories, one per project path,
  * that really change when you stage, discard, commit or switch branch.
+ * The `fruit-stand` project is a Unity VCS workspace and answers the way the
+ * real backend does for one (checkins, `/main/...` branches, update).
  */
 
 interface Change {
@@ -15,6 +17,9 @@ interface Change {
 interface MockFile { path: string; staged: Change | null; unstaged: Change | null }
 interface Tracking { upstream: string | null; ahead: number; behind: number }
 interface Repo {
+  vcs: VcsKind
+  /** Unity VCS: the repository the workspace is bound to. */
+  repository: string | null
   isRepo: boolean
   branch: string
   branches: Record<string, Tracking>
@@ -24,6 +29,8 @@ interface Repo {
   incoming: string[]
   /** Renames that were unstaged into a deletion plus a new file, so staging both restores them. */
   renames: { from: string; to: string; change: Change }[]
+  /** Unity VCS: branches that have changesets of their own (and so can't be deleted). */
+  used?: Set<string>
 }
 
 const MIN = 60_000
@@ -271,6 +278,8 @@ index ${hex(7)}..${hex(7)} 100644
     },
   ]
   return {
+    vcs: 'git',
+    repository: null,
     isRepo: true,
     branch: 'main',
     branches: {
@@ -294,6 +303,8 @@ index ${hex(7)}..${hex(7)} 100644
 
 function sideRepo(branch: string): Repo {
   return {
+    vcs: 'git',
+    repository: null,
     isRepo: true,
     branch,
     branches: { 'main': { upstream: 'origin/main', ahead: 0, behind: 0 }, [branch]: { upstream: null, ahead: 0, behind: 0 } },
@@ -330,6 +341,8 @@ function sideRepo(branch: string): Repo {
 
 function cleanRepo(): Repo {
   return {
+    vcs: 'git',
+    repository: null,
     isRepo: true,
     branch: 'main',
     branches: { main: { upstream: 'origin/main', ahead: 0, behind: 0 } },
@@ -340,14 +353,165 @@ function cleanRepo(): Repo {
   }
 }
 
-const emptyRepo = (): Repo => ({ isRepo: false, branch: 'main', branches: {}, files: [], log: [], incoming: [], renames: [] })
+const emptyRepo = (): Repo => ({ vcs: 'git', repository: null, isRepo: false, branch: 'main', branches: {}, files: [], log: [], incoming: [], renames: [] })
+
+/* ---------- a Unity VCS workspace ---------- */
+
+let nextChangeset = 1290
+function changesetOf(subject: string, agoMs: number, author = 'you@orchard.studio'): GitCommit {
+  const id = nextChangeset++
+  return { hash: `${hex(8)}-${hex(4)}-${hex(4)}-${hex(4)}-${hex(12)}`, shortHash: `cs:${id}`, subject, author, time: Date.now() - agoMs }
+}
+
+function unityRepo(): Repo {
+  const noTrack = { upstream: null, ahead: 0, behind: 0 }
+  nextChangeset = 1285
+  const log = ([
+    ['Initial import from Unity 6', 20 * 24 * 60 * MIN],
+    ['Item stacks merge on pickup', 2 * 24 * 60 * MIN],
+    ['Farm scene: move the well next to the barn', 22 * 60 * MIN],
+    ['Inventory grid: drag to reorder slots', 3 * 60 * MIN],
+    ['Crops: wilt when not watered for two days', 50 * MIN],
+  ] as const).map(([subject, ago]) => changesetOf(subject, ago)).reverse()
+  const files: MockFile[] = [
+    {
+      path: 'Assets/Scripts/Inventory/InventoryGrid.cs',
+      staged: null,
+      unstaged: {
+        status: 'M',
+        diff: `${head('Assets/Scripts/Inventory/InventoryGrid.cs')}@@ -41,9 +41,13 @@ public class InventoryGrid : MonoBehaviour
+     public bool TryAdd(ItemStack stack)
+     {
+-        var slot = slots.FirstOrDefault(s => s.IsEmpty);
+-        if (slot == null) return false;
+-        slot.Set(stack);
++        // Top up stacks of the same item before taking an empty slot.
++        foreach (var s in slots.Where(s => s.Item == stack.Item && !s.IsFull))
++            stack = s.Absorb(stack);
++        if (stack.Count == 0) return true;
++        var empty = slots.FirstOrDefault(s => s.IsEmpty);
++        if (empty == null) return false;
++        empty.Set(stack);
+         onChanged?.Invoke();
+         return true;
+     }
+`,
+      },
+    },
+    {
+      path: 'Assets/Scenes/Farm.unity',
+      staged: null,
+      unstaged: {
+        status: 'M',
+        diff: `${head('Assets/Scenes/Farm.unity')}@@ -2214,7 +2214,7 @@ Transform:
+   m_GameObject: {fileID: 1820347715}
+   serializedVersion: 2
+   m_LocalRotation: {x: 0, y: 0.38268343, z: 0, w: 0.9238795}
+-  m_LocalPosition: {x: 12.5, y: 0, z: -4}
++  m_LocalPosition: {x: 9.75, y: 0, z: -6.5}
+   m_LocalScale: {x: 1, y: 1, z: 1}
+   m_ConstrainProportionsScale: 0
+   m_Children: []
+`,
+      },
+    },
+    {
+      path: 'Assets/Scripts/Items/ItemStack.cs',
+      staged: null,
+      unstaged: {
+        status: 'R',
+        origPath: 'Assets/Scripts/ItemStack.cs',
+        diff: 'diff --git a/Assets/Scripts/ItemStack.cs b/Assets/Scripts/Items/ItemStack.cs\nrename from Assets/Scripts/ItemStack.cs\nrename to Assets/Scripts/Items/ItemStack.cs\n',
+      },
+    },
+    {
+      path: 'Assets/Scripts/Legacy/SaveV1.cs',
+      staged: null,
+      unstaged: {
+        status: 'D',
+        diff: deleted('Assets/Scripts/Legacy/SaveV1.cs', [
+          '// Version 1 saves, read once and rewritten as version 2.',
+          'public static class SaveV1',
+          '{',
+          '    public static bool CanRead(byte[] data) => data.Length > 4 && data[0] == 0x46 && data[4] == 1;',
+          '}',
+        ]),
+      },
+    },
+    {
+      path: 'Assets/Prefabs/Crate.prefab',
+      staged: null,
+      unstaged: {
+        status: '?',
+        diff: added('Assets/Prefabs/Crate.prefab', [
+          '%YAML 1.1',
+          '%TAG !u! tag:unity3d.com,2011:',
+          '--- !u!1 &4410925571286573214',
+          'GameObject:',
+          '  m_Name: Crate',
+          '  m_TagString: Pickup',
+          '  m_Layer: 6',
+        ]),
+      },
+    },
+    {
+      path: 'Assets/Prefabs/Crate.prefab.meta',
+      staged: null,
+      unstaged: { status: '?', diff: added('Assets/Prefabs/Crate.prefab.meta', ['fileFormatVersion: 2', `guid: ${hex(32)}`, 'PrefabImporter:', '  externalObjects: {}']) },
+    },
+    {
+      path: 'Assets/Textures/crate_albedo.png',
+      staged: null,
+      unstaged: {
+        status: '?',
+        diff: 'diff --git a/Assets/Textures/crate_albedo.png b/Assets/Textures/crate_albedo.png\nnew file mode 100644\nBinary files /dev/null and b/Assets/Textures/crate_albedo.png differ\n',
+      },
+    },
+  ]
+  return {
+    vcs: 'plastic',
+    repository: 'fruit-stand@orchard-studio@cloud',
+    isRepo: true,
+    branch: '/main/feature/inventory',
+    branches: {
+      '/main': noTrack,
+      '/main/feature/inventory': { ...noTrack },
+      '/main/feature/weather': { ...noTrack },
+      '/main/fix/crate-physics': { ...noTrack },
+      '/main/release-1.2': { ...noTrack },
+    },
+    used: new Set(['/main', '/main/feature/inventory', '/main/feature/weather', '/main/fix/crate-physics', '/main/release-1.2']),
+    files,
+    log,
+    // Changesets a teammate checked in on this branch since the workspace was updated.
+    incoming: ['Inventory: tooltips show the stack total', 'Fix the crate falling through the barn floor'],
+    renames: [],
+  }
+}
+
+const UNITY_ONLY = (what: string) => new Error(`${what} isn't part of Unity Version Control. Checkins go straight to the server.`)
+
+/** Unity VCS: add a branch and switch to it. */
+function createBranch(r: Repo, full: string, switchTo: boolean) {
+  if (r.branches[full]) throw new Error(`A branch named ${full} already exists.`)
+  r.branches[full] = { upstream: null, ahead: 0, behind: 0 }
+  if (switchTo) r.branch = full
+}
+
+/** Unity VCS: a typed name is a child of `parent` unless it starts at the root. */
+function childBranch(name: string, parent: string): string {
+  const n = name.trim()
+  if (!n) throw new Error('Enter a branch name')
+  if (/[\s"'@#:;*?<>|\\$`]|\.\.|\/\/|^-|\/$/.test(n)) throw new Error(`"${n}" is not a valid branch name`)
+  return n.startsWith('/') ? n : `${parent.replace(/\/+$/, '')}/${n}`
+}
 
 const repos = new Map<string, Repo>()
 function repoAt(path: string): Repo {
   let repo = repos.get(path)
   if (!repo) {
     const name = baseName(path)
-    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : mangoRepo()
+    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : mangoRepo()
     repos.set(path, repo)
   }
   return repo
@@ -358,12 +522,17 @@ function repoAt(path: string): Repo {
 const tracking = (r: Repo): Tracking => r.branches[r.branch] ?? { upstream: null, ahead: 0, behind: 0 }
 
 function statusOf(r: Repo, path: string): GitStatus {
-  if (!r.isRepo) return { isRepo: false, root: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
+  if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
   const t = tracking(r)
   const files: GitFile[] = r.files
-    .map(f => ({ path: f.path, origPath: f.staged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
+    .map(f => ({ path: f.path, origPath: f.staged?.origPath ?? f.unstaged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
     .sort((a, b) => Number(a.worktree === '?') - Number(b.worktree === '?') || a.path.localeCompare(b.path))
-  return { isRepo: true, root: path, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
+  if (r.vcs === 'plastic') {
+    // A changeset number for HEAD; "behind" is newer changesets on the branch, known without a fetch.
+    const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null
+    return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
+  }
+  return { vcs: 'git', repository: null, isRepo: true, root: path, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
 }
 
 const wanted = (files: string[]) => (f: MockFile) => files.length === 0 || files.includes(f.path)
@@ -373,7 +542,7 @@ function stage(r: Repo, files: string[]) {
   for (const f of r.files.filter(wanted(files))) {
     if (!f.unstaged) continue
     const u = f.unstaged
-    if (!f.staged) f.staged = { status: u.status === '?' ? 'A' : u.status, diff: u.diff }
+    if (!f.staged) f.staged = { status: u.status === '?' ? 'A' : u.status, diff: u.diff, origPath: u.origPath }
     else if (u.status === 'D') f.staged = f.staged.status === 'A' ? null : { status: 'D', diff: u.diff }
     else f.staged = { ...f.staged, diff: mergeHunks(f.staged.diff, u.diff) }
     f.unstaged = null
@@ -394,7 +563,10 @@ function unstage(r: Repo, files: string[]) {
   for (const f of r.files.filter(wanted(files))) {
     if (!f.staged) continue
     const s = f.staged
-    if (s.status === 'R' && s.origPath) {
+    if (r.vcs === 'plastic') {
+      // No index to restore from: the change just goes back to being unpicked.
+      f.unstaged = { status: s.status === 'A' ? '?' : s.status, diff: s.diff, origPath: s.origPath }
+    } else if (s.status === 'R' && s.origPath) {
       r.renames.push({ from: s.origPath, to: f.path, change: s })
       r.files.push({ path: s.origPath, staged: null, unstaged: { status: 'D', diff: deleted(s.origPath, TIME_OLD) } })
       f.unstaged = { status: '?', diff: added(f.path, TIME_NEW) }
@@ -421,7 +593,32 @@ function discard(r: Repo, files: string[]) {
   prune(r)
 }
 
+function checkin(r: Repo, message: string, amend: boolean): string {
+  const subject = message.trim().split('\n')[0] ?? ''
+  if (amend) throw UNITY_ONLY('Amending a changeset')
+  if (!subject) throw new Error('Write a checkin comment first')
+  if (!r.files.some(f => f.staged)) throw new Error('Nothing is staged. Stage the changes you want in this checkin first.')
+  if (r.incoming.length) {
+    throw new Error(`The branch has changesets your workspace doesn't have yet. Update the workspace, then check in again.\n\nMERGE_NEEDED A merge is needed from changeset 'cs:${nextChangeset + r.incoming.length - 1}' to changeset '${r.log[0]?.shortHash}' in order to checkin.`)
+  }
+  for (const f of r.files) f.staged = null
+  prune(r)
+  r.used?.add(r.branch)
+  r.log.unshift(changesetOf(subject, 0))
+  return r.log[0]!.shortHash
+}
+
+async function update(r: Repo): Promise<string> {
+  await wait(900)
+  if (!r.incoming.length) return ''
+  const arrived = r.incoming.map((subject, i) => changesetOf(subject, (r.incoming.length - i) * 31 * MIN, 'priya@orchard.studio')).reverse()
+  r.log.unshift(...arrived)
+  r.incoming = []
+  return `Updated. Downloaded ${arrived.length + 3} files.`
+}
+
 function commit(r: Repo, message: string, amend: boolean): string {
+  if (r.vcs === 'plastic') return checkin(r, message, amend)
   const subject = message.trim().split('\n')[0] ?? ''
   if (!subject && !amend) throw new Error('Write a commit message first')
   if (amend && !r.log.length) throw new Error('There is no commit to amend yet.')
@@ -514,6 +711,53 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     return
   }
   if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
+  if (r.vcs === 'plastic') {
+    switch (cmd) {
+      case 'git_fetch': throw UNITY_ONLY('Fetch')
+      case 'git_push': throw UNITY_ONLY('Push')
+      case 'git_pull': return update(r)
+      case 'git_merge': throw UNITY_ONLY('Merging from Mango')
+      case 'git_rebase': throw UNITY_ONLY('Rebase')
+      case 'git_checkout_remote': throw UNITY_ONLY('Remote branches')
+      case 'git_checkout':
+        if (args.create) return createBranch(r, childBranch(String(args.branch ?? ''), r.branch), true)
+        await wait(500)
+        return checkout(r, String(args.branch ?? ''), false)
+      case 'git_branch_create':
+        return createBranch(r, childBranch(String(args.name ?? ''), args.from || r.branch), !!args.checkout)
+      case 'git_branch_list': {
+        const now = Date.now()
+        return {
+          current: r.branch,
+          local: Object.keys(r.branches).map((name, i) => ({
+            name, isCurrent: name === r.branch, upstream: null, upstreamGone: false, ahead: 0, behind: 0,
+            time: name === r.branch ? (r.log[0]?.time ?? now) : now - (i + 2) * 7_200_000,
+            subject: name === r.branch ? (r.log[0]?.subject ?? '') : r.log[i + 1]?.subject ?? '',
+          })).sort((a, b) => b.time - a.time),
+          remote: [],
+          remotes: [],
+        }
+      }
+      case 'git_branch_rename': {
+        const from = String(args.from)
+        const to = String(args.to).includes('/') ? childBranch(String(args.to), '') : childBranch(String(args.to), from.slice(0, from.lastIndexOf('/')))
+        if (to.slice(0, to.lastIndexOf('/')) !== from.slice(0, from.lastIndexOf('/'))) throw new Error(`Unity VCS renames a branch in place. Keep it under ${from.slice(0, from.lastIndexOf('/')) || 'the top level'}.`)
+        if (r.branches[to]) throw new Error(`A branch named ${to} already exists.`)
+        r.branches[to] = r.branches[from]!; delete r.branches[from]
+        if (r.used?.delete(from)) r.used.add(to)
+        if (r.branch === from) r.branch = to
+        return
+      }
+      case 'git_branch_delete': {
+        const name = String(args.branch)
+        if (name === r.branch) throw new Error(`The workspace is on ${name}. Switch to another branch before deleting it.`)
+        if (Object.keys(r.branches).some(b => b.startsWith(`${name}/`))) throw new Error("Can't remove this branch because it has child branches.")
+        if (r.used?.has(name)) throw new Error("Can't remove this branch because it has changesets.")
+        delete r.branches[name]
+        return
+      }
+    }
+  }
   switch (cmd) {
     case 'git_diff': {
       const f = r.files.find(x => x.path === args.file)

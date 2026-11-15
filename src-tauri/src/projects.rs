@@ -20,7 +20,11 @@ const CLONE_ERROR_LINES: usize = 6;
 pub struct ProjectInfo {
     pub path: String,
     pub name: String,
+    /// Under version control: git, or a Unity VCS workspace (see `vcs`).
     pub is_git: bool,
+    /// Which version control; None when there is none.
+    #[serde(default)]
+    pub vcs: Option<crate::git::Vcs>,
     pub branch: Option<String>,
     pub last_opened: u64,
 }
@@ -179,8 +183,15 @@ fn git_info(dir: &Path) -> (bool, Option<String>) {
 }
 
 fn inspect(path: &Path, last_opened: u64) -> ProjectInfo {
-    let (is_git, branch) = git_info(path);
+    let (is_git, branch, vcs) = match crate::vcs::detect_on_disk(path) {
+        Some((crate::git::Vcs::Plastic, root)) => (true, crate::plastic::selector_branch(&root), Some(crate::git::Vcs::Plastic)),
+        _ => {
+            let (is_git, branch) = git_info(path);
+            (is_git, branch, is_git.then_some(crate::git::Vcs::Git))
+        }
+    };
     ProjectInfo {
+        vcs,
         path: path_string(path),
         name: folder_name(path),
         is_git,

@@ -3,9 +3,11 @@ mod agents;
 mod auth;
 mod bin;
 mod git;
+mod plastic;
 mod projects;
 mod pty;
 mod shells;
+mod vcs;
 
 use tauri::Manager;
 
@@ -36,26 +38,26 @@ pub fn run() {
             agent_proc::agent_kill,
             auth::agent_auth_status,
             auth::agent_logout,
-            git::git_status,
-            git::git_diff,
-            git::git_stage,
-            git::git_unstage,
-            git::git_discard,
-            git::git_commit,
-            git::git_fetch,
-            git::git_pull,
-            git::git_push,
-            git::git_log,
-            git::git_branches,
-            git::git_checkout,
-            git::git_init,
-            git::git_branch_list,
-            git::git_branch_create,
-            git::git_checkout_remote,
-            git::git_merge,
-            git::git_rebase,
-            git::git_branch_rename,
-            git::git_branch_delete,
+            vcs::git_status,
+            vcs::git_diff,
+            vcs::git_stage,
+            vcs::git_unstage,
+            vcs::git_discard,
+            vcs::git_commit,
+            vcs::git_fetch,
+            vcs::git_pull,
+            vcs::git_push,
+            vcs::git_log,
+            vcs::git_branches,
+            vcs::git_checkout,
+            vcs::git_init,
+            vcs::git_branch_list,
+            vcs::git_branch_create,
+            vcs::git_checkout_remote,
+            vcs::git_merge,
+            vcs::git_rebase,
+            vcs::git_branch_rename,
+            vcs::git_branch_delete,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

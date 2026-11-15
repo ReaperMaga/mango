@@ -9,6 +9,7 @@ import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
 import { shortAgo } from '~/utils/time'
+import { units, vcsTerms } from '~/utils/vcs'
 
 /**
  * Branch popup in the manner of JetBrains IDEs: one column with a search field,
@@ -16,6 +17,10 @@ import { shortAgo } from '~/utils/time'
  * (`feat/x` sits in a `feat` folder). Each branch opens a flyout with its own
  * actions (checkout, new branch from, merge, rebase, rename, delete).
  * Wraps its trigger (default slot) and opens under it.
+ *
+ * Unity VCS workspaces use it too: branches are paths (`/main/task`), a new
+ * branch is a child of the one it starts from, and the git-only actions
+ * (fetch, push, merge, rebase, remote branches) are left out.
  */
 const props = defineProps<{ path: string | null }>()
 
@@ -48,6 +53,8 @@ const nameField = ref<HTMLInputElement | null>(null)
 /** Delete was refused because the branch has unmerged commits: offer to force it. */
 const unmerged = ref(false)
 
+const status = computed(() => git.status(props.path))
+const terms = computed(() => vcsTerms(status.value?.vcs ?? ws.openProjects.find(p => p.path === props.path)?.vcs))
 const current = computed(() => list.value?.current ?? null)
 const currentBranch = computed(() => list.value?.local.find(b => b.isCurrent) ?? null)
 const q = computed(() => query.value.trim().toLowerCase())
@@ -59,12 +66,21 @@ interface Action { id: string; label: string; icon: Component; count?: number; d
 const actions = computed<Action[]>(() => {
   const cb = currentBranch.value
   const remotes = !!list.value?.remotes.length
+  const t = terms.value
   const all: Action[] = [
-    {
-      id: 'pull', label: 'Update', icon: ArrowDownToLine, count: cb?.behind, disabled: !!busy.value || !cb?.upstream,
-      title: cb?.upstream ? `Pull ${cb.upstream} into ${current.value}` : 'This branch tracks no remote branch yet', run: () => update(),
-    },
-    { id: 'commit', label: 'Commit…', icon: ListCheck, disabled: !!busy.value, title: 'Open the Changes view to commit', run: commitView },
+    t.remotes
+      ? {
+          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: cb?.behind, disabled: !!busy.value || !cb?.upstream,
+          title: cb?.upstream ? `Pull ${cb.upstream} into ${current.value}` : 'This branch tracks no remote branch yet', run: () => update(),
+        }
+      : {
+          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: status.value?.behind, disabled: !!busy.value,
+          title: status.value?.behind
+            ? `Update to the newest changeset: ${units(status.value.behind, t)} on ${current.value ?? 'the branch'}`
+            : 'Update the workspace to the newest changeset',
+          run: () => update(),
+        },
+    { id: 'commit', label: `${t.commit}…`, icon: ListCheck, disabled: !!busy.value, title: `Open the Changes view to ${t.commit.toLowerCase()}`, run: commitView },
     {
       id: 'push', label: cb?.upstream ? 'Push' : 'Publish', icon: CloudUpload, count: cb?.ahead, disabled: !!busy.value || !remotes,
       title: cb?.upstream ? `Push ${current.value} to ${cb.upstream}` : `Publish ${current.value ?? 'this branch'} to the remote`, run: () => push(),
@@ -72,7 +88,8 @@ const actions = computed<Action[]>(() => {
     { id: 'fetch', label: 'Fetch', icon: CloudDownload, disabled: !!busy.value || !remotes, title: 'Fetch from the remote', run: () => fetchAll() },
     { id: 'new', label: 'New branch…', icon: GitBranchPlus, divider: true, disabled: !!busy.value, title: current.value ? `New branch from ${current.value}` : undefined, run: () => startName('new', null) },
   ]
-  return all.filter(a => matches(a.label))
+  // Unity VCS checkins go straight to the server: nothing to push or fetch.
+  return all.filter(a => (t.remotes || (a.id !== 'push' && a.id !== 'fetch')) && matches(a.label))
 })
 
 /* ---------- branch tree ---------- */
@@ -95,7 +112,8 @@ function tree(section: string, rows: Row[]): TreeNode[] {
   type Dir = { dirs: Map<string, Dir>; leaves: { row: Row; label: string }[] }
   const top: Dir = { dirs: new Map(), leaves: [] }
   for (const row of rows) {
-    const parts = row.b.name.split('/')
+    // Unity VCS names start at the root (`/main/task`): the tree starts at `main`.
+    const parts = row.b.name.replace(/^\/+/, '').split('/')
     let dir = top
     for (const seg of parts.slice(0, -1)) {
       if (!dir.dirs.has(seg)) dir.dirs.set(seg, { dirs: new Map(), leaves: [] })
@@ -108,7 +126,8 @@ function tree(section: string, rows: Row[]): TreeNode[] {
     const entries = [
       ...[...dir.dirs].map(([name, d]) => ({ name, d, leaf: null as null | { row: Row; label: string } })),
       ...dir.leaves.map(l => ({ name: l.label, d: null as Dir | null, leaf: l })),
-    ].sort((a, b) => a.name.localeCompare(b.name))
+    // A Unity VCS branch can also be the folder of its children (`/main`, `/main/task`): the branch comes first.
+    ].sort((a, b) => a.name.localeCompare(b.name) || Number(!a.leaf) - Number(!b.leaf))
     for (const e of entries) {
       if (e.leaf) { out.push({ kind: 'branch', key: e.leaf.row.key, label: e.leaf.label, depth, row: e.leaf.row }); continue }
       const key = `${prefix}/${e.name}`
@@ -127,7 +146,8 @@ const rowsByKey = computed(() => new Map([...locals.value, ...remotes.value].map
 
 const nodes = computed<TreeNode[]>(() => {
   const out: TreeNode[] = []
-  for (const [key, name, rows] of [['local', 'Local', locals.value], ['remote', 'Remote', remotes.value]] as const) {
+  const localName = terms.value.remotes ? 'Local' : 'Branches'
+  for (const [key, name, rows] of [['local', localName, locals.value], ['remote', 'Remote', remotes.value]] as const) {
     if (!rows.length) continue
     const open = isOpen(key)
     out.push({ kind: 'section', key, name, open, count: rows.length })
@@ -290,11 +310,24 @@ function commitView() {
   close()
 }
 
+/** Unity VCS renames a branch in place, so only its last segment is edited. */
+const leafOf = (name: string) => name.slice(name.lastIndexOf('/') + 1)
+const parentOf = (name: string) => name.slice(0, Math.max(0, name.lastIndexOf('/')))
+const renameFrom = computed(() => (target.value ? (terms.value.pathBranches ? leafOf(target.value.b.name) : target.value.b.name) : ''))
+/** Unity VCS: the full name a new branch gets, a child of where it starts unless typed from the root. */
+const newFullName = computed(() => {
+  const name = nameInput.value.trim()
+  if (!terms.value.pathBranches || !name) return null
+  if (name.startsWith('/')) return name
+  const base = target.value?.b.name ?? current.value
+  return base ? `${base.replace(/\/+$/, '')}/${name}` : `/${name}`
+})
+
 async function startName(kind: 'new' | 'rename', row: Row | null) {
   closeSub()
   target.value = row
   view.value = kind
-  nameInput.value = kind === 'rename' && row ? row.b.name : ''
+  nameInput.value = kind === 'rename' && row ? (terms.value.pathBranches ? leafOf(row.b.name) : row.b.name) : ''
   message.value = null
   await nextTick()
   nameField.value?.focus()
@@ -326,8 +359,9 @@ async function submitName() {
     const ok = await run('create', () => call('git_branch_create', { path: p(), name, from, checkout: true }))
     if (ok) close()
   } else if (view.value === 'rename' && row) {
-    const ok = await run('rename', () => call('git_branch_rename', { path: p(), from: row.b.name, to: name }), () => `Renamed to ${name}.`)
-    if (ok) { await backToList(); active.value = `l:${name}` }
+    const full = terms.value.pathBranches && !name.includes('/') ? `${parentOf(row.b.name)}/${name}` : name
+    const ok = await run('rename', () => call('git_branch_rename', { path: p(), from: row.b.name, to: name }), () => `Renamed to ${full}.`)
+    if (ok) { await backToList(); active.value = `l:${full}` }
   }
 }
 async function remove(force: boolean) {
@@ -509,18 +543,21 @@ defineExpose({ show, close })
               <template v-if="view === 'new'">New branch from <span class="bp__mono">{{ target?.b.name ?? current ?? 'HEAD' }}</span></template>
               <template v-else>Rename <span class="bp__mono">{{ target?.b.name }}</span></template>
             </label>
-            <input id="bp-name" ref="nameField" :value="nameInput" class="bp__input" placeholder="branch-name" spellcheck="false" autocomplete="off" @input="onNameInput">
-            <p v-if="view === 'new'" class="bp__hint">Created and checked out right away.</p>
+            <input id="bp-name" ref="nameField" :value="nameInput" class="bp__input" :placeholder="terms.pathBranches ? 'task-name' : 'branch-name'" spellcheck="false" autocomplete="off" @input="onNameInput">
+            <p v-if="view === 'new' && newFullName" class="bp__hint">Created as <span class="bp__mono">{{ newFullName }}</span> and switched to right away.</p>
+            <p v-else-if="view === 'new'" class="bp__hint">Created and checked out right away.</p>
+            <p v-else-if="terms.pathBranches" class="bp__hint">Unity VCS renames a branch where it is: only the last part of the name changes.</p>
             <div class="bp__form-actions">
               <UiButton v-if="view === 'new'" size="sm" variant="primary" type="submit" :loading="busy === 'create'" :disabled="!nameInput.trim()">Create</UiButton>
-              <UiButton v-else size="sm" variant="primary" type="submit" :loading="busy === 'rename'" :disabled="!nameInput.trim() || nameInput.trim() === target?.b.name">Rename</UiButton>
+              <UiButton v-else size="sm" variant="primary" type="submit" :loading="busy === 'rename'" :disabled="!nameInput.trim() || nameInput.trim() === renameFrom">Rename</UiButton>
               <UiButton size="sm" variant="ghost" @click="backToList">Cancel</UiButton>
             </div>
           </form>
 
           <div v-else-if="view === 'delete' && target" class="bp__form">
             <p class="bp__form-title">Delete <span class="bp__mono">{{ target.b.name }}</span>?</p>
-            <p class="bp__hint">Only the local branch is removed. The remote branch, if any, stays.</p>
+            <p v-if="terms.remotes" class="bp__hint">Only the local branch is removed. The remote branch, if any, stays.</p>
+            <p v-else class="bp__hint">Removed from the repository for everyone. Unity VCS only deletes a branch that has no changesets or child branches.</p>
             <div class="bp__form-actions">
               <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? 'Delete anyway' : 'Delete' }}</UiButton>
               <UiButton size="sm" variant="ghost" @click="backToList">Cancel</UiButton>
@@ -548,7 +585,7 @@ defineExpose({ show, close })
               <template v-if="subRow.kind === 'local'">
                 <span v-if="subRow.b.isCurrent">Current branch</span>
                 <span v-if="subRow.b.upstream">{{ subRow.b.upstreamGone ? `${subRow.b.upstream} deleted on remote` : `tracks ${subRow.b.upstream}` }}</span>
-                <span v-else>not published</span>
+                <span v-else-if="terms.remotes">not published</span>
               </template>
               <span v-else>on {{ subRow.b.remote }}</span>
               <span v-if="subRow.b.time" class="tabular">{{ shortAgo(subRow.b.time, now()) }} ago</span>
@@ -564,7 +601,7 @@ defineExpose({ show, close })
             <span class="bp__icon"><GitBranchPlus /></span>
             <span class="bp__label">New branch from here…</span>
           </button>
-          <template v-if="!(subRow.kind === 'local' && subRow.b.isCurrent) && current">
+          <template v-if="terms.mergeRebase && !(subRow.kind === 'local' && subRow.b.isCurrent) && current">
             <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="merge(subRow)">
               <span class="bp__icon"><GitMerge /></span>
               <span class="bp__label">Merge into <span class="bp__mono">{{ current }}</span></span>

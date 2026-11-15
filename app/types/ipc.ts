@@ -5,13 +5,19 @@
  * Rust structs serialize with #[serde(rename_all = "camelCase")].
  */
 
+/** Version control a project is under: git, or Unity Version Control (formerly Plastic SCM, CLI `cm`). */
+export type VcsKind = 'git' | 'plastic'
+
 export interface ProjectInfo {
   /** Absolute path of the project folder. */
   path: string
   /** Folder name. */
   name: string
+  /** Under version control: a git repository or a Unity VCS workspace (see `vcs`). */
   isGit: boolean
-  /** Current branch, null when not a git repo or detached. */
+  /** Which version control; null (or missing, from older builds) when there is none. */
+  vcs?: VcsKind | null
+  /** Current branch (`/main/task` for Unity VCS), null when there is none or it is detached. */
   branch: string | null
   /** Unix ms, when it was last opened in Mango. */
   lastOpened: number
@@ -48,7 +54,12 @@ export interface AuthStatus {
   detail: string | null
 }
 
-/* ---------- git ---------- */
+/* ---------- source control ----------
+ * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
+ * the backend works out which one a folder is and answers in these shapes.
+ * Unity VCS has no staging area; "staged" files are the ones picked for the
+ * next checkin, remembered by the backend while it runs.
+ */
 
 export interface GitFile {
   /** Path relative to the repository root, forward slashes. */
@@ -63,22 +74,27 @@ export interface GitFile {
 }
 
 export interface GitStatus {
+  vcs: VcsKind
+  /** Unity VCS only: the repository the workspace is bound to, e.g. "game@org@cloud". */
+  repository: string | null
   isRepo: boolean
   /** Repository root (absolute), null when not a repo. */
   root: string | null
   /** Current branch, null when detached or not a repo. */
   branch: string | null
-  /** Short hash of HEAD, null on an unborn branch. */
+  /** Short hash of HEAD (Unity VCS: the loaded changeset number), null on an unborn branch. */
   head: string | null
   /** Upstream ref such as "origin/main", null when none is set. */
   upstream: string | null
   ahead: number
+  /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */
   behind: number
   files: GitFile[]
 }
 
 export interface GitCommit {
   hash: string
+  /** e.g. "a1b2c3d"; "cs:12" for a Unity VCS changeset. */
   shortHash: string
   subject: string
   author: string
@@ -182,9 +198,12 @@ export interface Commands {
   git_unstage: [{ path: string; files: string[] }, void]
   /** Throw away working-tree changes: restores tracked files, deletes untracked ones. */
   git_discard: [{ path: string; files: string[] }, void]
-  /** Commits what is staged. Returns the new short hash. */
+  /** Commits what is staged (Unity VCS: checks it in; no amend). Returns the new short hash, or "cs:12". */
   git_commit: [{ path: string; message: string; amend: boolean }, string]
-  /** These three return git's output for display. Push sets the upstream when there is none. */
+  /**
+   * These three return git's output for display. Push sets the upstream when there is none.
+   * Unity VCS: pull is `cm update`; fetch and push are refused (checkins go straight to the server).
+   */
   git_fetch: [{ path: string }, string]
   git_pull: [{ path: string }, string]
   git_push: [{ path: string }, string]
@@ -196,7 +215,10 @@ export interface Commands {
 
   /** Local and remote branches, newest commit first. */
   git_branch_list: [{ path: string }, GitBranchList]
-  /** Create `name` at `from` (HEAD when null) and optionally switch to it. */
+  /**
+   * Create `name` at `from` (HEAD when null) and optionally switch to it.
+   * Unity VCS: a name without a leading `/` becomes a child of `from` (or the current branch).
+   */
   git_branch_create: [{ path: string; name: string; from: string | null; checkout: boolean }, void]
   /** Check out a remote branch as a local tracking branch. Returns the local branch name. */
   git_checkout_remote: [{ path: string; branch: string }, string]
@@ -205,7 +227,10 @@ export interface Commands {
   /** Rebase the current branch onto `onto`. Returns git's output. */
   git_rebase: [{ path: string; onto: string }, string]
   git_branch_rename: [{ path: string; from: string; to: string }, void]
-  /** Without `force`, an unmerged branch is refused with an error containing "not fully merged". */
+  /**
+   * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
+   * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
+   */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
 }
 

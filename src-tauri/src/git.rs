@@ -11,14 +11,14 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Local commands finish in milliseconds; this only catches a stuck process.
-const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
+pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fetch, pull, push, and commit (hooks may run a test suite).
-const SLOW_TIMEOUT: Duration = Duration::from_secs(600);
+pub(crate) const SLOW_TIMEOUT: Duration = Duration::from_secs(600);
 /// A diff larger than this is cut off with a marker line.
-const DIFF_CAP: usize = 400 * 1024;
+pub(crate) const DIFF_CAP: usize = 400 * 1024;
 /// The last line of a diff that was cut off at [`DIFF_CAP`].
 const DIFF_TRUNCATED: &str = "\\ Diff truncated at 400 KB";
 /// How much of stderr is kept for error messages.
@@ -41,9 +41,22 @@ pub struct GitFile {
     pub conflicted: bool,
 }
 
+/// Which version control a folder is under.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Vcs {
+    #[default]
+    Git,
+    /// Unity Version Control (formerly Plastic SCM), driven through `cm`.
+    Plastic,
+}
+
 #[derive(Debug, Clone, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct GitStatus {
+    pub vcs: Vcs,
+    /// Unity VCS only: the repository the workspace is bound to, e.g. "game@org@cloud".
+    pub repository: Option<String>,
     pub is_repo: bool,
     pub root: Option<String>,
     pub branch: Option<String>,
@@ -136,7 +149,7 @@ fn side(code: u8) -> Option<String> {
     }
 }
 
-fn lossy(bytes: &[u8]) -> String {
+pub(crate) fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
@@ -281,7 +294,7 @@ fn is_new_file_diff(diff: &str) -> bool {
 }
 
 /// A path relative to the repository root that cannot escape it.
-fn clean_rel(file: &str) -> Result<&str, String> {
+pub(crate) fn clean_rel(file: &str) -> Result<&str, String> {
     let bad = || format!("\"{file}\" is not a path inside the repository");
     if file.is_empty() || file.contains('\0') || file.starts_with(['/', '\\']) {
         return Err(bad());
@@ -299,7 +312,7 @@ fn clean_rel(file: &str) -> Result<&str, String> {
 
 /// Split a path list so no single command line gets too long (Windows caps
 /// it at 32k characters).
-fn chunks(paths: &[String]) -> Vec<&[String]> {
+pub(crate) fn chunks(paths: &[String]) -> Vec<&[String]> {
     let mut out = Vec::new();
     let (mut start, mut bytes) = (0, 0);
     for (i, p) in paths.iter().enumerate() {
@@ -317,7 +330,7 @@ fn chunks(paths: &[String]) -> Vec<&[String]> {
 }
 
 /// Git redraws progress with `\r`; keep only the final state of each line.
-fn tidy_output(text: &str) -> String {
+pub(crate) fn tidy_output(text: &str) -> String {
     text.lines()
         .map(|l| l.rsplit('\r').next().unwrap_or(l).trim_end())
         .filter(|l| !l.is_empty())
@@ -381,7 +394,7 @@ fn parse_refs(text: &str, current: Option<&str>) -> (Vec<GitLocalBranch>, Vec<Gi
 }
 
 /// A ref name that is safe to hand to git as an argument.
-fn safe_ref(name: &str) -> Result<&str, String> {
+pub(crate) fn safe_ref(name: &str) -> Result<&str, String> {
     let name = name.trim();
     if name.is_empty() {
         return Err("Enter a branch name".into());
@@ -396,30 +409,30 @@ fn safe_ref(name: &str) -> Result<&str, String> {
 // Running git
 // ---------------------------------------------------------------------------
 
-struct Output {
-    code: Option<i32>,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+pub(crate) struct Output {
+    pub code: Option<i32>,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
     /// stdout hit its cap and the rest was dropped.
-    truncated: bool,
+    pub truncated: bool,
 }
 
 impl Output {
-    fn ok(&self) -> bool {
+    pub(crate) fn ok(&self) -> bool {
         self.code == Some(0)
     }
-    fn text(&self) -> String {
+    pub(crate) fn text(&self) -> String {
         lossy(&self.stdout)
     }
-    fn line(&self) -> String {
+    pub(crate) fn line(&self) -> String {
         self.text().trim_end_matches(['\n', '\r']).to_string()
     }
     /// stderr then stdout, cleaned up for display.
-    fn combined(&self) -> String {
+    pub(crate) fn combined(&self) -> String {
         tidy_output(&format!("{}\n{}", lossy(&self.stderr), lossy(&self.stdout)))
     }
     /// A human-readable reason for a failed command.
-    fn error(&self, what: &str) -> String {
+    pub(crate) fn error(&self, what: &str) -> String {
         let detail = self.combined();
         if !detail.is_empty() {
             return detail;
@@ -434,7 +447,7 @@ impl Output {
 /// Read up to `cap` bytes. With `drain`, keep reading (and dropping) after
 /// the cap so the writer never blocks; without it, stop, which closes the
 /// pipe and ends the writer.
-fn read_capped(mut source: impl Read, cap: usize, drain: bool) -> (Vec<u8>, bool) {
+pub(crate) fn read_capped(mut source: impl Read, cap: usize, drain: bool) -> (Vec<u8>, bool) {
     let mut out = Vec::new();
     let mut truncated = false;
     let mut buf = [0u8; 16 * 1024];
@@ -456,6 +469,68 @@ fn read_capped(mut source: impl Read, cap: usize, drain: bool) -> (Vec<u8>, bool
         }
     }
     (out, truncated)
+}
+
+/// Run `cmd` to completion with no terminal: stdin from `stdin` (or
+/// nothing), stdout kept up to `cap` bytes, and the process stopped after
+/// `timeout`. `program` names it in messages; `missing` is the error when it
+/// cannot be found. Shared by the git and Unity VCS backends.
+pub(crate) fn run_process(
+    mut cmd: Command,
+    mut stdin: Option<Vec<u8>>,
+    cap: usize,
+    timeout: Duration,
+    program: &str,
+    missing: &str,
+) -> Result<Output, String> {
+    cmd.stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => missing.to_string(),
+        _ => format!("Could not run {program}: {e}"),
+    })?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let out = std::thread::spawn(move || match stdout {
+        Some(s) => read_capped(s, cap, false),
+        None => (Vec::new(), false),
+    });
+    let err = std::thread::spawn(move || match stderr {
+        Some(s) => read_capped(s, STDERR_CAP, true).0,
+        None => Vec::new(),
+    });
+    if let (Some(mut pipe), Some(bytes)) = (child.stdin.take(), stdin.take()) {
+        // A command that exits early closes the pipe; its error says why.
+        let _ = pipe.write_all(&bytes);
+    }
+
+    let deadline = Instant::now() + timeout;
+    let mut nap = Duration::from_millis(1);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(nap);
+                nap = (nap * 2).min(Duration::from_millis(20));
+            }
+            Ok(None) => {
+                // The readers are left to finish on their own: a helper
+                // process may still hold the pipes open.
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!(
+                    "{program} did not finish within {} seconds and was stopped",
+                    timeout.as_secs()
+                ));
+            }
+            Err(e) => return Err(format!("Could not wait for {program}: {e}")),
+        }
+    };
+    let (stdout, truncated) = out.join().unwrap_or_default();
+    let stderr = err.join().unwrap_or_default();
+    Ok(Output { code: status.code(), stdout, stderr, truncated })
 }
 
 /// The git binary and a PATH on which it can find its helpers (ssh,
@@ -527,57 +602,8 @@ impl Git {
         self
     }
 
-    fn run(mut self) -> Result<Output, String> {
-        self.cmd
-            .stdin(if self.stdin.is_some() { Stdio::piped() } else { Stdio::null() })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = self.cmd.spawn().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => "git is not installed or not on PATH".to_string(),
-            _ => format!("Could not run git: {e}"),
-        })?;
-
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
-        let cap = self.cap;
-        let out = std::thread::spawn(move || match stdout {
-            Some(s) => read_capped(s, cap, false),
-            None => (Vec::new(), false),
-        });
-        let err = std::thread::spawn(move || match stderr {
-            Some(s) => read_capped(s, STDERR_CAP, true).0,
-            None => Vec::new(),
-        });
-        if let (Some(mut pipe), Some(bytes)) = (child.stdin.take(), self.stdin.take()) {
-            // A command that exits early closes the pipe; its error says why.
-            let _ = pipe.write_all(&bytes);
-        }
-
-        let deadline = Instant::now() + self.timeout;
-        let mut nap = Duration::from_millis(1);
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(nap);
-                    nap = (nap * 2).min(Duration::from_millis(20));
-                }
-                Ok(None) => {
-                    // The readers are left to finish on their own: a helper
-                    // process may still hold the pipes open.
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(format!(
-                        "git did not finish within {} seconds and was stopped",
-                        self.timeout.as_secs()
-                    ));
-                }
-                Err(e) => return Err(format!("Could not wait for git: {e}")),
-            }
-        };
-        let (stdout, truncated) = out.join().unwrap_or_default();
-        let stderr = err.join().unwrap_or_default();
-        Ok(Output { code: status.code(), stdout, stderr, truncated })
+    fn run(self) -> Result<Output, String> {
+        run_process(self.cmd, self.stdin, self.cap, self.timeout, "git", "git is not installed or not on PATH")
     }
 
     /// Run and turn a non-zero exit into an error.
@@ -591,7 +617,7 @@ impl Git {
     }
 }
 
-async fn blocking<T, F>(f: F) -> Result<T, String>
+pub(crate) async fn blocking<T, F>(f: F) -> Result<T, String>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, String> + Send + 'static,
@@ -605,7 +631,7 @@ where
 // Repository state
 // ---------------------------------------------------------------------------
 
-fn existing_dir(path: &str) -> Result<PathBuf, String> {
+pub(crate) fn existing_dir(path: &str) -> Result<PathBuf, String> {
     let dir = PathBuf::from(path.trim());
     if path.trim().is_empty() {
         return Err("No folder given".into());
@@ -668,13 +694,15 @@ fn has_head(root: &Path) -> Result<bool, String> {
         .ok())
 }
 
-fn status_of(path: &str) -> Result<GitStatus, String> {
+pub(crate) fn status_of(path: &str) -> Result<GitStatus, String> {
     let dir = existing_dir(path)?;
     let Some((root, head)) = locate(&dir)? else {
         return Ok(GitStatus::default());
     };
     let parsed = read_status(&dir, true)?;
     Ok(GitStatus {
+        vcs: Vcs::Git,
+        repository: None,
         is_repo: true,
         root: Some(root),
         branch: parsed.branch,
@@ -694,7 +722,7 @@ fn status_of(path: &str) -> Result<GitStatus, String> {
 // Diff
 // ---------------------------------------------------------------------------
 
-fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, String> {
+pub(crate) fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, String> {
     let root = require_root(path)?;
     let file = clean_rel(file)?;
     let diff = |paths: &[&str]| -> Result<String, String> {
@@ -764,7 +792,7 @@ fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, String> {
 // Staging and discarding
 // ---------------------------------------------------------------------------
 
-fn stage(path: &str, files: &[String]) -> Result<(), String> {
+pub(crate) fn stage(path: &str, files: &[String]) -> Result<(), String> {
     let root = require_root(path)?;
     if files.is_empty() {
         git(&root).args(["add", "-A"]).run_ok("git add")?;
@@ -779,7 +807,7 @@ fn stage(path: &str, files: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn unstage(path: &str, files: &[String]) -> Result<(), String> {
+pub(crate) fn unstage(path: &str, files: &[String]) -> Result<(), String> {
     let root = require_root(path)?;
     for file in files {
         clean_rel(file)?;
@@ -820,7 +848,7 @@ fn unstage(path: &str, files: &[String]) -> Result<(), String> {
 }
 
 /// Delete an untracked file, then any folders that only existed to hold it.
-fn remove_untracked(root: &Path, rel: &str) -> Result<(), String> {
+pub(crate) fn remove_untracked(root: &Path, rel: &str) -> Result<(), String> {
     let target = root.join(clean_rel(rel)?);
     match fs::symlink_metadata(&target) {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -855,7 +883,7 @@ fn remove_untracked(root: &Path, rel: &str) -> Result<(), String> {
 ///
 /// An empty list means every working-tree change; staged-only files and
 /// conflicts are left alone.
-fn discard(path: &str, files: &[String]) -> Result<(), String> {
+pub(crate) fn discard(path: &str, files: &[String]) -> Result<(), String> {
     let root = require_root(path)?;
     for file in files {
         clean_rel(file)?;
@@ -942,7 +970,7 @@ fn short_head(root: &Path) -> Result<String, String> {
         .line())
 }
 
-fn commit(path: &str, message: &str, amend: bool) -> Result<String, String> {
+pub(crate) fn commit(path: &str, message: &str, amend: bool) -> Result<String, String> {
     let root = require_root(path)?;
     let message = message.trim();
     if message.is_empty() && !amend {
@@ -1015,7 +1043,7 @@ fn explain_sync_failure(detail: String) -> String {
     format!("{lead}\n\n{detail}")
 }
 
-fn fetch(path: &str) -> Result<String, String> {
+pub(crate) fn fetch(path: &str) -> Result<String, String> {
     let root = require_root(path)?;
     if remotes(&root)?.is_empty() {
         return Err(NO_REMOTE.into());
@@ -1027,7 +1055,7 @@ fn fetch(path: &str) -> Result<String, String> {
     Ok(out.combined())
 }
 
-fn pull(path: &str) -> Result<String, String> {
+pub(crate) fn pull(path: &str) -> Result<String, String> {
     let root = require_root(path)?;
     if remotes(&root)?.is_empty() {
         return Err(NO_REMOTE.into());
@@ -1062,7 +1090,7 @@ fn pull(path: &str) -> Result<String, String> {
     Err(explain_sync_failure(out.error("git pull")))
 }
 
-fn push(path: &str) -> Result<String, String> {
+pub(crate) fn push(path: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let status = read_status(&root, false)?;
     let Some(branch) = status.branch else {
@@ -1097,7 +1125,7 @@ fn push(path: &str) -> Result<String, String> {
     Ok(out.combined())
 }
 
-fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
+pub(crate) fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
     let root = require_root(path)?;
     if !has_head(&root)? {
         return Ok(Vec::new());
@@ -1111,7 +1139,7 @@ fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
     Ok(parse_log(&out.text()))
 }
 
-fn branches(path: &str) -> Result<GitBranches, String> {
+pub(crate) fn branches(path: &str) -> Result<GitBranches, String> {
     let root = require_root(path)?;
     let head = git(&root)
         .read_only()
@@ -1133,7 +1161,7 @@ fn branches(path: &str) -> Result<GitBranches, String> {
     Ok(GitBranches { current, local })
 }
 
-fn checkout(path: &str, branch: &str, create: bool) -> Result<(), String> {
+pub(crate) fn checkout(path: &str, branch: &str, create: bool) -> Result<(), String> {
     let root = require_root(path)?;
     let branch = branch.trim();
     if branch.is_empty() {
@@ -1158,7 +1186,7 @@ fn checkout(path: &str, branch: &str, create: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn branch_list(path: &str) -> Result<GitBranchList, String> {
+pub(crate) fn branch_list(path: &str) -> Result<GitBranchList, String> {
     let root = require_root(path)?;
     let head = git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]).run()?;
     let current = Some(head.line()).filter(|b| head.ok() && !b.is_empty());
@@ -1192,7 +1220,7 @@ fn valid_new_branch(root: &Path, name: &str) -> Result<(), String> {
 }
 
 /// Create `name` at `from` (or at HEAD) and optionally switch to it.
-fn branch_create(path: &str, name: &str, from: Option<&str>, checkout: bool) -> Result<(), String> {
+pub(crate) fn branch_create(path: &str, name: &str, from: Option<&str>, checkout: bool) -> Result<(), String> {
     let root = require_root(path)?;
     let name = safe_ref(name)?;
     valid_new_branch(&root, name)?;
@@ -1207,7 +1235,7 @@ fn branch_create(path: &str, name: &str, from: Option<&str>, checkout: bool) -> 
 
 /// Check out a remote branch such as "origin/feature": switch to the local
 /// branch of that name if there is one, otherwise create it tracking the remote.
-fn checkout_remote(path: &str, branch: &str) -> Result<String, String> {
+pub(crate) fn checkout_remote(path: &str, branch: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let branch = safe_ref(branch)?;
     let remote = remotes(&root)?
@@ -1250,7 +1278,7 @@ fn conflict_report(root: &Path, what: &str, abort: &str) -> Option<String> {
 }
 
 /// Merge `branch` into the current branch.
-fn merge(path: &str, branch: &str) -> Result<String, String> {
+pub(crate) fn merge(path: &str, branch: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let branch = safe_ref(branch)?;
     let out = git(&root).slow().args(["merge", "--no-edit"]).arg(branch).run()?;
@@ -1261,7 +1289,7 @@ fn merge(path: &str, branch: &str) -> Result<String, String> {
 }
 
 /// Rebase the current branch onto `onto`.
-fn rebase(path: &str, onto: &str) -> Result<String, String> {
+pub(crate) fn rebase(path: &str, onto: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let onto = safe_ref(onto)?;
     let out = git(&root).slow().arg("rebase").arg(onto).run()?;
@@ -1271,7 +1299,7 @@ fn rebase(path: &str, onto: &str) -> Result<String, String> {
     Err(conflict_report(&root, "Rebase", "git rebase --abort").unwrap_or_else(|| out.error("git rebase")))
 }
 
-fn branch_rename(path: &str, from: &str, to: &str) -> Result<(), String> {
+pub(crate) fn branch_rename(path: &str, from: &str, to: &str) -> Result<(), String> {
     let root = require_root(path)?;
     let from = safe_ref(from)?;
     let to = safe_ref(to)?;
@@ -1283,7 +1311,7 @@ fn branch_rename(path: &str, from: &str, to: &str) -> Result<(), String> {
 /// Delete a local branch. Without `force`, git refuses branches whose commits
 /// are not merged anywhere; that refusal comes back as an error mentioning
 /// "not fully merged" so the UI can offer to delete anyway.
-fn branch_delete(path: &str, branch: &str, force: bool) -> Result<(), String> {
+pub(crate) fn branch_delete(path: &str, branch: &str, force: bool) -> Result<(), String> {
     let root = require_root(path)?;
     let branch = safe_ref(branch)?;
     git(&root)
@@ -1294,7 +1322,7 @@ fn branch_delete(path: &str, branch: &str, force: bool) -> Result<(), String> {
     Ok(())
 }
 
-fn init(path: &str) -> Result<(), String> {
+pub(crate) fn init(path: &str) -> Result<(), String> {
     let dir = existing_dir(path)?;
     if locate(&dir)?.is_some() {
         return Ok(());
@@ -1310,113 +1338,6 @@ fn init(path: &str) -> Result<(), String> {
     }
     cmd.args(["init", "-q"]).run_ok("git init")?;
     Ok(())
-}
-
-// ---------------------------------------------------------------------------
-// Commands
-// ---------------------------------------------------------------------------
-
-#[tauri::command]
-pub async fn git_status(path: String) -> Result<GitStatus, String> {
-    blocking(move || status_of(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_diff(path: String, file: String, staged: bool) -> Result<String, String> {
-    blocking(move || diff_of(&path, &file, staged)).await
-}
-
-#[tauri::command]
-pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), String> {
-    blocking(move || stage(&path, &files)).await
-}
-
-#[tauri::command]
-pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), String> {
-    blocking(move || unstage(&path, &files)).await
-}
-
-#[tauri::command]
-pub async fn git_discard(path: String, files: Vec<String>) -> Result<(), String> {
-    blocking(move || discard(&path, &files)).await
-}
-
-#[tauri::command]
-pub async fn git_commit(path: String, message: String, amend: bool) -> Result<String, String> {
-    blocking(move || commit(&path, &message, amend)).await
-}
-
-#[tauri::command]
-pub async fn git_fetch(path: String) -> Result<String, String> {
-    blocking(move || fetch(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_pull(path: String) -> Result<String, String> {
-    blocking(move || pull(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_push(path: String) -> Result<String, String> {
-    blocking(move || push(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_log(path: String, limit: u32) -> Result<Vec<GitCommit>, String> {
-    blocking(move || log(&path, limit)).await
-}
-
-#[tauri::command]
-pub async fn git_branches(path: String) -> Result<GitBranches, String> {
-    blocking(move || branches(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_checkout(path: String, branch: String, create: bool) -> Result<(), String> {
-    blocking(move || checkout(&path, &branch, create)).await
-}
-
-/// Local and remote branches with upstream state, newest commit first.
-#[tauri::command]
-pub async fn git_branch_list(path: String) -> Result<GitBranchList, String> {
-    blocking(move || branch_list(&path)).await
-}
-
-#[tauri::command]
-pub async fn git_branch_create(path: String, name: String, from: Option<String>, checkout: bool) -> Result<(), String> {
-    blocking(move || branch_create(&path, &name, from.as_deref(), checkout)).await
-}
-
-/// Returns the name of the local branch that is now checked out.
-#[tauri::command]
-pub async fn git_checkout_remote(path: String, branch: String) -> Result<String, String> {
-    blocking(move || checkout_remote(&path, &branch)).await
-}
-
-#[tauri::command]
-pub async fn git_merge(path: String, branch: String) -> Result<String, String> {
-    blocking(move || merge(&path, &branch)).await
-}
-
-#[tauri::command]
-pub async fn git_rebase(path: String, onto: String) -> Result<String, String> {
-    blocking(move || rebase(&path, &onto)).await
-}
-
-#[tauri::command]
-pub async fn git_branch_rename(path: String, from: String, to: String) -> Result<(), String> {
-    blocking(move || branch_rename(&path, &from, &to)).await
-}
-
-#[tauri::command]
-pub async fn git_branch_delete(path: String, branch: String, force: bool) -> Result<(), String> {
-    blocking(move || branch_delete(&path, &branch, force)).await
-}
-
-/// `git init` in `path`. Does nothing when it is already inside a repository.
-#[tauri::command]
-pub async fn git_init(path: String) -> Result<(), String> {
-    blocking(move || init(&path)).await
 }
 
 #[cfg(test)]

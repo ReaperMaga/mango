@@ -80,9 +80,10 @@ const mock = (() => {
   const home = '/home/you'
 
   let recent: ProjectInfo[] = [
-    { path: `${home}/Projects/mango`, name: 'mango', isGit: true, branch: 'main', lastOpened: now - 1000 * 60 * 4 },
-    { path: `${home}/Projects/orchard-api`, name: 'orchard-api', isGit: true, branch: 'feat/rate-limits', lastOpened: now - 1000 * 60 * 60 * 5 },
-    { path: `${home}/Projects/pulp-ui`, name: 'pulp-ui', isGit: true, branch: 'main', lastOpened: now - 1000 * 60 * 60 * 26 },
+    { path: `${home}/Projects/mango`, name: 'mango', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 4 },
+    { path: `${home}/Projects/orchard-api`, name: 'orchard-api', isGit: true, vcs: 'git', branch: 'feat/rate-limits', lastOpened: now - 1000 * 60 * 60 * 5 },
+    { path: `${home}/Projects/pulp-ui`, name: 'pulp-ui', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 60 * 26 },
+    { path: `${home}/Projects/fruit-stand`, name: 'fruit-stand', isGit: true, vcs: 'plastic', branch: '/main/feature/inventory', lastOpened: now - 1000 * 60 * 60 * 30 },
     { path: `${home}/Projects/notes`, name: 'notes', isGit: false, branch: null, lastOpened: now - 1000 * 60 * 60 * 24 * 6 },
   ]
 

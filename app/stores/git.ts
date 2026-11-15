@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import type { GitBranches, GitCommit, GitFile, GitStatus } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
+import { vcsTerms } from '~/utils/vcs'
 
 /** The one action that can run at a time. */
 export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init'
@@ -149,12 +150,14 @@ export const useGit = defineStore('git', {
       }
     },
 
-    /** Keep the project's branch (titlebar, pane headers) in step with what git says. */
+    /** Keep the project's branch (titlebar, pane headers) in step with what git or Unity VCS says. */
     syncProject(path: string, status: GitStatus) {
       const project = useWorkspace().openProjects.find(p => p.path === path)
-      if (project && (project.branch !== status.branch || project.isGit !== status.isRepo)) {
+      const vcs = status.isRepo ? status.vcs : null
+      if (project && (project.branch !== status.branch || project.isGit !== status.isRepo || (project.vcs ?? null) !== vcs)) {
         project.branch = status.branch
         project.isGit = status.isRepo
+        project.vcs = vcs
       }
     },
 
@@ -299,7 +302,7 @@ export const useGit = defineStore('git', {
           await call('git_stage', { path, files: conflicts ? files.filter(f => !f.conflicted).map(f => f.path) : [] })
         }
         const hash = await call('git_commit', { path, message, amend })
-        return `${amend ? 'Amended' : 'Committed'} ${hash}`
+        return `${amend ? 'Amended' : vcsTerms(repo.status?.vcs).committed} ${hash}`
       })
       if (ok) {
         repo.message = ''
@@ -312,6 +315,7 @@ export const useGit = defineStore('git', {
     fetch(path: string) {
       return this.run(path, 'fetch', async () => (await call('git_fetch', { path })) || 'Fetched. Nothing new on the remote.')
     },
+    /** Git pull; for Unity VCS, `cm update`. */
     pull(path: string) {
       return this.run(path, 'pull', async () => (await call('git_pull', { path })) || 'Already up to date.')
     },

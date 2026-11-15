@@ -63,7 +63,9 @@ app/
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
+  vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches
   git.rs             everything the Changes view and branch popup need (shells out to git)
+  plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   bin.rs             finding binaries on PATH, `hide_console`
@@ -109,6 +111,10 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Ref names from the UI go through `safe_ref` before reaching git. File names are literal
   (`GIT_LITERAL_PATHSPECS=1`). `GIT_TERMINAL_PROMPT=0` so nothing waits on a prompt nobody sees.
 - Discard and delete destroy work: the UI asks first (two-step confirm), and the backend refuses unsafe cases.
+- Unity VCS (`plastic.rs`): branch names go through `safe_branch`; `cm` never gets a prompt (`--noinput`,
+  `PLASTICEDITOR` removed). Read structured output with `--xml --encoding=utf-8`: plain `cm` output is in the
+  console code page and mangles non-ASCII names. Prove changes with the ignored `plastic::tests::real_cm` test
+  against a throwaway workspace (`MANGO_CM_WORKSPACE`), never a real one.
 
 ## Design: use the impeccable skill
 

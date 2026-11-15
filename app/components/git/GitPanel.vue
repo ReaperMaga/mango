@@ -11,8 +11,10 @@ import { useThreads } from '~/stores/threads'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
+import { units, vcsTerms } from '~/utils/vcs'
 
-const POLL_MS = 4000
+/** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
+const TICK_MS = 4000
 
 const ws = useWorkspace()
 const git = useGit()
@@ -22,6 +24,8 @@ const path = computed(() => ws.activeProjectPath)
 const repo = computed(() => git.repo(path.value))
 const status = computed(() => repo.value?.status ?? null)
 const isRepo = computed(() => !!status.value?.isRepo)
+/** Words and actions for git or Unity VCS. */
+const terms = computed(() => vcsTerms(status.value?.vcs))
 const staged = computed(() => git.stagedFiles(path.value))
 const changes = computed(() => git.changedFiles(path.value))
 const conflicts = computed(() => changes.value.filter(f => f.conflicted).length)
@@ -44,12 +48,15 @@ function onVisible() {
   if (document.visibilityState === 'visible') void refresh()
 }
 let poll: ReturnType<typeof setInterval> | undefined
+let lastPoll = 0
 onMounted(() => {
   window.addEventListener('focus', refresh)
   document.addEventListener('visibilitychange', onVisible)
   poll = setInterval(() => {
-    if (path.value && document.visibilityState === 'visible') git.poll(path.value)
-  }, POLL_MS)
+    if (!path.value || document.visibilityState !== 'visible' || Date.now() - lastPoll < terms.value.pollMs - 100) return
+    lastPoll = Date.now()
+    git.poll(path.value)
+  }, TICK_MS)
 })
 onBeforeUnmount(() => {
   window.removeEventListener('focus', refresh)
@@ -141,6 +148,13 @@ const upstream = computed(() => status.value?.upstream ?? null)
 const ahead = computed(() => status.value?.ahead ?? 0)
 const behind = computed(() => status.value?.behind ?? 0)
 const pullTitle = computed(() => (behind.value ? `Pull ${plural(behind.value, 'commit')} from ${upstream.value}` : `Pull from ${upstream.value}`))
+/** Unity VCS: bring the workspace to the newest changeset on its branch. */
+const updateTitle = computed(() => (behind.value
+  ? `Update: ${units(behind.value, terms.value)} on ${status.value?.branch ?? 'the branch'} you don't have yet`
+  : 'Update the workspace to the latest changeset'))
+/** Unity VCS: the repository the workspace is bound to, without the server part. */
+const repository = computed(() => status.value?.repository ?? null)
+const repositoryName = computed(() => repository.value?.split('@')[0] ?? null)
 const pushTitle = computed(() => (ahead.value ? `Push ${plural(ahead.value, 'commit')} to ${upstream.value}` : `Push to ${upstream.value} (nothing new)`))
 const canPublish = computed(() => !!status.value?.branch && !!status.value?.head)
 const publishTitle = computed(() => {
@@ -173,8 +187,13 @@ const canCommit = computed(() => !git.busy && !!message.value.trim() && conflict
 const commitHint = computed(() => {
   if (conflicts.value) return { text: `Resolve ${plural(conflicts.value, 'conflict')} first`, warn: true }
   if (staged.value.length) return { text: `${plural(staged.value.length, 'file')} staged`, warn: false }
-  if (changes.value.length) return { text: `Nothing staged. Stages ${changes.value.length === 1 ? 'the 1 change' : `all ${changes.value.length} changes`}.`, warn: false }
-  return { text: 'Nothing to commit', warn: false }
+  const all = changes.value.length === 1 ? 'the 1 change' : `all ${changes.value.length} changes`
+  if (changes.value.length) return { text: terms.value.amend ? `Nothing staged. Stages ${all}.` : `Nothing staged. Checks in ${all}.`, warn: false }
+  return { text: `Nothing to ${terms.value.commit.toLowerCase()}`, warn: false }
+})
+const commitTitle = computed(() => {
+  const verb = terms.value.commit.toLowerCase()
+  return commitsAll.value ? `Stage everything and ${verb}` : `${terms.value.commit} staged files`
 })
 const showCommit = computed(() => isRepo.value && (!clean.value || !!message.value))
 
@@ -259,7 +278,14 @@ function onListKey(e: KeyboardEvent) {
     <header class="gp__head">
       <h2 class="gp__title">Changes</h2>
       <div class="gp__tools">
-        <template v-if="isRepo">
+        <template v-if="isRepo && !terms.remotes">
+          <button type="button" class="gp__sync" :aria-label="updateTitle" :title="updateTitle" :disabled="waiting" @click="path && git.pull(path)">
+            <span v-if="running('pull')" class="gp__spin" aria-hidden="true" />
+            <ArrowDown v-else />
+            <span v-if="behind" class="gp__sync-n tabular">{{ behind }}</span>
+          </button>
+        </template>
+        <template v-else-if="isRepo">
           <UiIconButton label="Fetch from the remote" :disabled="waiting" @click="path && git.fetch(path)">
             <span v-if="running('fetch')" class="gp__spin" aria-hidden="true" />
             <CloudDownload v-else />
@@ -302,8 +328,9 @@ function onListKey(e: KeyboardEvent) {
           </template>
         </GitBranchPopup>
         <span v-if="upstream" class="gp__upstream" :title="`Tracks ${upstream}`">{{ upstream }}</span>
+        <span v-else-if="repository" class="gp__upstream" :title="`Unity VCS repository ${repository}`">{{ repositoryName }}</span>
         <UiButton
-          v-else-if="status?.branch"
+          v-else-if="status?.branch && terms.remotes"
           class="gp__publish"
           size="sm"
           variant="ghost"
@@ -330,8 +357,8 @@ function onListKey(e: KeyboardEvent) {
         v-model="message"
         class="gp__message"
         rows="2"
-        placeholder="Commit message"
-        aria-label="Commit message"
+        :placeholder="terms.message"
+        :aria-label="terms.message"
         spellcheck="true"
         @keydown="onMessageKey"
       />
@@ -344,11 +371,11 @@ function onListKey(e: KeyboardEvent) {
             type="submit"
             :loading="running('commit')"
             :disabled="!canCommit"
-            :title="`${commitsAll ? 'Stage everything and commit' : 'Commit staged files'} (${mod}+Enter)`"
+            :title="`${commitTitle} (${mod}+Enter)`"
           >
-            {{ commitsAll ? 'Commit all' : 'Commit' }}
+            {{ commitsAll ? terms.commitAll : terms.commit }}
           </UiButton>
-          <UiMenu :items="commitMenu" placement="bottom-end" :width="264" label="More commit options">
+          <UiMenu v-if="terms.amend" :items="commitMenu" placement="bottom-end" :width="264" label="More commit options">
             <template #default="{ toggle, open: menuOpen }">
               <UiIconButton size="sm" label="More commit options" :active="menuOpen" class="gp__commit-more" @click="toggle"><ChevronDown /></UiIconButton>
             </template>
@@ -462,7 +489,7 @@ function onListKey(e: KeyboardEvent) {
                 <span class="gp__when tabular">{{ shortAgo(c.time, now) }}</span>
               </li>
             </ul>
-            <p v-else class="gp__quiet">{{ repo.logHead === undefined ? 'Reading history…' : 'No commits yet' }}</p>
+            <p v-else class="gp__quiet">{{ repo.logHead === undefined ? 'Reading history…' : `No ${terms.unit}s yet` }}</p>
           </template>
         </section>
       </template>
