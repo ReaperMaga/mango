@@ -1,0 +1,79 @@
+<script setup lang="ts">
+import { Marked } from 'marked'
+
+/**
+ * Renders agent markdown. Raw HTML in the source is escaped, never injected:
+ * agent output is untrusted text.
+ */
+const props = defineProps<{ text: string; streaming?: boolean }>()
+
+const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
+const md = new Marked({
+  gfm: true,
+  breaks: false,
+  renderer: {
+    html({ text }) { return escape(text) },
+    link({ href, text }) {
+      const safe = /^(https?:|mailto:)/i.test(href) ? href : '#'
+      return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${text}</a>`
+    },
+    image({ text }) { return escape(text) },
+  },
+})
+
+const html = computed(() => md.parse(props.text) as string)
+</script>
+
+<template>
+  <div class="md selectable" :class="{ 'is-streaming': streaming }" v-html="html" />
+</template>
+
+<style scoped>
+.md { font-size: var(--text-md); line-height: var(--leading-chat); color: var(--fg); overflow-wrap: anywhere; }
+.md :deep(> *:first-child) { margin-top: 0; }
+.md :deep(> *:last-child) { margin-bottom: 0; }
+.md :deep(p) { margin: 0 0 0.7em; }
+.md :deep(ul), .md :deep(ol) { margin: 0 0 0.8em; padding-left: 1.3em; }
+.md :deep(li) { margin: 0.2em 0; }
+.md :deep(li::marker) { color: var(--fg-faint); }
+.md :deep(h1), .md :deep(h2), .md :deep(h3) { font-size: var(--text-lg); font-weight: 640; margin: 1.2em 0 0.4em; letter-spacing: -0.01em; }
+.md :deep(strong) { font-weight: 640; }
+.md :deep(code) {
+  font-size: 0.88em;
+  padding: 0.1em 0.38em;
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+  border: 1px solid var(--line-soft);
+}
+.md :deep(pre) {
+  margin: 0 0 0.8em;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  overflow-x: auto;
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+.md :deep(pre code) { padding: 0; border: 0; background: none; font-size: inherit; }
+.md :deep(blockquote) { margin: 0 0 0.8em; padding-left: var(--space-3); border-left: 1px solid var(--line-strong); color: var(--fg-muted); }
+.md :deep(a) { color: var(--accent-ink); }
+.md :deep(hr) { border: 0; height: 1px; background: var(--line-soft); margin: 1.2em 0; }
+.md :deep(table) { border-collapse: collapse; margin: 0 0 0.8em; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.md :deep(th), .md :deep(td) { padding: 4px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+.md :deep(th) { color: var(--fg-muted); font-weight: 600; }
+
+.md.is-streaming :deep(> *:last-child)::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 1.05em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  border-radius: 1px;
+  background: var(--accent);
+  animation: caret 1s steps(2) infinite;
+}
+@keyframes caret { 50% { opacity: 0; } }
+</style>

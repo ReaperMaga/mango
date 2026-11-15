@@ -1,0 +1,192 @@
+/*
+ * Mango design tokens.
+ * World: mango orchard at dusk. Leaf-shade grounds, ripe-mango accent,
+ * thread status expressed as ripeness.
+ */
+
+:root {
+  /* Type */
+  --font-ui: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --text-2xs: 10.5px;
+  --text-xs: 11.5px;
+  --text-sm: 12.5px;
+  --text-md: 13.5px;
+  --text-lg: 15px;
+  --text-xl: 19px;
+  --text-2xl: 26px;
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-chat: 1.62;
+
+  /* Space (4px grid) */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Shape */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  /* Layout */
+  --titlebar-h: 46px;
+  --sidebar-w: 264px;
+  --tabbar-h: 36px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-med: 220ms;
+  --dur-slow: 420ms;
+
+  /* Ripeness hues (shared) */
+  --hue-leaf: 150;
+  --hue-mango: 62;
+  --hue-blush: 28;
+  --hue-gold: 85;
+}
+
+/* ---------- Dark (default) ---------- */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bg-app: oklch(0.165 0.010 160);          /* titlebar, rails */
+  --bg-canvas: oklch(0.195 0.010 160);       /* main work area */
+  --bg-panel: oklch(0.215 0.011 160);        /* raised panels, composer */
+  --bg-raised: oklch(0.25 0.012 160);        /* menus, popovers */
+  --bg-hover: oklch(0.27 0.012 160 / 0.55);
+  --bg-active: oklch(0.30 0.014 160 / 0.7);
+  --bg-inset: oklch(0.145 0.009 160);        /* terminal, code */
+
+  --line: oklch(0.30 0.012 160);
+  --line-soft: oklch(0.26 0.011 160);
+  --line-strong: oklch(0.38 0.014 160);
+
+  --fg: oklch(0.94 0.008 150);
+  --fg-muted: oklch(0.80 0.012 150);
+  --fg-subtle: oklch(0.69 0.012 150);
+  --fg-faint: oklch(0.64 0.012 155);
+
+  --accent: oklch(0.79 0.16 58);
+  --accent-strong: oklch(0.83 0.165 58);
+  --accent-fg: oklch(0.22 0.04 var(--hue-mango));
+  --accent-soft: oklch(0.80 0.155 var(--hue-mango) / 0.14);
+  --accent-ink: oklch(0.82 0.15 var(--hue-mango));
+  --accent-line: oklch(0.80 0.155 var(--hue-mango) / 0.45);
+
+  --ripe-queued: oklch(0.70 0.11 var(--hue-leaf));
+  --ripe-running: oklch(0.77 0.17 52);
+  --ripe-waiting: oklch(0.72 0.15 var(--hue-blush));
+  --ripe-done: oklch(0.89 0.15 92);
+  --ripe-error: oklch(0.66 0.19 22);
+  --ripe-idle: oklch(0.58 0.015 155);
+  /* Text-grade versions of the status colours (>= 4.5:1 on the grounds). */
+  --ripe-queued-fg: oklch(0.78 0.11 var(--hue-leaf));
+  --ripe-running-fg: oklch(0.82 0.15 var(--hue-mango));
+  --ripe-waiting-fg: oklch(0.78 0.14 var(--hue-blush));
+  --ripe-done-fg: oklch(0.89 0.15 92);
+  --ripe-error-fg: oklch(0.74 0.16 22);
+
+  --diff-add-bg: oklch(0.70 0.11 var(--hue-leaf) / 0.12);
+  --diff-add-fg: oklch(0.78 0.12 var(--hue-leaf));
+  --diff-del-bg: oklch(0.66 0.19 22 / 0.12);
+  --diff-del-fg: oklch(0.74 0.14 22);
+
+  --shadow-pop: 0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35);
+  --shadow-soft: 0 4px 14px -6px oklch(0.05 0.01 160 / 0.5);
+  --scrim: oklch(0.08 0.01 160 / 0.55);
+
+  --selection: oklch(0.80 0.155 var(--hue-mango) / 0.28);
+  --focus-ring: oklch(0.80 0.155 var(--hue-mango) / 0.7);
+
+  /* Terminal ANSI palette (read by xterm theme) */
+  --term-bg: oklch(0.145 0.009 160);
+  --term-fg: oklch(0.90 0.008 150);
+  --term-black: #1a201d;
+  --term-red: #f0766b;
+  --term-green: #8fcf9a;
+  --term-yellow: #f4c062;
+  --term-blue: #7fb2f0;
+  --term-magenta: #d39af0;
+  --term-cyan: #78d0c8;
+  --term-white: #d9e0dc;
+  --term-bright-black: #5d6b64;
+}
+
+/* ---------- Light ---------- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg-app: oklch(0.955 0.007 150);
+  --bg-canvas: oklch(0.985 0.004 150);
+  --bg-panel: oklch(1 0 0);
+  --bg-raised: oklch(1 0 0);
+  --bg-hover: oklch(0.90 0.010 150 / 0.55);
+  --bg-active: oklch(0.88 0.014 150 / 0.75);
+  --bg-inset: oklch(0.975 0.005 150);
+
+  --line: oklch(0.88 0.008 150);
+  --line-soft: oklch(0.92 0.006 150);
+  --line-strong: oklch(0.80 0.010 150);
+
+  --fg: oklch(0.24 0.015 160);
+  --fg-muted: oklch(0.38 0.015 160);
+  --fg-subtle: oklch(0.47 0.014 160);
+  --fg-faint: oklch(0.53 0.012 160);
+
+  --accent: oklch(0.74 0.17 60);
+  --accent-strong: oklch(0.70 0.17 58);
+  --accent-fg: oklch(0.22 0.04 62);
+  --accent-soft: oklch(0.72 0.16 60 / 0.16);
+  --accent-ink: oklch(0.52 0.15 50);
+  --accent-line: oklch(0.66 0.17 55 / 0.45);
+
+  --ripe-queued: oklch(0.58 0.12 var(--hue-leaf));
+  --ripe-running: oklch(0.68 0.18 50);
+  --ripe-waiting: oklch(0.62 0.17 var(--hue-blush));
+  --ripe-done: oklch(0.70 0.16 88);
+  --ripe-error: oklch(0.56 0.20 25);
+  --ripe-idle: oklch(0.66 0.012 155);
+  --ripe-queued-fg: oklch(0.46 0.12 var(--hue-leaf));
+  --ripe-running-fg: oklch(0.52 0.14 50);
+  --ripe-waiting-fg: oklch(0.52 0.17 var(--hue-blush));
+  --ripe-done-fg: oklch(0.50 0.11 85);
+  --ripe-error-fg: oklch(0.50 0.19 25);
+
+  --diff-add-bg: oklch(0.70 0.12 var(--hue-leaf) / 0.14);
+  --diff-add-fg: oklch(0.45 0.12 var(--hue-leaf));
+  --diff-del-bg: oklch(0.62 0.19 25 / 0.12);
+  --diff-del-fg: oklch(0.50 0.18 25);
+
+  --shadow-pop: 0 14px 34px -10px oklch(0.30 0.03 160 / 0.28), 0 2px 6px oklch(0.30 0.03 160 / 0.10);
+  --shadow-soft: 0 4px 14px -6px oklch(0.30 0.03 160 / 0.18);
+  --scrim: oklch(0.30 0.02 160 / 0.25);
+
+  --selection: oklch(0.72 0.16 60 / 0.25);
+  --focus-ring: oklch(0.60 0.17 52 / 0.7);
+
+  --term-bg: oklch(0.975 0.005 150);
+  --term-fg: oklch(0.28 0.015 160);
+  --term-black: #2a302d;
+  --term-red: #c4362c;
+  --term-green: #2e8a4a;
+  --term-yellow: #a86a00;
+  --term-blue: #2a64b8;
+  --term-magenta: #8e3fb0;
+  --term-cyan: #11807a;
+  --term-white: #8a948f;
+  --term-bright-black: #6b7570;
+}

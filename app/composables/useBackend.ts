@@ -1,0 +1,188 @@
+import type { Commands, Events, ProjectInfo, AgentInfo } from '~/types/ipc'
+import { mockGit } from '~/composables/mockGit'
+
+/**
+ * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
+ * in a plain browser (`pnpm dev` without Tauri) it falls back to an in-memory
+ * mock so the UI can be developed and screenshotted on its own.
+ */
+
+export const isTauri = (): boolean =>
+  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+type Args<K extends keyof Commands> = Commands[K][0]
+type Result<K extends keyof Commands> = Commands[K][1]
+type Unlisten = () => void
+
+export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Promise<Result<K>> {
+  if (isTauri()) {
+    const { invoke } = await import('@tauri-apps/api/core')
+    return invoke<Result<K>>(cmd, (args ?? {}) as Record<string, unknown>)
+  }
+  return mock.call(cmd, args ?? ({} as Args<K>))
+}
+
+export async function on<E extends keyof Events>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
+  if (isTauri()) {
+    const { listen } = await import('@tauri-apps/api/event')
+    return listen<Events[E]>(event, e => handler(e.payload))
+  }
+  return mock.on(event, handler)
+}
+
+/** Native folder picker. Returns null when cancelled. */
+export async function pickFolder(title = 'Open folder', defaultPath?: string): Promise<string | null> {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-dialog')
+    const res = await open({ directory: true, multiple: false, title, defaultPath })
+    return typeof res === 'string' ? res : null
+  }
+  const p = window.prompt(`${title} (browser preview: type a path)`, defaultPath ?? '/home/you/Projects/')
+  return p?.trim() || null
+}
+
+export async function openExternal(url: string) {
+  if (isTauri()) {
+    const { open } = await import('@tauri-apps/plugin-shell')
+    await open(url)
+  } else {
+    window.open(url, '_blank', 'noopener')
+  }
+}
+
+/** Window controls for the custom titlebar. No-ops in the browser. */
+export const appWindow = {
+  async minimize() {
+    if (!isTauri()) return
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().minimize()
+  },
+  async toggleMaximize() {
+    if (!isTauri()) return
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().toggleMaximize()
+  },
+  async close() {
+    if (!isTauri()) return
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().close()
+  },
+}
+
+/* ------------------------------------------------------------------ */
+/* Browser mock                                                        */
+/* ------------------------------------------------------------------ */
+
+const mock = (() => {
+  const listeners = new Map<string, Set<(p: unknown) => void>>()
+  const emit = (event: string, payload: unknown) => listeners.get(event)?.forEach(fn => fn(payload))
+  const now = Date.now()
+  const home = '/home/you'
+
+  let recent: ProjectInfo[] = [
+    { path: `${home}/Projects/mango`, name: 'mango', isGit: true, branch: 'main', lastOpened: now - 1000 * 60 * 4 },
+    { path: `${home}/Projects/orchard-api`, name: 'orchard-api', isGit: true, branch: 'feat/rate-limits', lastOpened: now - 1000 * 60 * 60 * 5 },
+    { path: `${home}/Projects/pulp-ui`, name: 'pulp-ui', isGit: true, branch: 'main', lastOpened: now - 1000 * 60 * 60 * 26 },
+    { path: `${home}/Projects/notes`, name: 'notes', isGit: false, branch: null, lastOpened: now - 1000 * 60 * 60 * 24 * 6 },
+  ]
+
+  const remember = (p: ProjectInfo) => {
+    recent = [p, ...recent.filter(r => r.path !== p.path)].slice(0, 30)
+    return p
+  }
+  const basename = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p
+
+  /* A tiny fake shell so the terminal panel has something to talk to. */
+  interface FakePty { cwd: string; line: string }
+  const ptys = new Map<string, FakePty>()
+  const prompt = (p: FakePty) => `\x1b[32m${basename(p.cwd)}\x1b[0m \x1b[33m❯\x1b[0m `
+  const runLine = (id: string, p: FakePty, line: string) => {
+    const out = (s: string) => emit('pty://data', { id, data: s })
+    const [cmd, ...rest] = line.trim().split(/\s+/)
+    switch (cmd) {
+      case undefined:
+      case '':
+        break
+      case 'pwd': out(`${p.cwd}\r\n`); break
+      case 'ls': out('\x1b[1;34mapp\x1b[0m  \x1b[1;34msrc-tauri\x1b[0m  nuxt.config.ts  package.json  PRODUCT.md  README.md\r\n'); break
+      case 'echo': out(`${rest.join(' ')}\r\n`); break
+      case 'clear': out('\x1b[2J\x1b[H'); break
+      case 'git': out('On branch main\r\nnothing to commit, working tree clean\r\n'); break
+      case 'exit': emit('pty://exit', { id, code: 0 }); ptys.delete(id); return
+      default: out(`\x1b[2mbrowser preview: \x1b[0m${cmd}\x1b[2m runs for real inside the Mango app\x1b[0m\r\n`)
+    }
+    out(prompt(p))
+  }
+
+  async function call(cmd: string, args: any): Promise<any> {
+    await new Promise(r => setTimeout(r, 60))
+    switch (cmd) {
+      case 'recent_projects': return [...recent]
+      case 'open_project': {
+        const existing = recent.find(r => r.path === args.path)
+        return remember({ ...(existing ?? { path: args.path, name: basename(args.path), isGit: true, branch: 'main' }), lastOpened: Date.now() })
+      }
+      case 'forget_project': recent = recent.filter(r => r.path !== args.path); return
+      case 'create_project':
+        return remember({ path: `${args.parent.replace(/\/+$/, '')}/${args.name}`, name: args.name, isGit: !!args.gitInit, branch: args.gitInit ? 'main' : null, lastOpened: Date.now() })
+      case 'git_clone': {
+        const name = args.name || basename(String(args.url)).replace(/\.git$/, '')
+        const lines = [`Cloning into '${name}'...`, 'remote: Enumerating objects: 1284, done.', 'remote: Counting objects: 100% (1284/1284), done.', 'Receiving objects:  48% (617/1284)', 'Receiving objects: 100% (1284/1284), 2.31 MiB | 9.8 MiB/s, done.', 'Resolving deltas: 100% (702/702), done.']
+        for (const line of lines) {
+          await new Promise(r => setTimeout(r, 380))
+          emit('clone://progress', { jobId: args.jobId, line })
+        }
+        return remember({ path: `${args.parent.replace(/\/+$/, '')}/${name}`, name, isGit: true, branch: 'main', lastOpened: Date.now() })
+      }
+      case 'default_projects_dir': return `${home}/Projects`
+      case 'detect_agents': return [
+        { id: 'claude', name: 'Claude Code', installed: true, version: '2.4.1', path: `${home}/.local/bin/claude` },
+        { id: 'codex', name: 'Codex', installed: true, version: '0.98.0', path: `${home}/.local/bin/codex` },
+      ] satisfies AgentInfo[]
+      case 'pty_spawn': {
+        const id = `pty-${Math.random().toString(36).slice(2, 8)}`
+        const p: FakePty = { cwd: args.cwd || home, line: '' }
+        ptys.set(id, p)
+        setTimeout(() => emit('pty://data', { id, data: `\x1b[2mMango browser preview — a real login shell runs here inside the desktop app.\x1b[0m\r\n${prompt(p)}` }), 30)
+        return id
+      }
+      case 'pty_write': {
+        const p = ptys.get(args.id)
+        if (!p) return
+        for (const ch of String(args.data)) {
+          if (ch === '\r') { emit('pty://data', { id: args.id, data: '\r\n' }); runLine(args.id, p, p.line); p.line = '' }
+          else if (ch === '\x7f') { if (p.line) { p.line = p.line.slice(0, -1); emit('pty://data', { id: args.id, data: '\b \b' }) } }
+          else if (ch === '\x03') { p.line = ''; emit('pty://data', { id: args.id, data: `^C\r\n${prompt(p)}` }) }
+          else if (ch >= ' ') { p.line += ch; emit('pty://data', { id: args.id, data: ch }) }
+        }
+        return
+      }
+      case 'terminal_profiles': return [
+        { id: 'zsh', name: 'Zsh', path: '/usr/bin/zsh', args: ['-l'], isDefault: true },
+        { id: 'bash', name: 'Bash', path: '/usr/bin/bash', args: ['-l'], isDefault: false },
+        { id: 'fish', name: 'fish', path: '/usr/bin/fish', args: ['-l'], isDefault: false },
+        { id: 'sh', name: 'sh', path: '/bin/sh', args: ['-l'], isDefault: false },
+      ]
+      case 'pty_resize': return
+      case 'pty_kill': ptys.delete(args.id); return
+      case 'agent_auth_status': return {
+        agent: args.agent, installed: true, loggedIn: args.agent === 'claude',
+        account: args.agent === 'claude' ? 'you@example.com' : null, plan: args.agent === 'claude' ? 'max' : null,
+        method: args.agent === 'claude' ? 'claude.ai' : null, detail: args.agent === 'claude' ? null : 'Not logged in',
+      }
+      case 'agent_logout': return
+      case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
+      case 'agent_write': case 'agent_close_stdin': case 'agent_kill': return
+    }
+    if (cmd.startsWith('git_')) return mockGit(cmd, args)
+    throw new Error(`mock: unknown command ${cmd}`)
+  }
+
+  function on(event: string, handler: (p: any) => void): Unlisten {
+    if (!listeners.has(event)) listeners.set(event, new Set())
+    listeners.get(event)!.add(handler)
+    return () => listeners.get(event)?.delete(handler)
+  }
+
+  return { call: call as <K extends keyof Commands>(cmd: K, args: Args<K>) => Promise<Result<K>>, on: on as <E extends keyof Events>(e: E, h: (p: Events[E]) => void) => Unlisten }
+})()

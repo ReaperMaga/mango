@@ -1,0 +1,277 @@
+import { defineStore } from 'pinia'
+import type { AgentInfo, ProjectInfo, TerminalProfile } from '~/types/ipc'
+import type { PermissionMode } from '~/agents/types'
+import { call } from '~/composables/useBackend'
+import { baseName } from '~/utils/paths'
+
+export type Theme = 'dark' | 'light' | 'system'
+
+export interface TerminalTab {
+  id: string
+  title: string
+  cwd: string | null
+  /** set once the PTY is spawned */
+  ptyId: string | null
+  exited: boolean
+  /** The shell this tab runs (a TerminalProfile id); null means the system default. */
+  profileId: string | null
+  /** Display name of that shell, e.g. "Zsh". */
+  shell: string | null
+}
+
+export type SidebarView = 'threads' | 'changes'
+export type CursorStyle = 'bar' | 'block' | 'underline'
+export type SettingsSection = 'agents' | 'terminal' | 'appearance' | 'general'
+
+const LS_KEY = 'mango.workspace.v1'
+
+function loadPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_KEY) || '{}')
+  } catch {
+    return {}
+  }
+}
+
+let tabSeq = 0
+
+export const useWorkspace = defineStore('workspace', {
+  state: () => {
+    const prefs = loadPrefs()
+    return {
+      recent: [] as ProjectInfo[],
+      /** Projects open in this window (sidebar groups). */
+      openProjects: [] as ProjectInfo[],
+      activeProjectPath: null as string | null,
+      agents: [] as AgentInfo[],
+
+      theme: (prefs.theme ?? 'dark') as Theme,
+      sidebarOpen: prefs.sidebarOpen ?? true,
+      sidebarWidth: (prefs.sidebarWidth ?? 264) as number,
+
+      terminalOpen: prefs.terminalOpen ?? false,
+      /** fraction of the main column height */
+      terminalHeight: (prefs.terminalHeight ?? 0.34) as number,
+      terminalTabs: [] as TerminalTab[],
+      activeTerminalId: null as string | null,
+      /** Shells found on this machine. */
+      terminalProfiles: [] as TerminalProfile[],
+      terminalProfilesLoading: false,
+      /** The user's choice of shell for new terminals; null follows the system default. */
+      terminalProfileId: (prefs.terminalProfileId ?? null) as string | null,
+      terminalFontSize: (prefs.terminalFontSize ?? 12.5) as number,
+      terminalCursorStyle: (prefs.terminalCursorStyle ?? 'bar') as CursorStyle,
+      terminalCursorBlink: (prefs.terminalCursorBlink ?? true) as boolean,
+
+      /** How diffs in the main pane are laid out. */
+      diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
+      /** What the left sidebar shows: chat threads or source control. */
+      sidebarView: (prefs.sidebarView === 'changes' ? 'changes' : 'threads') as SidebarView,
+
+      /** Permission mode new chats start in. */
+      defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
+
+      /** Settings view; the value is the section to show. */
+      settings: null as null | SettingsSection,
+
+      paletteOpen: false,
+      /** which project dialog is open on the welcome hub / from the palette */
+      dialog: null as null | 'new' | 'clone',
+    }
+  },
+
+  getters: {
+    activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
+    hasProject: s => s.openProjects.length > 0,
+    /** The shell a plain "new terminal" starts: the user's choice if it still exists, else the system default. */
+    defaultTerminalProfile: s =>
+      s.terminalProfiles.find(p => p.id === s.terminalProfileId)
+      ?? s.terminalProfiles.find(p => p.isDefault)
+      ?? s.terminalProfiles[0]
+      ?? null,
+  },
+
+  actions: {
+    persist() {
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({
+          theme: this.theme,
+          sidebarOpen: this.sidebarOpen,
+          sidebarWidth: this.sidebarWidth,
+          terminalOpen: this.terminalOpen,
+          terminalHeight: this.terminalHeight,
+          sidebarView: this.sidebarView,
+          diffView: this.diffView,
+          terminalProfileId: this.terminalProfileId,
+          terminalFontSize: this.terminalFontSize,
+          terminalCursorStyle: this.terminalCursorStyle,
+          terminalCursorBlink: this.terminalCursorBlink,
+          defaultMode: this.defaultMode,
+          openProjects: this.openProjects.map(p => p.path),
+          activeProjectPath: this.activeProjectPath,
+        }))
+      } catch { /* storage unavailable: prefs just don't persist */ }
+    },
+
+    async init() {
+      this.applyTheme()
+      // "System" follows the OS while the app is open.
+      window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
+      const [recent, agents] = await Promise.all([
+        call('recent_projects').catch(() => [] as ProjectInfo[]),
+        call('detect_agents').catch(() => [] as AgentInfo[]),
+      ])
+      this.recent = recent
+      this.loadTerminalProfiles()
+      // CLIs print versions in their own formats ("2.1.3 (Claude Code)", "codex-cli 0.16.2"): keep the number.
+      this.agents = agents.map(a => ({ ...a, version: a.version?.match(/\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?/)?.[0] ?? a.version }))
+      // Reopen the projects that were open last time.
+      const prefs = loadPrefs()
+      const paths: string[] = prefs.openProjects ?? []
+      // Built fresh so running init twice (hot reload) cannot list a project twice.
+      const reopened: ProjectInfo[] = []
+      for (const path of new Set(paths)) {
+        const info = recent.find(r => r.path === path)
+        if (info) reopened.push(info)
+      }
+      this.openProjects = reopened
+      this.activeProjectPath = this.openProjects.find(p => p.path === prefs.activeProjectPath)?.path
+        ?? this.openProjects[0]?.path ?? null
+    },
+
+    async refreshRecent() {
+      this.recent = await call('recent_projects').catch(() => this.recent)
+    },
+
+    /** Add a project (already validated by the backend) to the window and focus it. */
+    adopt(info: ProjectInfo) {
+      const i = this.openProjects.findIndex(p => p.path === info.path)
+      if (i === -1) this.openProjects.push(info)
+      else this.openProjects[i] = info
+      this.activeProjectPath = info.path
+      this.recent = [info, ...this.recent.filter(r => r.path !== info.path)]
+      this.dialog = null
+      this.persist()
+    },
+
+    async openProject(path: string) {
+      const info = await call('open_project', { path })
+      this.adopt(info)
+      return info
+    },
+
+    closeProject(path: string) {
+      this.openProjects = this.openProjects.filter(p => p.path !== path)
+      if (this.activeProjectPath === path) this.activeProjectPath = this.openProjects[0]?.path ?? null
+      this.persist()
+    },
+
+    async forgetProject(path: string) {
+      await call('forget_project', { path }).catch(() => {})
+      this.recent = this.recent.filter(r => r.path !== path)
+    },
+
+    setActiveProject(path: string) {
+      this.activeProjectPath = path
+      this.persist()
+    },
+
+    /* ---------- theme ---------- */
+    setTheme(theme: Theme) {
+      this.theme = theme
+      this.applyTheme()
+      this.persist()
+    },
+    cycleTheme() {
+      this.setTheme(this.resolvedTheme() === 'dark' ? 'light' : 'dark')
+    },
+    resolvedTheme(): 'dark' | 'light' {
+      if (this.theme !== 'system') return this.theme
+      return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+    },
+    applyTheme() {
+      document.documentElement.dataset.theme = this.resolvedTheme()
+    },
+
+    /* ---------- layout ---------- */
+    toggleSidebar() {
+      this.sidebarOpen = !this.sidebarOpen
+      this.persist()
+    },
+    setSidebarWidth(w: number) {
+      this.sidebarWidth = Math.round(Math.min(560, Math.max(200, w)))
+    },
+
+    setSidebarView(view: SidebarView) {
+      this.sidebarView = view
+      this.sidebarOpen = true
+      this.persist()
+    },
+    /** Show source control in the sidebar; again to go back to threads. */
+    toggleGit(force?: boolean) {
+      const showing = this.sidebarOpen && this.sidebarView === 'changes'
+      this.setSidebarView(force ?? !showing ? 'changes' : 'threads')
+    },
+    openSettings(section: SettingsSection = 'agents') {
+      this.settings = section
+      this.paletteOpen = false
+    },
+    async refreshAgents() {
+      const agents = await call('detect_agents').catch(() => this.agents)
+      this.agents = agents.map(a => ({ ...a, version: a.version?.match(/\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?/)?.[0] ?? a.version }))
+    },
+
+    /* ---------- terminal ---------- */
+    toggleTerminal(force?: boolean) {
+      this.terminalOpen = force ?? !this.terminalOpen
+      if (this.terminalOpen && this.terminalTabs.length === 0) this.newTerminal()
+      this.persist()
+    },
+    setTerminalHeight(fraction: number) {
+      this.terminalHeight = Math.min(0.8, Math.max(0.14, fraction))
+    },
+    /** Look for shells on this machine (again). */
+    async loadTerminalProfiles() {
+      this.terminalProfilesLoading = true
+      try {
+        this.terminalProfiles = await call('terminal_profiles')
+      } catch { /* keep what we had; terminals fall back to the system default */ }
+      this.terminalProfilesLoading = false
+    },
+    setTerminalProfile(id: string | null) {
+      this.terminalProfileId = id
+      this.persist()
+    },
+    setTerminalFontSize(size: number) {
+      this.terminalFontSize = Math.min(22, Math.max(9, Math.round(size * 2) / 2))
+      this.persist()
+    },
+    /** `profileId` picks a shell for this one terminal; omitted, the default shell is used. */
+    newTerminal(cwd?: string | null, profileId?: string | null) {
+      const id = `term-${++tabSeq}`
+      const dir = cwd ?? this.activeProjectPath
+      const profile = this.terminalProfiles.find(p => p.id === profileId) ?? this.defaultTerminalProfile
+      this.terminalTabs.push({
+        id,
+        title: dir ? baseName(dir) : 'shell',
+        cwd: dir,
+        ptyId: null,
+        exited: false,
+        profileId: profile?.id ?? null,
+        shell: profile?.name ?? null,
+      })
+      this.activeTerminalId = id
+      this.terminalOpen = true
+      return id
+    },
+    closeTerminal(id: string) {
+      const i = this.terminalTabs.findIndex(t => t.id === id)
+      if (i === -1) return
+      const [tab] = this.terminalTabs.splice(i, 1)
+      if (tab?.ptyId && !tab.exited) call('pty_kill', { id: tab.ptyId }).catch(() => {})
+      if (this.activeTerminalId === id) this.activeTerminalId = this.terminalTabs[Math.max(0, i - 1)]?.id ?? null
+      if (this.terminalTabs.length === 0) this.terminalOpen = false
+      this.persist()
+    },
+  },
+})
