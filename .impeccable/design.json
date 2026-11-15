@@ -1,0 +1,1446 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-15T10:36:27Z",
+  "title": "Design System: Mango",
+  "extensions": {
+    "colorMeta": {
+      "bg-app": {
+        "role": "neutral",
+        "displayName": "Leaf-Shade Ground",
+        "canonical": "oklch(0.165 0.010 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.006 160)",
+          "oklch(0.38 0.008 160)",
+          "oklch(0.50 0.010 160)",
+          "oklch(0.62 0.010 160)",
+          "oklch(0.74 0.010 160)",
+          "oklch(0.85 0.008 160)",
+          "oklch(0.95 0.006 160)"
+        ]
+      },
+      "bg-canvas": {
+        "role": "neutral",
+        "displayName": "Work Canvas",
+        "canonical": "oklch(0.195 0.010 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.006 160)",
+          "oklch(0.38 0.008 160)",
+          "oklch(0.50 0.010 160)",
+          "oklch(0.62 0.010 160)",
+          "oklch(0.74 0.010 160)",
+          "oklch(0.85 0.008 160)",
+          "oklch(0.95 0.006 160)"
+        ]
+      },
+      "bg-panel": {
+        "role": "neutral",
+        "displayName": "Panel Lift",
+        "canonical": "oklch(0.215 0.011 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.006 160)",
+          "oklch(0.38 0.009 160)",
+          "oklch(0.50 0.010 160)",
+          "oklch(0.62 0.011 160)",
+          "oklch(0.74 0.010 160)",
+          "oklch(0.85 0.009 160)",
+          "oklch(0.95 0.007 160)"
+        ]
+      },
+      "bg-raised": {
+        "role": "neutral",
+        "displayName": "Raised Layer",
+        "canonical": "oklch(0.25 0.012 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.007 160)",
+          "oklch(0.38 0.010 160)",
+          "oklch(0.50 0.011 160)",
+          "oklch(0.62 0.012 160)",
+          "oklch(0.74 0.011 160)",
+          "oklch(0.85 0.010 160)",
+          "oklch(0.95 0.008 160)"
+        ]
+      },
+      "bg-inset": {
+        "role": "neutral",
+        "displayName": "Inset Well",
+        "canonical": "oklch(0.145 0.009 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 160)",
+          "oklch(0.26 0.005 160)",
+          "oklch(0.38 0.007 160)",
+          "oklch(0.50 0.009 160)",
+          "oklch(0.62 0.009 160)",
+          "oklch(0.74 0.009 160)",
+          "oklch(0.85 0.007 160)",
+          "oklch(0.95 0.006 160)"
+        ]
+      },
+      "bg-hover": {
+        "role": "neutral",
+        "displayName": "Hover Wash",
+        "canonical": "oklch(0.27 0.012 160 / 0.55)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.007 160)",
+          "oklch(0.38 0.010 160)",
+          "oklch(0.50 0.011 160)",
+          "oklch(0.62 0.012 160)",
+          "oklch(0.74 0.011 160)",
+          "oklch(0.85 0.010 160)",
+          "oklch(0.95 0.008 160)"
+        ]
+      },
+      "bg-active": {
+        "role": "neutral",
+        "displayName": "Active Wash",
+        "canonical": "oklch(0.30 0.014 160 / 0.7)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 160)",
+          "oklch(0.26 0.008 160)",
+          "oklch(0.38 0.011 160)",
+          "oklch(0.50 0.013 160)",
+          "oklch(0.62 0.014 160)",
+          "oklch(0.74 0.013 160)",
+          "oklch(0.85 0.011 160)",
+          "oklch(0.95 0.009 160)"
+        ]
+      },
+      "line-soft": {
+        "role": "neutral",
+        "displayName": "Soft Line",
+        "canonical": "oklch(0.26 0.011 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.006 160)",
+          "oklch(0.38 0.009 160)",
+          "oklch(0.50 0.010 160)",
+          "oklch(0.62 0.011 160)",
+          "oklch(0.74 0.010 160)",
+          "oklch(0.85 0.009 160)",
+          "oklch(0.95 0.007 160)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Line",
+        "canonical": "oklch(0.30 0.012 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.007 160)",
+          "oklch(0.38 0.010 160)",
+          "oklch(0.50 0.011 160)",
+          "oklch(0.62 0.012 160)",
+          "oklch(0.74 0.011 160)",
+          "oklch(0.85 0.010 160)",
+          "oklch(0.95 0.008 160)"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Strong Line",
+        "canonical": "oklch(0.38 0.014 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 160)",
+          "oklch(0.26 0.008 160)",
+          "oklch(0.38 0.011 160)",
+          "oklch(0.50 0.013 160)",
+          "oklch(0.62 0.014 160)",
+          "oklch(0.74 0.013 160)",
+          "oklch(0.85 0.011 160)",
+          "oklch(0.95 0.009 160)"
+        ]
+      },
+      "fg": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(0.94 0.008 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 150)",
+          "oklch(0.26 0.004 150)",
+          "oklch(0.38 0.006 150)",
+          "oklch(0.50 0.008 150)",
+          "oklch(0.62 0.008 150)",
+          "oklch(0.74 0.008 150)",
+          "oklch(0.85 0.007 150)",
+          "oklch(0.95 0.005 150)"
+        ]
+      },
+      "fg-muted": {
+        "role": "neutral",
+        "displayName": "Muted Ink",
+        "canonical": "oklch(0.80 0.012 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 150)",
+          "oklch(0.26 0.007 150)",
+          "oklch(0.38 0.010 150)",
+          "oklch(0.50 0.011 150)",
+          "oklch(0.62 0.012 150)",
+          "oklch(0.74 0.011 150)",
+          "oklch(0.85 0.010 150)",
+          "oklch(0.95 0.008 150)"
+        ]
+      },
+      "fg-subtle": {
+        "role": "neutral",
+        "displayName": "Subtle Ink",
+        "canonical": "oklch(0.69 0.012 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 150)",
+          "oklch(0.26 0.007 150)",
+          "oklch(0.38 0.010 150)",
+          "oklch(0.50 0.011 150)",
+          "oklch(0.62 0.012 150)",
+          "oklch(0.74 0.011 150)",
+          "oklch(0.85 0.010 150)",
+          "oklch(0.95 0.008 150)"
+        ]
+      },
+      "fg-faint": {
+        "role": "neutral",
+        "displayName": "Faint Ink",
+        "canonical": "oklch(0.64 0.012 155)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 155)",
+          "oklch(0.26 0.007 155)",
+          "oklch(0.38 0.010 155)",
+          "oklch(0.50 0.011 155)",
+          "oklch(0.62 0.012 155)",
+          "oklch(0.74 0.011 155)",
+          "oklch(0.85 0.010 155)",
+          "oklch(0.95 0.008 155)"
+        ]
+      },
+      "accent": {
+        "role": "primary",
+        "displayName": "Ripe Mango",
+        "canonical": "oklch(0.79 0.16 58)",
+        "tonalRamp": [
+          "oklch(0.15 0.040 58)",
+          "oklch(0.26 0.090 58)",
+          "oklch(0.38 0.129 58)",
+          "oklch(0.50 0.152 58)",
+          "oklch(0.62 0.160 58)",
+          "oklch(0.74 0.152 58)",
+          "oklch(0.85 0.131 58)",
+          "oklch(0.95 0.101 58)"
+        ]
+      },
+      "accent-strong": {
+        "role": "primary",
+        "displayName": "Ripe Mango Bright",
+        "canonical": "oklch(0.83 0.165 58)",
+        "tonalRamp": [
+          "oklch(0.15 0.041 58)",
+          "oklch(0.26 0.092 58)",
+          "oklch(0.38 0.133 58)",
+          "oklch(0.50 0.157 58)",
+          "oklch(0.62 0.165 58)",
+          "oklch(0.74 0.157 58)",
+          "oklch(0.85 0.135 58)",
+          "oklch(0.95 0.104 58)"
+        ]
+      },
+      "accent-fg": {
+        "role": "primary",
+        "displayName": "Mango Stone Ink",
+        "canonical": "oklch(0.22 0.04 62)",
+        "tonalRamp": [
+          "oklch(0.15 0.010 62)",
+          "oklch(0.26 0.022 62)",
+          "oklch(0.38 0.032 62)",
+          "oklch(0.50 0.038 62)",
+          "oklch(0.62 0.040 62)",
+          "oklch(0.74 0.038 62)",
+          "oklch(0.85 0.033 62)",
+          "oklch(0.95 0.025 62)"
+        ]
+      },
+      "accent-ink": {
+        "role": "primary",
+        "displayName": "Mango Ink",
+        "canonical": "oklch(0.82 0.15 62)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 62)",
+          "oklch(0.26 0.084 62)",
+          "oklch(0.38 0.121 62)",
+          "oklch(0.50 0.143 62)",
+          "oklch(0.62 0.150 62)",
+          "oklch(0.74 0.143 62)",
+          "oklch(0.85 0.123 62)",
+          "oklch(0.95 0.095 62)"
+        ]
+      },
+      "accent-soft": {
+        "role": "primary",
+        "displayName": "Mango Wash",
+        "canonical": "oklch(0.80 0.155 62 / 0.14)",
+        "tonalRamp": [
+          "oklch(0.15 0.039 62)",
+          "oklch(0.26 0.087 62)",
+          "oklch(0.38 0.125 62)",
+          "oklch(0.50 0.147 62)",
+          "oklch(0.62 0.155 62)",
+          "oklch(0.74 0.147 62)",
+          "oklch(0.85 0.127 62)",
+          "oklch(0.95 0.098 62)"
+        ]
+      },
+      "accent-line": {
+        "role": "primary",
+        "displayName": "Mango Line",
+        "canonical": "oklch(0.80 0.155 62 / 0.45)",
+        "tonalRamp": [
+          "oklch(0.15 0.039 62)",
+          "oklch(0.26 0.087 62)",
+          "oklch(0.38 0.125 62)",
+          "oklch(0.50 0.147 62)",
+          "oklch(0.62 0.155 62)",
+          "oklch(0.74 0.147 62)",
+          "oklch(0.85 0.127 62)",
+          "oklch(0.95 0.098 62)"
+        ]
+      },
+      "ripe-idle": {
+        "role": "secondary",
+        "displayName": "Bare Stem",
+        "canonical": "oklch(0.58 0.015 155)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 155)",
+          "oklch(0.26 0.008 155)",
+          "oklch(0.38 0.012 155)",
+          "oklch(0.50 0.014 155)",
+          "oklch(0.62 0.015 155)",
+          "oklch(0.74 0.014 155)",
+          "oklch(0.85 0.012 155)",
+          "oklch(0.95 0.009 155)"
+        ]
+      },
+      "ripe-queued": {
+        "role": "secondary",
+        "displayName": "Unripe Leaf Green",
+        "canonical": "oklch(0.70 0.11 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.028 150)",
+          "oklch(0.26 0.062 150)",
+          "oklch(0.38 0.088 150)",
+          "oklch(0.50 0.105 150)",
+          "oklch(0.62 0.110 150)",
+          "oklch(0.74 0.105 150)",
+          "oklch(0.85 0.090 150)",
+          "oklch(0.95 0.069 150)"
+        ]
+      },
+      "ripe-running": {
+        "role": "secondary",
+        "displayName": "Ripening Mango",
+        "canonical": "oklch(0.77 0.17 52)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 52)",
+          "oklch(0.26 0.095 52)",
+          "oklch(0.38 0.137 52)",
+          "oklch(0.50 0.162 52)",
+          "oklch(0.62 0.170 52)",
+          "oklch(0.74 0.162 52)",
+          "oklch(0.85 0.139 52)",
+          "oklch(0.95 0.107 52)"
+        ]
+      },
+      "ripe-waiting": {
+        "role": "secondary",
+        "displayName": "Blush Coral",
+        "canonical": "oklch(0.72 0.15 28)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 28)",
+          "oklch(0.26 0.084 28)",
+          "oklch(0.38 0.121 28)",
+          "oklch(0.50 0.143 28)",
+          "oklch(0.62 0.150 28)",
+          "oklch(0.74 0.143 28)",
+          "oklch(0.85 0.123 28)",
+          "oklch(0.95 0.095 28)"
+        ]
+      },
+      "ripe-done": {
+        "role": "secondary",
+        "displayName": "Ripe Gold",
+        "canonical": "oklch(0.89 0.15 92)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 92)",
+          "oklch(0.26 0.084 92)",
+          "oklch(0.38 0.121 92)",
+          "oklch(0.50 0.143 92)",
+          "oklch(0.62 0.150 92)",
+          "oklch(0.74 0.143 92)",
+          "oklch(0.85 0.123 92)",
+          "oklch(0.95 0.095 92)"
+        ]
+      },
+      "ripe-error": {
+        "role": "secondary",
+        "displayName": "Bruise Red",
+        "canonical": "oklch(0.66 0.19 22)",
+        "tonalRamp": [
+          "oklch(0.15 0.048 22)",
+          "oklch(0.26 0.106 22)",
+          "oklch(0.38 0.153 22)",
+          "oklch(0.50 0.181 22)",
+          "oklch(0.62 0.190 22)",
+          "oklch(0.74 0.181 22)",
+          "oklch(0.85 0.156 22)",
+          "oklch(0.95 0.120 22)"
+        ]
+      },
+      "ripe-queued-fg": {
+        "role": "secondary",
+        "displayName": "Unripe Leaf Green, text grade",
+        "canonical": "oklch(0.78 0.11 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.028 150)",
+          "oklch(0.26 0.062 150)",
+          "oklch(0.38 0.088 150)",
+          "oklch(0.50 0.105 150)",
+          "oklch(0.62 0.110 150)",
+          "oklch(0.74 0.105 150)",
+          "oklch(0.85 0.090 150)",
+          "oklch(0.95 0.069 150)"
+        ]
+      },
+      "ripe-running-fg": {
+        "role": "secondary",
+        "displayName": "Ripening Mango, text grade",
+        "canonical": "oklch(0.82 0.15 62)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 62)",
+          "oklch(0.26 0.084 62)",
+          "oklch(0.38 0.121 62)",
+          "oklch(0.50 0.143 62)",
+          "oklch(0.62 0.150 62)",
+          "oklch(0.74 0.143 62)",
+          "oklch(0.85 0.123 62)",
+          "oklch(0.95 0.095 62)"
+        ]
+      },
+      "ripe-waiting-fg": {
+        "role": "secondary",
+        "displayName": "Blush Coral, text grade",
+        "canonical": "oklch(0.78 0.14 28)",
+        "tonalRamp": [
+          "oklch(0.15 0.035 28)",
+          "oklch(0.26 0.078 28)",
+          "oklch(0.38 0.113 28)",
+          "oklch(0.50 0.133 28)",
+          "oklch(0.62 0.140 28)",
+          "oklch(0.74 0.133 28)",
+          "oklch(0.85 0.115 28)",
+          "oklch(0.95 0.088 28)"
+        ]
+      },
+      "ripe-done-fg": {
+        "role": "secondary",
+        "displayName": "Ripe Gold, text grade",
+        "canonical": "oklch(0.89 0.15 92)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 92)",
+          "oklch(0.26 0.084 92)",
+          "oklch(0.38 0.121 92)",
+          "oklch(0.50 0.143 92)",
+          "oklch(0.62 0.150 92)",
+          "oklch(0.74 0.143 92)",
+          "oklch(0.85 0.123 92)",
+          "oklch(0.95 0.095 92)"
+        ]
+      },
+      "ripe-error-fg": {
+        "role": "secondary",
+        "displayName": "Bruise Red, text grade",
+        "canonical": "oklch(0.74 0.16 22)",
+        "tonalRamp": [
+          "oklch(0.15 0.040 22)",
+          "oklch(0.26 0.090 22)",
+          "oklch(0.38 0.129 22)",
+          "oklch(0.50 0.152 22)",
+          "oklch(0.62 0.160 22)",
+          "oklch(0.74 0.152 22)",
+          "oklch(0.85 0.131 22)",
+          "oklch(0.95 0.101 22)"
+        ]
+      },
+      "diff-add-bg": {
+        "role": "secondary",
+        "displayName": "Diff Added Wash",
+        "canonical": "oklch(0.70 0.11 150 / 0.12)",
+        "tonalRamp": [
+          "oklch(0.15 0.028 150)",
+          "oklch(0.26 0.062 150)",
+          "oklch(0.38 0.088 150)",
+          "oklch(0.50 0.105 150)",
+          "oklch(0.62 0.110 150)",
+          "oklch(0.74 0.105 150)",
+          "oklch(0.85 0.090 150)",
+          "oklch(0.95 0.069 150)"
+        ]
+      },
+      "diff-add-fg": {
+        "role": "secondary",
+        "displayName": "Diff Added Ink",
+        "canonical": "oklch(0.78 0.12 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 150)",
+          "oklch(0.26 0.067 150)",
+          "oklch(0.38 0.097 150)",
+          "oklch(0.50 0.114 150)",
+          "oklch(0.62 0.120 150)",
+          "oklch(0.74 0.114 150)",
+          "oklch(0.85 0.098 150)",
+          "oklch(0.95 0.076 150)"
+        ]
+      },
+      "diff-del-bg": {
+        "role": "secondary",
+        "displayName": "Diff Removed Wash",
+        "canonical": "oklch(0.66 0.19 22 / 0.12)",
+        "tonalRamp": [
+          "oklch(0.15 0.048 22)",
+          "oklch(0.26 0.106 22)",
+          "oklch(0.38 0.153 22)",
+          "oklch(0.50 0.181 22)",
+          "oklch(0.62 0.190 22)",
+          "oklch(0.74 0.181 22)",
+          "oklch(0.85 0.156 22)",
+          "oklch(0.95 0.120 22)"
+        ]
+      },
+      "diff-del-fg": {
+        "role": "secondary",
+        "displayName": "Diff Removed Ink",
+        "canonical": "oklch(0.74 0.14 22)",
+        "tonalRamp": [
+          "oklch(0.15 0.035 22)",
+          "oklch(0.26 0.078 22)",
+          "oklch(0.38 0.113 22)",
+          "oklch(0.50 0.133 22)",
+          "oklch(0.62 0.140 22)",
+          "oklch(0.74 0.133 22)",
+          "oklch(0.85 0.115 22)",
+          "oklch(0.95 0.088 22)"
+        ]
+      },
+      "focus-ring": {
+        "role": "primary",
+        "displayName": "Focus Ring",
+        "canonical": "oklch(0.80 0.155 62 / 0.7)",
+        "tonalRamp": [
+          "oklch(0.15 0.039 62)",
+          "oklch(0.26 0.087 62)",
+          "oklch(0.38 0.125 62)",
+          "oklch(0.50 0.147 62)",
+          "oklch(0.62 0.155 62)",
+          "oklch(0.74 0.147 62)",
+          "oklch(0.85 0.127 62)",
+          "oklch(0.95 0.098 62)"
+        ]
+      },
+      "selection": {
+        "role": "primary",
+        "displayName": "Selection",
+        "canonical": "oklch(0.80 0.155 62 / 0.28)",
+        "tonalRamp": [
+          "oklch(0.15 0.039 62)",
+          "oklch(0.26 0.087 62)",
+          "oklch(0.38 0.125 62)",
+          "oklch(0.50 0.147 62)",
+          "oklch(0.62 0.155 62)",
+          "oklch(0.74 0.147 62)",
+          "oklch(0.85 0.127 62)",
+          "oklch(0.95 0.098 62)"
+        ]
+      },
+      "scrim": {
+        "role": "neutral",
+        "displayName": "Scrim",
+        "canonical": "oklch(0.08 0.01 160 / 0.55)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.006 160)",
+          "oklch(0.38 0.008 160)",
+          "oklch(0.50 0.010 160)",
+          "oklch(0.62 0.010 160)",
+          "oklch(0.74 0.010 160)",
+          "oklch(0.85 0.008 160)",
+          "oklch(0.95 0.006 160)"
+        ]
+      },
+      "bg-app-light": {
+        "role": "neutral",
+        "displayName": "Leaf-Shade Ground (light theme)",
+        "canonical": "oklch(0.955 0.007 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 150)",
+          "oklch(0.26 0.004 150)",
+          "oklch(0.38 0.006 150)",
+          "oklch(0.50 0.007 150)",
+          "oklch(0.62 0.007 150)",
+          "oklch(0.74 0.007 150)",
+          "oklch(0.85 0.006 150)",
+          "oklch(0.95 0.004 150)"
+        ]
+      },
+      "bg-canvas-light": {
+        "role": "neutral",
+        "displayName": "Work Canvas (light theme)",
+        "canonical": "oklch(0.985 0.004 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.001 150)",
+          "oklch(0.26 0.002 150)",
+          "oklch(0.38 0.003 150)",
+          "oklch(0.50 0.004 150)",
+          "oklch(0.62 0.004 150)",
+          "oklch(0.74 0.004 150)",
+          "oklch(0.85 0.003 150)",
+          "oklch(0.95 0.003 150)"
+        ]
+      },
+      "bg-panel-light": {
+        "role": "neutral",
+        "displayName": "Panel Lift (light theme)",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0.000 0)",
+          "oklch(0.26 0.000 0)",
+          "oklch(0.38 0.000 0)",
+          "oklch(0.50 0.000 0)",
+          "oklch(0.62 0.000 0)",
+          "oklch(0.74 0.000 0)",
+          "oklch(0.85 0.000 0)",
+          "oklch(0.95 0.000 0)"
+        ]
+      },
+      "bg-raised-light": {
+        "role": "neutral",
+        "displayName": "Raised Layer (light theme)",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.15 0.000 0)",
+          "oklch(0.26 0.000 0)",
+          "oklch(0.38 0.000 0)",
+          "oklch(0.50 0.000 0)",
+          "oklch(0.62 0.000 0)",
+          "oklch(0.74 0.000 0)",
+          "oklch(0.85 0.000 0)",
+          "oklch(0.95 0.000 0)"
+        ]
+      },
+      "bg-inset-light": {
+        "role": "neutral",
+        "displayName": "Inset Well (light theme)",
+        "canonical": "oklch(0.975 0.005 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.001 150)",
+          "oklch(0.26 0.003 150)",
+          "oklch(0.38 0.004 150)",
+          "oklch(0.50 0.005 150)",
+          "oklch(0.62 0.005 150)",
+          "oklch(0.74 0.005 150)",
+          "oklch(0.85 0.004 150)",
+          "oklch(0.95 0.003 150)"
+        ]
+      },
+      "bg-hover-light": {
+        "role": "neutral",
+        "displayName": "Hover Wash (light theme)",
+        "canonical": "oklch(0.90 0.010 150 / 0.55)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 150)",
+          "oklch(0.26 0.006 150)",
+          "oklch(0.38 0.008 150)",
+          "oklch(0.50 0.010 150)",
+          "oklch(0.62 0.010 150)",
+          "oklch(0.74 0.010 150)",
+          "oklch(0.85 0.008 150)",
+          "oklch(0.95 0.006 150)"
+        ]
+      },
+      "bg-active-light": {
+        "role": "neutral",
+        "displayName": "Active Wash (light theme)",
+        "canonical": "oklch(0.88 0.014 150 / 0.75)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 150)",
+          "oklch(0.26 0.008 150)",
+          "oklch(0.38 0.011 150)",
+          "oklch(0.50 0.013 150)",
+          "oklch(0.62 0.014 150)",
+          "oklch(0.74 0.013 150)",
+          "oklch(0.85 0.011 150)",
+          "oklch(0.95 0.009 150)"
+        ]
+      },
+      "line-soft-light": {
+        "role": "neutral",
+        "displayName": "Soft Line (light theme)",
+        "canonical": "oklch(0.92 0.006 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 150)",
+          "oklch(0.26 0.003 150)",
+          "oklch(0.38 0.005 150)",
+          "oklch(0.50 0.006 150)",
+          "oklch(0.62 0.006 150)",
+          "oklch(0.74 0.006 150)",
+          "oklch(0.85 0.005 150)",
+          "oklch(0.95 0.004 150)"
+        ]
+      },
+      "line-light": {
+        "role": "neutral",
+        "displayName": "Line (light theme)",
+        "canonical": "oklch(0.88 0.008 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.002 150)",
+          "oklch(0.26 0.004 150)",
+          "oklch(0.38 0.006 150)",
+          "oklch(0.50 0.008 150)",
+          "oklch(0.62 0.008 150)",
+          "oklch(0.74 0.008 150)",
+          "oklch(0.85 0.007 150)",
+          "oklch(0.95 0.005 150)"
+        ]
+      },
+      "line-strong-light": {
+        "role": "neutral",
+        "displayName": "Strong Line (light theme)",
+        "canonical": "oklch(0.80 0.010 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 150)",
+          "oklch(0.26 0.006 150)",
+          "oklch(0.38 0.008 150)",
+          "oklch(0.50 0.010 150)",
+          "oklch(0.62 0.010 150)",
+          "oklch(0.74 0.010 150)",
+          "oklch(0.85 0.008 150)",
+          "oklch(0.95 0.006 150)"
+        ]
+      },
+      "fg-light": {
+        "role": "neutral",
+        "displayName": "Ink (light theme)",
+        "canonical": "oklch(0.24 0.015 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 160)",
+          "oklch(0.26 0.008 160)",
+          "oklch(0.38 0.012 160)",
+          "oklch(0.50 0.014 160)",
+          "oklch(0.62 0.015 160)",
+          "oklch(0.74 0.014 160)",
+          "oklch(0.85 0.012 160)",
+          "oklch(0.95 0.009 160)"
+        ]
+      },
+      "fg-muted-light": {
+        "role": "neutral",
+        "displayName": "Muted Ink (light theme)",
+        "canonical": "oklch(0.38 0.015 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 160)",
+          "oklch(0.26 0.008 160)",
+          "oklch(0.38 0.012 160)",
+          "oklch(0.50 0.014 160)",
+          "oklch(0.62 0.015 160)",
+          "oklch(0.74 0.014 160)",
+          "oklch(0.85 0.012 160)",
+          "oklch(0.95 0.009 160)"
+        ]
+      },
+      "fg-subtle-light": {
+        "role": "neutral",
+        "displayName": "Subtle Ink (light theme)",
+        "canonical": "oklch(0.47 0.014 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.004 160)",
+          "oklch(0.26 0.008 160)",
+          "oklch(0.38 0.011 160)",
+          "oklch(0.50 0.013 160)",
+          "oklch(0.62 0.014 160)",
+          "oklch(0.74 0.013 160)",
+          "oklch(0.85 0.011 160)",
+          "oklch(0.95 0.009 160)"
+        ]
+      },
+      "fg-faint-light": {
+        "role": "neutral",
+        "displayName": "Faint Ink (light theme)",
+        "canonical": "oklch(0.53 0.012 160)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 160)",
+          "oklch(0.26 0.007 160)",
+          "oklch(0.38 0.010 160)",
+          "oklch(0.50 0.011 160)",
+          "oklch(0.62 0.012 160)",
+          "oklch(0.74 0.011 160)",
+          "oklch(0.85 0.010 160)",
+          "oklch(0.95 0.008 160)"
+        ]
+      },
+      "accent-light": {
+        "role": "primary",
+        "displayName": "Ripe Mango (light theme)",
+        "canonical": "oklch(0.74 0.17 60)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 60)",
+          "oklch(0.26 0.095 60)",
+          "oklch(0.38 0.137 60)",
+          "oklch(0.50 0.162 60)",
+          "oklch(0.62 0.170 60)",
+          "oklch(0.74 0.162 60)",
+          "oklch(0.85 0.139 60)",
+          "oklch(0.95 0.107 60)"
+        ]
+      },
+      "accent-strong-light": {
+        "role": "primary",
+        "displayName": "Ripe Mango Bright (light theme)",
+        "canonical": "oklch(0.70 0.17 58)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 58)",
+          "oklch(0.26 0.095 58)",
+          "oklch(0.38 0.137 58)",
+          "oklch(0.50 0.162 58)",
+          "oklch(0.62 0.170 58)",
+          "oklch(0.74 0.162 58)",
+          "oklch(0.85 0.139 58)",
+          "oklch(0.95 0.107 58)"
+        ]
+      },
+      "accent-fg-light": {
+        "role": "primary",
+        "displayName": "Mango Stone Ink (light theme)",
+        "canonical": "oklch(0.22 0.04 62)",
+        "tonalRamp": [
+          "oklch(0.15 0.010 62)",
+          "oklch(0.26 0.022 62)",
+          "oklch(0.38 0.032 62)",
+          "oklch(0.50 0.038 62)",
+          "oklch(0.62 0.040 62)",
+          "oklch(0.74 0.038 62)",
+          "oklch(0.85 0.033 62)",
+          "oklch(0.95 0.025 62)"
+        ]
+      },
+      "accent-ink-light": {
+        "role": "primary",
+        "displayName": "Mango Ink (light theme)",
+        "canonical": "oklch(0.52 0.15 50)",
+        "tonalRamp": [
+          "oklch(0.15 0.037 50)",
+          "oklch(0.26 0.084 50)",
+          "oklch(0.38 0.121 50)",
+          "oklch(0.50 0.143 50)",
+          "oklch(0.62 0.150 50)",
+          "oklch(0.74 0.143 50)",
+          "oklch(0.85 0.123 50)",
+          "oklch(0.95 0.095 50)"
+        ]
+      },
+      "accent-soft-light": {
+        "role": "primary",
+        "displayName": "Mango Wash (light theme)",
+        "canonical": "oklch(0.72 0.16 60 / 0.16)",
+        "tonalRamp": [
+          "oklch(0.15 0.040 60)",
+          "oklch(0.26 0.090 60)",
+          "oklch(0.38 0.129 60)",
+          "oklch(0.50 0.152 60)",
+          "oklch(0.62 0.160 60)",
+          "oklch(0.74 0.152 60)",
+          "oklch(0.85 0.131 60)",
+          "oklch(0.95 0.101 60)"
+        ]
+      },
+      "accent-line-light": {
+        "role": "primary",
+        "displayName": "Mango Line (light theme)",
+        "canonical": "oklch(0.66 0.17 55 / 0.45)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 55)",
+          "oklch(0.26 0.095 55)",
+          "oklch(0.38 0.137 55)",
+          "oklch(0.50 0.162 55)",
+          "oklch(0.62 0.170 55)",
+          "oklch(0.74 0.162 55)",
+          "oklch(0.85 0.139 55)",
+          "oklch(0.95 0.107 55)"
+        ]
+      },
+      "ripe-idle-light": {
+        "role": "secondary",
+        "displayName": "Bare Stem (light theme)",
+        "canonical": "oklch(0.66 0.012 155)",
+        "tonalRamp": [
+          "oklch(0.15 0.003 155)",
+          "oklch(0.26 0.007 155)",
+          "oklch(0.38 0.010 155)",
+          "oklch(0.50 0.011 155)",
+          "oklch(0.62 0.012 155)",
+          "oklch(0.74 0.011 155)",
+          "oklch(0.85 0.010 155)",
+          "oklch(0.95 0.008 155)"
+        ]
+      },
+      "ripe-queued-light": {
+        "role": "secondary",
+        "displayName": "Unripe Leaf Green (light theme)",
+        "canonical": "oklch(0.58 0.12 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 150)",
+          "oklch(0.26 0.067 150)",
+          "oklch(0.38 0.097 150)",
+          "oklch(0.50 0.114 150)",
+          "oklch(0.62 0.120 150)",
+          "oklch(0.74 0.114 150)",
+          "oklch(0.85 0.098 150)",
+          "oklch(0.95 0.076 150)"
+        ]
+      },
+      "ripe-running-light": {
+        "role": "secondary",
+        "displayName": "Ripening Mango (light theme)",
+        "canonical": "oklch(0.68 0.18 50)",
+        "tonalRamp": [
+          "oklch(0.15 0.045 50)",
+          "oklch(0.26 0.101 50)",
+          "oklch(0.38 0.145 50)",
+          "oklch(0.50 0.171 50)",
+          "oklch(0.62 0.180 50)",
+          "oklch(0.74 0.171 50)",
+          "oklch(0.85 0.148 50)",
+          "oklch(0.95 0.113 50)"
+        ]
+      },
+      "ripe-waiting-light": {
+        "role": "secondary",
+        "displayName": "Blush Coral (light theme)",
+        "canonical": "oklch(0.62 0.17 28)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 28)",
+          "oklch(0.26 0.095 28)",
+          "oklch(0.38 0.137 28)",
+          "oklch(0.50 0.162 28)",
+          "oklch(0.62 0.170 28)",
+          "oklch(0.74 0.162 28)",
+          "oklch(0.85 0.139 28)",
+          "oklch(0.95 0.107 28)"
+        ]
+      },
+      "ripe-done-light": {
+        "role": "secondary",
+        "displayName": "Ripe Gold (light theme)",
+        "canonical": "oklch(0.70 0.16 88)",
+        "tonalRamp": [
+          "oklch(0.15 0.040 88)",
+          "oklch(0.26 0.090 88)",
+          "oklch(0.38 0.129 88)",
+          "oklch(0.50 0.152 88)",
+          "oklch(0.62 0.160 88)",
+          "oklch(0.74 0.152 88)",
+          "oklch(0.85 0.131 88)",
+          "oklch(0.95 0.101 88)"
+        ]
+      },
+      "ripe-error-light": {
+        "role": "secondary",
+        "displayName": "Bruise Red (light theme)",
+        "canonical": "oklch(0.56 0.20 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.050 25)",
+          "oklch(0.26 0.112 25)",
+          "oklch(0.38 0.161 25)",
+          "oklch(0.50 0.190 25)",
+          "oklch(0.62 0.200 25)",
+          "oklch(0.74 0.190 25)",
+          "oklch(0.85 0.164 25)",
+          "oklch(0.95 0.126 25)"
+        ]
+      },
+      "ripe-queued-fg-light": {
+        "role": "secondary",
+        "displayName": "Unripe Leaf Green, text grade (light theme)",
+        "canonical": "oklch(0.46 0.12 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 150)",
+          "oklch(0.26 0.067 150)",
+          "oklch(0.38 0.097 150)",
+          "oklch(0.50 0.114 150)",
+          "oklch(0.62 0.120 150)",
+          "oklch(0.74 0.114 150)",
+          "oklch(0.85 0.098 150)",
+          "oklch(0.95 0.076 150)"
+        ]
+      },
+      "ripe-running-fg-light": {
+        "role": "secondary",
+        "displayName": "Ripening Mango, text grade (light theme)",
+        "canonical": "oklch(0.52 0.14 50)",
+        "tonalRamp": [
+          "oklch(0.15 0.035 50)",
+          "oklch(0.26 0.078 50)",
+          "oklch(0.38 0.113 50)",
+          "oklch(0.50 0.133 50)",
+          "oklch(0.62 0.140 50)",
+          "oklch(0.74 0.133 50)",
+          "oklch(0.85 0.115 50)",
+          "oklch(0.95 0.088 50)"
+        ]
+      },
+      "ripe-waiting-fg-light": {
+        "role": "secondary",
+        "displayName": "Blush Coral, text grade (light theme)",
+        "canonical": "oklch(0.52 0.17 28)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 28)",
+          "oklch(0.26 0.095 28)",
+          "oklch(0.38 0.137 28)",
+          "oklch(0.50 0.162 28)",
+          "oklch(0.62 0.170 28)",
+          "oklch(0.74 0.162 28)",
+          "oklch(0.85 0.139 28)",
+          "oklch(0.95 0.107 28)"
+        ]
+      },
+      "ripe-done-fg-light": {
+        "role": "secondary",
+        "displayName": "Ripe Gold, text grade (light theme)",
+        "canonical": "oklch(0.50 0.11 85)",
+        "tonalRamp": [
+          "oklch(0.15 0.028 85)",
+          "oklch(0.26 0.062 85)",
+          "oklch(0.38 0.088 85)",
+          "oklch(0.50 0.105 85)",
+          "oklch(0.62 0.110 85)",
+          "oklch(0.74 0.105 85)",
+          "oklch(0.85 0.090 85)",
+          "oklch(0.95 0.069 85)"
+        ]
+      },
+      "ripe-error-fg-light": {
+        "role": "secondary",
+        "displayName": "Bruise Red, text grade (light theme)",
+        "canonical": "oklch(0.50 0.19 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.048 25)",
+          "oklch(0.26 0.106 25)",
+          "oklch(0.38 0.153 25)",
+          "oklch(0.50 0.181 25)",
+          "oklch(0.62 0.190 25)",
+          "oklch(0.74 0.181 25)",
+          "oklch(0.85 0.156 25)",
+          "oklch(0.95 0.120 25)"
+        ]
+      },
+      "diff-add-bg-light": {
+        "role": "secondary",
+        "displayName": "Diff Added Wash (light theme)",
+        "canonical": "oklch(0.70 0.12 150 / 0.14)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 150)",
+          "oklch(0.26 0.067 150)",
+          "oklch(0.38 0.097 150)",
+          "oklch(0.50 0.114 150)",
+          "oklch(0.62 0.120 150)",
+          "oklch(0.74 0.114 150)",
+          "oklch(0.85 0.098 150)",
+          "oklch(0.95 0.076 150)"
+        ]
+      },
+      "diff-add-fg-light": {
+        "role": "secondary",
+        "displayName": "Diff Added Ink (light theme)",
+        "canonical": "oklch(0.45 0.12 150)",
+        "tonalRamp": [
+          "oklch(0.15 0.030 150)",
+          "oklch(0.26 0.067 150)",
+          "oklch(0.38 0.097 150)",
+          "oklch(0.50 0.114 150)",
+          "oklch(0.62 0.120 150)",
+          "oklch(0.74 0.114 150)",
+          "oklch(0.85 0.098 150)",
+          "oklch(0.95 0.076 150)"
+        ]
+      },
+      "diff-del-bg-light": {
+        "role": "secondary",
+        "displayName": "Diff Removed Wash (light theme)",
+        "canonical": "oklch(0.62 0.19 25 / 0.12)",
+        "tonalRamp": [
+          "oklch(0.15 0.048 25)",
+          "oklch(0.26 0.106 25)",
+          "oklch(0.38 0.153 25)",
+          "oklch(0.50 0.181 25)",
+          "oklch(0.62 0.190 25)",
+          "oklch(0.74 0.181 25)",
+          "oklch(0.85 0.156 25)",
+          "oklch(0.95 0.120 25)"
+        ]
+      },
+      "diff-del-fg-light": {
+        "role": "secondary",
+        "displayName": "Diff Removed Ink (light theme)",
+        "canonical": "oklch(0.50 0.18 25)",
+        "tonalRamp": [
+          "oklch(0.15 0.045 25)",
+          "oklch(0.26 0.101 25)",
+          "oklch(0.38 0.145 25)",
+          "oklch(0.50 0.171 25)",
+          "oklch(0.62 0.180 25)",
+          "oklch(0.74 0.171 25)",
+          "oklch(0.85 0.148 25)",
+          "oklch(0.95 0.113 25)"
+        ]
+      },
+      "focus-ring-light": {
+        "role": "primary",
+        "displayName": "Focus Ring (light theme)",
+        "canonical": "oklch(0.60 0.17 52 / 0.7)",
+        "tonalRamp": [
+          "oklch(0.15 0.043 52)",
+          "oklch(0.26 0.095 52)",
+          "oklch(0.38 0.137 52)",
+          "oklch(0.50 0.162 52)",
+          "oklch(0.62 0.170 52)",
+          "oklch(0.74 0.162 52)",
+          "oklch(0.85 0.139 52)",
+          "oklch(0.95 0.107 52)"
+        ]
+      },
+      "selection-light": {
+        "role": "primary",
+        "displayName": "Selection (light theme)",
+        "canonical": "oklch(0.72 0.16 60 / 0.25)",
+        "tonalRamp": [
+          "oklch(0.15 0.040 60)",
+          "oklch(0.26 0.090 60)",
+          "oklch(0.38 0.129 60)",
+          "oklch(0.50 0.152 60)",
+          "oklch(0.62 0.160 60)",
+          "oklch(0.74 0.152 60)",
+          "oklch(0.85 0.131 60)",
+          "oklch(0.95 0.101 60)"
+        ]
+      },
+      "scrim-light": {
+        "role": "neutral",
+        "displayName": "Scrim (light theme)",
+        "canonical": "oklch(0.30 0.02 160 / 0.25)",
+        "tonalRamp": [
+          "oklch(0.15 0.005 160)",
+          "oklch(0.26 0.011 160)",
+          "oklch(0.38 0.016 160)",
+          "oklch(0.50 0.019 160)",
+          "oklch(0.62 0.020 160)",
+          "oklch(0.74 0.019 160)",
+          "oklch(0.85 0.016 160)",
+          "oklch(0.95 0.013 160)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "The product name on the welcome hub. One per screen at most."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "The question in an empty chat pane."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Dialog titles, headings inside agent prose, the command palette input."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "The 13.5px base: welcome action titles, palette results, pane titles."
+      },
+      "body-chat": {
+        "displayName": "Body, chat",
+        "purpose": "Agent prose and user messages at a 1.62 line height."
+      },
+      "body-sm": {
+        "displayName": "Body, small",
+        "purpose": "The workhorse of the chrome: menu items, inputs, thread titles, tabs, tool lines."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Button labels and emphasised control text."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Meta lines, hints, field labels, status words."
+      },
+      "micro": {
+        "displayName": "Micro",
+        "purpose": "Timestamps, keycaps, footers."
+      },
+      "mono": {
+        "displayName": "Mono",
+        "purpose": "Paths, branch names, tool targets, diff lines, command previews."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Code blocks in agent prose; the terminal uses the same face and size."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-pop",
+        "value": "0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35)",
+        "purpose": "Dark theme. Menus, dialogs, the command palette. Always with a line border on the raised ground."
+      },
+      {
+        "name": "shadow-pop-light",
+        "value": "0 14px 34px -10px oklch(0.30 0.03 160 / 0.28), 0 2px 6px oklch(0.30 0.03 160 / 0.10)",
+        "purpose": "Light theme value of shadow-pop."
+      },
+      {
+        "name": "shadow-soft",
+        "value": "0 4px 14px -6px oklch(0.05 0.01 160 / 0.5)",
+        "purpose": "Dark theme. The composer, docked but lifted above the transcript."
+      },
+      {
+        "name": "shadow-soft-light",
+        "value": "0 4px 14px -6px oklch(0.30 0.03 160 / 0.18)",
+        "purpose": "Light theme value of shadow-soft."
+      },
+      {
+        "name": "focus-halo",
+        "value": "0 0 0 3px var(--accent-soft)",
+        "purpose": "Field-level focus: text inputs and the composer, together with an accent-line or strong-line border."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid var(--focus-ring); outline-offset: 1px",
+        "purpose": "Global :focus-visible treatment for everything that is not a text field."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Default easing for every state change and entrance."
+      },
+      {
+        "name": "ease-in-out",
+        "value": "cubic-bezier(0.65, 0, 0.35, 1)",
+        "purpose": "Looping work-in-progress motion: the breathing fill level, the Thinking label, the indeterminate progress bar."
+      },
+      {
+        "name": "dur-fast",
+        "value": "120ms",
+        "purpose": "Hover, press, colour and border changes; menu open."
+      },
+      {
+        "name": "dur-med",
+        "value": "220ms",
+        "purpose": "Dialogs, sidebar and terminal panel movement, ripeness colour change, switch thumb."
+      },
+      {
+        "name": "dur-slow",
+        "value": "420ms",
+        "purpose": "The ripeness fill level settling; the welcome column entrance."
+      },
+      {
+        "name": "ripen",
+        "value": "1.8s ease-in-out infinite, fill line between y 7.5 and y 4 of 12",
+        "purpose": "The running ripeness dot: its flesh level rises and settles."
+      },
+      {
+        "name": "breathe",
+        "value": "1.6s ease-in-out infinite, opacity 1 to 0.45",
+        "purpose": "The live Thinking label."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all animation and transition durations collapse to 0.01ms",
+        "purpose": "prefers-reduced-motion: reduce, applied globally in base.css."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "window-min",
+        "value": "960px"
+      },
+      {
+        "name": "composer-narrow (container query, max-width)",
+        "value": "400px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Ripeness Dot",
+      "kind": "custom",
+      "refersTo": "ripeness-dot",
+      "description": "The signature status mark. A fruit whose colour and fill level show how ripe a thread is: idle, queued, working, needs you, done, failed, and an unseen result with its halo.",
+      "html": "<div class=\"ds-ripe-row\"><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--idle\" role=\"img\" aria-label=\"Idle\" title=\"Idle\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-idle\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-idle)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Idle</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--queued\" role=\"img\" aria-label=\"Queued\" title=\"Queued\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-queued\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-queued)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Queued</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--running\" role=\"img\" aria-label=\"Working\" title=\"Working\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-running\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-running)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Working</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--waiting\" role=\"img\" aria-label=\"Needs you\" title=\"Needs you\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-waiting\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-waiting)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Needs you</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--done\" role=\"img\" aria-label=\"Done\" title=\"Done\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-done\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-done)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Done</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--error\" role=\"img\" aria-label=\"Failed\" title=\"Failed\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-error\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-error)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Failed</span></span><span class=\"ds-ripe-cell\"><span class=\"ds-ripe ds-ripe--done ds-ripe--unseen\" role=\"img\" aria-label=\"Done, unseen\" title=\"Done, unseen\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-unseen\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-unseen)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span>Unseen</span></span></div>",
+      "css": ".ds-ripe-row { display: flex; flex-wrap: wrap; gap: var(--space-4) var(--space-5); padding: var(--space-4); background: var(--bg-app); border-radius: var(--radius-md); } .ds-ripe-cell { display: inline-flex; align-items: center; gap: var(--space-2); font-family: var(--font-ui); font-size: var(--text-xs); color: var(--fg-muted); } .ds-ripe { position: relative; display: inline-grid; place-items: center; width: var(--s, 12px); height: var(--s, 12px); flex: none; --c: var(--ripe-idle); --level: 12px; } .ds-ripe svg { display: block; overflow: visible; } .ds-ripe__skin { fill: none; stroke: var(--c); stroke-width: 1.2; transition: stroke var(--dur-med) var(--ease-out); } .ds-ripe__flesh { fill: var(--c); stroke: var(--c); stroke-width: 1.2; transition: fill var(--dur-med) var(--ease-out), stroke var(--dur-med) var(--ease-out); } .ds-ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); } .ds-ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; } .ds-ripe--idle { --c: var(--ripe-idle); --level: 12px; } .ds-ripe--idle .ds-ripe__leaf { fill: var(--ripe-idle); } .ds-ripe--queued { --c: var(--ripe-queued); --level: 12px; } .ds-ripe--running { --c: var(--ripe-running); --level: 6px; } .ds-ripe--running .ds-ripe__level { animation: ds-ripen 1.8s var(--ease-in-out) infinite; } .ds-ripe--waiting { --c: var(--ripe-waiting); --level: 0px; } .ds-ripe--done { --c: var(--ripe-done); --level: 0px; } .ds-ripe--error { --c: var(--ripe-error); --level: 0px; } .ds-ripe--error .ds-ripe__leaf { fill: var(--ripe-error); opacity: 0.6; } .ds-ripe--unseen::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid var(--c); opacity: 0.45; } @keyframes ds-ripen { 0%, 100% { transform: translateY(7.5px); } 50% { transform: translateY(4px); } } @media (prefers-reduced-motion: reduce) { .ds-ripe--running .ds-ripe__level { animation: none; } }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Accent fill with its own ink. One per view: a dialog confirm, Allow once.",
+      "html": "<button type=\"button\" class=\"ds-btn ds-btn-primary\">Clone</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: 30px; padding: 0 var(--space-3); font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 550; white-space: nowrap; border-radius: var(--radius-sm); border: 1px solid transparent; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); } .ds-btn:active { transform: translateY(0.5px); } .ds-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; } .ds-btn-primary { background: var(--accent); color: var(--accent-fg); } .ds-btn-primary:hover { background: var(--accent-strong); }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "The default button: panel ground with a hairline outline.",
+      "html": "<button type=\"button\" class=\"ds-btn ds-btn-secondary\">Browse…</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: 30px; padding: 0 var(--space-3); font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 550; white-space: nowrap; border-radius: var(--radius-sm); border: 1px solid transparent; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); } .ds-btn:active { transform: translateY(0.5px); } .ds-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; } .ds-btn-secondary { background: var(--bg-panel); border-color: var(--line); color: var(--fg); } .ds-btn-secondary:hover { background: var(--bg-raised); border-color: var(--line-strong); }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "No fill until hovered. Cancel, Deny, Stop.",
+      "html": "<button type=\"button\" class=\"ds-btn ds-btn-ghost\">Cancel</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); height: 30px; padding: 0 var(--space-3); font-family: var(--font-ui); font-size: var(--text-sm); font-weight: 550; white-space: nowrap; border-radius: var(--radius-sm); border: 1px solid transparent; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); } .ds-btn:active { transform: translateY(0.5px); } .ds-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; } .ds-btn-ghost { background: none; color: var(--fg-muted); } .ds-btn-ghost:hover { background: var(--bg-hover); color: var(--fg); }"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "Square icon target, 28px or 22px. Toggles show the active wash while on.",
+      "html": "<div class=\"ds-icon-row\"><button type=\"button\" class=\"ds-icon-btn\" aria-label=\"New chat\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg></button><button type=\"button\" class=\"ds-icon-btn ds-icon-btn--active\" aria-label=\"Toggle sidebar\" aria-pressed=\"true\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M9 3v18\"/></svg></button><button type=\"button\" class=\"ds-icon-btn ds-icon-btn--sm\" aria-label=\"Toggle terminal\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 15h18\"/></svg></button><button type=\"button\" class=\"ds-icon-btn ds-icon-btn--sm\" aria-label=\"Close\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M18 6 6 18\"/><path d=\"m6 6 12 12\"/></svg></button></div>",
+      "css": ".ds-icon-row { display: flex; align-items: center; gap: var(--space-1); } .ds-icon-btn { display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: none; color: var(--fg-subtle); border-radius: var(--radius-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); } .ds-icon-btn--sm { width: 22px; height: 22px; border-radius: var(--radius-xs); } .ds-icon-btn:hover { background: var(--bg-hover); color: var(--fg); } .ds-icon-btn:active { background: var(--bg-active); } .ds-icon-btn--active { background: var(--bg-active); color: var(--fg); } .ds-icon-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Label over an inset input over one line of hint. Focus turns the border to the accent line and adds a 3px accent wash.",
+      "html": "<div class=\"ds-field\"><label class=\"ds-field__label\" for=\"ds-field-demo\">Repository URL</label><input id=\"ds-field-demo\" class=\"ds-input\" type=\"text\" placeholder=\"owner/repo or a git URL\" value=\"tauri-apps/tauri\"><p class=\"ds-field__msg\">Clones https://github.com/tauri-apps/tauri.git</p></div>",
+      "css": ".ds-field { display: grid; gap: 6px; width: 320px; max-width: 100%; font-family: var(--font-ui); } .ds-field__label { font-size: var(--text-xs); font-weight: 560; color: var(--fg-muted); } .ds-field__msg { margin: 0; font-size: var(--text-xs); line-height: var(--leading-tight); color: var(--fg-subtle); } .ds-input { height: 32px; width: 100%; padding: 0 var(--space-3); font-family: var(--font-ui); font-size: var(--text-sm); color: var(--fg); background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--radius-sm); caret-color: var(--accent); transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); } .ds-input::placeholder { color: var(--fg-faint); } .ds-input:focus, .ds-input:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }"
+    },
+    {
+      "name": "Menu",
+      "kind": "custom",
+      "refersTo": "menu",
+      "description": "Floating list on the raised ground with the pop shadow. Items carry an optional icon, a hint line, and a check or a shortcut.",
+      "html": "<div class=\"ds-menu\" role=\"menu\" aria-label=\"Chat actions\"><button type=\"button\" class=\"ds-menu__item\" role=\"menuitem\"><span class=\"ds-menu__icon\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></span><span class=\"ds-menu__text\"><span>Ask first</span><span class=\"ds-menu__hint\">Approve each command</span></span><svg class=\"ds-menu__check\" width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 6 9 17l-5-5\"/></svg></button><button type=\"button\" class=\"ds-menu__item\" role=\"menuitem\"><span class=\"ds-menu__icon\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\" ry=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg></span><span class=\"ds-menu__text\"><span>Duplicate</span></span><span class=\"ds-menu__kbd\">Ctrl D</span></button><div class=\"ds-menu__sep\" role=\"separator\"></div><button type=\"button\" class=\"ds-menu__item\" role=\"menuitem\"><span class=\"ds-menu__icon\"><svg width=\"15\" height=\"15\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.75\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M3 6h18\"/><path d=\"M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6\"/><path d=\"M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2\"/></svg></span><span class=\"ds-menu__text\"><span>Delete chat</span></span></button></div>",
+      "css": ".ds-menu { width: 240px; padding: var(--space-1); font-family: var(--font-ui); background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); } .ds-menu__item { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: 30px; padding: 5px var(--space-2); border: 0; background: none; border-radius: var(--radius-sm); text-align: left; color: var(--fg); font-family: inherit; font-size: var(--text-sm); cursor: pointer; } .ds-menu__item:hover, .ds-menu__item:focus-visible { background: var(--bg-hover); outline: none; } .ds-menu__icon { width: 16px; display: grid; place-items: center; color: var(--fg-subtle); flex: none; } .ds-menu__text { flex: 1; min-width: 0; display: grid; } .ds-menu__hint { font-size: var(--text-xs); color: var(--fg-subtle); } .ds-menu__check { color: var(--accent-ink); flex: none; } .ds-menu__kbd { font-size: var(--text-xs); color: var(--fg-faint); flex: none; } .ds-menu__sep { height: 1px; margin: var(--space-1) var(--space-2); background: var(--line-soft); }"
+    },
+    {
+      "name": "Thread Row",
+      "kind": "nav",
+      "refersTo": "thread-row",
+      "description": "Sidebar navigation. Ripeness dot, title over a one-line status, timestamp. Current row takes the active wash; an unseen result takes a halo and a heavier title.",
+      "html": "<nav class=\"ds-threads\" aria-label=\"Threads\"><div class=\"ds-thread\" role=\"button\" tabindex=\"0\"><span class=\"ds-ripe ds-ripe--running\" role=\"img\" aria-label=\"Working\" title=\"Working\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-t1\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-t1)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><div class=\"ds-thread__text\"><span class=\"ds-thread__title\">Persist threads to SQLite</span><span class=\"ds-thread__sub\">Working…</span></div><span class=\"ds-thread__time\">now</span></div><div class=\"ds-thread ds-thread--current ds-thread--unseen\" role=\"button\" tabindex=\"0\"><span class=\"ds-ripe ds-ripe--waiting ds-ripe--unseen\" role=\"img\" aria-label=\"Needs you\" title=\"Needs you\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-t2\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-t2)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><div class=\"ds-thread__text\"><span class=\"ds-thread__title\">Clone dialog: show git progress inline</span><span class=\"ds-thread__sub ds-thread__sub--waiting\">Needs your approval</span></div><span class=\"ds-thread__time\">1m</span></div><div class=\"ds-thread\" role=\"button\" tabindex=\"0\"><span class=\"ds-ripe ds-ripe--done\" role=\"img\" aria-label=\"Done\" title=\"Done\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-t3\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-t3)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><div class=\"ds-thread__text\"><span class=\"ds-thread__title\">Wire the terminal panel to a real PTY</span><span class=\"ds-thread__sub\">Claude Code</span></div><span class=\"ds-thread__time\">2m</span></div><div class=\"ds-thread\" role=\"button\" tabindex=\"0\"><span class=\"ds-ripe ds-ripe--error\" role=\"img\" aria-label=\"Failed\" title=\"Failed\" style=\"--s:12px\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-t4\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-t4)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><div class=\"ds-thread__text\"><span class=\"ds-thread__title\">Command palette fuzzy matching</span><span class=\"ds-thread__sub ds-thread__sub--error\">Stopped with an error</span></div><span class=\"ds-thread__time\">2h</span></div></nav>",
+      "css": ".ds-threads { display: grid; gap: 1px; width: 264px; max-width: 100%; padding: var(--space-2); font-family: var(--font-ui); background: var(--bg-app); border-radius: var(--radius-md); } .ds-thread { display: grid; grid-template-columns: 14px 1fr auto; align-items: center; justify-items: start; column-gap: var(--space-2); min-height: 44px; padding: 6px 6px 6px 8px; border-radius: var(--radius-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-out); } .ds-thread:hover { background: var(--bg-hover); } .ds-thread--current, .ds-thread--current:hover { background: var(--bg-active); } .ds-thread:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; } .ds-thread .ds-ripe { align-self: start; margin-top: 3px; justify-self: center; } .ds-thread__text { min-width: 0; width: 100%; display: grid; gap: 1px; } .ds-thread__title { font-size: var(--text-sm); line-height: 1.35; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-thread--current .ds-thread__title, .ds-thread--unseen .ds-thread__title { color: var(--fg); } .ds-thread--unseen .ds-thread__title { font-weight: 560; } .ds-thread__sub { font-size: var(--text-xs); line-height: 1.35; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-thread__sub--waiting { color: var(--ripe-waiting-fg); } .ds-thread__sub--error { color: var(--ripe-error-fg); } .ds-thread__time { align-self: start; margin-top: 2px; font-size: var(--text-2xs); font-variant-numeric: tabular-nums; color: var(--fg-faint); } .ds-ripe { position: relative; display: inline-grid; place-items: center; width: var(--s, 12px); height: var(--s, 12px); flex: none; --c: var(--ripe-idle); --level: 12px; } .ds-ripe svg { display: block; overflow: visible; } .ds-ripe__skin { fill: none; stroke: var(--c); stroke-width: 1.2; transition: stroke var(--dur-med) var(--ease-out); } .ds-ripe__flesh { fill: var(--c); stroke: var(--c); stroke-width: 1.2; transition: fill var(--dur-med) var(--ease-out), stroke var(--dur-med) var(--ease-out); } .ds-ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); } .ds-ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; } .ds-ripe--idle { --c: var(--ripe-idle); --level: 12px; } .ds-ripe--idle .ds-ripe__leaf { fill: var(--ripe-idle); } .ds-ripe--queued { --c: var(--ripe-queued); --level: 12px; } .ds-ripe--running { --c: var(--ripe-running); --level: 6px; } .ds-ripe--running .ds-ripe__level { animation: ds-ripen 1.8s var(--ease-in-out) infinite; } .ds-ripe--waiting { --c: var(--ripe-waiting); --level: 0px; } .ds-ripe--done { --c: var(--ripe-done); --level: 0px; } .ds-ripe--error { --c: var(--ripe-error); --level: 0px; } .ds-ripe--error .ds-ripe__leaf { fill: var(--ripe-error); opacity: 0.6; } .ds-ripe--unseen::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid var(--c); opacity: 0.45; } @keyframes ds-ripen { 0%, 100% { transform: translateY(7.5px); } 50% { transform: translateY(4px); } } @media (prefers-reduced-motion: reduce) { .ds-ripe--running .ds-ripe__level { animation: none; } }"
+    },
+    {
+      "name": "Chat Tabs",
+      "kind": "nav",
+      "refersTo": "chat-tab",
+      "description": "The 36px tab strip above the chat panes. The active tab takes the canvas ground and the accent underline; a tab shown in the other split pane takes a neutral underline.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\" aria-label=\"Open chats\"><div class=\"ds-tab ds-tab--shown\" role=\"tab\" tabindex=\"0\" aria-selected=\"false\"><span class=\"ds-ripe ds-ripe--done\" role=\"img\" aria-label=\"Done\" title=\"Done\" style=\"--s:11px\"><svg width=\"11\" height=\"11\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-c1\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-c1)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span class=\"ds-tab__title\">Wire the terminal panel</span></div><div class=\"ds-tab ds-tab--active\" role=\"tab\" tabindex=\"0\" aria-selected=\"true\"><span class=\"ds-ripe ds-ripe--waiting ds-ripe--unseen\" role=\"img\" aria-label=\"Needs you\" title=\"Needs you\" style=\"--s:11px\"><svg width=\"11\" height=\"11\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-c2\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-c2)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span class=\"ds-tab__title\">Clone dialog: show git progress</span></div><div class=\"ds-tab\" role=\"tab\" tabindex=\"0\" aria-selected=\"false\"><span class=\"ds-ripe ds-ripe--running\" role=\"img\" aria-label=\"Working\" title=\"Working\" style=\"--s:11px\"><svg width=\"11\" height=\"11\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><defs><clipPath id=\"ds-ripe-clip-c3\"><rect class=\"ds-ripe__level\" x=\"0\" y=\"0\" width=\"12\" height=\"12\"/></clipPath></defs><path class=\"ds-ripe__skin\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\"/><path class=\"ds-ripe__flesh\" d=\"M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z\" clip-path=\"url(#ds-ripe-clip-c3)\"/><path class=\"ds-ripe__leaf\" d=\"M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z\"/></svg></span><span class=\"ds-tab__title\">Persist threads to SQLite</span></div></div>",
+      "css": ".ds-tabs { display: flex; align-items: stretch; height: 36px; padding-left: var(--space-1); font-family: var(--font-ui); border-bottom: 1px solid var(--line-soft); background: color-mix(in oklch, var(--bg-app) 35%, var(--bg-canvas)); } .ds-tab { position: relative; display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 220px; padding: 0 10px; font-size: var(--text-sm); color: var(--fg-subtle); cursor: pointer; transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); } .ds-tab:hover { color: var(--fg-muted); background: var(--bg-hover); } .ds-tab--shown { color: var(--fg-muted); } .ds-tab--active, .ds-tab--active:hover { color: var(--fg); background: var(--bg-canvas); } .ds-tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; } .ds-tab--active::after, .ds-tab--shown::after { content: ''; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; } .ds-tab--active::after { border-radius: 2px 2px 0 0; background: var(--accent); } .ds-tab--shown::after { background: var(--line-strong); } .ds-tab__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-ripe { position: relative; display: inline-grid; place-items: center; width: var(--s, 12px); height: var(--s, 12px); flex: none; --c: var(--ripe-idle); --level: 12px; } .ds-ripe svg { display: block; overflow: visible; } .ds-ripe__skin { fill: none; stroke: var(--c); stroke-width: 1.2; transition: stroke var(--dur-med) var(--ease-out); } .ds-ripe__flesh { fill: var(--c); stroke: var(--c); stroke-width: 1.2; transition: fill var(--dur-med) var(--ease-out), stroke var(--dur-med) var(--ease-out); } .ds-ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); } .ds-ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; } .ds-ripe--idle { --c: var(--ripe-idle); --level: 12px; } .ds-ripe--idle .ds-ripe__leaf { fill: var(--ripe-idle); } .ds-ripe--queued { --c: var(--ripe-queued); --level: 12px; } .ds-ripe--running { --c: var(--ripe-running); --level: 6px; } .ds-ripe--running .ds-ripe__level { animation: ds-ripen 1.8s var(--ease-in-out) infinite; } .ds-ripe--waiting { --c: var(--ripe-waiting); --level: 0px; } .ds-ripe--done { --c: var(--ripe-done); --level: 0px; } .ds-ripe--error { --c: var(--ripe-error); --level: 0px; } .ds-ripe--error .ds-ripe__leaf { fill: var(--ripe-error); opacity: 0.6; } .ds-ripe--unseen::after { content: ''; position: absolute; inset: -3px; border-radius: 50%; border: 1.5px solid var(--c); opacity: 0.45; } @keyframes ds-ripen { 0%, 100% { transform: translateY(7.5px); } 50% { transform: translateY(4px); } } @media (prefers-reduced-motion: reduce) { .ds-ripe--running .ds-ripe__level { animation: none; } }"
+    },
+    {
+      "name": "Composer",
+      "kind": "custom",
+      "refersTo": "composer",
+      "description": "Where a message is written: panel ground, 12px corners, the soft shadow, picker chips for agent, model and permissions, and the accent send button.",
+      "html": "<form class=\"ds-composer\" onsubmit=\"return false\"><textarea class=\"ds-composer__input\" rows=\"1\" placeholder=\"Ask Claude Code to build, fix or explain…\" aria-label=\"Message\"></textarea><div class=\"ds-composer__bar\"><button type=\"button\" class=\"ds-chip ds-chip--agent\"><span class=\"ds-chip__dot\" aria-hidden=\"true\"></span><span>Claude Code</span><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m6 9 6 6 6-6\"/></svg></button><button type=\"button\" class=\"ds-chip\"><span>Opus 5.5</span><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m6 9 6 6 6-6\"/></svg></button><button type=\"button\" class=\"ds-chip\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z\"/></svg><span>Ask first</span><svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m6 9 6 6 6-6\"/></svg></button><span class=\"ds-composer__spacer\"></span><button type=\"submit\" class=\"ds-send\" aria-label=\"Send\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.25\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m5 12 7-7 7 7\"/><path d=\"M12 19V5\"/></svg></button></div></form>",
+      "css": ".ds-composer { display: flex; flex-direction: column; gap: var(--space-1); width: 520px; max-width: 100%; padding: var(--space-3) var(--space-2) var(--space-2) var(--space-3); font-family: var(--font-ui); background: var(--bg-panel); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-soft); transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); } .ds-composer:focus-within { border-color: var(--line-strong); box-shadow: var(--shadow-soft), 0 0 0 3px var(--accent-soft); } .ds-composer__input { width: 100%; min-height: 22px; padding: 0 var(--space-1); resize: none; border: 0; outline: none; background: transparent; font-family: inherit; font-size: var(--text-md); line-height: 1.55; color: var(--fg); caret-color: var(--accent); } .ds-composer__input::placeholder { color: var(--fg-faint); } .ds-composer__bar { display: flex; align-items: center; gap: 2px; } .ds-composer__spacer { flex: 1; } .ds-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 6px 0 8px; border: 0; background: none; border-radius: var(--radius-sm); font-family: inherit; font-size: var(--text-xs); font-weight: 540; color: var(--fg-subtle); white-space: nowrap; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out); } .ds-chip svg { opacity: 0.7; flex: none; } .ds-chip--agent { color: var(--fg-muted); } .ds-chip:hover { background: var(--bg-hover); color: var(--fg); } .ds-chip__dot { width: 8px; height: 8px; border-radius: 2px; background: var(--accent); } .ds-send { display: grid; place-items: center; width: 28px; height: 28px; margin-left: var(--space-1); padding: 0; border: 0; border-radius: var(--radius-sm); background: var(--accent); color: var(--accent-fg); cursor: pointer; transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); } .ds-send:hover { background: var(--accent-strong); } .ds-send:active { transform: scale(0.94); } .ds-chip:focus-visible, .ds-send:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }"
+    },
+    {
+      "name": "Keycap",
+      "kind": "chip",
+      "refersTo": "kbd",
+      "description": "A shortcut shown as separate keys, inside buttons, menus and the command search.",
+      "html": "<span class=\"ds-keys\"><kbd class=\"ds-kbd\">Ctrl</kbd><kbd class=\"ds-kbd\">K</kbd></span>",
+      "css": ".ds-keys { display: inline-flex; gap: 3px; } .ds-kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 5px; font-family: var(--font-ui); font-size: var(--text-2xs); font-weight: 500; line-height: 1; color: var(--fg-subtle); background: var(--bg-hover); border: 1px solid var(--line-soft); border-radius: var(--radius-xs); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Orchard at Dusk",
+    "overview": "Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. The ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.\n\nThe density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a \"Thinking…\" label, a streaming caret, a spinner.\n\nThe light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.",
+    "keyCharacteristics": [
+      "Leaf-shade grounds (hue 160, chroma about 0.01) in four lightness steps, plus an inset well darker than all of them.",
+      "One accent family, ripe mango, split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.",
+      "Status as ripeness: colour plus fill level, in a fruit-shaped mark used in the sidebar, tabs, pane headers and the titlebar counter.",
+      "Inter Variable at tool density with fractional weights; JetBrains Mono only where the content is machine text.",
+      "Radius grows with the size of the surface: 4, 6, 8, 12px.",
+      "Chrome is not selectable and uses the default cursor; content is selectable.",
+      "Lucide line icons at 1.75 stroke, 16px in a 28px target, 14px in a 22px target."
+    ],
+    "rules": [
+      {
+        "name": "The Fill-or-Ink Rule",
+        "body": "Mango has two jobs and two tokens. As a fill it is `accent` and the text on it is `accent-fg`. As text or an icon on a ground it is `accent-ink`. Never set text in `accent`, and never fill with `accent-ink`; in the light theme the two are far apart and the wrong one fails contrast.",
+        "section": "colors"
+      },
+      {
+        "name": "The Two-Grade Rule",
+        "body": "A status colour drawn as a mark (the fruit, a dot, a border, a wash) uses `ripe-*`. The same status written as words uses `ripe-*-fg`.",
+        "section": "colors"
+      },
+      {
+        "name": "The Ripeness Rule",
+        "body": "Status is never colour alone. It is colour plus fill level, in the ripeness dot, and wherever it matters it is also a word (\"Working…\", \"Needs your approval\", \"Stopped with an error\").",
+        "section": "colors"
+      },
+      {
+        "name": "The Geometric Precision Rule",
+        "body": "`text-rendering: geometricPrecision` on the root is required, not a preference. Without it Linux webviews round Inter's narrow semibold word space down to 3px and words run together.",
+        "section": "typography"
+      },
+      {
+        "name": "The Machine Text Rule",
+        "body": "Monospace is for code, paths, branches and the terminal. Never for labels, numbers in the chrome, or decoration.",
+        "section": "typography"
+      },
+      {
+        "name": "The Lightness Ladder Rule",
+        "body": "A surface that is closer to the user is lighter: app, then canvas, then panel, then raised. Never lift a surface with a border alone, and never put a darker surface above a lighter one, except the inset well, which reads as a cut into its parent.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Floating Shadow Rule",
+        "body": "Shadows belong to layers that float: menus, dialogs, the palette, and the composer. Rows, cards in the flow, tabs and rails are flat.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Chrome and Content Rule",
+        "body": "Chrome text is not selectable and keeps the default cursor, like a native app. Anything a person would read closely or copy (messages, thinking text, tool output, command previews, path previews, logs) carries `.selectable`. Inputs and the terminal are always selectable.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do take every colour, size, space, radius and duration from `app/assets/css/tokens.css`. Components read tokens only; that is what makes the light theme work without a single theme branch.",
+      "Do use `accent` with `accent-fg` for fills and `accent-ink` for accent-coloured text and icons (The Fill-or-Ink Rule).",
+      "Do use `ripe-*` for marks, borders and washes and `ripe-*-fg` for status words (The Two-Grade Rule).",
+      "Do show thread status with the ripeness dot wherever a thread is named, and back it with a status word where there is room.",
+      "Do lift surfaces by lightness: app, canvas, panel, raised, with the inset well for terminals, code and inputs.",
+      "Do keep `text-rendering: geometricPrecision` on the root.",
+      "Do mark readable or copyable content with `.selectable`; leave chrome unselectable.",
+      "Do truncate with an ellipsis and keep a `title` on the element; the frame must hold at 960 by 600px.",
+      "Do keep state transitions at 120ms and panel or dialog movement at 220ms on `--ease-out`, and honour `prefers-reduced-motion` (the base stylesheet already collapses durations).",
+      "Do write labels in sentence case and show shortcuts as keycaps."
+    ],
+    "donts": [
+      "Don't set text in `accent` or fill with `accent-ink`.",
+      "Don't signal status with colour alone, and don't draw status as a plain round dot where the ripeness dot belongs.",
+      "Don't introduce a second accent hue. Colour outside the mango family and the ripening scale is reserved for the terminal's ANSI palette.",
+      "Don't put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette and the composer.",
+      "Don't separate surfaces with a border alone when they are at different depths; change the ground.",
+      "Don't use monospace for anything that is not code, a path, a branch or terminal output.",
+      "Don't write a raw colour, pixel font size or duration in a component when a token exists.",
+      "Don't animate anything that is not a state change or work in progress."
+    ]
+  }
+}
