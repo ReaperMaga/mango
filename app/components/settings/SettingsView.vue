@@ -18,15 +18,15 @@ type Section = NonNullable<ReturnType<typeof useWorkspace>['settings']>
 const ws = useWorkspace()
 
 const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
+  { id: 'general', label: 'General', icon: SlidersHorizontal },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
   { id: 'appearance', label: 'Appearance', icon: SunMoon },
-  { id: 'general', label: 'General', icon: SlidersHorizontal },
 ]
 
 const open = computed(() => ws.settings !== null)
 /** Stays on the last section while the view fades out. */
-const section = ref<Section>(ws.settings ?? 'agents')
+const section = ref<Section>(ws.settings ?? 'general')
 
 const view = ref<HTMLElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)

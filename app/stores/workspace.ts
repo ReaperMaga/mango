@@ -223,7 +223,7 @@ export const useWorkspace = defineStore('workspace', {
       const showing = this.sidebarOpen && this.sidebarView === 'changes'
       this.setSidebarView(force ?? !showing ? 'changes' : 'threads')
     },
-    openSettings(section: SettingsSection = 'agents') {
+    openSettings(section: SettingsSection = 'general') {
       this.settings = section
       this.paletteOpen = false
     },
