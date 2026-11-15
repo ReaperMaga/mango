@@ -1,4 +1,4 @@
-import type { Commands, Events, ProjectInfo, AgentInfo } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, SetupTool, SetupToolId } from '~/types/ipc'
 import { mockGit } from '~/composables/mockGit'
 
 /**
@@ -115,6 +115,29 @@ const mock = (() => {
     out(prompt(p))
   }
 
+  /* Setup: Codex starts out missing so the dialog has something to install. */
+  const setupTools: SetupTool[] = [
+    { id: 'git', name: 'Git', installed: true, version: 'git version 2.47.1', path: '/usr/bin/git', install: { command: 'sudo apt-get install -y git', via: 'apt' }, helpUrl: 'https://git-scm.com/downloads' },
+    { id: 'claude', name: 'Claude Code', installed: true, version: '2.4.1 (Claude Code)', path: `${home}/.local/bin/claude`, install: { command: 'curl -fsSL https://claude.ai/install.sh | bash', via: "Anthropic's installer" }, helpUrl: 'https://code.claude.com/docs/en/setup' },
+    { id: 'codex', name: 'Codex', installed: false, version: null, path: null, install: { command: 'curl -fsSL https://chatgpt.com/codex/install.sh | sh', via: "OpenAI's installer" }, helpUrl: 'https://github.com/openai/codex' },
+  ]
+  /** Play a fake installer into a fake terminal, then mark the tool installed. */
+  function fakeInstall(id: string, tool: SetupToolId) {
+    const t = setupTools.find(x => x.id === tool)!
+    const lines = [
+      `\x1b[2m$ ${t.install?.command}\x1b[0m`,
+      `Downloading ${t.name}…`,
+      'Verifying checksum… ok',
+      `Installing to ${home}/.local/bin`,
+      `\x1b[32m✓\x1b[0m ${t.name} installed \x1b[2m(simulated: the browser preview installs nothing)\x1b[0m`,
+    ]
+    lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
+    setTimeout(() => {
+      Object.assign(t, { installed: true, version: tool === 'codex' ? 'codex-cli 0.98.0' : '1.0.0', path: `${home}/.local/bin/${tool}` })
+      emit('pty://exit', { id, code: 0 })
+    }, 250 + lines.length * 420)
+  }
+
   async function call(cmd: string, args: any): Promise<any> {
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
@@ -136,10 +159,9 @@ const mock = (() => {
         return remember({ path: `${args.parent.replace(/\/+$/, '')}/${name}`, name, isGit: true, branch: 'main', lastOpened: Date.now() })
       }
       case 'default_projects_dir': return `${home}/Projects`
-      case 'detect_agents': return [
-        { id: 'claude', name: 'Claude Code', installed: true, version: '2.4.1', path: `${home}/.local/bin/claude` },
-        { id: 'codex', name: 'Codex', installed: true, version: '0.98.0', path: `${home}/.local/bin/codex` },
-      ] satisfies AgentInfo[]
+      case 'detect_agents': return setupTools.filter(t => t.id !== 'git').map(t => ({
+        id: t.id as AgentInfo['id'], name: t.name, installed: t.installed, version: t.version, path: t.path,
+      })) satisfies AgentInfo[]
       case 'pty_spawn': {
         const id = `pty-${Math.random().toString(36).slice(2, 8)}`
         const p: FakePty = { cwd: args.cwd || home, line: '' }
@@ -167,11 +189,17 @@ const mock = (() => {
       case 'pty_resize': return
       case 'pty_kill': ptys.delete(args.id); return
       case 'agent_auth_status': return {
-        agent: args.agent, installed: true, loggedIn: args.agent === 'claude',
+        agent: args.agent, installed: !!setupTools.find(t => t.id === args.agent)?.installed, loggedIn: args.agent === 'claude',
         account: args.agent === 'claude' ? 'you@example.com' : null, plan: args.agent === 'claude' ? 'max' : null,
         method: args.agent === 'claude' ? 'claude.ai' : null, detail: args.agent === 'claude' ? null : 'Not logged in',
       }
       case 'agent_logout': return
+      case 'setup_check': return setupTools.map(t => ({ ...t }))
+      case 'setup_install': {
+        const id = `pty-${Math.random().toString(36).slice(2, 8)}`
+        fakeInstall(id, args.tool)
+        return id
+      }
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': return
       case 'update_check': return {

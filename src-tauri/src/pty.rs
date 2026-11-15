@@ -157,6 +157,20 @@ pub async fn pty_spawn(
     rows: u16,
     command: Option<Vec<String>>,
 ) -> Result<String, String> {
+    start(app, &state, cwd, cols, rows, command, &[])
+}
+
+/// Open a PTY running `command` (or the login shell) with extra `env`, and
+/// stream it as `pty://data` / `pty://exit`. Returns the terminal id.
+pub(crate) fn start(
+    app: AppHandle,
+    state: &PtyState,
+    cwd: Option<String>,
+    cols: u16,
+    rows: u16,
+    command: Option<Vec<String>>,
+    env: &[(&str, &str)],
+) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(size(cols, rows))
         .map_err(|e| format!("Could not open a terminal: {e}"))?;
@@ -184,6 +198,9 @@ pub async fn pty_spawn(
         }
     };
     cmd.cwd(resolve_cwd(cwd));
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "mango");

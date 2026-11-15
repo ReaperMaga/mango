@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FolderOpen, FolderPlus, GitBranch, GitFork, Settings, X } from 'lucide-vue-next'
+import { Download, FolderOpen, FolderPlus, GitBranch, GitFork, Settings, X } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import type { ProjectInfo } from '~/types/ipc'
@@ -257,10 +257,13 @@ onBeforeUnmount(() => {
       </section>
 
       <footer class="agents">
-        <button type="button" class="agents__settings" @click="ws.openSettings('agents')">
+        <button v-if="noAgents" type="button" class="agents__settings" @click="ws.openSetup()">
+          <Download />
+          <span>No agent is installed yet. Install one</span>
+        </button>
+        <button v-else type="button" class="agents__settings" @click="ws.openSettings('agents')">
           <Settings />
-          <span v-if="noAgents">No agent is installed yet. Set one up in Settings</span>
-          <span v-else>Settings</span>
+          <span>Settings</span>
         </button>
       </footer>
     </div>

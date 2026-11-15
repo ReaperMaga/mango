@@ -6,6 +6,7 @@ mod git;
 mod plastic;
 mod projects;
 mod pty;
+mod setup;
 mod shells;
 mod updater;
 mod vcs;
@@ -41,6 +42,8 @@ pub fn run() {
             agent_proc::agent_kill,
             auth::agent_auth_status,
             auth::agent_logout,
+            setup::setup_check,
+            setup::setup_install,
             vcs::git_status,
             vcs::git_diff,
             vcs::git_stage,

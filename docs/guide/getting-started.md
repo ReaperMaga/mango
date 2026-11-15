@@ -1,6 +1,27 @@
 # Getting started
 
-This page walks through the first launch: opening a project and starting a chat. It assumes you have [installed Mango](./install) and at least one agent CLI.
+This page walks through the first launch: setting up an agent, opening a project and starting a chat. It assumes you have [installed Mango](./install).
+
+## Get started
+
+The first time Mango starts, it opens **Get started**. It lists Claude Code, Codex and Git, with what Mango found for each:
+
+- **Ready**: installed and signed in. The row shows the account.
+- **Installed**: Git is there.
+- **Not signed in**: installed, but not signed in yet. **Sign in** runs the CLI's own login (`claude auth login` or `codex login`) in a terminal inside the dialog. Finish in your browser; if the page gives you a code, paste it into the terminal and press <kbd>Enter</kbd>.
+- **Not installed**: **Install** runs the vendor's own installer in a terminal inside the dialog. The row shows the exact command before you press it:
+
+| Tool | Windows | Linux | macOS |
+| --- | --- | --- | --- |
+| Claude Code | `irm https://claude.ai/install.ps1 \| iex` (PowerShell) | `curl -fsSL https://claude.ai/install.sh \| bash` | same as Linux |
+| Codex | `irm https://chatgpt.com/codex/install.ps1 \| iex` (PowerShell) | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | same as Linux |
+| Git | `winget install --id Git.Git -e --source winget` | `sudo apt-get install -y git` (or `dnf`, `pacman`, `zypper`) | `brew install git`, or Apple's Command Line Tools |
+
+An installer may ask you something, such as your password for `sudo` or a WinGet agreement: answer it in the terminal. On Windows the Git installer may also ask for permission in a separate window. When Mango has no installer it can run (for example on Linux without `curl`), the row links to the tool's download page instead.
+
+One agent is enough; Git is for the [Changes](./changes) view and cloning. While an installer or a sign-in runs, the dialog stays open; **Stop** or **Cancel** ends it. Then press **Done**, or **Skip for now** if you want to set things up later. If you quit Mango before closing the dialog, it opens again on the next launch.
+
+To open it again, choose **Get started** in the command palette (<kbd>Ctrl</kbd> <kbd>K</kbd>), or **Install…** on an agent that is not installed in **Settings > Agents**.
 
 ## The start screen
 
@@ -11,7 +32,7 @@ With no project open, Mango shows its start screen:
 - **Clone repository**: clone from GitHub or any git remote.
 - **Recent**: projects you opened before, with their current branch. Remove one with the **×** on its row or the <kbd>Delete</kbd> key.
 
-If no agent CLI is installed, the footer says so and links to **Settings > Agents**.
+If no agent CLI is installed, the footer says so and opens **Get started**.
 
 On macOS-style keyboards <kbd>⌘</kbd> takes the place of <kbd>Ctrl</kbd> throughout Mango.
 

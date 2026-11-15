@@ -22,7 +22,7 @@ While the terminal has focus, only <kbd>Ctrl</kbd> <kbd>K</kbd> and the terminal
 
 ## Command palette
 
-The palette (<kbd>Ctrl</kbd> <kbd>K</kbd>, or the search field in the titlebar) searches chats, projects and actions: new chat, open folder, new project, clone repository, show or hide the terminal, sidebar and changes, split, settings, theme.
+The palette (<kbd>Ctrl</kbd> <kbd>K</kbd>, or the search field in the titlebar) searches chats, projects and actions: new chat, open folder, new project, clone repository, get started (install and sign in to agents), show or hide the terminal, sidebar and changes, split, settings, theme.
 
 | Keys | Action |
 | --- | --- |

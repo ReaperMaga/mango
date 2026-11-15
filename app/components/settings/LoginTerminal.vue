@@ -14,11 +14,16 @@ import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
  */
 const props = withDefaults(defineProps<{
   /** argv of the program to run, e.g. ['claude', 'auth', 'login'] */
-  command: string[]
+  command?: string[]
+  /** Starts the process some other way (e.g. `setup_install`); resolves to the pty id. */
+  start?: (cols: number, rows: number) => Promise<string>
   /** accessible name of the terminal */
   label: string
   rows?: number
 }>(), { rows: 14 })
+
+/** What to call the program in an error line. */
+const programName = computed(() => props.command?.join(' ') || props.label)
 
 const emit = defineEmits<{
   /** the process ended on its own */
@@ -277,7 +282,9 @@ async function spawn() {
   backlog = []
   try {
     const { cols, rows } = term
-    const id = await call('pty_spawn', { cwd: null, cols, rows, command: props.command })
+    const id = props.start
+      ? await props.start(cols, rows)
+      : await call('pty_spawn', { cwd: null, cols, rows, command: props.command ?? null })
     if (disposed) {
       call('pty_kill', { id }).catch(() => {})
       return
@@ -295,7 +302,7 @@ async function spawn() {
     backlog = null
     exited = true
     const msg = err instanceof Error ? err.message : String(err)
-    term?.write(`\x1b[31mCould not start ${props.command.join(' ')}:\x1b[0m ${msg}\r\n\x1b[?25l`)
+    term?.write(`\x1b[31mCould not start ${programName.value}:\x1b[0m ${msg}\r\n\x1b[?25l`)
     emit('failed', msg)
   } finally {
     backlog = null

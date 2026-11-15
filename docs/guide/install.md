@@ -4,14 +4,17 @@ Mango is built for Windows (x64) and Linux (x64). The current release is <Releas
 
 ## Before you start
 
-Mango runs the agent command-line tools installed on your computer. It does not ship an agent of its own, and it never sees or stores your credentials. Install at least one of them and sign in with its own sign-in:
+Mango runs the agent command-line tools installed on your computer. It does not ship an agent of its own, and it never sees or stores your credentials. You need at least one of them, signed in with its own sign-in.
 
-| Agent | Install | Sign in |
-| --- | --- | --- |
-| Claude Code | `npm install -g @anthropic-ai/claude-code` | `claude auth login` |
-| Codex | `npm install -g @openai/codex` | `codex login` |
+You don't have to install them first: on its first launch Mango opens **Get started**, which installs what is missing and signs you in. See [Getting started](./getting-started#get-started). To install them yourself instead:
 
-You can also sign in later from **Settings > Agents**, which runs the same login command in a terminal inside Mango. See [Settings](./settings#agents).
+| Tool | Windows (PowerShell) | Linux and macOS | Sign in |
+| --- | --- | --- | --- |
+| Claude Code | `irm https://claude.ai/install.ps1 \| iex` | `curl -fsSL https://claude.ai/install.sh \| bash` | `claude auth login` |
+| Codex | `irm https://chatgpt.com/codex/install.ps1 \| iex` | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | `codex login` |
+| Git | `winget install --id Git.Git -e` | your package manager, e.g. `sudo apt install git` | |
+
+`npm install -g @anthropic-ai/claude-code` and `npm install -g @openai/codex` work too, if you already use Node.js. You can also sign in later from **Settings > Agents**, which runs the login command in a terminal inside Mango. See [Settings](./settings#agents).
 
 For the Changes view you need `git` on your `PATH`. For Unity Version Control workspaces you need the Unity VCS (Plastic SCM) client and its `cm` command; see [Unity Version Control](./unity-vcs).
 

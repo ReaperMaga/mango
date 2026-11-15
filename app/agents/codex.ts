@@ -641,7 +641,7 @@ function run(options: AgentRunOptions): AgentRun {
     }
     catch (e: Json) {
       const why = String(e?.message ?? e ?? '').trim()
-      return finish('error', `Could not start the Codex CLI${why ? ` (${why})` : ''}. Install it with "npm install -g @openai/codex" and make sure "codex" is on your PATH.`)
+      return finish('error', `Could not start the Codex CLI${why ? ` (${why})` : ''}. Install it from Settings > Agents, or make sure "codex" is on your PATH.`)
     }
     if (ended) return shutdown()
     if (exited) return

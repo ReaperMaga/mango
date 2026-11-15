@@ -12,6 +12,8 @@ export interface AuthEntry {
 
 <script setup lang="ts">
 import { Check, CircleAlert, CircleCheck, CircleDashed, Copy, ExternalLink, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { AGENT_CLI, copyToClipboard } from '~/utils/agentCli'
+import { useWorkspace } from '~/stores/workspace'
 import type { AgentInfo } from '~/types/ipc'
 import type { AgentId } from '~/types/chat'
 import { call, openExternal } from '~/composables/useBackend'
@@ -32,12 +34,8 @@ const props = defineProps<{
   refresh: (opts?: { detect?: boolean }) => Promise<AuthStatus | null>
 }>()
 
-/** The CLI command of each agent, and how to install, sign in to and sign out of it. */
-const CLI: Partial<Record<AgentId, { bin: string; install: string; login: string[]; logout: string }>> = {
-  claude: { bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code', login: ['claude', 'auth', 'login'], logout: 'claude auth logout' },
-  codex: { bin: 'codex', install: 'npm install -g @openai/codex', login: ['codex', 'login'], logout: 'codex logout' },
-}
-const cli = computed(() => CLI[props.agent] ?? null)
+const ws = useWorkspace()
+const cli = computed(() => AGENT_CLI[props.agent] ?? null)
 const loginCommand = computed(() => cli.value?.login.join(' ') ?? '')
 
 /** true / false once known, null while we are still finding out. */
@@ -74,23 +72,11 @@ const signedOutDetail = computed(() => {
 
 /* ---------- copy ---------- */
 
-const copied = ref<null | 'install' | 'link'>(null)
+const copied = ref<null | 'link'>(null)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 
-async function copyText(text: string, what: 'install' | 'link') {
-  try {
-    await navigator.clipboard.writeText(text)
-  } catch {
-    // Older webviews: copy through a throwaway field.
-    const ta = document.createElement('textarea')
-    ta.value = text
-    ta.setAttribute('readonly', '')
-    ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none'
-    document.body.appendChild(ta)
-    ta.select()
-    try { document.execCommand('copy') } catch { /* nothing else to try */ }
-    ta.remove()
-  }
+async function copyText(text: string, what: 'link') {
+  await copyToClipboard(text)
   copied.value = what
   clearTimeout(copiedTimer)
   copiedTimer = setTimeout(() => { copied.value = null }, 1600)
@@ -249,20 +235,12 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
         </span>
       </p>
       <div class="agent__indent">
-        <div v-if="cli" class="install">
-          <code class="install__cmd selectable">{{ cli.install }}</code>
-          <UiIconButton
-            size="sm"
-            :label="copied === 'install' ? 'Copied' : 'Copy install command'"
-            @click="copyText(cli.install, 'install')"
-          >
-            <Check v-if="copied === 'install'" class="install__ok" />
-            <Copy v-else />
-          </UiIconButton>
-        </div>
         <div class="agent__after">
-          <span>{{ cli ? 'Run this in a terminal, then check again.' : 'Install it, then check again.' }}</span>
-          <UiButton size="sm" :loading="rechecking" @click="recheck">Check again</UiButton>
+          <span>Mango can run the official installer for you.</span>
+          <span class="agent__actions">
+            <UiButton variant="ghost" size="sm" :loading="rechecking" @click="recheck">Check again</UiButton>
+            <UiButton size="sm" @click="ws.openSetup()">Install…</UiButton>
+          </span>
         </div>
       </div>
     </div>
@@ -491,27 +469,6 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 
 /* ---- not installed ---- */
 .agent__indent { margin-left: 22px; }
-.install {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-height: 32px;
-  margin-top: var(--space-1);
-  padding: 0 var(--space-1) 0 var(--space-3);
-  background: var(--bg-inset);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-}
-.install__cmd {
-  flex: 1;
-  min-width: 0;
-  overflow-x: auto;
-  white-space: nowrap;
-  font-size: var(--text-xs);
-  color: var(--fg);
-  scrollbar-width: none;
-}
-.install__ok { color: var(--ripe-queued-fg); }
 .agent__after {
   display: flex;
   align-items: center;

@@ -20,6 +20,24 @@ fn extra_dirs() -> Vec<PathBuf> {
             dirs.push(home.join(rel));
         }
     }
+    // Where Windows installers put things. A running app keeps the PATH it was
+    // started with, so tools installed from the setup dialog live here until
+    // Mango restarts.
+    #[cfg(windows)]
+    {
+        if let Some(local) = dirs::data_local_dir() {
+            dirs.push(local.join(r"Programs\OpenAI\Codex\bin"));
+            dirs.push(local.join(r"Microsoft\WinGet\Links"));
+        }
+        if let Some(roaming) = dirs::data_dir() {
+            dirs.push(roaming.join("npm"));
+        }
+        let program_files = std::env::var_os("ProgramFiles")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
+        dirs.push(program_files.join(r"Git\cmd"));
+        dirs.push(program_files.join("nodejs"));
+    }
     #[cfg(unix)]
     for abs in ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"] {
         dirs.push(PathBuf::from(abs));
