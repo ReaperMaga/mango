@@ -23,7 +23,7 @@ export interface TerminalTab {
   shell: string | null
 }
 
-export type SidebarView = 'threads' | 'changes'
+export type SidebarView = 'threads' | 'files' | 'changes'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
 
@@ -80,8 +80,8 @@ export const useWorkspace = defineStore('workspace', {
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
-      /** What the left sidebar shows: chat threads or source control. */
-      sidebarView: (prefs.sidebarView === 'changes' ? 'changes' : 'threads') as SidebarView,
+      /** What the left sidebar shows: chat threads, the project's files or source control. */
+      sidebarView: (['changes', 'files'].includes(prefs.sidebarView) ? prefs.sidebarView : 'threads') as SidebarView,
 
       /** Permission mode new chats start in. */
       defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
@@ -244,6 +244,11 @@ export const useWorkspace = defineStore('workspace', {
     toggleGit(force?: boolean) {
       const showing = this.sidebarOpen && this.sidebarView === 'changes'
       this.setSidebarView(force ?? !showing ? 'changes' : 'threads')
+    },
+    /** Show the project's files in the sidebar; again to go back to threads. */
+    toggleFiles(force?: boolean) {
+      const showing = this.sidebarOpen && this.sidebarView === 'files'
+      this.setSidebarView(force ?? !showing ? 'files' : 'threads')
     },
     openSettings(section: SettingsSection = 'general') {
       this.settings = section

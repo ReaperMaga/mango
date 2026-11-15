@@ -1,20 +1,24 @@
 <script setup lang="ts">
-import { Columns2, FileDiff, Plus, X, PanelRightClose } from 'lucide-vue-next'
+import { Columns2, FileDiff, FileCode, Plus, X, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
+import { useFiles } from '~/stores/files'
 import { hasUnreadResult, type Thread } from '~/types/chat'
 
 const ws = useWorkspace()
 const threads = useThreads()
+const files = useFiles()
 const mod = ref('Ctrl')
 onMounted(() => (mod.value = modLabel()))
 
 type Tab =
   | { id: string; kind: 'chat'; title: string; thread: Thread }
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
+  | { id: string; kind: 'file'; title: string; file: string }
 
 /** Tabs belonging to the active project (chats and diffs); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
@@ -23,6 +27,11 @@ const tabs = computed<Tab[]>(() => {
     const diff = parseDiffTab(id)
     if (diff) {
       if (diff.projectPath === ws.activeProjectPath) out.push({ id, kind: 'diff', title: diff.name, file: diff.file, staged: diff.staged })
+      continue
+    }
+    const file = parseFileTab(id)
+    if (file) {
+      if (file.projectPath === ws.activeProjectPath) out.push({ id, kind: 'file', title: file.name, file: file.file })
       continue
     }
     const t = threads.byId(id)
@@ -52,7 +61,7 @@ function newChat() {
 watch(() => ws.activeProjectPath, (path) => {
   if (!path) return
   for (const pane of threads.panes) {
-    const owner = parseDiffTab(pane.threadId)?.projectPath ?? threads.byId(pane.threadId)?.projectPath
+    const owner = tabProject(pane.threadId) ?? threads.byId(pane.threadId)?.projectPath
     if (owner && owner !== path) pane.threadId = tabs.value.find(x => !threads.panes.some(p => p.threadId === x.id))?.id ?? null
   }
   if (threads.panes.length > 1 && threads.panes.every(p => !p.threadId)) threads.closePane('pane-b')
@@ -91,21 +100,32 @@ function onTabAux(e: MouseEvent, id: string) {
           role="tab"
           tabindex="0"
           :aria-selected="threads.activePane.threadId === t.id"
-          :title="`${t.kind === 'diff' ? `Changes in ${t.file}` : t.title}${i < 9 ? ` (${mod}+${i + 1})` : ''}`"
+          :title="`${t.kind === 'diff' ? `Changes in ${t.file}` : t.kind === 'file' ? t.file : t.title}${i < 9 ? ` (${mod}+${i + 1})` : ''}`"
           @click="threads.show(t.id)"
           @keydown.enter.prevent="threads.show(t.id)"
           @auxclick="onTabAux($event, t.id)"
+          @dblclick="t.kind === 'file' && files.pin(t.id)"
         >
           <template v-if="t.kind === 'chat'">
             <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
             <span class="ca__tab-title">{{ t.title }}</span>
           </template>
-          <template v-else>
+          <template v-else-if="t.kind === 'diff'">
             <FileDiff class="ca__tab-icon" aria-hidden="true" />
             <span class="ca__tab-title">{{ t.title }}</span>
             <span v-if="t.staged" class="ca__tab-note">staged</span>
           </template>
-          <button type="button" class="ca__tab-x" :aria-label="`Close ${t.title}`" @click.stop="threads.closeTab(t.id)"><X /></button>
+          <template v-else>
+            <FileCode class="ca__tab-icon" aria-hidden="true" />
+            <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
+          </template>
+          <button
+            type="button"
+            class="ca__tab-x"
+            :class="{ 'is-dirty': files.isDirty(t.id) }"
+            :aria-label="files.isDirty(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
+            @click.stop="threads.closeTab(t.id)"
+          ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
         </div>
         <UiIconButton class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
       </div>
@@ -138,6 +158,16 @@ function onTabAux(e: MouseEvent, id: string) {
         />
         <GitDiffPane
           v-if="isDiffTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <FilesEditorPane
+          v-else-if="isFileTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"
@@ -220,6 +250,8 @@ function onTabAux(e: MouseEvent, id: string) {
 .ca__tab-icon { width: 14px; height: 14px; flex: none; stroke-width: 1.75; color: var(--fg-subtle); }
 .ca__tab-note { flex: none; font-size: var(--text-2xs); color: var(--fg-faint); }
 .ca__tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A file opened with a single click: the next one replaces it until it is edited or double-clicked. */
+.ca__tab-title.is-preview { font-style: italic; }
 .ca__tab-x {
   display: grid;
   place-items: center;
@@ -234,6 +266,11 @@ function onTabAux(e: MouseEvent, id: string) {
 .ca__tab-x svg { width: 13px; height: 13px; }
 .ca__tab:hover .ca__tab-x, .ca__tab.is-active .ca__tab-x, .ca__tab-x:focus-visible { opacity: 1; }
 .ca__tab-x:hover { background: var(--bg-active); color: var(--fg); }
+/* Unsaved edits: a dot in place of the close button, which comes back on hover. */
+.ca__tab-x.is-dirty { opacity: 1; }
+.ca__tab-x.is-dirty svg, .ca__tab-x.is-dirty:hover .ca__tab-dot, .ca__tab-x.is-dirty:focus-visible .ca__tab-dot { display: none; }
+.ca__tab-x.is-dirty:hover svg, .ca__tab-x.is-dirty:focus-visible svg { display: block; }
+.ca__tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
 .ca__plus { align-self: center; margin-left: var(--space-1); }
 .ca__tools { display: flex; align-items: center; gap: 2px; padding: 0 var(--space-2); }
 

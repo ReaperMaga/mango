@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, Files, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/chat'
@@ -25,8 +25,9 @@ function onWindowFocus() { if (ws.activeProjectPath) refreshGit(ws.activeProject
 onMounted(() => window.addEventListener('focus', onWindowFocus))
 onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
 
-/** Source control needs more room than a thread list. */
-const width = computed(() => (ws.sidebarView === 'changes' ? Math.max(ws.sidebarWidth, 320) : ws.sidebarWidth))
+/** Source control and the file tree need more room than a thread list. */
+const width = computed(() => (ws.sidebarView === 'threads' ? ws.sidebarWidth : Math.max(ws.sidebarWidth, 320)))
+const viewLabel = computed(() => ({ threads: 'Threads', files: 'Files', changes: 'Changes' })[ws.sidebarView])
 
 /**
  * The sidebar lists the chats of the project chosen in the titlebar, grouped by
@@ -218,7 +219,7 @@ const agentsNeedingAttention = computed(() => {
 </script>
 
 <template>
-  <aside class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" :aria-label="ws.sidebarView === 'changes' ? 'Changes' : 'Threads'">
+  <aside class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" :aria-label="viewLabel">
     <div class="sb__views" role="tablist" aria-label="Sidebar view">
       <button
         type="button"
@@ -231,6 +232,18 @@ const agentsNeedingAttention = computed(() => {
         @click="ws.setSidebarView('threads')"
       >
         <MessagesSquare />
+      </button>
+      <button
+        type="button"
+        class="sb__view"
+        :class="{ 'is-active': ws.sidebarView === 'files' }"
+        role="tab"
+        :aria-selected="ws.sidebarView === 'files'"
+        aria-label="Files"
+        :title="`Files (${mod}+Shift+E)`"
+        @click="ws.setSidebarView('files')"
+      >
+        <Files />
       </button>
       <button
         type="button"
@@ -248,6 +261,7 @@ const agentsNeedingAttention = computed(() => {
     </div>
 
     <GitPanel v-if="ws.sidebarView === 'changes'" />
+    <FilesPanel v-else-if="ws.sidebarView === 'files'" />
 
     <template v-else>
     <div class="sb__top">
@@ -374,7 +388,7 @@ const agentsNeedingAttention = computed(() => {
       @pointermove="onResize"
       @pointerup="endResize"
       @pointercancel="endResize"
-      @dblclick="ws.setSidebarWidth(ws.sidebarView === 'changes' ? 320 : 264); ws.persist()"
+      @dblclick="ws.setSidebarWidth(ws.sidebarView === 'threads' ? 264 : 320); ws.persist()"
     />
   </aside>
 </template>

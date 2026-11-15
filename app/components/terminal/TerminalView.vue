@@ -6,6 +6,7 @@ import { call, on, openExternal } from '~/composables/useBackend'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import type { PtyDataEvent, PtyExitEvent } from '~/types/ipc'
 import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
+import { cssVar, hex2, toHex } from '~/utils/cssColor'
 
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
@@ -40,35 +41,6 @@ let resizeTimer: ReturnType<typeof setTimeout> | undefined
 /* ------------------------------------------------------------------ */
 /* Theme: xterm wants hex/rgb, tokens are oklch -> paint & read back    */
 /* ------------------------------------------------------------------ */
-
-let paintCtx: CanvasRenderingContext2D | null | undefined
-const SENTINEL = '#010203'
-
-function cssVar(name: string): string {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
-}
-
-const hex2 = (n: number) => Math.round(Math.min(255, Math.max(0, n))).toString(16).padStart(2, '0')
-
-/** Resolve any CSS colour (oklch, var-substituted, with alpha) to #rrggbb[aa]. */
-function toHex(value: string, fallback: string): string {
-  if (!value) return fallback
-  if (paintCtx === undefined) {
-    const canvas = document.createElement('canvas')
-    canvas.width = canvas.height = 1
-    paintCtx = canvas.getContext('2d', { willReadFrequently: true })
-  }
-  const ctx = paintCtx
-  if (!ctx) return fallback
-  ctx.clearRect(0, 0, 1, 1)
-  ctx.fillStyle = SENTINEL
-  ctx.fillStyle = value
-  // An unparseable value leaves the sentinel in place.
-  if (String(ctx.fillStyle).toLowerCase() === SENTINEL && value.toLowerCase() !== SENTINEL) return fallback
-  ctx.fillRect(0, 0, 1, 1)
-  const [r = 0, g = 0, b = 0, a = 255] = ctx.getImageData(0, 0, 1, 1).data
-  return `#${hex2(r)}${hex2(g)}${hex2(b)}${a < 255 ? hex2(a) : ''}`
-}
 
 /** Mix an opaque #rrggbb toward white (t > 0) or black (t < 0). */
 function shade(hex: string, t: number): string {

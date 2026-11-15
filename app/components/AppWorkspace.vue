@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
+import { useFilesSync } from '~/composables/useFilesSync'
 
 const ws = useWorkspace()
 const column = ref<HTMLElement | null>(null)
+useFilesSync()
 </script>
 
 <template>

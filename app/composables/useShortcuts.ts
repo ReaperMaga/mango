@@ -1,5 +1,7 @@
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
+import { isFileTab } from '~/utils/fileTabs'
 import { pickFolder } from '~/composables/useBackend'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
@@ -20,6 +22,7 @@ export async function openFolderFlow() {
  *   Mod+`  / Ctrl+J  terminal   Mod+B  sidebar          Mod+\  split chat
  *   Mod+W  close tab            Mod+1..9 switch tab     Mod+Shift+T  new terminal
  *   Mod+Shift+G  changes panel  Mod+,  settings
+ *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -50,6 +53,14 @@ export function useShortcuts() {
     if (k === 'b') { e.preventDefault(); ws.toggleSidebar(); return }
     if (k === '\\') { e.preventDefault(); threads.isSplit ? threads.closePane(threads.activePaneId) : threads.split(); return }
     if (k === 'g' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleGit(); return }
+    if (k === 'e' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleFiles(); return }
+    if (k === 's' && !e.shiftKey) {
+      // Never the browser's "save page"; only a file tab has something to save.
+      e.preventDefault()
+      const id = threads.activePane.threadId
+      if (isFileTab(id)) void useFiles().save(id)
+      return
+    }
     if (k === 't' && e.shiftKey) { e.preventDefault(); ws.newTerminal(); return }
     if (k === 'w' && !e.shiftKey) {
       const id = threads.activePane.threadId
