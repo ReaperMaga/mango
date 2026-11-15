@@ -7,6 +7,7 @@ mod plastic;
 mod projects;
 mod pty;
 mod shells;
+mod updater;
 mod vcs;
 
 use tauri::Manager;
@@ -16,9 +17,11 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(pty::PtyState::default())
         .manage(agent_proc::AgentProcState::default())
         .manage(projects::ProjectsState::default())
+        .manage(updater::UpdaterState::default())
         .invoke_handler(tauri::generate_handler![
             projects::recent_projects,
             projects::open_project,
@@ -58,6 +61,8 @@ pub fn run() {
             vcs::git_rebase,
             vcs::git_branch_rename,
             vcs::git_branch_delete,
+            updater::update_check,
+            updater::update_install,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

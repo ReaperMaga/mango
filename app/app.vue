@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useUpdater } from '~/stores/updater'
 
 const ws = useWorkspace()
 const threads = useThreads()
+const updater = useUpdater()
 const ready = ref(false)
 
 onMounted(async () => {
   threads.load()
   await ws.init()
   ready.value = true
+  updater.start()
 })
 
 useShortcuts()

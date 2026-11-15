@@ -94,6 +94,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
     </div>
 
     <div class="tb__right" data-tauri-drag-region>
+      <UpdateIndicator />
       <button
         v-if="attention.length"
         type="button"

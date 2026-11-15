@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import {
-  Columns2, FlaskConical, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, FlaskConical, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, MessageSquarePlus, Settings,
   Moon, PanelBottom, PanelLeft, Search, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useUpdater } from '~/stores/updater'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import type { ThreadStatus } from '~/types/chat'
 
@@ -86,6 +87,10 @@ const actions = computed<Item[]>(() => {
     )
   }
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
+  const up = useUpdater()
+  items.push(up.update
+    ? { id: 'update', group: 'Actions', label: `Update to ${up.update.version} and restart`, icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
+    : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('general'); up.check(true) } })
   items.push({ id: 'settings', group: 'Actions', label: 'Open settings', icon: Settings, keys: [mod, ','], keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
   items.push({
     id: 'theme',

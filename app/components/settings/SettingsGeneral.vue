@@ -4,6 +4,7 @@ import type { PermissionMode } from '~/types/chat'
 import { isTauri } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsSection from './SettingsSection.vue'
+import SettingsUpdates from './SettingsUpdates.vue'
 
 const ws = useWorkspace()
 
@@ -64,7 +65,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 </script>
 
 <template>
-  <SettingsSection title="General" description="Defaults for new chats.">
+  <SettingsSection title="General" description="Defaults for new chats, updates, and the version you are running.">
     <div class="group">
       <div class="group__head">
         <h3 :id="labelId" class="group__title">Permissions for new chats</h3>
@@ -92,6 +93,8 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
         </label>
       </div>
     </div>
+
+    <SettingsUpdates />
 
     <div class="group about">
       <div class="about__head">

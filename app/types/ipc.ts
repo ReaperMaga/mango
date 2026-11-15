@@ -153,6 +153,17 @@ export interface AgentExitEvent { id: string; code: number | null }
 export interface PtyDataEvent { id: string; data: string }
 export interface PtyExitEvent { id: string; code: number | null }
 
+/** A newer release found on GitHub (`update_check`). */
+export interface UpdateInfo {
+  version: string
+  currentVersion: string
+  /** Release notes (markdown), when the release has any. */
+  notes: string | null
+  /** Publish date, ms since the epoch. */
+  dateMs: number | null
+}
+export interface UpdateProgress { downloaded: number; total: number | null }
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -232,6 +243,14 @@ export interface Commands {
    * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
    */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
+
+  /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
+  update_check: [Record<string, never>, UpdateInfo | null]
+  /**
+   * Downloads, verifies and installs the update from the last check, then restarts Mango
+   * (terminals and agent runs are stopped). Emits `update://progress`. Never resolves on success.
+   */
+  update_install: [Record<string, never>, void]
 }
 
 /** Events emitted by the backend. */
@@ -242,4 +261,5 @@ export interface Events {
   'agent://stdout': AgentLineEvent
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
+  'update://progress': UpdateProgress
 }

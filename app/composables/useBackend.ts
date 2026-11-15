@@ -174,6 +174,20 @@ const mock = (() => {
       case 'agent_logout': return
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': return
+      case 'update_check': return {
+        version: '0.2.0',
+        currentVersion: '0.1.0',
+        notes: 'Simulated update: the browser preview has no releases to install.',
+        dateMs: now - 1000 * 60 * 60 * 3,
+      }
+      case 'update_install': {
+        const total = 18_400_000
+        for (let downloaded = 0; downloaded < total; downloaded += 1_150_000) {
+          await new Promise(r => setTimeout(r, 120))
+          emit('update://progress', { downloaded, total })
+        }
+        throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
+      }
     }
     if (cmd.startsWith('git_')) return mockGit(cmd, args)
     throw new Error(`mock: unknown command ${cmd}`)
