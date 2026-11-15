@@ -16,7 +16,7 @@ There are four sections: General, Agents, Terminal and Appearance. <kbd>↑</kbd
 
 Mango runs the agent CLIs installed on your computer, and you sign in with each tool's own sign-in, so your credentials stay with it. Each agent has a row with its version and the path of the command Mango found.
 
-- **Not installed**: Mango could not find the command. The row shows the install command (`npm install -g @anthropic-ai/claude-code` or `npm install -g @openai/codex`) with a copy button. Run it in a terminal, then press **Check again**.
+- **Not installed**: Mango could not find the command. **Install…** opens [Get started](./getting-started#get-started), which runs the vendor's installer for you. If you installed it yourself, press **Check again**.
 - **Not signed in**: **Sign in** runs the CLI's own login (`claude auth login` or `codex login`) in a terminal right inside the row. Finish in your browser; **Open sign-in page** and **Copy link** help when the CLI prints a link. If the page gives you a code, paste it into the terminal and press <kbd>Enter</kbd> (the code may stay hidden as you paste). Mango checks the sign-in again when the command ends.
 - **Signed in**: shows the account when the CLI reports one. **Switch account** runs the login again; **Sign out** asks first, then runs the CLI's own sign-out. Chats that use that agent stop working until you sign in again.
 

@@ -36,7 +36,7 @@ fn detect(id: &str, name: &str, binary: &str) -> AgentInfo {
 }
 
 /// First line of `<bin> --version`, or `None` on failure or after the timeout.
-fn version_of(bin: &Path) -> Option<String> {
+pub(crate) fn version_of(bin: &Path) -> Option<String> {
     let mut cmd = Command::new(bin);
     crate::bin::hide_console(&mut cmd);
     cmd.arg("--version")

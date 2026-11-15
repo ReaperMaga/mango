@@ -54,6 +54,7 @@ app/
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (sidebar Changes view), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
+    setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
   composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, useShortcuts.ts
@@ -63,6 +64,7 @@ app/
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
+  setup.rs           "Get started": what is installed, per-OS installer recipes run in a PTY (`setup_install`)
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
@@ -98,6 +100,8 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Prove adapter changes against the real CLI with `scripts/try-agent.ts` in a scratch folder (never in this
   repo). Keep prompts tiny: every run spends the user's quota.
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.
+- Installing works the same way: `setup.rs` picks the vendor's own installer per OS and runs it in a PTY the
+  user watches. The frontend only names a tool id; never build an install command line from webview input.
 - Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that.
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 

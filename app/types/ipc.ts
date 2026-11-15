@@ -54,6 +54,22 @@ export interface AuthStatus {
   detail: string | null
 }
 
+/** Something Mango needs, offered by the setup dialog (`setup_check`). */
+export type SetupToolId = 'git' | 'claude' | 'codex'
+
+export interface SetupTool {
+  id: SetupToolId
+  name: string
+  installed: boolean
+  /** First line of `<bin> --version`, as the tool prints it. */
+  version: string | null
+  path: string | null
+  /** How Mango would install it on this computer; null when it can't (send the user to `helpUrl`). */
+  install: { command: string; via: string } | null
+  /** The vendor's own install page. */
+  helpUrl: string
+}
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -198,6 +214,14 @@ export interface Commands {
   agent_kill: [{ id: string }, void]
 
   agent_auth_status: [{ agent: 'claude' | 'codex' }, AuthStatus]
+
+  /** Git and the agent CLIs: installed or not, and how Mango would install the missing ones here. */
+  setup_check: [Record<string, never>, SetupTool[]]
+  /**
+   * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
+   * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
+   */
+  setup_install: [{ tool: SetupToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** `path` is any folder inside the repository (normally the project path). */

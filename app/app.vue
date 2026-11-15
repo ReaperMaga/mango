@@ -37,6 +37,7 @@ onBeforeUnmount(() => window.removeEventListener('mango:files-changed', onFilesC
     </main>
     <ProjectNewProjectDialog />
     <ProjectCloneDialog />
+    <SetupGettingStarted />
     <SettingsView />
     <CommandPalette />
   </div>

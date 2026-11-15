@@ -3,6 +3,7 @@ import type { AgentInfo, ProjectInfo, TerminalProfile } from '~/types/ipc'
 import type { PermissionMode } from '~/agents/types'
 import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
+import { shortVersion } from '~/utils/agentCli'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -28,6 +29,15 @@ export type SettingsSection = 'agents' | 'terminal' | 'appearance' | 'general'
 
 const LS_KEY = 'mango.workspace.v1'
 
+/** No prefs stored at all: Mango has never run on this computer (or its data was cleared). */
+function isFirstRun() {
+  try {
+    return localStorage.getItem(LS_KEY) === null
+  } catch {
+    return false
+  }
+}
+
 function loadPrefs() {
   try {
     return JSON.parse(localStorage.getItem(LS_KEY) || '{}')
@@ -41,6 +51,7 @@ let tabSeq = 0
 export const useWorkspace = defineStore('workspace', {
   state: () => {
     const prefs = loadPrefs()
+    const firstRun = isFirstRun()
     return {
       recent: [] as ProjectInfo[],
       /** Projects open in this window (sidebar groups). */
@@ -79,8 +90,13 @@ export const useWorkspace = defineStore('workspace', {
       settings: null as null | SettingsSection,
 
       paletteOpen: false,
-      /** which project dialog is open on the welcome hub / from the palette */
-      dialog: null as null | 'new' | 'clone',
+      /** which dialog is open: a project dialog, or "Get started" (setup) */
+      dialog: null as null | 'new' | 'clone' | 'setup',
+      /**
+       * The "Get started" dialog was shown and closed. Unset in prefs from older
+       * builds, which already ran: only a first run starts out false.
+       */
+      setupSeen: (prefs.setupSeen ?? !firstRun) as boolean,
     }
   },
 
@@ -112,6 +128,7 @@ export const useWorkspace = defineStore('workspace', {
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
           defaultMode: this.defaultMode,
+          setupSeen: this.setupSeen,
           openProjects: this.openProjects.map(p => p.path),
           activeProjectPath: this.activeProjectPath,
         }))
@@ -128,8 +145,7 @@ export const useWorkspace = defineStore('workspace', {
       ])
       this.recent = recent
       this.loadTerminalProfiles()
-      // CLIs print versions in their own formats ("2.1.3 (Claude Code)", "codex-cli 0.16.2"): keep the number.
-      this.agents = agents.map(a => ({ ...a, version: a.version?.match(/\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?/)?.[0] ?? a.version }))
+      this.agents = agents.map(a => ({ ...a, version: shortVersion(a.version) }))
       // Reopen the projects that were open last time.
       const prefs = loadPrefs()
       const paths: string[] = prefs.openProjects ?? []
@@ -142,6 +158,12 @@ export const useWorkspace = defineStore('workspace', {
       this.openProjects = reopened
       this.activeProjectPath = this.openProjects.find(p => p.path === prefs.activeProjectPath)?.path
         ?? this.openProjects[0]?.path ?? null
+      // First run: offer to install what is missing. Written now, so quitting
+      // halfway brings the dialog back next time.
+      if (!this.setupSeen) {
+        this.persist()
+        this.dialog = 'setup'
+      }
     },
 
     async refreshRecent() {
@@ -227,9 +249,20 @@ export const useWorkspace = defineStore('workspace', {
       this.settings = section
       this.paletteOpen = false
     },
+    openSetup() {
+      this.dialog = 'setup'
+      this.paletteOpen = false
+    },
+    closeSetup() {
+      if (this.dialog === 'setup') this.dialog = null
+      this.setupSeen = true
+      this.persist()
+      // Something may have been installed: let the rest of the app see it.
+      this.refreshAgents()
+    },
     async refreshAgents() {
       const agents = await call('detect_agents').catch(() => this.agents)
-      this.agents = agents.map(a => ({ ...a, version: a.version?.match(/\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?/)?.[0] ?? a.version }))
+      this.agents = agents.map(a => ({ ...a, version: shortVersion(a.version) }))
     },
 
     /* ---------- terminal ---------- */
