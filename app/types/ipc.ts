@@ -180,6 +180,25 @@ export interface UpdateInfo {
 }
 export interface UpdateProgress { downloaded: number; total: number | null }
 
+/** A Whisper speech model for voice input (`voice_models`). Multilingual; runs on this computer. */
+export type VoiceModelId = 'tiny' | 'base' | 'small'
+export interface VoiceModel {
+  id: VoiceModelId
+  name: string
+  /** Bytes to download. */
+  sizeBytes: number
+  downloaded: boolean
+  downloading: boolean
+}
+export interface VoiceProgress { model: VoiceModelId; downloaded: number; total: number }
+export interface Transcript {
+  text: string
+  /** Whisper language code that was used, e.g. "en"; detected unless one was asked for. */
+  language: string | null
+  /** Seconds of audio. */
+  duration: number
+}
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -275,6 +294,19 @@ export interface Commands {
    * (terminals and agent runs are stopped). Emits `update://progress`. Never resolves on success.
    */
   update_install: [Record<string, never>, void]
+
+  /** The speech models on offer and which are downloaded. */
+  voice_models: [Record<string, never>, VoiceModel[]]
+  /** Fetch a model from Hugging Face (pinned commit, SHA-256 checked). Emits `voice://progress`; resolves when ready. */
+  voice_download: [{ model: VoiceModelId }, void]
+  /** Stops a download in progress; `voice_download` then rejects with "Download cancelled.". */
+  voice_download_cancel: [{ model: VoiceModelId }, void]
+  voice_delete: [{ model: VoiceModelId }, void]
+  /**
+   * Speech to text, locally. `audio` is base64 of 16 kHz mono 16-bit little-endian PCM, at most 10 minutes.
+   * `language` is a Whisper code such as "en"; null detects it.
+   */
+  voice_transcribe: [{ model: VoiceModelId; audio: string; language: string | null }, Transcript]
 }
 
 /** Events emitted by the backend. */
@@ -286,4 +318,5 @@ export interface Events {
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
   'update://progress': UpdateProgress
+  'voice://progress': VoiceProgress
 }

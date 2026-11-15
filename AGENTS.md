@@ -71,6 +71,7 @@ src-tauri/src/
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
+  voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
 ```

@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Bot, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
+import { Bot, Mic, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
+import SettingsVoice from './SettingsVoice.vue'
 
 /**
  * Settings: a full view under the titlebar, not a dialog. It takes the place
@@ -22,6 +23,7 @@ const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
   { id: 'agents', label: 'Agents', icon: Bot },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
+  { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'appearance', label: 'Appearance', icon: SunMoon },
 ]
 
@@ -153,6 +155,7 @@ onBeforeUnmount(() => {
             <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
             <SettingsAgents v-show="section === 'agents'" :active="section === 'agents'" />
             <SettingsTerminal v-if="section === 'terminal'" />
+            <SettingsVoice v-else-if="section === 'voice'" />
             <SettingsAppearance v-else-if="section === 'appearance'" />
             <SettingsGeneral v-else-if="section === 'general'" />
           </div>

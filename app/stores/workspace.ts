@@ -25,7 +25,7 @@ export interface TerminalTab {
 
 export type SidebarView = 'threads' | 'changes'
 export type CursorStyle = 'bar' | 'block' | 'underline'
-export type SettingsSection = 'agents' | 'terminal' | 'appearance' | 'general'
+export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
 
 const LS_KEY = 'mango.workspace.v1'
 

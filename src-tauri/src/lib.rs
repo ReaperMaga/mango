@@ -10,7 +10,9 @@ mod setup;
 mod shells;
 mod updater;
 mod vcs;
+mod voice;
 
+use tauri::webview::{PermissionKind, PermissionResponse};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -19,10 +21,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Voice input records in the webview. Mango loads only its own pages, and recording
+        // starts only when the user presses the microphone, so grant it without a second prompt
+        // (WebKitGTK would otherwise deny it outright).
+        .on_permission_request(|_, kind| match kind {
+            PermissionKind::Microphone => PermissionResponse::Allow,
+            _ => PermissionResponse::Default,
+        })
         .manage(pty::PtyState::default())
         .manage(agent_proc::AgentProcState::default())
         .manage(projects::ProjectsState::default())
         .manage(updater::UpdaterState::default())
+        .manage(voice::VoiceState::default())
         .invoke_handler(tauri::generate_handler![
             projects::recent_projects,
             projects::open_project,
@@ -66,6 +76,11 @@ pub fn run() {
             vcs::git_branch_delete,
             updater::update_check,
             updater::update_install,
+            voice::voice_models,
+            voice::voice_download,
+            voice::voice_download_cancel,
+            voice::voice_delete,
+            voice::voice_transcribe,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

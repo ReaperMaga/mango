@@ -23,3 +23,28 @@ portable-pty = "0.9"
 uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 similar = "2"
+# Voice input: Whisper in pure Rust (no C++ toolchain), its download, and the audio hand-off.
+candle-core = "0.11"
+candle-nn = "0.11"
+candle-transformers = "0.11"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+sha2 = "0.10"
+base64 = "0.23"
+
+# Whisper is unusably slow unoptimised; keep debug builds of the app fast to iterate on
+# while its math runs at release speed.
+[profile.dev.package.candle-core]
+opt-level = 3
+[profile.dev.package.candle-nn]
+opt-level = 3
+[profile.dev.package.candle-transformers]
+opt-level = 3
+[profile.dev.package.gemm]
+opt-level = 3
+[profile.dev.package.gemm-common]
+opt-level = 3
+[profile.dev.package.gemm-f32]
+opt-level = 3
+[profile.dev.package.half]
+opt-level = 3

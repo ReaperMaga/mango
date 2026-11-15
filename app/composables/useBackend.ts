@@ -1,4 +1,4 @@
-import type { Commands, Events, ProjectInfo, AgentInfo, SetupTool, SetupToolId } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
 import { mockGit } from '~/composables/mockGit'
 
 /**
@@ -138,6 +138,32 @@ const mock = (() => {
     }, 250 + lines.length * 420)
   }
 
+  /* Voice: models "download" in a few seconds; transcription answers with a labelled stand-in. */
+  const voiceModels: VoiceModel[] = [
+    { id: 'tiny', name: 'Tiny', sizeBytes: 153_544_121, downloaded: false, downloading: false },
+    { id: 'base', name: 'Base', sizeBytes: 292_886_385, downloaded: false, downloading: false },
+    { id: 'small', name: 'Small', sizeBytes: 969_477_513, downloaded: false, downloading: false },
+  ]
+  const voiceCancel = new Set<VoiceModelId>()
+  async function fakeVoiceDownload(id: VoiceModelId) {
+    const m = voiceModels.find(x => x.id === id)
+    if (!m) throw new Error(`There is no speech model called "${id}".`)
+    if (m.downloaded) return
+    m.downloading = true
+    voiceCancel.delete(id)
+    try {
+      const steps = 40
+      for (let i = 0; i <= steps; i++) {
+        if (voiceCancel.has(id)) throw new Error('Download cancelled.')
+        emit('voice://progress', { model: id, downloaded: Math.round(m.sizeBytes * i / steps), total: m.sizeBytes })
+        await new Promise(r => setTimeout(r, 90))
+      }
+      m.downloaded = true
+    } finally {
+      m.downloading = false
+    }
+  }
+
   async function call(cmd: string, args: any): Promise<any> {
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
@@ -215,6 +241,15 @@ const mock = (() => {
           emit('update://progress', { downloaded, total })
         }
         throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
+      }
+      case 'voice_models': return voiceModels.map(m => ({ ...m }))
+      case 'voice_download': return fakeVoiceDownload(args.model)
+      case 'voice_download_cancel': voiceCancel.add(args.model); return
+      case 'voice_delete': { const m = voiceModels.find(x => x.id === args.model); if (m) m.downloaded = false; return }
+      case 'voice_transcribe': {
+        const duration = Math.round((atob(args.audio).length / 2 / 16000) * 10) / 10
+        await new Promise(r => setTimeout(r, 700))
+        return { text: `Simulated transcription of ${duration} s of audio; the desktop app runs Whisper here.`, language: args.language ?? 'en', duration }
       }
     }
     if (cmd.startsWith('git_')) return mockGit(cmd, args)
