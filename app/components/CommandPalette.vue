@@ -6,7 +6,7 @@ import {
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
-import { AGENTS } from '~/types/chat'
+import { AGENTS, hasUnreadResult } from '~/types/chat'
 import type { ThreadStatus } from '~/types/chat'
 
 /**
@@ -112,7 +112,7 @@ const threadItems = computed<Item[]>(() => {
       label: t.title,
       detail: many ? `${AGENTS[t.agent].name} · ${p.name}` : AGENTS[t.agent].name,
       status: t.status,
-      unseen: t.status === 'waiting' || (t.status === 'done' && !t.seen),
+      unseen: t.status === 'waiting' || hasUnreadResult(t),
       keywords: `${AGENTS[t.agent].name} ${p.name} ${t.model}`,
       rank: i,
       run: () => {

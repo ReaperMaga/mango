@@ -92,7 +92,7 @@ export const useThreads = defineStore('threads', {
         agent,
         model: AGENTS[agent].models[0]!.id,
         mode: useWorkspace().defaultMode,
-        status: 'idle',
+        status: 'working',
         messages: [],
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -117,7 +117,7 @@ export const useThreads = defineStore('threads', {
         this.activePaneId = pane.id
       }
       const t = this.byId(id)
-      if (t && t.status === 'done') t.seen = true
+      if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
       this.persist()
     },
 
@@ -153,7 +153,7 @@ export const useThreads = defineStore('threads', {
     focusPane(paneId: string) {
       this.activePaneId = paneId
       const t = this.byId(this.panes.find(p => p.id === paneId)?.threadId)
-      if (t && t.status === 'done') t.seen = true
+      if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
     },
 
     /** Open a second pane to the right; shows `threadId` or the next tab. */
@@ -205,8 +205,8 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    /** Set a chat's status by hand: Idle, Working (in progress) or Settled. While an agent runs, the run owns the status. */
-    setStatus(id: string, status: 'idle' | 'working' | 'done') {
+    /** Set a chat's status by hand: Working, or Settled (the sidebar mark). While an agent runs, the run owns the status. */
+    setStatus(id: string, status: 'working' | 'done') {
       const t = this.byId(id)
       if (!t || isBusy(t)) return
       t.status = status
@@ -301,7 +301,7 @@ export const useThreads = defineStore('threads', {
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
-      t.status = 'idle'
+      t.status = 'working'
       this.persist()
     },
 
@@ -318,7 +318,8 @@ export const useThreads = defineStore('threads', {
       this._touch(id)
       return msg.parts[msg.parts.length - 1]!
     },
-    _setStatus(id: string, status: Thread['status']) {
+    /** `outcome` says how a run ended; a finished turn goes back to Working, never to Settled. */
+    _setStatus(id: string, status: Thread['status'], outcome?: Message['outcome']) {
       const t = this.byId(id)
       if (!t) return
       // A run just ended: note on its message how long the whole turn took.
@@ -329,11 +330,11 @@ export const useThreads = defineStore('threads', {
         if (last?.role === 'agent' && last.elapsedMs === undefined) {
           const asked = [...t.messages].reverse().find(m => m.role === 'user')
           last.elapsedMs = Date.now() - (asked?.createdAt ?? last.createdAt)
-          last.outcome = status === 'done' ? 'done' : status === 'error' ? 'error' : 'stopped'
+          last.outcome = outcome ?? (status === 'error' ? 'error' : 'stopped')
         }
       }
       const visible = this.panes.some(p => p.threadId === id)
-      if (status === 'done') t.seen = visible
+      if (outcome === 'done') t.seen = visible
       this._touch(id)
       this.persist()
     },
@@ -366,7 +367,8 @@ function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'
   const model = AGENTS[agent].models.some(m => m.id === t.model) ? t.model : AGENTS[agent].models[0]!.id
   const mode = (['plan', 'ask', 'edits', 'auto'] as const).includes(t.mode) ? t.mode : 'ask'
-  const interrupted = ['running', 'queued', 'waiting'].includes(t.status)
+  // Older builds also had an 'idle' status; it is Working now.
+  const interrupted = ['running', 'queued', 'waiting', 'idle'].includes(t.status)
   const messages = t.messages.map(m => ({
     ...m,
     parts: m.parts.map((p): Part => {
@@ -375,7 +377,7 @@ function normalizeLoaded(t: Thread): Thread {
       return p
     }),
   }))
-  return { ...t, agent, model, mode, messages, status: interrupted ? 'idle' : t.status }
+  return { ...t, agent, model, mode, messages, status: interrupted ? 'working' : t.status }
 }
 
 function titleFrom(text: string) {

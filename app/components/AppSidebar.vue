@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDashed, CircleDot, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2, FolderOpen } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2, FolderOpen } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
-import { AGENTS, displayStatus, type Thread } from '~/types/chat'
+import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
 import { modLabel, openFolderFlow } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
@@ -52,7 +52,7 @@ const sections = computed(() => {
   const path = ws.activeProjectPath
   const live = path ? threads.forProject(path) : []
   const all = [
-    { id: 'active' as const, title: 'Idle / Working', foldable: false, threads: live.filter(t => t.status !== 'done') },
+    { id: 'active' as const, title: 'Working', foldable: false, threads: live.filter(t => t.status !== 'done') },
     { id: 'settled' as const, title: 'Settled', foldable: true, threads: live.filter(t => t.status === 'done') },
     { id: 'archived' as const, title: 'Archived', foldable: true, threads: path ? threads.archivedFor(path) : [] },
   ]
@@ -61,7 +61,7 @@ const sections = computed(() => {
     ...sec,
     open: !sec.foldable || !closed.value.has(sec.id),
     /** Results nobody has looked at yet, so a folded section still says so. */
-    unseen: sec.threads.filter(t => !t.archived && !t.seen && t.status === 'done').length,
+    unseen: sec.threads.filter(hasUnreadResult).length,
   }))
 })
 
@@ -187,10 +187,8 @@ function threadMenu(t: Thread): MenuItem[] {
       { label: 'Move up', icon: ArrowUp, kbd: 'Alt+↑', divider: true, disabled: order.indexOf(t.id) <= 0, onSelect: () => threads.move(t.id, -1) },
       { label: 'Move down', icon: ArrowDown, kbd: 'Alt+↓', disabled: order.indexOf(t.id) === order.length - 1, onSelect: () => threads.move(t.id, 1) },
     ]),
-    // Status, the same four as the picker in the chat header.
-    { label: 'Idle', icon: CircleDashed, divider: true, checked: shown === 'idle', disabled: busy, onSelect: () => threads.setStatus(t.id, 'idle') },
-    { label: 'Working', icon: CircleDot, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
-    { label: 'Settled', icon: CircleCheck, checked: shown === 'done', disabled: busy, onSelect: () => threads.setStatus(t.id, 'done') },
+    // Status. Settled is only set with the row's mark.
+    { label: 'Working', icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
     { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) threads.archive(t.id) } },
     { label: 'Delete chat', icon: Trash2, danger: true, divider: true, onSelect: () => threads.remove(t.id) },
   ]
@@ -306,7 +304,7 @@ const agentsNeedingAttention = computed(() => {
               @dblclick="startRename(t)"
               @contextmenu.prevent="openContextMenu(t, $event)"
             >
-              <UiRipenessDot :status="t.archived ? 'idle' : t.status" :unseen="!t.archived && !t.seen && (t.status === 'done' || t.status === 'waiting')" />
+              <UiRipenessDot :status="t.archived ? 'archived' : t.status" :unseen="hasUnreadResult(t) || (!t.archived && !t.seen && t.status === 'waiting')" />
               <div class="sb__thread-text">
                 <input
                   v-if="renaming === t.id"
@@ -334,10 +332,10 @@ const agentsNeedingAttention = computed(() => {
                 <UiIconButton
                   v-else
                   size="sm"
-                  :label="isBusy(t) ? 'Still working' : t.status === 'done' ? 'Mark as idle' : 'Mark as settled'"
+                  :label="isBusy(t) ? 'Still working' : t.status === 'done' ? 'Mark as working' : 'Mark as settled'"
                   :active="t.status === 'done'"
                   :disabled="isBusy(t)"
-                  @click.stop="threads.setStatus(t.id, t.status === 'done' ? 'idle' : 'done')"
+                  @click.stop="threads.setStatus(t.id, t.status === 'done' ? 'working' : 'done')"
                 >
                   <CircleCheck />
                 </UiIconButton>

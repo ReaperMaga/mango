@@ -114,7 +114,7 @@ export function demoThreads(projectPath: string): Thread[] {
       title: 'Write the README',
       agent: 'claude',
       model: 'haiku',
-      status: 'idle',
+      status: 'working',
       branch: 'main',
       createdAt: now - 26 * 60 * min,
       updatedAt: now - 25 * 60 * min,

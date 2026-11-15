@@ -5,7 +5,7 @@ import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
-import type { Thread } from '~/types/chat'
+import { hasUnreadResult, type Thread } from '~/types/chat'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -97,7 +97,7 @@ function onTabAux(e: MouseEvent, id: string) {
           @auxclick="onTabAux($event, t.id)"
         >
           <template v-if="t.kind === 'chat'">
-            <UiRipenessDot :status="t.thread.archived ? 'idle' : t.thread.status" :size="11" :unseen="!t.thread.archived && !t.thread.seen && (t.thread.status === 'done' || t.thread.status === 'waiting')" />
+            <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
             <span class="ca__tab-title">{{ t.title }}</span>
           </template>
           <template v-else>

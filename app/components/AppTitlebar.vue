@@ -5,6 +5,7 @@ import { useThreads } from '~/stores/threads'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
+import { hasUnreadResult } from '~/types/chat'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -29,7 +30,7 @@ const projectItems = computed<MenuItem[]>(() => [
 ])
 
 /** Threads that want the user: waiting for approval or finished and unread. */
-const attention = computed(() => threads.threads.filter(t => !t.archived && (t.status === 'waiting' || (t.status === 'done' && !t.seen))))
+const attention = computed(() => threads.threads.filter(t => (!t.archived && t.status === 'waiting') || hasUnreadResult(t)))
 function jumpToAttention() {
   const t = attention.value.find(x => x.status === 'waiting') ?? attention.value[0]
   if (!t) return

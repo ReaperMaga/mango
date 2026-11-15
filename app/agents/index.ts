@@ -181,7 +181,8 @@ export async function runAgentTurn(store: Store, threadId: string, prompt: strin
         // An agent message with nothing in it (stopped before any output) would render as a gap.
         if (!msg.parts.length) t.messages.splice(t.messages.indexOf(msg), 1)
         runs.delete(threadId)
-        store._setStatus(threadId, e.status === 'done' ? 'done' : e.status === 'error' ? 'error' : 'idle')
+        // Answering never settles a chat: it stays Working until the user marks it settled.
+        store._setStatus(threadId, e.status === 'error' ? 'error' : 'working', e.status)
         finish()
         break
       }

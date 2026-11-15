@@ -5,12 +5,11 @@ export type AgentId = 'claude' | 'codex'
 
 /** Ripeness: how far along a thread is. Drives the signature status dot. */
 export type ThreadStatus =
-  | 'idle'     // nothing asked yet
   | 'queued'   // message sent, agent not started
   | 'running'  // agent working
-  | 'working'  // marked "in progress" by the user; no agent run is active right now
+  | 'working'  // in progress, no agent run active: new chats and every finished turn land here
   | 'waiting'  // agent needs the user (approval / question)
-  | 'done'     // finished, unread result
+  | 'done'     // settled: only ever set by the user, with the mark in the sidebar
   | 'error'
 
 /** 'other' covers anything without its own row style (sub-agents, plans, MCP tools); give it a `label`. */
@@ -106,13 +105,13 @@ export const modelLabel = (agent: AgentId, id: string) =>
   AGENTS[agent].models.find(m => m.id === id)?.label ?? id
 
 /**
- * What a chat's status reads as. Four of them are the chat's life, and all four
- * can be picked by hand: Idle (not started, or parked), Working (in progress:
- * an agent is running, or you marked it so), Settled (the agent finished its
- * turn, or you called it finished) and Archived. Two more only come from a run
- * and need to be visible: "Needs you" (an approval is open) and "Failed".
+ * What a chat's status reads as. Three of them are the chat's life: Working (a
+ * new chat, an agent running, or a turn that finished and waits for more),
+ * Settled (only when you press the mark: finished, nothing pending) and
+ * Archived. Two more only come from a run and need to be visible: "Needs you"
+ * (an approval is open) and "Failed".
  */
-export type DisplayStatus = 'idle' | 'working' | 'waiting' | 'done' | 'error' | 'archived'
+export type DisplayStatus = 'working' | 'waiting' | 'done' | 'error' | 'archived'
 
 export function displayStatus(t: Pick<Thread, 'status' | 'archived'>): DisplayStatus {
   if (t.archived) return 'archived'
@@ -120,8 +119,11 @@ export function displayStatus(t: Pick<Thread, 'status' | 'archived'>): DisplaySt
   return t.status
 }
 
+/** A finished turn nobody has looked at yet. */
+export const hasUnreadResult = (t: Pick<Thread, 'status' | 'archived' | 'seen'>) =>
+  !t.archived && !t.seen && (t.status === 'working' || t.status === 'done')
+
 export const STATUS_LABELS: Record<DisplayStatus, string> = {
-  idle: 'Idle',
   working: 'Working',
   waiting: 'Needs you',
   done: 'Settled',

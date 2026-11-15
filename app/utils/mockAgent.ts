@@ -93,5 +93,5 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
     reply.text += chunk
     await sleep(22)
   }
-  store._setStatus(threadId, 'done')
+  store._setStatus(threadId, 'working', 'done')
 }

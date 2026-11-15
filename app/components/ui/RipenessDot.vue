@@ -3,17 +3,18 @@ import type { ThreadStatus } from '~/types/chat'
 
 /**
  * Mango's signature status mark: a small fruit whose colour and fill show how
- * ripe a thread is. idle and queued are hollow (grey, then unripe leaf green), running is
+ * ripe a thread is. archived and queued are hollow (grey, then unripe leaf green), running is
  * half-filled mango whose level breathes, waiting is full blush (needs you),
  * done is full gold, error is red.
  */
-const props = withDefaults(defineProps<{ status: ThreadStatus; size?: number; unseen?: boolean }>(), { size: 12, unseen: false })
+type DotStatus = ThreadStatus | 'archived'
+const props = withDefaults(defineProps<{ status: DotStatus; size?: number; unseen?: boolean }>(), { size: 12, unseen: false })
 
 const clipId = useId()
 const body = 'M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z'
 
-const labels: Record<ThreadStatus, string> = {
-  idle: 'Idle',
+const labels: Record<DotStatus, string> = {
+  archived: 'Archived',
   queued: 'Queued',
   running: 'Working',
   working: 'Working',
@@ -63,8 +64,8 @@ const labels: Record<ThreadStatus, string> = {
 .ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); }
 .ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; }
 
-.ripe--idle { --c: var(--ripe-idle); --level: 12px; }
-.ripe--idle .ripe__leaf { fill: var(--ripe-idle); }
+.ripe--archived { --c: var(--ripe-idle); --level: 12px; }
+.ripe--archived .ripe__leaf { fill: var(--ripe-idle); }
 .ripe--queued { --c: var(--ripe-queued); --level: 12px; }
 .ripe--running { --c: var(--ripe-running); --level: 6px; }
 .ripe--running .ripe__level { animation: ripen 1.8s var(--ease-in-out) infinite; }
