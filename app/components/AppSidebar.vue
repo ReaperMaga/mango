@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2, FolderOpen } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
-import { modLabel, openFolderFlow } from '~/composables/useShortcuts'
+import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { useGit, refreshGit } from '~/stores/git'
 import type { MenuItem } from '~/types/ui'
@@ -363,7 +363,6 @@ const agentsNeedingAttention = computed(() => {
         <span>Settings</span>
         <span v-if="agentsNeedingAttention" class="sb__settings-note">{{ agentsNeedingAttention }}</span>
       </button>
-      <UiIconButton size="sm" label="Open folder" :shortcut="`${mod}+O`" @click="openFolderFlow()"><FolderOpen /></UiIconButton>
     </footer>
 
     <div
