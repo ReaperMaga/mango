@@ -1,5 +1,5 @@
-import type { DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode } from '~/agents/types'
+import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn } from '~/agents/types'
 
 /**
  * Claude Code adapter.
@@ -350,6 +350,7 @@ function run(options: AgentRunOptions): AgentRun {
     '--permission-mode', MODES[options.mode] ?? 'default',
   ]
   if (options.model && options.model !== 'default') args.push('--model', options.model)
+  if (options.effort) args.push('--effort', options.effort)
   if (options.sessionId) args.push('--resume', options.sessionId)
 
   options.spawn(args, {
@@ -400,5 +401,45 @@ function run(options: AgentRunOptions): AgentRun {
   }
 }
 
-export const claudeAdapter: AgentAdapter = { id: 'claude', run }
+/**
+ * Claude Code's own model list: the `initialize` control request answers with every
+ * model the account can use and the effort levels each accepts. No prompt is sent.
+ */
+function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    const finish = (models: AgentModel[] | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (models) resolve(models)
+      else reject(new Error(why ?? 'Claude Code did not list its models.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Claude Code took too long to list its models.'), 30_000)
+    spawn(['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'], {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-models') return
+        const list = m.response?.response?.models
+        if (!Array.isArray(list)) return finish(null)
+        finish(list.filter((x: any) => typeof x?.value === 'string').map((x: any): AgentModel => {
+          const efforts = x.supportsEffort && Array.isArray(x.supportedEffortLevels) ? x.supportedEffortLevels.map(String) : []
+          return x.value === 'default'
+            ? { id: 'default', label: 'Default', hint: x.description ? `Claude Code's choice: ${x.description}` : undefined, efforts }
+            : { id: x.value, label: String(x.displayName ?? x.value), hint: x.description || undefined, efforts }
+        }))
+      },
+      onExit: () => finish(null, 'Claude Code exited before listing its models.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-models', request: { subtype: 'initialize' } })).catch(() => {})
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
+export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels }
 export default claudeAdapter

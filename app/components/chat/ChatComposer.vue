@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import { ArrowUp, ChevronDown, Gauge, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useVoice } from '~/stores/voice'
+import { useModels } from '~/stores/models'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import { AGENTS, modelLabel, type AgentId, type Thread } from '~/types/chat'
+import { AGENTS, effortLabel, type AgentId, type Thread } from '~/types/chat'
 import type { MenuItem } from '~/types/ui'
 
 /**
@@ -15,17 +16,20 @@ const props = withDefaults(defineProps<{
   agent: AgentId
   model: string
   mode: Thread['mode']
+  /** null: the CLI's default effort */
+  effort?: string | null
   busy?: boolean
   autofocus?: boolean
   placeholder?: string
   large?: boolean
-}>(), { busy: false, autofocus: false, large: false })
+}>(), { effort: null, busy: false, autofocus: false, large: false })
 
 const emit = defineEmits<{
   send: [text: string]
   stop: []
   'update:agent': [agent: AgentId]
   'update:model': [model: string]
+  'update:effort': [effort: string | null]
   'update:mode': [mode: Thread['mode']]
 }>()
 
@@ -143,12 +147,48 @@ const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[])
   }
 }))
 
-const modelItems = computed<MenuItem[]>(() => AGENTS[props.agent].models.map(m => ({
-  label: m.label,
-  hint: m.hint,
-  checked: props.model === m.id,
-  onSelect: () => emit('update:model', m.id),
-})))
+/* ---------- model and effort: the lists come from the CLI itself (stores/models.ts) ---------- */
+
+const models = useModels()
+const refreshModels = () => void models.refresh(props.agent, ws.activeProjectPath)
+watch(() => props.agent, refreshModels, { immediate: true })
+
+const modelItems = computed<MenuItem[]>(() => {
+  const list = models.list(props.agent)
+  // Claude Code lists its aliases first, then pinned versions: set those apart.
+  const firstPinned = list.findIndex(m => m.id.startsWith('claude-'))
+  return list.map((m, i) => ({
+    label: m.label,
+    hint: m.hint,
+    checked: props.model === m.id,
+    divider: i > 0 && i === firstPinned,
+    onSelect: () => {
+      emit('update:model', m.id)
+      if (props.effort && !(m.efforts ?? []).includes(props.effort)) emit('update:effort', null)
+    },
+  }))
+})
+
+const efforts = computed(() => models.efforts(props.agent, props.model))
+const effortItems = computed<MenuItem[]>(() => {
+  const fallback = models.find(props.agent, props.model)?.defaultEffort
+  return [
+    {
+      label: 'Default',
+      hint: fallback ? `${AGENTS[props.agent].name} uses ${effortLabel(fallback).toLowerCase()}` : `Whatever ${AGENTS[props.agent].name} is set to`,
+      checked: !props.effort,
+      onSelect: () => emit('update:effort', null),
+    },
+    ...efforts.value.map((level, i) => ({
+      label: effortLabel(level),
+      hint: i === 0 ? 'Quickest answers, least thinking' : i === efforts.value.length - 1 ? 'Thinks longest; slowest and uses the most quota' : undefined,
+      checked: props.effort === level,
+      divider: i === 0,
+      onSelect: () => emit('update:effort', level),
+    })),
+  ]
+})
+const effortText = computed(() => (props.effort ? effortLabel(props.effort) : 'Effort'))
 
 const modes = {
   plan: { label: 'Plan', hint: 'Read-only: explores and proposes a plan', icon: MapIcon },
@@ -190,8 +230,23 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
       </UiMenu>
       <UiMenu :items="modelItems" placement="top-start" :width="270" label="Model">
         <template #default="{ toggle, open }">
-          <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="toggle">
-            <span class="cp__chip-text">{{ modelLabel(agent, model) }}</span>
+          <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="() => { toggle(); refreshModels() }">
+            <span class="cp__chip-text">{{ models.label(agent, model) }}</span>
+            <ChevronDown />
+          </button>
+        </template>
+      </UiMenu>
+      <UiMenu v-if="efforts.length" :items="effortItems" placement="top-start" :width="260" label="Effort">
+        <template #default="{ toggle, open }">
+          <button
+            type="button"
+            class="cp__chip"
+            :class="{ 'is-open': open, 'is-default': !effort }"
+            :title="`Effort: ${effort ? effortLabel(effort) : 'default'}`"
+            @click="toggle"
+          >
+            <Gauge />
+            <span class="cp__chip-text cp__mode-text">{{ effortText }}</span>
             <ChevronDown />
           </button>
         </template>

@@ -1,4 +1,4 @@
-import type { AgentId, Part, Thread } from '~/types/chat'
+import type { AgentId, AgentModel, Part, Thread } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, SpawnFn, SpawnHandlers } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
@@ -70,6 +70,16 @@ function spawnFor(agent: AgentId, cwd: string): SpawnFn {
       kill: () => call('agent_kill', { id }),
     }
   }
+}
+
+/**
+ * The models the agent's CLI offers (no turn is run). Null in the browser preview,
+ * which has no CLI, and when the adapter cannot list them.
+ */
+export async function listAgentModels(agent: AgentId, cwd: string): Promise<AgentModel[] | null> {
+  if (!isTauri()) return null
+  const adapter = await adapters[agent]()
+  return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,6 +207,7 @@ export async function runAgentTurn(store: Store, threadId: string, prompt: strin
       prompt,
       model: thread.model,
       mode: thread.mode,
+      effort: thread.effort ?? null,
       sessionId: thread.sessionId ?? null,
       spawn: spawnFor(thread.agent, thread.projectPath),
       emit,

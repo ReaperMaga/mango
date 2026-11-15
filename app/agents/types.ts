@@ -1,4 +1,4 @@
-import type { AgentId, DiffLine, ToolKind } from '~/types/chat'
+import type { AgentId, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
  * How an agent CLI is driven. One `run()` is one turn: the adapter starts (or
@@ -57,6 +57,8 @@ export interface AgentRunOptions {
   /** A model id from the adapter's `models`, or 'default' to let the CLI choose. */
   model: string
   mode: PermissionMode
+  /** One of the model's `efforts`, or null to leave it to the CLI. */
+  effort?: string | null
   /** From an earlier `session` event of the same thread, null for a new conversation. */
   sessionId: string | null
   spawn: SpawnFn
@@ -77,4 +79,9 @@ export interface AgentRun {
 export interface AgentAdapter {
   id: AgentId
   run(options: AgentRunOptions): AgentRun
+  /**
+   * The models this CLI offers the signed-in account, 'default' first, read from the CLI
+   * without running a turn (no quota is spent). Rejects when the CLI can't answer.
+   */
+  listModels?(spawn: SpawnFn): Promise<AgentModel[]>
 }

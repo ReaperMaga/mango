@@ -13,8 +13,8 @@ const thread = computed(() => threads.byId(props.pane.threadId))
 const busy = computed(() => !!thread.value && ['running', 'queued', 'waiting'].includes(thread.value.status))
 
 /* ---------- empty pane: draft settings live here until the first send ---------- */
-const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'] })
-watch(() => draft.agent, a => { draft.model = AGENTS[a].models[0]!.id; threads.defaultAgent = a })
+const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'], effort: null as string | null })
+watch(() => draft.agent, (a) => { draft.model = AGENTS[a].models[0]!.id; draft.effort = null; threads.defaultAgent = a })
 const draftText = ref('')
 
 /* Unsent text is kept per thread, so switching tabs never loses a draft. */
@@ -35,6 +35,7 @@ async function start(text: string) {
   const t = threads.create(ws.activeProjectPath, draft.agent, ws.activeProject?.branch ?? null)
   threads.setModel(t.id, draft.model)
   threads.setMode(t.id, draft.mode)
+  threads.setEffort(t.id, draft.effort)
   if (threads.activePane.id !== props.pane.id) threads.show(t.id, props.pane.id)
   await threads.send(t.id, text)
 }
@@ -118,6 +119,7 @@ function onKey(e: KeyboardEvent) {
           :agent="thread.agent"
           :model="thread.model"
           :mode="thread.mode"
+          :effort="thread.effort ?? null"
           :busy="busy"
           :autofocus="active"
           @send="text => threads.send(thread!.id, text)"
@@ -125,6 +127,7 @@ function onKey(e: KeyboardEvent) {
           @update:agent="a => threads.setAgent(thread!.id, a)"
           @update:model="m => threads.setModel(thread!.id, m)"
           @update:mode="m => threads.setMode(thread!.id, m)"
+          @update:effort="e => threads.setEffort(thread!.id, e)"
         />
       </div>
     </template>
@@ -139,6 +142,7 @@ function onKey(e: KeyboardEvent) {
           v-model:agent="draft.agent"
           v-model:model="draft.model"
           v-model:mode="draft.mode"
+          v-model:effort="draft.effort"
           large
           :autofocus="active"
           @send="start"
