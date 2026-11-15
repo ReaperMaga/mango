@@ -2,6 +2,24 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.2
+
+### Agents and chats
+
+- **Attachments:** paste a screenshot or copied files into the message box, pick files with the paperclip, or drop them on a chat. Claude Code gets images inline and other files by path, Codex gets images by path. Up to 10 per message, 25 MB each; large images are shrunk to fit the model's limits.
+- Images that agents produce show in the chat and open in a viewer.
+- The model picker lists every model the installed CLI offers your account.
+- Reasoning effort is set per chat with a slider next to the model picker (Claude Code: low to max; Codex: the levels its model accepts).
+- **Voice input:** press the microphone in the message box (or <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>Space</kbd>) and speak. Speech is transcribed on your computer by Whisper; pick, download and test a model in **Settings > Voice**.
+
+### Files
+
+- A **Files** view next to the chat list (<kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>E</kbd>) shows the project as a tree with git status. Files open in a Monaco editor tab; save with <kbd>Ctrl</kbd> <kbd>S</kbd>. Mango asks before closing unsaved edits and before overwriting a file that changed on disk.
+
+### Look
+
+- A new app mark: a ripe mango with a Roman capital M.
+
 ## 0.1.1
 
 ### Agents
