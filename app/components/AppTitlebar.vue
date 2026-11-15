@@ -141,7 +141,8 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
   z-index: 20;
 }
 .tb__left, .tb__right { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
-.tb__right { justify-content: flex-end; }
+/* Full bar height, so the window controls' hover fills the titlebar top to bottom. */
+.tb__right { justify-content: flex-end; align-self: stretch; }
 .tb__mark { margin-right: var(--space-2); }
 
 .tb__project {
