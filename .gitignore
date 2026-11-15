@@ -1,0 +1,12 @@
+node_modules
+.nuxt
+.output
+.data
+dist
+src-tauri/target
+src-tauri/gen/schemas
+.impeccable/questions
+.impeccable/mocks
+.impeccable/review
+.impeccable/config.local.json
+*.log
