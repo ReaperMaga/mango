@@ -144,6 +144,9 @@ unless asked for them. Ask at most one short batch of product questions, then bu
 - Never `pkill -f "nuxt dev"`: it kills other dev servers (and the shell running it). Kill by PID.
 - Do not edit generated or vendored files: `.nuxt/`, `.output/`, `src-tauri/gen/`, `src-tauri/icons/`,
   `.claude/skills/impeccable/`.
-- Commits follow Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`, optional
-  scope such as `feat(git): …`), in the imperative, one logical change each.
+- **Always use Conventional Commits prefixes**, for everything that carries a title: commit messages, pull
+  request titles, issue titles, release names and branch names (`feat/…`, `fix/…`). Types: `feat`, `fix`, `docs`,
+  `style`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, `revert`; optional scope such as `feat(git): …`; `!`
+  after the type (or a `BREAKING CHANGE:` footer) for breaking changes. Write the subject in the imperative, lower
+  case, no trailing period. One logical change per commit.
 - Keep `README.md` in step with user-visible changes.
