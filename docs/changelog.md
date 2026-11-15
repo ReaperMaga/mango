@@ -2,12 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
-## Unreleased
+## 0.1.1
 
 ### Agents
 
 - **Get started** opens on the first launch. It shows whether Claude Code, Codex and Git are installed and signed in, installs the missing ones with each vendor's own installer in a terminal inside the dialog, and signs in to the agents. Open it again from the command palette or **Settings > Agents**.
 - **Settings > Agents** offers **Install…** for an agent that is not installed, instead of an `npm` command to copy.
+
+### Sidebar
+
+- The sidebar footer no longer has an **Open folder** button. Open a folder from the project menu in the titlebar, the command palette or <kbd>Ctrl</kbd> <kbd>O</kbd>.
 
 ## 0.1.0
 
