@@ -73,11 +73,12 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
             :class="{ 'is-open': open }"
             aria-haspopup="dialog"
             :aria-expanded="open"
-            :title="open ? undefined : 'Branches'"
+            :title="open ? undefined : ws.activeProject.branch ? `Branch: ${ws.activeProject.branch}` : 'Branches'"
             @click="toggle"
           >
             <GitBranch />
-            <span>{{ ws.activeProject.branch ?? 'detached' }}</span>
+            <!-- Unity VCS branches are paths: when space runs out, keep the end (…/feature/x) in view. -->
+            <span :class="{ 'tb__branch-path': ws.activeProject.branch?.startsWith('/') }"><bdi>{{ ws.activeProject.branch ?? 'detached' }}</bdi></span>
             <ChevronDown class="tb__chev" />
           </button>
         </template>
@@ -160,6 +161,8 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
   transition: background var(--dur-fast) var(--ease-out);
 }
 .tb__project:hover, .tb__project.is-open { background: var(--bg-hover); }
+/* The project keeps its width; a long branch (Unity VCS paths such as /main/feature/x) is what gets cut short. */
+.tb__left > :deep(.menu) { flex: none; }
 .tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
 
@@ -179,6 +182,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__branch:hover, .tb__branch.is-open { background: var(--bg-hover); color: var(--fg); }
 .tb__branch svg { width: 13px; height: 13px; flex: none; }
 .tb__branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb__branch .tb__branch-path { direction: rtl; text-align: left; }
 
 .tb__search {
   display: flex;
