@@ -31,7 +31,10 @@ their own session files (`~/.claude`, `~/.codex`) as usual.
 pnpm install
 pnpm app          # tauri dev: starts Nuxt on :1420 and opens the window
 pnpm app:build    # release build + installers
+pnpm bump minor   # new version (patch, minor, major or an exact 1.2.3) in every file that holds it
 ```
+
+The version you are running, with the commit it was built from, is in Settings > General.
 
 Linux needs the Tauri system packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
 `librsvg2-dev`, `libayatana-appindicator3-dev`, `libssl-dev`).

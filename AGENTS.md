@@ -22,6 +22,9 @@ pnpm dev            # UI only at http://localhost:1420, with an in-memory mock b
 pnpm app            # the desktop app (tauri dev)
 pnpm app:build      # release build + installers
 
+pnpm bump patch|minor|major|1.2.3   # set the version everywhere (prints the commit + tag commands)
+pnpm version:check                  # every copy of the version agrees (exit 1 if not)
+
 pnpm nuxt prepare && pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json   # typecheck (must be clean)
 cd src-tauri && cargo test && cargo build                               # backend tests, no new warnings
 cd src-tauri && cargo check --target x86_64-pc-windows-msvc             # Windows must keep compiling
@@ -32,6 +35,11 @@ pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 # Drive an agent adapter against the real CLI, outside the app
 node scripts/try-agent.ts claude /path/to/scratch-project "say hi" --mode ask --raw
 ```
+
+**Versioning:** semver, with `package.json` as the single source. `tauri.conf.json` reads it (`"version":
+"../package.json"`), the frontend bakes it in with the git commit (`nuxt.config.ts`, read via `useBuildInfo()`,
+shown in Settings > General), and `pnpm bump` keeps `Cargo.toml` and `Cargo.lock` in step. Never edit a version by
+hand. Releases are tagged `vX.Y.Z` on a `chore(release): vX.Y.Z` commit.
 
 The dev port is **1420** (`nuxt.config.ts` and `src-tauri/tauri.conf.json` must agree). TypeScript is pinned to
 5.9 because vue-tsc does not run on TypeScript 7.

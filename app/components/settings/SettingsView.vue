@@ -16,6 +16,7 @@ import SettingsTerminal from './SettingsTerminal.vue'
 type Section = NonNullable<ReturnType<typeof useWorkspace>['settings']>
 
 const ws = useWorkspace()
+const build = useBuildInfo()
 
 const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
@@ -141,6 +142,9 @@ onBeforeUnmount(() => {
             <span>{{ s.label }}</span>
           </button>
         </nav>
+        <button type="button" class="settings__version tabular" title="About Mango" @click="show('general')">
+          Mango {{ build.version }}<template v-if="build.dev"> · dev</template>
+        </button>
       </div>
 
       <div class="settings__main">
@@ -221,6 +225,16 @@ onBeforeUnmount(() => {
 .settings__item:hover svg,
 .settings__item.is-current svg { color: var(--fg); }
 .settings__item:focus-visible { border-radius: var(--radius-sm); }
+.settings__version {
+  align-self: flex-start;
+  margin-top: auto;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  transition: color var(--dur-fast) var(--ease-out);
+}
+.settings__version:hover { color: var(--fg-subtle); }
 
 /* ---- the section, on the canvas ---- */
 .settings__main {
