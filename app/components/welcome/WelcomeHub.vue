@@ -166,10 +166,7 @@ onBeforeUnmount(() => {
   <div ref="root" class="hub">
     <div class="hub__col">
       <header class="hub__head">
-        <svg class="hub__mark" viewBox="0 0 64 64" aria-hidden="true">
-          <rect width="64" height="64" rx="14" class="hub__mark-bg" />
-          <path d="M19.5 44V21.5L32 36l12.5-14.5V44" class="hub__mark-m" />
-        </svg>
+        <UiMangoMark :size="40" class="hub__mark" aria-hidden="true" />
         <h1 class="hub__title">Mango</h1>
         <p class="hub__lede">Run Claude Code and Codex side by side on your projects.</p>
       </header>
@@ -301,15 +298,7 @@ onBeforeUnmount(() => {
   padding: 0 var(--space-3);
   margin-bottom: var(--space-6);
 }
-.hub__mark { width: 40px; height: 40px; margin-bottom: var(--space-4); }
-.hub__mark-bg { fill: var(--accent); }
-.hub__mark-m {
-  fill: none;
-  stroke: var(--accent-fg);
-  stroke-width: 6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
+.hub__mark { margin-bottom: var(--space-4); }
 .hub__title {
   margin: 0;
   font-size: var(--text-2xl);

@@ -306,7 +306,7 @@ A near-neutral green-black ground, one warm accent family, and a ripening scale 
 ### Primary
 - **Ripe Mango** (`accent`): the accent as a fill. The primary button, the composer's send button, the active chat tab's 2px underline, the on-state of a switch, progress bar fill, the streaming caret, the app mark.
 - **Ripe Mango Bright** (`accent-strong`): hover state of an accent fill. Lighter in dark, deeper in light.
-- **Mango Stone Ink** (`accent-fg`): the dark ink that sits on an accent fill (button label, send arrow, the M in the mark). The same value in both themes.
+- **Mango Stone Ink** (`accent-fg`): the dark ink that sits on an accent fill (button label, send arrow). The same value in both themes.
 - **Mango Ink** (`accent-ink`): the accent as text or icon colour on a ground: links, the check mark of a selected menu item, matched characters in the command palette, the New chat icon, the active terminal tab's icon. Deepened sharply in the light theme.
 - **Mango Wash** (`accent-soft`) and **Mango Line** (`accent-line`): translucent accent. The wash is the 3px focus halo around inputs and the composer and the tile behind the primary welcome action; the line is the focused input border and the colour a resize handle takes on hover.
 
@@ -416,7 +416,7 @@ Corners are softly rounded and the radius follows the size of the thing: 4px for
 
 Borders are 1px hairlines in the line tokens, never heavier. Tinted borders are made by mixing a status colour toward transparent (35 to 60%). The user's message bubble has one squared corner (4px, bottom right) so it reads as spoken from the right; that is the only asymmetric radius besides the canvas corner.
 
-The system's one figurative shape is the ripeness dot: a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. Everything else is rectangles and circles.
+The system's one figurative shape is the ripeness dot: a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. The app mark (`ui/MangoMark.vue`, and `assets/icon.svg`, the source of the app icons) is the same fruit, fully ripe in Ripe Mango with the leaf in Unripe Leaf Green, and a Roman inscription capital M (thick and thin strokes, bracketed serifs) cut out of the flesh so the ground shows through. Everything else is rectangles and circles.
 
 ## Components
 

@@ -1,16 +1,37 @@
 <script setup lang="ts">
+/**
+ * The app mark: the ripeness-dot mango, ripe, with a Roman inscription M cut
+ * out of its flesh so the ground shows through. Same geometry as
+ * assets/icon.svg (the source for the app icons), which uses fixed colours.
+ */
 withDefaults(defineProps<{ size?: number }>(), { size: 18 })
+
+const maskId = useId()
 </script>
 
 <template>
-  <svg class="mark" :width="size" :height="size" viewBox="0 0 64 64" role="img" aria-label="Mango">
-    <rect width="64" height="64" rx="15" class="mark__bg" />
-    <path class="mark__m" d="M18 44V21.5h4.6l9.4 13 9.4-13H46V44h-5.4V30.4L32 42.2l-8.6-11.8V44Z" />
+  <svg class="mark" :width="size" :height="size" viewBox="0.6 0 11 11" role="img" aria-label="Mango">
+    <defs>
+      <mask :id="maskId" maskUnits="userSpaceOnUse" x="0" y="0" width="12" height="12">
+        <path fill="#fff" d="M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z" />
+        <g fill="#000" transform="translate(6.05 6.25) scale(.071) translate(-51.5 -50)">
+          <path d="M19 80H27L31 22H23Z" />
+          <path d="M23 22H39L54.1 57L68 22H76L53 80H48Z" />
+          <path d="M66 22H80L84 80H69Z" />
+          <path d="M12 80H34V77.5C30.5 77.3 28 75.5 27.4 72H19.6C19 75.5 16 77.3 12 77.5Z" />
+          <path d="M62 80H91V77.5C87 77.3 84 75.5 83.4 72H68.6C68 75.5 65.5 77.3 62 77.5Z" />
+          <path d="M15 20H39V24H23L22.4 30C22 25.5 20 23.4 15 23Z" />
+          <path d="M66 20H90V23C85 23.4 81 25.5 80.6 30L80 24H66Z" />
+        </g>
+      </mask>
+    </defs>
+    <rect class="mark__flesh" x="0" y="0" width="12" height="12" :mask="`url(#${maskId})`" />
+    <path class="mark__leaf" d="M6.7 2c.3-1.1 1.4-1.9 2.9-1.8-.3 1.3-1.4 2-2.9 1.8Z" />
   </svg>
 </template>
 
 <style scoped>
 .mark { display: block; flex: none; }
-.mark__bg { fill: var(--accent); }
-.mark__m { fill: var(--accent-fg); }
+.mark__flesh { fill: var(--accent); }
+.mark__leaf { fill: var(--ripe-queued); }
 </style>
