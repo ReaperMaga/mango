@@ -1,0 +1,71 @@
+/**
+ * Drive an agent adapter against the real CLI, outside the app.
+ *
+ *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
+ *        [--model id] [--session id] [--deny] [--interrupt-after ms] [--raw]
+ *
+ * Prints every AgentEvent as one JSON line (text deltas are coalesced).
+ * Approvals are allowed automatically unless --deny is given.
+ * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
+ */
+import { spawn } from 'node:child_process'
+
+const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
+if (!agentId || !cwd || !prompt) {
+  console.error('usage: node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [flags]')
+  process.exit(2)
+}
+const flag = (name: string) => { const i = rest.indexOf(`--${name}`); return i >= 0 ? rest[i + 1] : undefined }
+const has = (name: string) => rest.includes(`--${name}`)
+const raw = has('raw')
+
+const mod = await import(`../app/agents/${agentId}.ts`)
+const adapter = mod.default ?? mod[`${agentId}Adapter`]
+if (!adapter?.run) throw new Error(`app/agents/${agentId}.ts must export the adapter as default or ${agentId}Adapter`)
+
+let pendingText = ''
+const flush = () => { if (pendingText) { console.log(JSON.stringify({ type: 'text-delta(coalesced)', text: pendingText })); pendingText = '' } }
+
+const run = adapter.run({
+  cwd,
+  prompt,
+  model: flag('model') ?? 'default',
+  mode: flag('mode') ?? 'ask',
+  sessionId: flag('session') ?? null,
+  spawn: async (args: string[], handlers: any, env?: Record<string, string>) => {
+    if (raw) console.log('$$', agentId, args.join(' '))
+    const p = spawn(agentId, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    const lines = (stream: NodeJS.ReadableStream, cb?: (l: string) => void, tag = '<<') => {
+      let buf = ''
+      stream.on('data', (d) => {
+        buf += d
+        let i
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).replace(/\r$/, ''); buf = buf.slice(i + 1)
+          if (!line) continue
+          if (raw) console.log(tag, line.length > 2000 ? `${line.slice(0, 2000)}…` : line)
+          cb?.(line)
+        }
+      })
+    }
+    lines(p.stdout!, handlers.onLine)
+    lines(p.stderr!, handlers.onStderr, '!!')
+    p.on('exit', code => handlers.onExit?.(code))
+    return {
+      write: async (line: string) => { if (raw) console.log('>>', line); p.stdin!.write(`${line}\n`) },
+      closeStdin: async () => { p.stdin!.end() },
+      kill: async () => { p.kill('SIGTERM') },
+    }
+  },
+  emit(event: any) {
+    if (event.type === 'text-delta') { pendingText += event.text; return }
+    flush()
+    console.log(JSON.stringify(event))
+    if (event.type === 'approval') setTimeout(() => run.respondApproval(event.id, !has('deny')), 300)
+    if (event.type === 'turn-end') setTimeout(() => process.exit(0), 1500)
+  },
+})
+
+const after = Number(flag('interrupt-after'))
+if (after) setTimeout(() => { console.log('-- interrupt'); run.interrupt() }, after)
+setTimeout(() => { console.error('-- harness timeout'); process.exit(1) }, 180_000)
