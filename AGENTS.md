@@ -43,7 +43,7 @@ app/
   agents/            claude.ts, codex.ts: CLI protocol -> AgentEvents. index.ts: runs turns, bridges to Rust
   assets/css/        tokens.css (the only source of colour/type/space/radius/motion), base.css
   components/        AppTitlebar, AppSidebar, AppWorkspace, ChatArea, CommandPalette
-    chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatStatus, ChatWorking
+    chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (sidebar Changes view), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
     terminal/        TerminalPanel, TerminalView (xterm.js)

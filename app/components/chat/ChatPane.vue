@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { GitBranch, X, Square, MessageSquareText, Bug, GitPullRequestDraft } from 'lucide-vue-next'
+import { MessageSquareText, Bug, GitPullRequestDraft } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
-import { AGENTS, modelLabel, type AgentId, type Thread } from '~/types/chat'
+import { AGENTS, type AgentId, type Thread } from '~/types/chat'
 import { drafts } from '~/utils/drafts'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
@@ -95,20 +95,6 @@ function onKey(e: KeyboardEvent) {
   <section class="pane" :class="{ 'is-active': active, 'is-split': split }" @keydown="onKey">
     <!-- Thread -->
     <template v-if="thread">
-      <header class="pane__head">
-        <UiRipenessDot :status="thread.archived ? 'idle' : thread.status" />
-        <h2 class="pane__title" :title="thread.title">{{ thread.title }}</h2>
-        <span class="pane__meta">
-          {{ AGENTS[thread.agent].name }}<span class="pane__sep">·</span>{{ modelLabel(thread.agent, thread.model) }}
-        </span>
-        <span v-if="thread.branch" class="pane__branch"><GitBranch />{{ thread.branch }}</span>
-        <span v-if="thread.simulated" class="pane__sim" title="These replies are simulated sample content, not a real agent run.">Simulated</span>
-        <span class="pane__spacer" />
-        <ChatStatus :thread="thread" />
-        <UiButton v-if="busy" size="sm" variant="ghost" @click="threads.stop(thread.id)"><Square />Stop</UiButton>
-        <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(pane.id)"><X /></UiIconButton>
-      </header>
-
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
@@ -180,53 +166,6 @@ function onKey(e: KeyboardEvent) {
   background: var(--bg-canvas);
   position: relative;
 }
-
-.pane__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 40px;
-  padding: 0 var(--space-3) 0 var(--space-4);
-  flex: none;
-  border-bottom: 1px solid var(--line-soft);
-}
-.pane.is-split:not(.is-active) .pane__head { opacity: 0.72; }
-.pane__title {
-  margin: 0;
-  min-width: 0;
-  font-size: var(--text-md);
-  font-weight: 600;
-  word-spacing: 0.06em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pane__meta { flex: none; font-size: var(--text-xs); color: var(--fg-subtle); white-space: nowrap; }
-.pane__sep { margin: 0 5px; color: var(--fg-faint); }
-.pane__branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  color: var(--fg-faint);
-  white-space: nowrap;
-  overflow: hidden;
-}
-.pane__branch svg { width: 12px; height: 12px; flex: none; }
-.pane__sim {
-  flex: none;
-  padding: 1px 7px;
-  border-radius: var(--radius-pill);
-  border: 1px dashed var(--line-strong);
-  font-size: var(--text-2xs);
-  font-weight: 560;
-  color: var(--fg-subtle);
-  white-space: nowrap;
-}
-.pane__spacer { flex: 1; }
-.pane.is-split .pane__meta, .pane.is-split .pane__branch { display: none; }
 
 .pane__scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .pane__col {

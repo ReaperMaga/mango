@@ -370,7 +370,7 @@ A fixed application frame, not a page. The window is a two-row grid: a 40px titl
 
 Spacing steps on a 4px grid (`spacing.1` to `spacing.12`). Padding inside a region is 12 to 24px; gaps between sibling controls are 2 to 8px; list rows are separated by 1 to 2px so hover washes do not touch. Row heights do the rhythm: 22 and 28px for icon targets, 26 to 32px for controls, 30 to 34px for menu and list rows, 44px for a two-line thread row.
 
-There are no viewport breakpoints. The window has a minimum of 960 by 600px and the layout holds there by truncating: every title, path and label ellipsises rather than wrapping, and the chat header drops its meta when split. The one adaptive rule is a container query on the composer: under 400px wide it hides the permissions label and the attach button and keeps the agent and model pickers.
+There are no viewport breakpoints. The window has a minimum of 960 by 600px and the layout holds there by truncating: every title, path and label ellipsises rather than wrapping. The one adaptive rule is a container query on the composer: under 400px wide it hides the permissions label and the attach button and keeps the agent and model pickers.
 
 Resize handles are invisible 6px strips over a boundary that show a 1 to 2px Mango Line on hover and while dragging; double-click resets.
 
