@@ -119,7 +119,14 @@ function resetSignIn() {
   answered.clear()
 }
 
+/**
+ * The sign-in pages of the tools Mango signs in to. CLIs print other links too (GitHub's notices
+ * link to its changelog), so only these are opened or offered as "the sign-in page".
+ */
+const SIGN_IN_PAGE = /^https:\/\/(github\.com\/login\/(device|oauth)|([a-z0-9-]+\.)?claude\.(ai|com)\/(.*\/)?oauth|([a-z0-9-]+\.)?anthropic\.com\/(.*\/)?oauth|auth\.openai\.com\/|login\.tailscale\.com\/)/i
+
 function onLink(url: string) {
+  if (props.signIn && !SIGN_IN_PAGE.test(url)) return
   link.value = url
   if (props.signIn && !opened) {
     opened = true
