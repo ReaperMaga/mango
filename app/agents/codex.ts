@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, SteerInput, ToolImage } from '~/agents/types'
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
@@ -211,7 +211,7 @@ interface OpenApproval { rpcId: string | number; respond(allow: boolean): Json }
  * The prompt as turn input: the text, then each attached image by path (`localImage`; Codex
  * reads the file itself). The sandbox can read the whole disk, so `readDirs` needs no grant.
  */
-function turnInput(options: AgentRunOptions): Json[] {
+function turnInput(options: SteerInput): Json[] {
   const input: Json[] = []
   if (options.prompt.trim() || !options.images?.length) input.push({ type: 'text', text: options.prompt, text_elements: [] })
   for (const img of options.images ?? []) input.push({ type: 'localImage', path: img.path })
@@ -268,7 +268,8 @@ function run(options: AgentRunOptions): AgentRun {
     })
 
   const shutdown = () => {
-    for (const w of waiting.values()) clearTimeout(w.timer)
+    // Nothing will answer now: settle what is still asked (a steer in flight falls back to the next turn).
+    for (const w of waiting.values()) { clearTimeout(w.timer); w.reject({ message: 'Codex closed.' }) }
     waiting.clear()
     if (stopTimer) clearTimeout(stopTimer)
     const t = transport
@@ -771,6 +772,17 @@ function run(options: AgentRunOptions): AgentRun {
   start().catch(e => fail(e))
 
   return {
+    async steer(input) {
+      // Before Codex named the turn, or once it is over, there is nothing to add to.
+      if (ended || closing || stopRequested || !threadId || !turnId) return false
+      try {
+        await request('turn/steer', { threadId, input: turnInput(input), expectedTurnId: turnId }, 15_000)
+        return !stopRequested
+      }
+      catch {
+        return false
+      }
+    },
     respondApproval(id, allow) {
       const approval = approvals.get(id)
       if (!approval || ended) return

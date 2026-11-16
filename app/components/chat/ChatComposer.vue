@@ -52,8 +52,9 @@ watch(text, () => nextTick(autosize))
 
 const canSend = computed(() => !!(text.value.trim() || attachments.value.length) && !pending.value.length)
 
+/** While the agent works, sending steers it: it reads the message at its next step. */
 function submit() {
-  if (props.busy || !canSend.value) return
+  if (!canSend.value) return
   emit('send', text.value, attachments.value)
   text.value = ''
   attachments.value = []
@@ -350,7 +351,10 @@ const modeItems = computed<MenuItem[]>(() => (Object.keys(modes) as Thread['mode
   onSelect: () => emit('update:mode', k),
 })))
 
-const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} to build, fix or explain…`)
+const ph = computed(() => props.placeholder ?? (props.busy
+  ? `Steer ${AGENTS[props.agent].name}: it reads this at its next step…`
+  : `Ask ${AGENTS[props.agent].name} to build, fix or explain…`))
+const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].name} reads it at its next step (Enter)` : 'Send (Enter)'))
 </script>
 
 <template>
@@ -507,12 +511,12 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
         <Square />
       </button>
       <button
-        v-else
+        v-if="!busy || canSend"
         type="submit"
         class="cp__send"
         :disabled="!canSend"
-        aria-label="Send"
-        title="Send (Enter)"
+        :aria-label="busy ? 'Send to the working agent' : 'Send'"
+        :title="sendTitle"
       >
         <ArrowUp />
       </button>

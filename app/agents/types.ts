@@ -92,8 +92,18 @@ export interface AgentRunOptions {
   emit(event: AgentEvent): void
 }
 
+/** A message sent while a turn runs. Same shape as the turn's own prompt. */
+export type SteerInput = Pick<AgentRunOptions, 'prompt' | 'images' | 'readDirs'>
+
 export interface AgentRun {
   respondApproval(id: string, allow: boolean): void
+  /**
+   * Hand the running turn another user message ("steering"): the agent reads it at its next
+   * step and answers within the same turn. Resolves false when this run cannot take it
+   * (not started yet, ending, or it needs something the run was not started with); the
+   * caller then sends it as the next turn instead. Optional: without it, every such message waits.
+   */
+  steer?(input: SteerInput): Promise<boolean>
   /** Ask the agent to stop the turn. The adapter still emits `turn-end` (status 'stopped'). */
   interrupt(): void
 }

@@ -1,5 +1,5 @@
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, SteerInput, ToolImage } from '~/agents/types'
 
 /**
  * Claude Code adapter.
@@ -185,7 +185,7 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
 }
 
 /** The prompt as message content: attached images first, then the text (an empty text block is refused). */
-function userContent(options: AgentRunOptions): unknown[] {
+function userContent(options: SteerInput): unknown[] {
   const content: unknown[] = (options.images ?? []).map(img => ({
     type: 'image',
     source: { type: 'base64', media_type: img.mime, data: img.data },
@@ -202,6 +202,13 @@ function run(options: AgentRunOptions): AgentRun {
   let lastStderr = ''
   let seq = 0
   let killTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * User messages written to stdin, and how many the CLI has taken in (it echoes each one with
+   * `isReplay` when it reads it). A message sent mid-turn ("steering") is read at the next step;
+   * one that arrives as the turn finishes becomes a follow-up turn, so the run lasts until it is answered.
+   */
+  let sentMessages = 0
+  let readMessages = 0
 
   /** Streaming state of the assistant message being received. */
   let messageId = ''
@@ -294,6 +301,7 @@ function run(options: AgentRunOptions): AgentRun {
 
   /** Tool results come back as a user message. */
   function onUser(m: any) {
+    if (m.isReplay) { readMessages++; return }
     const content: any[] = Array.isArray(m.message?.content) ? m.message.content : []
     for (const b of content) {
       if (b.type !== 'tool_result') continue
@@ -351,6 +359,8 @@ function run(options: AgentRunOptions): AgentRun {
       case 'result': {
         if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
         if (interrupted) end('stopped')
+        // A steering message came too late for this answer: the CLI answers it next, in the same process.
+        else if (readMessages < sentMessages && !m.is_error && (!m.subtype || m.subtype === 'success')) break
         else if (m.is_error || (m.subtype && m.subtype !== 'success')) {
           const raw = typeof m.result === 'string' && m.result ? m.result : Array.isArray(m.errors) ? m.errors.join('\n') : String(m.subtype ?? '')
           end('error', friendlyError(raw))
@@ -366,6 +376,7 @@ function run(options: AgentRunOptions): AgentRun {
     '--input-format', 'stream-json',
     '--verbose',
     '--include-partial-messages',
+    '--replay-user-messages',
     '--permission-prompt-tool', 'stdio',
     '--permission-mode', MODES[options.mode] ?? 'default',
   ]
@@ -386,12 +397,22 @@ function run(options: AgentRunOptions): AgentRun {
   }).then((t) => {
     transport = t
     if (ended) { t.kill().catch(() => {}); return }
+    sentMessages++
     send({ type: 'user', message: { role: 'user', content: userContent(options) } })
   }).catch((err) => {
     end('error', err instanceof Error ? err.message : String(err))
   })
 
+  const grantedDirs = new Set(options.readDirs ?? [])
+
   return {
+    async steer(input) {
+      // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
+      if (ended || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
+      sentMessages++
+      await send({ type: 'user', message: { role: 'user', content: userContent(input) } })
+      return true
+    },
     respondApproval(id, allow) {
       const pending = pendingApprovals.get(id)
       if (!pending) return
