@@ -424,13 +424,29 @@ function run(options: AgentRunOptions): AgentRun {
 }
 
 /**
+ * The effort Claude Code runs a model at when none is chosen, from its `get_settings` answer:
+ * the per-model setting (keyed by the resolved model id), else the global one, else what it
+ * reports as applied for the model it would start with. Unknown for any other model.
+ */
+function defaultEffortFor(resolved: string | undefined, settings: any, efforts: string[]): string | undefined {
+  if (!resolved || !efforts.length) return undefined
+  const level = settings?.effective?.modelSettings?.[resolved]?.effortLevel
+    ?? settings?.effective?.effortLevel
+    ?? (settings?.applied?.model === resolved ? settings.applied.effort : undefined)
+  return typeof level === 'string' && efforts.includes(level) ? level : undefined
+}
+
+/**
  * Claude Code's own model list: the `initialize` control request answers with every
- * model the account can use and the effort levels each accepts. No prompt is sent.
+ * model the account can use and the effort levels each accepts, and `get_settings`
+ * with the effort each one runs at by default. No prompt is sent.
  */
 function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
   return new Promise((resolve, reject) => {
     let transport: AgentTransport | null = null
     let done = false
+    let list: any[] | null = null
+    let settings: any = undefined // undefined: not answered yet; null: no answer to be had
     const finish = (models: AgentModel[] | null, why?: string) => {
       if (done) return
       done = true
@@ -439,26 +455,45 @@ function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
       if (models) resolve(models)
       else reject(new Error(why ?? 'Claude Code did not list its models.'))
     }
-    const timer = setTimeout(() => finish(null, 'Claude Code took too long to list its models.'), 30_000)
+    const tryFinish = () => {
+      if (!list || settings === undefined) return
+      finish(list.filter((x: any) => typeof x?.value === 'string').map((x: any): AgentModel => {
+        const efforts: string[] = x.supportsEffort && Array.isArray(x.supportedEffortLevels) ? x.supportedEffortLevels.map(String) : []
+        const defaultEffort = defaultEffortFor(x.resolvedModel ?? x.value, settings, efforts)
+        return x.value === 'default'
+          ? { id: 'default', label: 'Default', hint: x.description ? `Claude Code's choice: ${x.description}` : undefined, efforts, defaultEffort }
+          : { id: x.value, label: String(x.displayName ?? x.value), hint: x.description || undefined, efforts, defaultEffort }
+      }))
+    }
+    const timer = setTimeout(() => {
+      // The model list without defaults beats no list (an older CLI may not answer get_settings).
+      if (list) { settings = null; tryFinish() } else finish(null, 'Claude Code took too long to list its models.')
+    }, 30_000)
     spawn(['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'], {
       onLine(line) {
         let m: any
         try { m = JSON.parse(line) } catch { return }
-        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-models') return
-        const list = m.response?.response?.models
-        if (!Array.isArray(list)) return finish(null)
-        finish(list.filter((x: any) => typeof x?.value === 'string').map((x: any): AgentModel => {
-          const efforts = x.supportsEffort && Array.isArray(x.supportedEffortLevels) ? x.supportedEffortLevels.map(String) : []
-          return x.value === 'default'
-            ? { id: 'default', label: 'Default', hint: x.description ? `Claude Code's choice: ${x.description}` : undefined, efforts }
-            : { id: x.value, label: String(x.displayName ?? x.value), hint: x.description || undefined, efforts }
-        }))
+        if (m?.type !== 'control_response') return
+        const id = m.response?.request_id
+        if (id === 'mango-models') {
+          const models = m.response?.response?.models
+          if (!Array.isArray(models)) return finish(null)
+          list = models
+        } else if (id === 'mango-settings') {
+          settings = m.response?.subtype === 'success' ? (m.response.response ?? null) : null
+        } else return
+        tryFinish()
       },
-      onExit: () => finish(null, 'Claude Code exited before listing its models.'),
+      onExit: () => {
+        if (list) { settings ??= null; tryFinish() }
+        finish(null, 'Claude Code exited before listing its models.')
+      },
     }).then((t) => {
       transport = t
       if (done) { t.kill().catch(() => {}); return }
-      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-models', request: { subtype: 'initialize' } })).catch(() => {})
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-models', request: { subtype: 'initialize' } }))
+        .then(() => t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-settings', request: { subtype: 'get_settings' } })))
+        .catch(() => {})
     }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
   })
 }
