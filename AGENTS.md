@@ -76,6 +76,8 @@ src-tauri/src/
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
+  envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
+                     incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel)
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
@@ -112,6 +114,11 @@ scripts/try-agent.ts run an adapter against the real CLI
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
   trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.
+- Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
+  call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
+  `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
+  Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`); anything that touches the local disk
+  must skip them (`isEnvPath`).
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State
