@@ -28,7 +28,7 @@ export const useThreads = defineStore('threads', {
 
   getters: {
     byId: s => (id: string | null | undefined) => s.threads.find(t => t.id === id) ?? null,
-    /** A project's chats, newest first, without the archived ones. */
+    /** A project's chats in the user's order (see byListOrder), without the archived ones. */
     forProject: s => (path: string) =>
       s.threads.filter(t => t.projectPath === path && !t.archived).sort(byListOrder),
     archivedFor: s => (path: string) =>
@@ -209,7 +209,7 @@ export const useThreads = defineStore('threads', {
       const target = ids[ids.indexOf(id) + by]
       if (target) this.reorder(id, target, by < 0 ? 'before' : 'after')
     },
-    /** Forget the hand-made order of a project: newest activity first again. */
+    /** Forget the hand-made order of a project: newest first again. */
     resetOrder(projectPath: string) {
       for (const t of this.threads) if (t.projectPath === projectPath) delete t.order
       this.persist()
@@ -372,11 +372,12 @@ export const useThreads = defineStore('threads', {
 })
 
 /**
- * Sidebar order: chats the user placed by hand keep their place; chats without
- * a place (new ones) come first, newest activity on top.
+ * Sidebar order is the user's: chats placed by hand keep their place; chats without a
+ * place (new ones) come first, newest created on top. Activity never moves a chat, so
+ * the list holds still while agents answer.
  */
 function byListOrder(a: Thread, b: Thread) {
-  if (a.order === undefined && b.order === undefined) return b.updatedAt - a.updatedAt
+  if (a.order === undefined && b.order === undefined) return b.createdAt - a.createdAt
   if (a.order === undefined) return -1
   if (b.order === undefined) return 1
   return a.order - b.order

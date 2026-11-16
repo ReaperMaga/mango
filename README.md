@@ -25,7 +25,7 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 - **Branches:** click the branch name (titlebar or Changes view) for a JetBrains-style popup: search, update / push / fetch, local and remote branches, and per-branch checkout, new branch from, merge, rebase, rename and delete. For Unity VCS a new branch is a child of the one it starts from (`task` from `/main` is `/main/task`).
 - **Sidebar:** shows the chats of the project picked in the titlebar, grouped by status: Working on top, Settled and Archived at the bottom of the list, where they fold away.
 - **Chat status:** Working, Settled and Archived (plus "Needs you" and "Failed" while a run needs attention). New chats and every finished turn are Working; a chat is Settled only when you press the check mark on its sidebar row (press it again to go back to Working). Archive from the thread's menu in the sidebar.
-- **Order:** drag chats in the sidebar to arrange them (or Alt+↑ / Alt+↓, or Move up / Move down in the menu). New chats arrive on top.
+- **Order:** drag chats in the sidebar to arrange them (or Alt+↑ / Alt+↓, or Move up / Move down in the menu). New chats arrive on top, and the list holds still while agents answer: activity never reorders it.
 - Chat tabs, split view, per-thread drafts, command palette, dark and light themes.
 
 Mango uses the agents' own sign-in: it never sees or stores your credentials.
