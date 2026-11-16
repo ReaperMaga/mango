@@ -20,6 +20,7 @@ import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 import SettingsAgentRow from './SettingsAgentRow.vue'
+import AgentIcon from '~/components/ui/AgentIcon.vue'
 
 /** `active`: this section is the one on screen (it stays mounted while Settings is open). */
 const props = defineProps<{ active: boolean }>()
@@ -78,7 +79,7 @@ watch(() => props.active, (on) => { if (on) checkAll() })
 
 /* ---------- default agent ---------- */
 
-const agentOptions = ids.map(id => ({ value: id, label: AGENTS[id].name }))
+const agentOptions = ids.map(id => ({ value: id, label: AGENTS[id].name, icon: () => h(AgentIcon, { agent: id }) }))
 
 function setDefault(agent: AgentId) {
   threads.defaultAgent = agent

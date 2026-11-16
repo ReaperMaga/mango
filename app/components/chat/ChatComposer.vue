@@ -12,6 +12,7 @@ import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeTh
 import { baseName } from '~/utils/paths'
 import { openImage } from '~/utils/imageViewer'
 import type { MenuItem } from '~/types/ui'
+import AgentIcon from '~/components/ui/AgentIcon.vue'
 
 /**
  * Message composer. With a thread it sends to that thread; without one
@@ -287,6 +288,7 @@ const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[])
   const info = agentInfo(id)
   return {
     label: AGENTS[id].name,
+    icon: () => h(AgentIcon, { agent: id }),
     hint: info && !info.installed ? 'Not installed. See Settings > Agents.' : undefined,
     checked: props.agent === id,
     onSelect: () => emit('update:agent', id),
@@ -411,7 +413,7 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
       <UiMenu :items="agentItems" placement="top-start" :width="280" label="Agent">
         <template #default="{ toggle, open }">
           <button type="button" class="cp__chip cp__chip--agent" :class="{ 'is-open': open }" @click="toggle">
-            <span class="cp__agent-dot" :class="`cp__agent-dot--${agent}`" aria-hidden="true" />
+            <UiAgentIcon :agent="agent" class="cp__agent-icon" />
             <span class="cp__chip-text">{{ AGENTS[agent].name }}</span>
             <ChevronDown />
           </button>
@@ -654,9 +656,9 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
 .cp__chip--agent { color: var(--fg-muted); }
 .cp__effort { margin-right: 1px; }
 .cp__chip--mode-auto svg:first-child { color: var(--accent-ink); opacity: 1; }
-.cp__agent-dot { width: 8px; height: 8px; border-radius: 2px; }
-.cp__agent-dot--claude { background: var(--accent); }
-.cp__agent-dot--codex { background: var(--fg-muted); border-radius: 50%; }
+/* A logo, not a glyph: full strength, a touch larger than the chip's chevrons. */
+.cp__chip .cp__agent-icon { width: 13px; height: 13px; opacity: 1; }
+.cp__chip .cp__agent-icon.agent-icon--codex { color: var(--fg); }
 
 .cp__voice {
   display: flex;

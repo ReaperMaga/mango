@@ -203,7 +203,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   <li class="agent" :class="`agent--${view}`">
     <div class="agent__head">
       <span class="agent__lead" aria-hidden="true">
-        <span class="agent__mark" :class="`agent__mark--${agent}`" />
+        <UiAgentIcon :agent="agent" class="agent__mark" />
       </span>
       <h3 class="agent__name">{{ name }}</h3>
       <template v-if="installed">
@@ -383,9 +383,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
   height: 28px;
   min-width: 0;
 }
-.agent__mark { width: 8px; height: 8px; border-radius: 50%; background: var(--fg-muted); }
-.agent__mark--claude { border-radius: 2px; background: var(--accent); }
-.agent--missing .agent__mark { background: var(--ripe-idle); }
+.agent__mark { width: 14px; height: 14px; color: var(--fg); }
+/* Not installed yet: the mark recedes, like the rest of the row. */
+.agent--missing .agent__mark { opacity: 0.45; filter: grayscale(1); }
 .agent__name {
   margin: 0;
   flex: none;
