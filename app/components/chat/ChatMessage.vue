@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { CircleAlert, FileText } from 'lucide-vue-next'
-import type { Message, Thread } from '~/types/chat'
+import type { Message, Part, Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
 import { formatSize } from '~/utils/attachments'
 import { openImage } from '~/utils/imageViewer'
@@ -15,6 +15,32 @@ function viewAttachment(id: string) {
   const images = (props.message.attachments ?? []).filter(a => a.thumb)
   openImage(images, images.findIndex(a => a.id === id))
 }
+
+type Step = Extract<Part, { type: 'thinking' } | { type: 'tool' }>
+type Segment =
+  | { kind: 'part'; key: string; part: Part; i: number }
+  | { kind: 'steps'; key: string; steps: Step[]; end: number }
+
+const isStep = (p: Part): p is Step => p.type === 'thinking' || p.type === 'tool'
+
+/** Runs of two or more thinking/tool rows fold into one ChatSteps; everything else renders on its own. */
+const segments = computed<Segment[]>(() => {
+  const parts = props.message.parts
+  const out: Segment[] = []
+  for (let i = 0; i < parts.length;) {
+    let end = i
+    while (isStep(parts[i]!) && end + 1 < parts.length && isStep(parts[end + 1]!)) end++
+    if (end > i) {
+      const steps = parts.slice(i, end + 1) as Step[]
+      out.push({ kind: 'steps', key: `s:${steps[0]!.id ?? i}`, steps, end })
+    } else {
+      const part = parts[i]!
+      out.push({ kind: 'part', key: `p:${('id' in part && part.id) || i}`, part, i })
+    }
+    i = end + 1
+  }
+  return out
+})
 
 const lastTextIndex = computed(() => {
   for (let i = props.message.parts.length - 1; i >= 0; i--) if (props.message.parts[i]!.type === 'text') return i
@@ -53,30 +79,37 @@ ${a.path}`"
   </article>
 
   <article v-else class="msg msg--agent">
-    <template v-for="(p, i) in message.parts" :key="i">
-      <ChatThinking
-        v-if="p.type === 'thinking'"
-        :text="p.text"
-        :seconds="p.seconds"
-        :live="live && p.seconds === 0"
+    <template v-for="seg in segments" :key="seg.key">
+      <ChatSteps
+        v-if="seg.kind === 'steps'"
+        :steps="seg.steps"
+        :live="live && seg.end === message.parts.length - 1"
       />
-      <ChatTool v-else-if="p.type === 'tool'" :part="p" />
-      <ChatApproval
-        v-else-if="p.type === 'approval'"
-        :part="p"
-        :agent-name="AGENTS[thread.agent].name"
-        @resolve="allow => threads.resolveApproval(thread.id, message.id, i, allow)"
-      />
-      <p v-else-if="p.type === 'notice'" class="msg__notice" :class="`msg__notice--${p.level}`" :role="p.level === 'error' ? 'alert' : undefined">
-        <CircleAlert v-if="p.level === 'error'" />
-        <span class="selectable">{{ p.text }}</span>
-      </p>
-      <ChatMarkdown
-        v-else-if="p.type === 'text'"
-        class="msg__text"
-        :text="p.text"
-        :streaming="live && i === lastTextIndex && i === message.parts.length - 1"
-      />
+      <template v-else>
+        <ChatThinking
+          v-if="seg.part.type === 'thinking'"
+          :text="seg.part.text"
+          :seconds="seg.part.seconds"
+          :live="live && seg.part.seconds === 0"
+        />
+        <ChatTool v-else-if="seg.part.type === 'tool'" :part="seg.part" />
+        <ChatApproval
+          v-else-if="seg.part.type === 'approval'"
+          :part="seg.part"
+          :agent-name="AGENTS[thread.agent].name"
+          @resolve="allow => threads.resolveApproval(thread.id, message.id, seg.i, allow)"
+        />
+        <p v-else-if="seg.part.type === 'notice'" class="msg__notice" :class="`msg__notice--${seg.part.level}`" :role="seg.part.level === 'error' ? 'alert' : undefined">
+          <CircleAlert v-if="seg.part.level === 'error'" />
+          <span class="selectable">{{ seg.part.text }}</span>
+        </p>
+        <ChatMarkdown
+          v-else-if="seg.part.type === 'text'"
+          class="msg__text"
+          :text="seg.part.text"
+          :streaming="live && seg.i === lastTextIndex && seg.i === message.parts.length - 1"
+        />
+      </template>
     </template>
     <p v-if="message.elapsedMs !== undefined && !live" class="msg__ran tabular">
       {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}
