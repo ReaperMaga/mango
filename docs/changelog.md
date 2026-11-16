@@ -2,6 +2,21 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.3
+
+### Agents and chats
+
+- **Steer a working agent:** keep writing while an agent works. Press <kbd>Enter</kbd> (or the send button next to Stop) and the agent reads your message at its next step, in the same turn. A message it can't take right then goes out as the next turn once the current one ends; Stop drops it.
+- The effort chip shows the level a chat will run at even when none is picked: Claude Code's from your Claude Code settings, Codex's per model.
+
+### Sidebar
+
+- The chat list holds still while agents answer. Chats keep the order you gave them (new ones on top); a reply no longer moves a chat to the top.
+
+### Fixes
+
+- A chat from another project could end up in the main pane, without a tab or sidebar row, and a message typed into it ran in that other project's folder. Closing a tab, splitting and <kbd>Ctrl</kbd> <kbd>1</kbd>–<kbd>9</kbd> now stay within the active project's tabs.
+
 ## 0.1.2
 
 ### Agents and chats
