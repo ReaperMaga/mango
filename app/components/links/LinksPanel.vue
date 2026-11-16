@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ArrowLeft, ExternalLink, Link2, RefreshCw, Unlink, X } from 'lucide-vue-next'
 import type { LinkedItem } from '~/types/chat'
+import type { GhCheck } from '~/types/ipc'
 import { useThreads } from '~/stores/threads'
 import { useLinks } from '~/stores/links'
 import { openExternal } from '~/composables/useBackend'
@@ -74,6 +75,23 @@ function poll() {
 watch(() => [current.value?.key, currentDetail.value?.loading, currentDetail.value?.fetchedAt], schedule, { immediate: true })
 onBeforeUnmount(() => clearTimeout(poller))
 function back() { links.focused = null }
+
+/* ---------- a check's log, over its pull request ---------- */
+/** The check whose log is open, while its pull request is the one in front. */
+const check = computed(() => (links.check && current.value && links.check.linkKey === current.value.key ? links.check : null))
+const job = computed(() => (check.value ? links.jobs[check.value.url] : undefined))
+const backButton = ref<HTMLElement | null>(null)
+async function openCheck(c: GhCheck) {
+  if (!current.value) return
+  links.openCheck(current.value.key, c)
+  await nextTick()
+  backButton.value?.focus()
+}
+function closeCheck() { links.closeCheck() }
+// Another item or another chat: the log does not follow.
+watch(() => current.value?.key, (key) => { if (links.check && links.check.linkKey !== key) links.closeCheck() })
+const jobRefreshing = computed(() => !!(job.value?.loading && job.value.job))
+function refreshJob() { if (check.value) void links.loadJob(check.value.url) }
 function refresh() { if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true) }
 function unlink(l: LinkedItem) {
   if (!chat.value) return
@@ -117,11 +135,26 @@ watch(() => chat.value?.id, cancelAdd)
 
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
-  <section class="lp" aria-label="Pull requests and issues">
+  <section class="lp" aria-label="Pull requests and issues" @keydown.esc="check && closeCheck()">
     <header class="lp__head">
-      <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-      <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
-      <div v-if="chat" class="lp__tools">
+      <button
+        v-if="check && current"
+        ref="backButton"
+        type="button"
+        class="lp__back"
+        :aria-label="`Back to pull request #${current.number}`"
+        :title="`Back to pull request #${current.number} (Esc)`"
+        @click="closeCheck"
+      >
+        <ArrowLeft aria-hidden="true" />
+        <span class="lp__back-num tabular">#{{ current.number }}</span>
+        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? 'Pull request' }}</span>
+      </button>
+      <template v-else>
+        <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
+      </template>
+      <div v-if="chat && !check" class="lp__tools">
         <UiIconButton label="Link a pull request or issue" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
       </div>
     </header>
@@ -158,9 +191,19 @@ watch(() => chat.value?.id, cancelAdd)
       <UiButton v-if="!adding" size="sm" @click="startAdd"><Link2 aria-hidden="true" />Link one by hand</UiButton>
     </div>
 
+    <template v-else-if="current && check">
+      <div class="lp__scroll">
+        <LinksCheckLog :key="check.url" :check="check" />
+      </div>
+      <footer class="lp__foot">
+        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
+      </footer>
+    </template>
+
     <template v-else-if="current">
       <div class="lp__scroll">
-        <LinksItem :key="current.key" :link="current" :detail="currentDetail" />
+        <LinksItem :key="current.key" :link="current" :detail="currentDetail" @open-check="openCheck" />
       </div>
       <LinksMerge v-if="mergeable && chat" :key="current.key" :link="current" :item="mergeable" :project-path="chat.projectPath" />
       <footer class="lp__foot">
@@ -211,6 +254,27 @@ watch(() => chat.value?.id, cancelAdd)
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.lp__back {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-left: calc(-1 * var(--space-1));
+  padding: 0 var(--space-2) 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  text-align: left;
+  color: var(--fg-muted);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.lp__back:hover { background: var(--bg-hover); color: var(--fg); }
+.lp__back:active { background: var(--bg-active); }
+.lp__back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.lp__back svg { flex: none; width: 15px; height: 15px; stroke-width: 1.85; }
+.lp__back-num { flex: none; font-weight: 600; color: var(--fg); }
+.lp__back-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
 .lp__add { flex: none; display: grid; gap: 6px; padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--line-soft); }

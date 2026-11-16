@@ -532,6 +532,301 @@ pub async fn gh_item(path: String, reference: String) -> Result<GhItem, String> 
     blocking(move || item(&path, &reference)).await
 }
 
+// ---------------------------------------------------------------------------
+// A GitHub Actions job and its log
+// ---------------------------------------------------------------------------
+
+/// A whole job log is rarely more than a few megabytes; past this the rest is dropped.
+const LOG_CAP: usize = 24 * 1024 * 1024;
+/// Lines kept per step: a step that printed more keeps its end, where a failure is.
+const STEP_LINES: usize = 5_000;
+
+/// One step of a job, with its share of the log.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhJobStep {
+    pub number: u64,
+    pub name: String,
+    /// "success", "failure", "pending" (running), "queued" (not started), "cancelled", "skipped" or "neutral".
+    pub state: &'static str,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// The step's log lines, without their timestamps. Untrusted text, ANSI colour codes included.
+    pub lines: Vec<String>,
+    /// Earlier lines left out (see STEP_LINES).
+    pub omitted: usize,
+}
+
+/// A GitHub Actions job: its steps, and once it has finished, its log split into them.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhJob {
+    pub id: u64,
+    pub name: String,
+    pub workflow: Option<String>,
+    /// The job's page on GitHub.
+    pub url: String,
+    /// The same words as a step's state.
+    pub state: &'static str,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub steps: Vec<GhJobStep>,
+    /// The log was read (GitHub has it only once the job finished).
+    pub log_ready: bool,
+    /// Why the log could not be read, when the job finished but its log did not come.
+    pub log_error: Option<String>,
+    /// The log was longer than LOG_CAP and its end is missing.
+    pub log_truncated: bool,
+}
+
+/// Where a job lives: `https://host/owner/repo/actions/runs/<run>/job/<job>`, the details link of
+/// a GitHub Actions check.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JobTarget {
+    host: String,
+    owner: String,
+    repo: String,
+    job: u64,
+}
+
+const NOT_A_JOB: &str = "That check is not a GitHub Actions job, so Mango cannot show its log. Open it on GitHub instead.";
+
+/// A job id is a 64-bit number on GitHub, unlike pull request numbers.
+fn parse_id(s: &str) -> Option<u64> {
+    if s.is_empty() || s.len() > 20 || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse::<u64>().ok().filter(|n| *n > 0)
+}
+
+fn parse_job_url(url: &str) -> Result<JobTarget, String> {
+    let s = url.trim();
+    let rest = s.strip_prefix("https://").ok_or(NOT_A_JOB)?;
+    let rest = rest.split(['?', '#']).next().unwrap_or_default();
+    let parts: Vec<&str> = rest.split('/').collect();
+    let [host, owner, repo, "actions", "runs", run, "job", job, ..] = parts.as_slice() else {
+        return Err(NOT_A_JOB.into());
+    };
+    let host = host.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+    let (Some(_), Some(job)) = (parse_id(run), parse_id(job)) else {
+        return Err(NOT_A_JOB.into());
+    };
+    if !is_host(&host) || !is_name(owner) || !is_name(repo) {
+        return Err(NOT_A_JOB.into());
+    }
+    Ok(JobTarget { host, owner: owner.to_string(), repo: repo.to_string(), job })
+}
+
+/// A job's or step's `status` and `conclusion` in the words the window uses.
+fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
+    match status {
+        Some("completed") => match conclusion.unwrap_or_default() {
+            "success" => "success",
+            "cancelled" => "cancelled",
+            "skipped" => "skipped",
+            "neutral" | "stale" => "neutral",
+            _ => "failure",
+        },
+        Some("in_progress") => "pending",
+        _ => "queued",
+    }
+}
+
+/// Seconds since the epoch of an ISO 8601 UTC timestamp (`2026-11-16T20:29:33Z`, fractions
+/// allowed); only ever compared with others, so any consistent count does.
+fn epoch_seconds(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, m, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (hh, mm, ss) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    // Days from civil (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// A log line split into its timestamp (whole seconds) and its text.
+fn split_stamp(line: &str) -> (Option<i64>, &str) {
+    match line.split_once(' ') {
+        Some((stamp, text)) if stamp.ends_with('Z') => match epoch_seconds(stamp) {
+            Some(t) => (Some(t), text),
+            None => (None, line),
+        },
+        _ => (None, line),
+    }
+}
+
+/// The first line the runner prints for a step of its own (not one inside a composite action).
+fn starts_step(text: &str) -> bool {
+    text.starts_with("##[group]Run ") || text == "Post job cleanup." || text == "Cleaning up orphan processes"
+}
+
+/// Hand the job's log out to its steps. The log is one stream with a timestamp on each line;
+/// steps have start and end times to the second. A line belongs to the step running at its time,
+/// and where several steps share a second, the line a step opens with moves the log on to it.
+/// Lines the job printed before any step (none, normally) go to the first.
+fn split_log(log: &str, steps: &mut [GhJobStep]) {
+    let log = log.strip_prefix('\u{feff}').unwrap_or(log);
+    // Steps that ran, in order; skipped and not started ones printed nothing.
+    let ran: Vec<usize> = (0..steps.len())
+        .filter(|&i| !matches!(steps[i].state, "skipped" | "queued") && steps[i].started_at.is_some())
+        .collect();
+    if ran.is_empty() {
+        return;
+    }
+    let time = |i: usize, end: bool| {
+        let s = &steps[ran[i]];
+        (if end { &s.completed_at } else { &s.started_at }).as_deref().and_then(epoch_seconds)
+    };
+    let mut cur = 0;
+    let mut nested = 0usize;
+    let mut out: Vec<Vec<&str>> = vec![Vec::new(); ran.len()];
+    for raw in log.lines() {
+        let (t, text) = split_stamp(raw.strip_suffix('\r').unwrap_or(raw));
+        // A composite action's own steps are bracketed by these; the window does not show them.
+        if text.starts_with("##[start-action") {
+            nested += 1;
+            continue;
+        }
+        if text.starts_with("##[end-action") {
+            nested = nested.saturating_sub(1);
+            continue;
+        }
+        if let Some(t) = t {
+            // Past the end of this step: on to the step running now.
+            while cur + 1 < ran.len()
+                && time(cur, true).is_some_and(|end| end < t)
+                && time(cur + 1, false).is_some_and(|start| start <= t)
+            {
+                cur += 1;
+            }
+            if nested == 0
+                && cur + 1 < ran.len()
+                && !out[cur].is_empty()
+                && starts_step(text)
+                && time(cur + 1, false).is_some_and(|start| start <= t)
+            {
+                cur += 1;
+            }
+        }
+        out[cur].push(text);
+    }
+    for (i, lines) in out.into_iter().enumerate() {
+        let step = &mut steps[ran[i]];
+        step.omitted = lines.len().saturating_sub(STEP_LINES);
+        step.lines = lines[step.omitted..].iter().map(|l| l.to_string()).collect();
+    }
+}
+
+fn job_from_json(v: &Value) -> GhJob {
+    let steps = v["steps"]
+        .as_array()
+        .map(|steps| {
+            steps
+                .iter()
+                .map(|s| GhJobStep {
+                    number: s["number"].as_u64().unwrap_or(0),
+                    name: text(&s["name"]),
+                    state: run_state(s["status"].as_str(), s["conclusion"].as_str()),
+                    started_at: some_text(&s["started_at"]),
+                    completed_at: some_text(&s["completed_at"]),
+                    lines: Vec::new(),
+                    omitted: 0,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    GhJob {
+        id: v["id"].as_u64().unwrap_or(0),
+        name: text(&v["name"]),
+        workflow: some_text(&v["workflow_name"]),
+        url: text(&v["html_url"]),
+        state: run_state(v["status"].as_str(), v["conclusion"].as_str()),
+        started_at: some_text(&v["started_at"]),
+        completed_at: some_text(&v["completed_at"]),
+        steps,
+        log_ready: false,
+        log_error: None,
+        log_truncated: false,
+    }
+}
+
+fn job_api(target: &JobTarget, path: &str) -> Command {
+    let mut cmd = gh(None);
+    cmd.arg("api");
+    if target.host != "github.com" {
+        cmd.args(["--hostname", &target.host]);
+    }
+    cmd.arg(format!("repos/{}/{}/actions/jobs/{}{path}", target.owner, target.repo, target.job));
+    cmd
+}
+
+/// The job's whole log as text. Logs carry colour codes, which `gh api` only passes on when told
+/// to; a `gh` too old to know the flag passes them anyway.
+fn job_log(target: &JobTarget) -> Result<(String, bool), String> {
+    let mut cmd = job_api(target, "/logs");
+    cmd.arg("--allow-escape-sequences");
+    let mut out = run_process(cmd, None, LOG_CAP, TIMEOUT, "gh", MISSING)?;
+    if !out.ok() && out.combined().contains("unknown flag") {
+        out = run_process(job_api(target, "/logs"), None, LOG_CAP, TIMEOUT, "gh", MISSING)?;
+    }
+    if !out.ok() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if stderr.contains("(HTTP 410)") {
+            return Err("GitHub no longer keeps this log: it expired.".into());
+        }
+        if stderr.contains("(HTTP 404)") {
+            return Err("GitHub has no log for this job.".into());
+        }
+        return Err(gh_error(&out, None));
+    }
+    Ok((String::from_utf8_lossy(&out.stdout).into_owned(), out.truncated))
+}
+
+fn job(url: &str) -> Result<GhJob, String> {
+    let target = parse_job_url(url)?;
+    let v = run(job_api(&target, ""), None).map_err(|e| {
+        if e.contains("(HTTP 404)") || e.contains("Not Found") {
+            format!(
+                "GitHub has no job {} in {}/{}, or the account gh is signed in with cannot see it.",
+                target.job, target.owner, target.repo
+            )
+        } else {
+            e
+        }
+    })?;
+    let mut job = job_from_json(&v);
+    if job.url.is_empty() {
+        job.url = url.trim().to_string();
+    }
+    if v["status"].as_str() == Some("completed") {
+        match job_log(&target) {
+            Ok((log, truncated)) => {
+                split_log(&log, &mut job.steps);
+                job.log_ready = true;
+                job.log_truncated = truncated;
+            }
+            Err(e) => job.log_error = Some(e),
+        }
+    }
+    Ok(job)
+}
+
+/// A GitHub Actions job by its link (a check's details link): its steps, and once it finished,
+/// its log split into them.
+#[tauri::command]
+pub async fn gh_job(url: String) -> Result<GhJob, String> {
+    blocking(move || job(&url)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -696,6 +991,117 @@ mod tests {
         assert_eq!(item_from_json(&v, &target()).unwrap().state, "merged");
         let none = json!({ "data": { "repository": { "issueOrPullRequest": null } } });
         assert!(item_from_json(&none, &target()).unwrap_err().contains("#5 in o/r"));
+    }
+
+    #[test]
+    fn parses_job_links() {
+        assert_eq!(
+            parse_job_url("https://github.com/o/r/actions/runs/43950306942/job/133590732587?pr=4"),
+            Ok(JobTarget { host: "github.com".into(), owner: "o".into(), repo: "r".into(), job: 133590732587 })
+        );
+        for bad in [
+            "",
+            "http://github.com/o/r/actions/runs/1/job/2",
+            "https://github.com/o/r/actions/runs/1",
+            "https://github.com/o/r/pull/1",
+            "https://github.com/../r/actions/runs/1/job/2",
+            "https://github.com/o/r/actions/runs/x/job/2",
+            "https://github.com/o/r/actions/runs/1/job/-2",
+            "https://ci.example.com/build/9",
+        ] {
+            assert!(parse_job_url(bad).is_err(), "{bad:?} should be refused");
+        }
+    }
+
+    #[test]
+    fn reads_iso_times() {
+        let t = epoch_seconds("2026-11-16T20:29:33Z").unwrap();
+        assert_eq!(epoch_seconds("2026-11-16T20:29:33.9418942Z"), Some(t));
+        assert_eq!(epoch_seconds("2026-11-16T20:29:34Z"), Some(t + 1));
+        assert_eq!(epoch_seconds("2026-11-17T00:00:00Z").unwrap() - epoch_seconds("2026-11-16T00:00:00Z").unwrap(), 86_400);
+        assert_eq!(epoch_seconds("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(epoch_seconds("2024-03-01T00:00:00Z").unwrap() - epoch_seconds("2024-02-28T00:00:00Z").unwrap(), 2 * 86_400);
+        assert_eq!(epoch_seconds("not a time"), None);
+    }
+
+    fn step(number: u64, name: &str, conclusion: &str, start: &str, end: &str) -> Value {
+        json!({ "number": number, "name": name, "status": "completed", "conclusion": conclusion,
+                "started_at": format!("2026-11-16T20:29:{start}Z"), "completed_at": format!("2026-11-16T20:29:{end}Z") })
+    }
+
+    #[test]
+    fn splits_a_log_into_its_steps() {
+        let v = json!({ "id": 2, "name": "build", "workflow_name": "CI", "status": "completed", "conclusion": "failure",
+            "html_url": "https://github.com/o/r/actions/runs/1/job/2", "steps": [
+                step(1, "Set up job", "success", "33", "35"),
+                step(2, "Run actions/checkout@v7", "success", "35", "36"),
+                step(3, "Lint", "skipped", "36", "36"),
+                step(4, "Build", "success", "36", "36"),
+                step(5, "Test", "failure", "36", "40"),
+                step(14, "Post Run actions/checkout@v7", "success", "40", "40"),
+                step(15, "Complete job", "success", "40", "40"),
+        ] });
+        let log = "\u{feff}2026-11-16T20:29:33.94Z Current runner version: '2.338.2'\n\
+            2026-11-16T20:29:35.18Z Complete job name: build\n\
+            2026-11-16T20:29:35.27Z ##[group]Run actions/checkout@v7\n\
+            2026-11-16T20:29:35.28Z ##[endgroup]\n\
+            2026-11-16T20:29:36.01Z ##[group]Run pnpm build\n\
+            2026-11-16T20:29:36.02Z ##[start-action display=Inner;id=x]\n\
+            2026-11-16T20:29:36.03Z ##[group]Run echo inner\n\
+            2026-11-16T20:29:36.04Z ##[end-action id=x;outcome=success]\n\
+            2026-11-16T20:29:36.05Z built\r\n\
+            2026-11-16T20:29:36.50Z ##[group]Run pnpm test\n\
+            2026-11-16T20:29:39.00Z \u{1b}[31mFAIL\u{1b}[0m one test\n\
+            2026-11-16T20:29:39.10Z ##[error]Process completed with exit code 1.\n\
+            2026-11-16T20:29:40.10Z Post job cleanup.\n\
+            2026-11-16T20:29:40.20Z Cleaning up orphan processes\n";
+        let mut job = job_from_json(&v);
+        assert_eq!((job.state, job.workflow.as_deref()), ("failure", Some("CI")));
+        split_log(log, &mut job.steps);
+        let lines: Vec<Vec<&str>> = job.steps.iter().map(|s| s.lines.iter().map(String::as_str).collect()).collect();
+        assert_eq!(lines[0], ["Current runner version: '2.338.2'", "Complete job name: build"]);
+        assert_eq!(lines[1], ["##[group]Run actions/checkout@v7", "##[endgroup]"]);
+        assert!(lines[2].is_empty(), "a skipped step printed nothing");
+        assert_eq!(lines[3], ["##[group]Run pnpm build", "##[group]Run echo inner", "built"]);
+        assert_eq!(lines[4], ["##[group]Run pnpm test", "\u{1b}[31mFAIL\u{1b}[0m one test", "##[error]Process completed with exit code 1."]);
+        assert_eq!(lines[5], ["Post job cleanup."]);
+        assert_eq!(lines[6], ["Cleaning up orphan processes"]);
+    }
+
+    #[test]
+    fn a_long_step_keeps_its_end() {
+        let v = json!({ "status": "completed", "conclusion": "success", "steps": [step(1, "Spam", "success", "00", "59")] });
+        let mut job = job_from_json(&v);
+        let log: String = (0..STEP_LINES + 7).map(|i| format!("2026-11-16T20:29:10.0Z line {i}\n")).collect();
+        split_log(&log, &mut job.steps);
+        assert_eq!(job.steps[0].omitted, 7);
+        assert_eq!(job.steps[0].lines.len(), STEP_LINES);
+        assert_eq!(job.steps[0].lines[0], "line 7");
+    }
+
+    #[test]
+    fn job_states() {
+        assert_eq!(run_state(Some("in_progress"), None), "pending");
+        assert_eq!(run_state(Some("queued"), None), "queued");
+        assert_eq!(run_state(None, None), "queued");
+        assert_eq!(run_state(Some("completed"), Some("timed_out")), "failure");
+        assert_eq!(run_state(Some("completed"), Some("skipped")), "skipped");
+    }
+
+    /// A real job's log, split: `MANGO_GH_JOB=<job link> cargo test real_gh_job -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_gh_job() {
+        let url = std::env::var("MANGO_GH_JOB").expect("MANGO_GH_JOB names a finished job's link");
+        let job = job(&url).expect("gh reads the job");
+        assert!(job.log_ready, "{:?}", job.log_error);
+        for s in &job.steps {
+            println!("{:>3} {:<9} {:>5} lines  {}", s.number, s.state, s.lines.len(), s.name);
+            if let Some(first) = s.lines.first() {
+                println!("              first: {first}");
+            }
+        }
+        assert!(job.steps.iter().filter(|s| s.state != "skipped").all(|s| !s.lines.is_empty()));
     }
 
     /// Against the real GitHub CLI, signed in: `cargo test real_gh -- --ignored`, run from a

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GhItem, GhMergeMethod } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhMergeMethod } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
@@ -27,11 +27,35 @@ export interface LinkDetail {
   bodyAt: number
 }
 
+/** A GitHub Actions job as last read, for the check log view. */
+export interface JobDetail {
+  job: GhJob | null
+  loading: boolean
+  error: string | null
+  fetchedAt: number
+}
+
+/** The check whose log the tool window shows, over the pull request it belongs to. */
+export interface OpenCheck {
+  /** The pull request's link key: the log closes when another item opens. */
+  linkKey: string
+  /** Its details link, a GitHub Actions job (see `isJobUrl`). */
+  url: string
+  name: string
+  workflow: string | null
+}
+
+/** A check's details link that `gh_job` can read: a GitHub Actions job. */
+export const isJobUrl = (url: string | null | undefined): url is string =>
+  !!url && /^https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+
 /** The picture links in a description are signed for a few minutes only: read it again before they lapse. */
 const STALE_MS = 4 * 60_000
 
 /** The latest read started per link key: an older read that finishes later is dropped. */
 const reads = new Map<string, number>()
+/** The same for job reads, by job link. */
+const jobReads = new Map<string, number>()
 
 const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e))
 
@@ -41,6 +65,10 @@ export const useLinks = defineStore('links', {
     details: {} as Record<string, LinkDetail>,
     /** The item the tool window has open; null shows the chat's list. */
     focused: null as string | null,
+    /** GitHub Actions jobs, by link. */
+    jobs: {} as Record<string, JobDetail>,
+    /** The check whose log is open over its pull request; null shows the pull request. */
+    check: null as OpenCheck | null,
   }),
 
   actions: {
@@ -111,6 +139,32 @@ export const useLinks = defineStore('links', {
       threads.link(chat.id, link)
       this.focused = link.key
       return link
+    },
+
+    /** Show a check's log over the pull request `linkKey`. Only GitHub Actions jobs have one here. */
+    openCheck(linkKey: string, check: GhCheck) {
+      if (!isJobUrl(check.url)) return
+      this.check = { linkKey, url: check.url, name: check.name, workflow: check.workflow }
+    },
+
+    closeCheck() {
+      this.check = null
+    },
+
+    /** Read a job (its steps, and its log once it finished). The newest read wins. */
+    async loadJob(url: string) {
+      const had = this.jobs[url]
+      const mine = (jobReads.get(url) ?? 0) + 1
+      jobReads.set(url, mine)
+      this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: true, error: null }
+      try {
+        const job = await call('gh_job', { url })
+        if (jobReads.get(url) !== mine) return
+        this.jobs[url] = { job, loading: false, error: null, fetchedAt: Date.now() }
+      } catch (e) {
+        if (jobReads.get(url) !== mine) return
+        this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: false, error: message(e) }
+      }
     },
 
     /** Open an item in the tool window. */

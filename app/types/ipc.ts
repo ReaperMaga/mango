@@ -226,6 +226,42 @@ export interface GhCheck {
   required: boolean
 }
 
+/** A job's or step's state: like a check's, plus "queued" for one that has not started. */
+export type GhRunState = GhCheck['state'] | 'queued'
+
+/** One step of a GitHub Actions job, with its share of the log. */
+export interface GhJobStep {
+  number: number
+  name: string
+  state: GhRunState
+  /** ISO timestamps. */
+  startedAt: string | null
+  completedAt: string | null
+  /** Its log lines without timestamps: untrusted text with ANSI colour codes and `##[group]`-style markers. */
+  lines: string[]
+  /** Earlier lines left out of a very long step. */
+  omitted: number
+}
+
+/** A GitHub Actions job as `gh_job` reads it. */
+export interface GhJob {
+  id: number
+  name: string
+  workflow: string | null
+  /** The job's page on GitHub. */
+  url: string
+  state: GhRunState
+  startedAt: string | null
+  completedAt: string | null
+  steps: GhJobStep[]
+  /** The log was read; GitHub has it only once the job finished. */
+  logReady: boolean
+  /** Why a finished job's log could not be read. */
+  logError: string | null
+  /** The log was too long and its end is missing. */
+  logTruncated: boolean
+}
+
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
  * refuses anything that leads outside it.
@@ -623,6 +659,11 @@ export interface Commands {
    * fails and says the branch moved). The local checkout is not touched.
    */
   gh_merge: [{ path: string; reference: string; method: GhMergeMethod; headSha: string }, void]
+  /**
+   * A GitHub Actions job by its link (a check's `url`, `…/actions/runs/<run>/job/<job>`): its steps,
+   * and once it finished, its log split into them. Other links are refused.
+   */
+  gh_job: [{ url: string }, GhJob]
 
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]

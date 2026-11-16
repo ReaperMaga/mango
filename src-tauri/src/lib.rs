@@ -101,6 +101,7 @@ pub fn run() {
             vcs::git_branch_delete,
             github::gh_item,
             github::gh_merge,
+            github::gh_job,
             files::fs_list_dir,
             files::fs_read_file,
             files::fs_read_bytes,

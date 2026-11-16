@@ -2,7 +2,7 @@
 import { ArrowRight, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX, ExternalLink, MessageSquare } from 'lucide-vue-next'
 import type { LinkedItem } from '~/types/chat'
 import type { GhCheck } from '~/types/ipc'
-import type { LinkDetail } from '~/stores/links'
+import { isJobUrl, type LinkDetail } from '~/stores/links'
 import { openExternal } from '~/composables/useBackend'
 import { safeHtml } from '~/utils/safeHtml'
 import { shortAgo, useNow } from '~/utils/time'
@@ -14,6 +14,7 @@ import { stateOf } from '~/utils/linkState'
  * Its actions sit in the tool window's footer (LinksPanel), so a long description never hides them.
  */
 const props = defineProps<{ link: LinkedItem; detail: LinkDetail | undefined }>()
+const emit = defineEmits<{ openCheck: [check: GhCheck] }>()
 
 const now = useNow()
 const item = computed(() => props.detail?.item ?? null)
@@ -55,7 +56,11 @@ const summary = computed(() => {
 const listChoice = ref<boolean | null>(null)
 const listOpen = computed(() => listChoice.value ?? summary.value?.tone !== 'success')
 function toggleList() { listChoice.value = !listOpen.value }
-function openCheck(c: GhCheck) { if (c.url) openExternal(c.url).catch(() => {}) }
+/** A GitHub Actions job opens its log here; any other check opens its details on its own site. */
+function openCheck(c: GhCheck) {
+  if (isJobUrl(c.url)) emit('openCheck', c)
+  else if (c.url) openExternal(c.url).catch(() => {})
+}
 
 const labelColor = (hex: string) => (/^[0-9a-f]{6}$/i.test(hex) ? `#${hex}` : 'var(--fg-faint)')
 
@@ -136,7 +141,7 @@ function onBodyClick(e: MouseEvent) {
             type="button"
             class="li__check"
             :disabled="!c.url || undefined"
-            :title="c.description ?? (c.url ? 'Open the details on GitHub' : undefined)"
+            :title="c.description ?? (isJobUrl(c.url) ? 'Show the log' : c.url ? 'Open the details on GitHub' : undefined)"
             @click="openCheck(c)"
           >
             <component :is="CHECK_ICON[c.state]" class="li__check-icon" :class="`is-${c.state}`" aria-hidden="true" />
@@ -144,7 +149,8 @@ function onBodyClick(e: MouseEvent) {
             <span class="li__check-name">{{ c.name }}</span>
             <span v-if="c.workflow || c.description" class="li__check-sub">{{ c.workflow ?? c.description }}</span>
             <span v-if="c.required" class="li__check-req">Required</span>
-            <ExternalLink v-if="c.url" class="li__check-go" aria-hidden="true" />
+            <ChevronRight v-if="isJobUrl(c.url)" class="li__check-go" aria-hidden="true" />
+            <ExternalLink v-else-if="c.url" class="li__check-go" aria-hidden="true" />
           </button>
         </li>
       </ul>
