@@ -11,7 +11,7 @@ import { useThreads } from '~/stores/threads'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
-import { units, vcsTerms } from '~/utils/vcs'
+import { resultLines, units, vcsTerms } from '~/utils/vcs'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
@@ -77,20 +77,21 @@ async function manualRefresh() {
 
 /* ---------- result strip ---------- */
 
+const noticeOf = (error: boolean, text: string, dismiss: boolean) => ({ error, dismiss, ...resultLines(text) })
 const notice = computed(() => {
   if (git.noticePath === path.value) {
-    if (git.lastError) return { error: true, text: git.lastError, dismiss: true }
-    if (git.lastOutput) return { error: false, text: git.lastOutput, dismiss: true }
+    if (git.lastError) return noticeOf(true, git.lastError, true)
+    if (git.lastOutput) return noticeOf(false, git.lastOutput, true)
   }
   // A failed background refresh while older data is still on screen.
-  if (repo.value?.error && status.value) return { error: true, text: `Couldn't refresh.\n${repo.value.error}`, dismiss: false }
+  if (repo.value?.error && status.value) return noticeOf(true, `Couldn't refresh.\n${repo.value.error}`, false)
   return null
 })
-/* One-line confirmations ("Committed a1b2c3d") clear themselves; real output stays until dismissed. */
+/* Confirmations ("Committed a1b2c3d", "Pulled 3 commits into main.") clear themselves; failures stay until dismissed. */
 let noticeTimer: ReturnType<typeof setTimeout> | undefined
 watch(() => git.lastOutput, (out) => {
   clearTimeout(noticeTimer)
-  if (out && !out.includes('\n')) noticeTimer = setTimeout(() => { if (git.lastOutput === out) git.lastOutput = null }, 5000)
+  if (out) noticeTimer = setTimeout(() => { if (git.lastOutput === out) git.lastOutput = null }, out.includes('\n') ? 8000 : 5000)
 })
 
 /* ---------- branch ---------- */
@@ -347,7 +348,10 @@ function onListKey(e: KeyboardEvent) {
     <div v-if="notice" class="gp__notice" :class="{ 'is-error': notice.error }" :role="notice.error ? 'alert' : 'status'">
       <CircleAlert v-if="notice.error" class="gp__notice-icon" aria-hidden="true" />
       <Check v-else class="gp__notice-icon" aria-hidden="true" />
-      <pre class="gp__notice-text selectable">{{ notice.text }}</pre>
+      <div class="gp__notice-text selectable">
+        <p class="gp__notice-title">{{ notice.title }}</p>
+        <p v-if="notice.detail" class="gp__notice-detail">{{ notice.detail }}</p>
+      </div>
       <UiIconButton v-if="notice.dismiss" size="sm" label="Dismiss" @click="git.dismiss()"><X /></UiIconButton>
     </div>
 
@@ -661,14 +665,15 @@ function onListKey(e: KeyboardEvent) {
   flex: 1;
   min-width: 0;
   max-height: 132px;
-  margin: 0;
   overflow: auto;
   font-size: var(--text-xs);
-  line-height: 1.6;
-  color: var(--fg-muted);
-  white-space: pre-wrap;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
+.gp__notice-title { margin: 0; font-weight: 560; color: var(--fg); }
+.gp__notice-detail { margin: 1px 0 0; color: var(--fg-subtle); white-space: pre-wrap; }
+/* Failures keep git's own words (paths, commands), so the detail reads as output. */
+.gp__notice.is-error .gp__notice-detail { font-family: var(--font-mono); color: var(--fg-muted); }
 
 /* ---------- commit box ---------- */
 .gp__commit { flex: none; padding: 0 var(--space-2) var(--space-2) var(--space-3); }

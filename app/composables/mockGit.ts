@@ -640,25 +640,28 @@ function commit(r: Repo, message: string, amend: boolean): string {
 
 const REMOTE = 'github.com:you'
 
-async function fetch(r: Repo, path: string): Promise<string> {
+/* Results read like the backend's summaries (git.rs `describe_*`): a headline, then detail lines. */
+const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`
+
+async function fetch(r: Repo): Promise<string> {
   await wait(650)
   const t = tracking(r)
-  if (!t.upstream || !r.incoming.length || t.behind > 0) return ''
-  t.behind = r.incoming.length
-  return `From ${REMOTE}/${baseName(path)}\n   ${r.log[t.ahead]?.shortHash ?? hex(7)}..${hex(7)}  ${r.branch.padEnd(10)} -> ${t.upstream}`
+  const fresh = !!t.upstream && r.incoming.length > 0 && t.behind === 0
+  if (fresh) t.behind = r.incoming.length
+  const title = fresh ? 'Fetched: 1 branch updated.' : 'Fetched. Nothing new on the remote.'
+  return t.upstream && t.behind > 0 ? `${title}\n${r.branch} is ${commits(t.behind)} behind ${t.upstream}. Update to bring them in.` : title
 }
 
-async function pull(r: Repo, path: string): Promise<string> {
+async function pull(r: Repo): Promise<string> {
   const t = tracking(r)
   if (!t.upstream) throw new Error(`${r.branch} isn't tracking a remote branch yet. Publish it first, then pull.`)
-  await fetch(r, path)
-  if (t.behind === 0) return 'Already up to date.'
-  const before = r.log[t.ahead]?.shortHash ?? hex(7)
+  await fetch(r)
+  if (t.behind === 0) return `${r.branch} is already up to date with ${t.upstream}.`
   const arrived = r.incoming.map((subject, i) => commitOf(subject, (i + 1) * 47 * MIN, 'Priya N.'))
   r.log.splice(t.ahead, 0, ...arrived)
   r.incoming = []
   t.behind = 0
-  return `Updating ${before}..${arrived[0]!.shortHash}\nFast-forward\n app/components/chat/ChatComposer.vue | 9 ++++++---\n src-tauri/Cargo.toml                 | 2 +-\n 2 files changed, 7 insertions(+), 4 deletions(-)`
+  return `Pulled ${commits(arrived.length)} into ${r.branch}.\n2 files changed, +7 −4`
 }
 
 async function push(r: Repo, path: string): Promise<string> {
@@ -669,15 +672,15 @@ async function push(r: Repo, path: string): Promise<string> {
   if (!t.upstream) {
     t.upstream = `origin/${r.branch}`
     t.ahead = 0
-    return `remote: Create a pull request for '${r.branch}' by visiting:\nremote:   https://github.com/you/${baseName(path)}/pull/new/${r.branch}\nTo ${url}\n * [new branch]      ${r.branch} -> ${r.branch}\nbranch '${r.branch}' set up to track '${t.upstream}'.`
+    return `Published ${r.branch} to ${t.upstream}.\n${r.branch} now tracks it, so Update and Push work from here.`
   }
   if (t.behind > 0) {
     throw new Error(`The remote has commits you don't have yet. Pull, then push again.\n\nTo ${url}\n ! [rejected]        ${r.branch} -> ${r.branch} (fetch first)\nerror: failed to push some refs to '${url}'`)
   }
-  if (t.ahead === 0) return 'Everything up-to-date'
-  const from = r.log[t.ahead]?.shortHash ?? hex(7)
+  if (t.ahead === 0) return `Nothing to push. ${t.upstream} already has every commit.`
+  const n = t.ahead
   t.ahead = 0
-  return `To ${url}\n   ${from}..${r.log[0]!.shortHash}  ${r.branch} -> ${r.branch}`
+  return `Pushed ${commits(n)} to ${t.upstream}.`
 }
 
 function checkout(r: Repo, branch: string, create: boolean) {
@@ -767,8 +770,8 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     case 'git_unstage': return unstage(r, args.files ?? [])
     case 'git_discard': return discard(r, args.files ?? [])
     case 'git_commit': return commit(r, String(args.message ?? ''), !!args.amend)
-    case 'git_fetch': return fetch(r, path)
-    case 'git_pull': return pull(r, path)
+    case 'git_fetch': return fetch(r)
+    case 'git_pull': return pull(r)
     case 'git_push': return push(r, path)
     case 'git_log': return r.log.slice(0, args.limit ?? 20)
     case 'git_branches': return { current: r.branch, local: Object.keys(r.branches).sort() } satisfies GitBranches
@@ -800,8 +803,8 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       r.branch = local
       return local
     }
-    case 'git_merge': return `Merge made by the 'ort' strategy.\n ${String(args.branch)} merged into ${r.branch}`
-    case 'git_rebase': return `Successfully rebased and updated refs/heads/${r.branch}.`
+    case 'git_merge': return `Merged 2 commits from ${String(args.branch)} into ${r.branch}.\n4 files changed, +38 −11`
+    case 'git_rebase': return `Rebased ${r.branch} onto ${String(args.onto)}.\nPicked up 2 commits from ${String(args.onto)}.`
     case 'git_branch_rename': {
       const from = String(args.from); const to = String(args.to).trim()
       if (!to) throw new Error('Enter a branch name')

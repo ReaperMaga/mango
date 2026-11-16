@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
-  ArrowDown, ArrowDownToLine, ArrowUp, Check, ChevronDown, ChevronRight, CloudDownload, CloudUpload, Folder, GitBranch,
+  ArrowDown, ArrowDownToLine, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CircleCheck, CloudDownload, CloudUpload,
+  Folder, GitBranch,
   GitBranchPlus, GitMerge, ListCheck, LogIn, Pencil, Search, Trash2, Waypoints,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -9,7 +10,7 @@ import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
 import { shortAgo } from '~/utils/time'
-import { units, vcsTerms } from '~/utils/vcs'
+import { resultLines, units, vcsTerms } from '~/utils/vcs'
 
 /**
  * Branch popup in the manner of JetBrains IDEs: one column with a search field,
@@ -42,6 +43,7 @@ const loading = ref(false)
 const query = ref('')
 const busy = ref<string | null>(null)
 const message = ref<{ error: boolean; text: string } | null>(null)
+const messageLines = computed(() => resultLines(message.value?.text ?? ''))
 
 type Row = { key: string; kind: 'local'; b: GitLocalBranch } | { key: string; kind: 'remote'; b: GitRemoteBranch }
 
@@ -564,7 +566,14 @@ defineExpose({ show, close })
             </div>
           </div>
 
-          <pre v-if="message" class="bp__msg selectable" :class="{ 'is-error': message.error }" :role="message.error ? 'alert' : 'status'">{{ message.text }}</pre>
+          <div v-if="message" class="bp__msg" :class="{ 'is-error': message.error }" :role="message.error ? 'alert' : 'status'">
+            <CircleAlert v-if="message.error" class="bp__msg-icon" aria-hidden="true" />
+            <CircleCheck v-else class="bp__msg-icon" aria-hidden="true" />
+            <div class="bp__msg-body selectable">
+              <p class="bp__msg-title">{{ messageLines.title }}</p>
+              <p v-if="messageLines.detail" class="bp__msg-detail">{{ messageLines.detail }}</p>
+            </div>
+          </div>
         </div>
       </Transition>
 
@@ -757,19 +766,29 @@ defineExpose({ show, close })
 
 .bp__msg {
   flex: none;
-  margin: 0;
-  max-height: 120px;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  max-height: 140px;
   overflow: auto;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--line-soft);
-  font-family: var(--font-mono);
+}
+.bp__msg-icon { width: 15px; height: 15px; flex: none; margin-top: 2px; stroke-width: 1.85; color: var(--ripe-queued-fg); }
+.bp__msg.is-error .bp__msg-icon { color: var(--ripe-error-fg); }
+.bp__msg-body { flex: 1; min-width: 0; }
+.bp__msg-title { margin: 0; font-size: var(--text-sm); font-weight: 560; line-height: 1.45; color: var(--fg); overflow-wrap: anywhere; }
+.bp__msg-detail {
+  margin: 2px 0 0;
   font-size: var(--text-xs);
   line-height: 1.5;
-  color: var(--fg-muted);
+  color: var(--fg-subtle);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.bp__msg.is-error { color: var(--ripe-error-fg); }
+/* Failures keep git's own words (paths, commands), so the detail reads as output. */
+.bp__msg.is-error .bp__msg-title { color: var(--ripe-error-fg); }
+.bp__msg.is-error .bp__msg-detail { font-family: var(--font-mono); color: var(--fg-muted); }
 
 .bp__spin {
   width: 12px;

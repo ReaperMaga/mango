@@ -1070,16 +1070,145 @@ fn explain_sync_failure(detail: String) -> String {
     format!("{lead}\n\n{detail}")
 }
 
+// ---------------------------------------------------------------------------
+// Sync summaries: what a fetch, pull, push, merge or rebase did, in one or two
+// lines, read from the repository before and after rather than from git's own
+// (localised, progress-laden) output.
+// ---------------------------------------------------------------------------
+
+/// "1 commit", "3 commits".
+fn count(n: u64, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// Files and lines that differ between two commits.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct DiffSize {
+    files: u64,
+    added: u64,
+    removed: u64,
+}
+
+/// `git diff --numstat` lines: `added<TAB>removed<TAB>path`, `-` for binary files.
+fn parse_numstat(text: &str) -> DiffSize {
+    let mut size = DiffSize::default();
+    for line in text.lines().filter(|l| !l.trim().is_empty()) {
+        let mut parts = line.splitn(3, '\t');
+        size.files += 1;
+        size.added += parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+        size.removed += parts.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+    }
+    size
+}
+
+/// "12 files changed, +80 −10" (the line counts only when there are any).
+fn describe_size(size: &DiffSize) -> String {
+    let files = format!("{} changed", count(size.files, "file", "files"));
+    match (size.added, size.removed) {
+        (0, 0) => files,
+        (a, 0) => format!("{files}, +{a}"),
+        (0, r) => format!("{files}, \u{2212}{r}"),
+        (a, r) => format!("{files}, +{a} \u{2212}{r}"),
+    }
+}
+
+/// Full hash of HEAD, `None` on an unborn branch.
+fn head_oid(root: &Path) -> Option<String> {
+    let out = git(root).read_only().args(["rev-parse", "-q", "--verify", "HEAD^{commit}"]).run().ok()?;
+    Some(out.line()).filter(|s| out.ok() && !s.is_empty())
+}
+
+/// Commits reachable from `to` but not from `from`, merges left out.
+fn commits_between(root: &Path, from: &str, to: &str) -> u64 {
+    git(root)
+        .read_only()
+        .args(["rev-list", "--count", "--no-merges"])
+        .arg(format!("{from}..{to}"))
+        .run()
+        .ok()
+        .filter(Output::ok)
+        .and_then(|o| o.line().parse().ok())
+        .unwrap_or(0)
+}
+
+fn diff_size(root: &Path, from: &str, to: &str) -> DiffSize {
+    git(root)
+        .read_only()
+        .args(["diff", "--numstat", "--no-color", "--no-ext-diff"])
+        .arg(from)
+        .arg(to)
+        .run()
+        .ok()
+        .filter(Output::ok)
+        .map(|o| parse_numstat(&o.text()))
+        .unwrap_or_default()
+}
+
+/// Every remote-tracking ref and the commit it points at.
+fn remote_refs(root: &Path) -> HashMap<String, String> {
+    git(root)
+        .read_only()
+        .args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
+        .run()
+        .ok()
+        .filter(Output::ok)
+        .map(|o| {
+            o.text()
+                .lines()
+                .filter_map(|l| l.split_once(' '))
+                .filter(|(_, name)| !name.ends_with("/HEAD"))
+                .map(|(oid, name)| (name.to_string(), oid.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// What a fetch changed among the remote-tracking branches.
+fn describe_fetch(before: &HashMap<String, String>, after: &HashMap<String, String>) -> String {
+    let updated = after.iter().filter(|(k, v)| before.get(*k).is_some_and(|b| b != *v)).count() as u64;
+    let added = after.keys().filter(|k| !before.contains_key(*k)).count() as u64;
+    let removed = before.keys().filter(|k| !after.contains_key(*k)).count() as u64;
+    let mut parts = Vec::new();
+    if updated > 0 {
+        parts.push(format!("{} updated", count(updated, "branch", "branches")));
+    }
+    if added > 0 {
+        parts.push(format!("{} new", count(added, "branch", "branches")));
+    }
+    if removed > 0 {
+        parts.push(format!("{} removed", count(removed, "branch", "branches")));
+    }
+    if parts.is_empty() {
+        "Fetched. Nothing new on the remote.".into()
+    } else {
+        format!("Fetched: {}.", parts.join(", "))
+    }
+}
+
+/// The second line after a fetch: how far behind the current branch now is.
+fn describe_behind(status: &ParsedStatus) -> Option<String> {
+    let (branch, upstream) = (status.branch.as_deref()?, status.upstream.as_deref()?);
+    (status.behind > 0).then(|| {
+        format!("{branch} is {} behind {upstream}. Update to bring them in.", count(status.behind.into(), "commit", "commits"))
+    })
+}
+
 pub(crate) fn fetch(path: &str) -> Result<String, String> {
     let root = require_root(path)?;
     if remotes(&root)?.is_empty() {
         return Err(NO_REMOTE.into());
     }
+    let before = remote_refs(&root);
     let out = git(&root).slow().arg("fetch").run()?;
     if !out.ok() {
         return Err(explain_sync_failure(out.error("git fetch")));
     }
-    Ok(out.combined())
+    let title = describe_fetch(&before, &remote_refs(&root));
+    let behind = read_status(&root, false).ok().as_ref().and_then(describe_behind);
+    Ok(match behind {
+        Some(line) => format!("{title}\n{line}"),
+        None => title,
+    })
 }
 
 pub(crate) fn pull(path: &str) -> Result<String, String> {
@@ -1091,14 +1220,27 @@ pub(crate) fn pull(path: &str) -> Result<String, String> {
     let Some(branch) = before.branch else {
         return Err("HEAD is detached, so there is no branch to pull into. Switch to a branch first.".into());
     };
-    if before.upstream.is_none() {
+    let Some(upstream) = before.upstream else {
         return Err(format!(
             "{branch} isn't tracking a remote branch yet. Publish it first, then pull."
         ));
-    }
+    };
     let out = git(&root).slow().arg("pull").run()?;
     if out.ok() {
-        return Ok(out.combined());
+        let after = head_oid(&root);
+        return Ok(match (before.oid, after) {
+            (Some(from), Some(to)) if from == to => format!("{branch} is already up to date with {upstream}."),
+            (Some(from), Some(to)) => {
+                let commits = commits_between(&root, &from, &upstream);
+                let title = if commits > 0 {
+                    format!("Pulled {} into {branch}.", count(commits, "commit", "commits"))
+                } else {
+                    format!("Updated {branch} from {upstream}.")
+                };
+                format!("{title}\n{}", describe_size(&diff_size(&root, &from, &to)))
+            }
+            _ => format!("Pulled {upstream} into {branch}."),
+        });
     }
     let conflicted: Vec<String> = read_status(&root, false)
         .map(|s| s.files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect())
@@ -1149,7 +1291,17 @@ pub(crate) fn push(path: &str) -> Result<String, String> {
     if !out.ok() {
         return Err(explain_sync_failure(out.error("git push")));
     }
-    Ok(out.combined())
+    Ok(match status.upstream {
+        Some(upstream) if status.ahead == 0 => format!("Nothing to push. {upstream} already has every commit."),
+        Some(upstream) => format!("Pushed {} to {upstream}.", count(status.ahead.into(), "commit", "commits")),
+        None => {
+            let tracks = read_status(&root, false).ok().and_then(|s| s.upstream);
+            match tracks {
+                Some(upstream) => format!("Published {branch} to {upstream}.\n{branch} now tracks it, so Update and Push work from here."),
+                None => format!("Published {branch}."),
+            }
+        }
+    })
 }
 
 pub(crate) fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
@@ -1308,9 +1460,20 @@ fn conflict_report(root: &Path, what: &str, abort: &str) -> Option<String> {
 pub(crate) fn merge(path: &str, branch: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let branch = safe_ref(branch)?;
+    let before = head_oid(&root);
+    let current = read_status(&root, false).ok().and_then(|s| s.branch).unwrap_or_else(|| "HEAD".into());
     let out = git(&root).slow().args(["merge", "--no-edit"]).arg(branch).run()?;
     if out.ok() {
-        return Ok(out.combined());
+        let after = head_oid(&root);
+        return Ok(match (before, after) {
+            (Some(from), Some(to)) if from == to => format!("{current} already has every commit from {branch}."),
+            (Some(from), Some(to)) => format!(
+                "Merged {} from {branch} into {current}.\n{}",
+                count(commits_between(&root, &from, &to), "commit", "commits"),
+                describe_size(&diff_size(&root, &from, &to)),
+            ),
+            _ => format!("Merged {branch} into {current}."),
+        });
     }
     Err(conflict_report(&root, "Merge", "git merge --abort").unwrap_or_else(|| out.error("git merge")))
 }
@@ -1319,9 +1482,23 @@ pub(crate) fn merge(path: &str, branch: &str) -> Result<String, String> {
 pub(crate) fn rebase(path: &str, onto: &str) -> Result<String, String> {
     let root = require_root(path)?;
     let onto = safe_ref(onto)?;
+    let before = head_oid(&root);
+    let current = read_status(&root, false).ok().and_then(|s| s.branch).unwrap_or_else(|| "HEAD".into());
     let out = git(&root).slow().arg("rebase").arg(onto).run()?;
     if out.ok() {
-        return Ok(out.combined());
+        let after = head_oid(&root);
+        return Ok(match (before, after) {
+            (Some(from), Some(to)) if from == to => format!("{current} is already up to date with {onto}."),
+            (Some(from), Some(_)) => {
+                let under = commits_between(&root, &from, onto);
+                if under > 0 {
+                    format!("Rebased {current} onto {onto}.\nPicked up {} from {onto}.", count(under, "commit", "commits"))
+                } else {
+                    format!("Rebased {current} onto {onto}.")
+                }
+            }
+            _ => format!("Rebased {current} onto {onto}."),
+        });
     }
     Err(conflict_report(&root, "Rebase", "git rebase --abort").unwrap_or_else(|| out.error("git rebase")))
 }
@@ -1422,12 +1599,31 @@ mod tests {
         assert!(branch_create(path, "bad name", None, false).is_err());
         assert_eq!(branch_list(path).unwrap().current.as_deref(), Some("feature/x"));
 
-        // Merge and rebase report success.
+        // Merge and rebase say what they did.
         checkout(path, "main", false).unwrap();
-        merge(path, "feature/x").unwrap();
+        assert_eq!(merge(path, "feature/x").unwrap(), "Merged 1 commit from feature/x into main.\n1 file changed, +1");
         assert!(work.join("b.txt").exists());
+        assert_eq!(merge(path, "feature/x").unwrap(), "main already has every commit from feature/x.");
+
+        // Push, fetch and pull say what they did.
+        assert_eq!(push(path).unwrap(), "Pushed 1 commit to origin/main.");
+        assert_eq!(push(path).unwrap(), "Nothing to push. origin/main already has every commit.");
+        sh(&base, &["clone", "-q", origin.to_str().unwrap(), "other"]);
+        let other = base.join("other");
+        for (k, v) in [("user.email", "o@example.com"), ("user.name", "Other"), ("commit.gpgsign", "false")] {
+            sh(&other, &["config", k, v]);
+        }
+        std::fs::write(other.join("a.txt"), "one\nmore\n").unwrap();
+        sh(&other, &["commit", "-q", "-am", "from elsewhere"]);
+        sh(&other, &["push", "-q"]);
+        let behind = "main is 1 commit behind origin/main. Update to bring them in.";
+        assert_eq!(fetch(path).unwrap(), format!("Fetched: 1 branch updated.\n{behind}"));
+        assert_eq!(fetch(path).unwrap(), format!("Fetched. Nothing new on the remote.\n{behind}"));
+        assert_eq!(pull(path).unwrap(), "Pulled 1 commit into main.\n1 file changed, +1");
+        assert_eq!(pull(path).unwrap(), "main is already up to date with origin/main.");
+
         checkout(path, "spike", false).unwrap();
-        rebase(path, "main").unwrap();
+        assert_eq!(rebase(path, "main").unwrap(), "Rebased spike onto main.\nPicked up 2 commits from main.");
         assert!(work.join("b.txt").exists());
 
         // Rename, then delete: an unmerged branch is refused until forced.
@@ -1443,6 +1639,22 @@ mod tests {
         assert!(branch_delete(path, "-D", false).is_err());
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn sizes_and_fetch_summaries() {
+        let size = parse_numstat("3\t1\tsrc/a.rs\n-\t-\timg.png\n10\t0\tdocs/{old => new}.md\n");
+        assert_eq!(size, DiffSize { files: 3, added: 13, removed: 1 });
+        assert_eq!(describe_size(&size), "3 files changed, +13 \u{2212}1");
+        assert_eq!(describe_size(&DiffSize { files: 1, added: 0, removed: 0 }), "1 file changed");
+
+        let refs = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let before = refs(&[("refs/remotes/origin/main", "a"), ("refs/remotes/origin/old", "b")]);
+        assert_eq!(describe_fetch(&before, &before), "Fetched. Nothing new on the remote.");
+        let after = refs(&[("refs/remotes/origin/main", "c"), ("refs/remotes/origin/x", "d"), ("refs/remotes/origin/y", "e")]);
+        assert_eq!(describe_fetch(&before, &after), "Fetched: 1 branch updated, 2 branches new, 1 branch removed.");
     }
 
     #[test]
