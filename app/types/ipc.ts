@@ -484,6 +484,26 @@ export interface EnvCreateInput {
   components: EnvComponentId[]
 }
 
+/** A folder inside an environment, for picking where a project lives. */
+export interface EnvDirEntry {
+  name: string
+  /** Absolute path inside the environment. */
+  path: string
+  /** Has a `.git` folder. */
+  isGit: boolean
+}
+
+export interface EnvDirListing {
+  /** The folder listed (absolute, normalised; `~` resolved to the agent's home). */
+  dir: string
+  /** Its parent; null at `/`. */
+  parent: string | null
+  /** Sub-folders only, sorted by name; hidden ones (`.x`) left out. */
+  entries: EnvDirEntry[]
+  /** More than the limit (500) existed. */
+  truncated: boolean
+}
+
 /** The desktop of an instance, served by noVNC through a tunnel on this computer. */
 export interface EnvDesktop { url: string }
 
@@ -658,8 +678,13 @@ export interface Commands {
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
   env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; cols: number; rows: number }, string]
-  /** Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given); returns its absolute path. */
-  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null }, string]
+  /**
+   * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
+   * `git init` in a new or empty folder when `gitInit`); returns its absolute path.
+   */
+  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean }, string]
+  /** The sub-folders of `dir` inside the environment (as the agent user); `dir` may be '~'. */
+  env_list_dir: [{ hostId: string; instance: string; dir: string }, EnvDirListing]
   /** Open (or reuse) a tunnel to the instance's desktop. */
   env_desktop_open: [{ hostId: string; instance: string }, EnvDesktop]
   env_desktop_close: [{ hostId: string; instance: string }, void]
