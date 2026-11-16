@@ -51,3 +51,13 @@ export function vcsTerms(kind: VcsKind | null | undefined): VcsTerms {
 export function units(n: number, t: VcsTerms): string {
   return `${n} ${t.unit}${n === 1 ? '' : 's'}`
 }
+
+/**
+ * A sync result or failure as a headline and the lines under it: the backend
+ * writes "Pulled 3 commits into main." then "12 files changed, +80 -10".
+ */
+export function resultLines(text: string): { title: string; detail: string } {
+  const at = text.indexOf('\n')
+  if (at < 0) return { title: text.trim(), detail: '' }
+  return { title: text.slice(0, at).trim(), detail: text.slice(at + 1).trim() }
+}
