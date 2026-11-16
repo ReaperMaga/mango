@@ -31,6 +31,7 @@ export interface TerminalTab {
  */
 export type ToolView = 'env' | 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
+export type AgentsTab = 'agents' | 'subscription' | 'usage'
 export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general'
 
 const LS_KEY = 'mango.workspace.v1'
@@ -156,6 +157,8 @@ export const useWorkspace = defineStore('workspace', {
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
+      /** which tab of Settings > Agents shows; not persisted */
+      agentsTab: 'agents' as AgentsTab,
 
       paletteOpen: false,
       /**
@@ -378,8 +381,9 @@ export const useWorkspace = defineStore('workspace', {
     toggleFiles(force?: boolean) {
       this.toggleTool('files', force)
     },
-    openSettings(section: SettingsSection = 'general') {
+    openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section
+      if (tab) this.agentsTab = tab
       this.paletteOpen = false
     },
     openUsage() {

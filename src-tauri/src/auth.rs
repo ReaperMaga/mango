@@ -18,6 +18,8 @@ pub struct AuthStatus {
     pub account: Option<String>,
     /// e.g. "max", "pro", when the CLI reports one.
     pub plan: Option<String>,
+    /// The organization the account belongs to, when the CLI names one that says more than the email.
+    pub organization: Option<String>,
     /// How the CLI is authenticated, e.g. "claude.ai", "ChatGPT", "API key".
     pub method: Option<String>,
     /// Raw first line of the CLI's status output, for display when nothing else parses.
@@ -77,6 +79,11 @@ fn parse_claude(stdout: &str, status: &mut AuthStatus) {
         status.account = text("email");
         status.plan = text("subscriptionType");
         status.method = text("authMethod");
+        // A personal account is named "<email>'s Organization": that adds nothing.
+        status.organization = text("orgName").filter(|org| match &status.account {
+            Some(email) => !org.starts_with(email.as_str()),
+            None => true,
+        });
     } else {
         let lower = stdout.to_lowercase();
         status.logged_in = lower.contains("logged in") && !lower.contains("not logged in");
@@ -97,6 +104,35 @@ fn parse_codex(ok: bool, stdout: &str, stderr: &str, status: &mut AuthStatus) {
     status.detail = Some(line).filter(|l| !l.is_empty());
 }
 
+/// Account email and ChatGPT plan from the claims of Codex's `id_token` in `auth.json`.
+/// Only those two claims are read; no token ever leaves this function.
+fn codex_claims(auth_json: &str) -> (Option<String>, Option<String>) {
+    use base64::Engine as _;
+    let claims = serde_json::from_str::<serde_json::Value>(auth_json)
+        .ok()
+        .and_then(|v| v.pointer("/tokens/id_token")?.as_str().map(str::to_string))
+        .and_then(|jwt| {
+            let payload = jwt.split('.').nth(1)?;
+            let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+            serde_json::from_slice::<serde_json::Value>(&bytes).ok()
+        });
+    let Some(claims) = claims else { return (None, None) };
+    let text = |v: Option<&serde_json::Value>| v.and_then(|s| s.as_str()).map(str::to_string);
+    (
+        text(claims.get("email")),
+        text(claims.pointer("/https:~1~1api.openai.com~1auth/chatgpt_plan_type")),
+    )
+}
+
+fn read_codex_claims() -> (Option<String>, Option<String>) {
+    let home = std::env::var_os("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| dirs::home_dir().map(|h| h.join(".codex")));
+    home.and_then(|h| std::fs::read_to_string(h.join("auth.json")).ok())
+        .map(|s| codex_claims(&s))
+        .unwrap_or((None, None))
+}
+
 fn status_of(agent: &str) -> Result<AuthStatus, String> {
     let name = crate::agent_proc::binary_for(agent)?;
     let mut status = AuthStatus { agent: agent.to_string(), ..Default::default() };
@@ -113,6 +149,9 @@ fn status_of(agent: &str) -> Result<AuthStatus, String> {
                 }
             } else {
                 parse_codex(ok, &stdout, &stderr, &mut status);
+                if status.logged_in {
+                    (status.account, status.plan) = read_codex_claims();
+                }
             }
         }
         None => status.detail = Some(format!("{name} did not answer in time")),
@@ -154,6 +193,23 @@ mod tests {
         assert!(s.logged_in);
         assert_eq!(s.account.as_deref(), Some("a@b.c"));
         assert_eq!(s.plan.as_deref(), Some("max"));
+        assert_eq!(s.organization, None);
+
+        let mut s = AuthStatus::default();
+        parse_claude(r#"{"loggedIn":true,"email":"a@b.c","orgName":"a@b.c's Organization"}"#, &mut s);
+        assert_eq!(s.organization, None);
+        parse_claude(r#"{"loggedIn":true,"email":"a@b.c","orgName":"Acme"}"#, &mut s);
+        assert_eq!(s.organization.as_deref(), Some("Acme"));
+    }
+
+    #[test]
+    fn reads_codex_plan_from_id_token() {
+        use base64::Engine as _;
+        let enc = |s: &str| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(s);
+        let payload = r#"{"email":"a@b.c","https://api.openai.com/auth":{"chatgpt_plan_type":"plus"}}"#;
+        let json = format!(r#"{{"tokens":{{"id_token":"{}.{}.sig"}}}}"#, enc("{}"), enc(payload));
+        assert_eq!(codex_claims(&json), (Some("a@b.c".into()), Some("plus".into())));
+        assert_eq!(codex_claims("{}"), (None, None));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Columns2, FileDiff, FileCode, Plus, X, PanelRightClose } from 'lucide-vue-next'
+import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, FileDiff, FileCode, ListX, Pin, Plus, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
@@ -8,6 +8,10 @@ import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { useFiles } from '~/stores/files'
 import { hasUnreadResult, type Thread } from '~/types/chat'
+import { isBusy } from '~/stores/threads'
+import { copyToClipboard } from '~/utils/agentCli'
+import { sepOf, withTrailingSep } from '~/utils/paths'
+import type { MenuItem } from '~/types/ui'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -85,6 +89,72 @@ function onUp() { dragging = false }
 function onTabAux(e: MouseEvent, id: string) {
   if (e.button === 1) { e.preventDefault(); threads.closeTab(id) }
 }
+
+/* ---------- right-click on a tab: the app's own menu instead of the webview's (Back, Refresh, Save as) ---------- */
+
+const tabMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
+const menuTabId = ref<string | null>(null)
+
+async function onTabContext(e: MouseEvent, id: string) {
+  menuTabId.value = id
+  await nextTick()
+  tabMenu.value?.showAt(e.clientX, e.clientY)
+}
+
+/** Closing several at once leaves files with unsaved edits open: no stack of "save?" questions. */
+function closeMany(ids: string[]) {
+  for (const id of ids) if (!(isFileTab(id) && files.isDirty(id))) threads.closeTab(id)
+}
+
+/** A file's path on disk, in the style of the project's own path. */
+function absolutePath(projectPath: string, file: string) {
+  const sep = sepOf(projectPath)
+  return withTrailingSep(projectPath) + (sep === '\\' ? file.replace(/\//g, '\\') : file)
+}
+
+const tabMenuItems = computed<MenuItem[]>(() => {
+  const id = menuTabId.value
+  const at = tabs.value.findIndex(t => t.id === id)
+  const tab = tabs.value[at]
+  if (!tab) return []
+  const ids = tabs.value.map(t => t.id)
+  const items: MenuItem[] = [
+    { label: 'Close', icon: X, kbd: `${mod.value}+W`, onSelect: () => threads.closeTab(tab.id) },
+    { label: 'Close others', icon: XCircle, disabled: ids.length < 2, onSelect: () => closeMany(ids.filter(x => x !== tab.id)) },
+    { label: 'Close to the right', icon: ArrowRightToLine, disabled: at >= ids.length - 1, onSelect: () => closeMany(ids.slice(at + 1)) },
+    { label: 'Close all', icon: ListX, onSelect: () => closeMany(ids) },
+  ]
+
+  const inOtherPane = threads.isSplit && paneOf(tab.id) !== 'pane-b'
+  const splitItem: MenuItem = {
+    label: threads.isSplit ? 'Show in the right pane' : 'Split right',
+    icon: Columns2,
+    divider: true,
+    disabled: threads.isSplit && !inOtherPane,
+    onSelect: () => threads.split(tab.id),
+  }
+
+  if (tab.kind === 'chat') {
+    const busy = isBusy(tab.thread)
+    items.push(
+      splitItem,
+      { label: 'Mark as settled', icon: CircleCheck, divider: true, disabled: busy || tab.thread.status === 'done', onSelect: () => threads.setStatus(tab.id, 'done') },
+      { label: 'Archive chat', icon: Archive, disabled: busy, hint: busy ? 'Still working' : undefined, onSelect: () => threads.archive(tab.id) },
+    )
+    return items
+  }
+
+  const project = tab.kind === 'file' ? parseFileTab(tab.id)?.projectPath : parseDiffTab(tab.id)?.projectPath
+  items.push(splitItem)
+  if (tab.kind === 'file' && files.isPreview(tab.id)) {
+    items.push({ label: 'Keep open', icon: Pin, divider: true, onSelect: () => files.pin(tab.id) })
+  }
+  items.push(
+    { label: 'Copy path', icon: Copy, divider: !(tab.kind === 'file' && files.isPreview(tab.id)), disabled: !project, onSelect: () => project && void copyToClipboard(absolutePath(project, tab.file)) },
+    { label: 'Copy relative path', icon: Route, onSelect: () => void copyToClipboard(tab.file) },
+  )
+  return items
+})
 </script>
 
 <template>
@@ -107,6 +177,7 @@ function onTabAux(e: MouseEvent, id: string) {
           @click="threads.show(t.id)"
           @keydown.enter.prevent="threads.show(t.id)"
           @auxclick="onTabAux($event, t.id)"
+          @contextmenu.prevent="onTabContext($event, t.id)"
           @dblclick="t.kind === 'file' && files.pin(t.id)"
         >
           <template v-if="t.kind === 'chat'">
@@ -145,6 +216,8 @@ function onTabAux(e: MouseEvent, id: string) {
         </UiIconButton>
       </div>
     </div>
+
+    <UiMenu ref="tabMenu" class="ca__ctx" :items="tabMenuItems" :width="230" label="Tab actions" />
 
     <div ref="panesEl" class="ca__panes" :style="{ '--split': split }">
       <template v-for="(pane, i) in threads.panes" :key="pane.id">

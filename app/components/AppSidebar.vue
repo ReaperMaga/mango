@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, Gauge, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import AgentIcon from '~/components/ui/AgentIcon.vue'
+import { call } from '~/composables/useBackend'
+import { isEnvPath } from '~/utils/envPath'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
-import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/chat'
+import { AGENTS, displayStatus, hasUnreadResult, type AgentId, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
@@ -244,12 +247,61 @@ function endResize() {
   ws.persist()
 }
 
-/** Only speak up in the footer when an agent needs setting up; details live in Settings. */
-const agentsNeedingAttention = computed(() => {
-  if (!ws.agents.length) return ''
-  const missing = ws.agents.filter(a => !a.installed)
-  return missing.length === ws.agents.length ? 'No agent installed' : ''
-})
+/** Only speak up in the footer when no agent is installed; details live in Settings. */
+const noAgentInstalled = computed(() => ws.agents.length > 0 && ws.agents.every(a => !a.installed))
+
+/* ---------- footer: Settings, and Code settings (which agent, its usage and plan) ---------- */
+
+const settingsItems = computed<MenuItem[]>(() => [
+  { label: 'Settings', icon: Settings, kbd: `${mod.value}+,`, onSelect: () => ws.openSettings() },
+  { label: 'Get started…', icon: Rocket, onSelect: () => ws.openSetup() },
+  { label: 'Log out', icon: LogOut, divider: true, onSelect: askLogout },
+])
+
+/* ---------- log out: ends the sign-in of the agent on screen, after asking ---------- */
+
+const logoutOpen = ref(false)
+const loggingOut = ref(false)
+const logoutError = ref('')
+
+function askLogout() {
+  logoutError.value = ''
+  logoutOpen.value = true
+}
+
+async function logout() {
+  if (loggingOut.value) return
+  loggingOut.value = true
+  logoutError.value = ''
+  try {
+    await call('agent_logout', { agent: currentAgent.value })
+    logoutOpen.value = false
+  } catch (err) {
+    const why = err instanceof Error ? err.message : String(err)
+    logoutError.value = `Couldn't log out of ${AGENTS[currentAgent.value].name}: ${why.replace(/\.$/, '')}.`
+  } finally {
+    loggingOut.value = false
+  }
+}
+
+/** The agent of the chat on screen, or the one new chats start with. */
+const currentAgent = computed<AgentId>(() => threads.activeThread?.agent ?? threads.defaultAgent)
+
+const codeItems = computed<MenuItem[]>(() => [
+  ...(Object.keys(AGENTS) as AgentId[]).map((id): MenuItem => {
+    const info = ws.agents.find(a => a.id === id)
+    return {
+      label: AGENTS[id].name,
+      icon: () => h(AgentIcon, { agent: id }),
+      // A remote project runs the CLI in its instance: whether it is installed here does not matter.
+      hint: info && !info.installed && !isEnvPath(ws.activeProjectPath) ? 'Not installed. See Settings > Agents.' : undefined,
+      checked: currentAgent.value === id,
+      onSelect: () => threads.chooseAgent(id),
+    }
+  }),
+  { label: 'Usage limits', icon: Gauge, divider: true, kbd: `${mod.value}+Shift+U`, onSelect: () => ws.openUsage() },
+  { label: 'Subscription', icon: CreditCard, onSelect: () => ws.openSettings('agents', 'subscription') },
+])
 </script>
 
 <template>
@@ -384,12 +436,42 @@ const agentsNeedingAttention = computed(() => {
     </nav>
 
     <footer class="sb__foot">
-      <button type="button" class="sb__settings" :title="`Settings (${mod}+,)`" @click="ws.openSettings()">
-        <Settings />
-        <span>Settings</span>
-        <span v-if="agentsNeedingAttention" class="sb__settings-note">{{ agentsNeedingAttention }}</span>
-      </button>
+      <UiMenu :items="settingsItems" placement="top-start" :width="230" label="Settings">
+        <template #default="{ toggle, open }">
+          <button type="button" class="sb__btn" :class="{ 'is-open': open }" :title="`Settings (${mod}+,)`" @click="toggle">
+            <Settings />
+            <span class="sb__btn-text">Settings</span>
+            <span v-if="noAgentInstalled" class="sb__dot" title="No agent installed" />
+            <ChevronDown class="sb__chev" />
+          </button>
+        </template>
+      </UiMenu>
+      <UiMenu :items="codeItems" placement="top-end" :width="270" label="Code settings">
+        <template #default="{ toggle, open }">
+          <button
+            type="button"
+            class="sb__btn sb__btn--agent"
+            :class="{ 'is-open': open }"
+            :title="`Code settings: ${AGENTS[currentAgent].name}`"
+            :aria-label="`Code settings, ${AGENTS[currentAgent].name}`"
+            @click="toggle"
+          >
+            <UiAgentIcon :agent="currentAgent" class="sb__agent-icon" />
+          </button>
+        </template>
+      </UiMenu>
     </footer>
+
+    <UiDialog :open="logoutOpen" title="Log out" :width="420" :dismissible="!loggingOut" @close="logoutOpen = false">
+      <p class="sb__logout">
+        Log out of {{ AGENTS[currentAgent].name }}? Chats that use it stop until you sign in again in Settings > Agents.
+      </p>
+      <p v-if="logoutError" class="sb__logout sb__logout--error selectable" role="alert">{{ logoutError }}</p>
+      <template #footer>
+        <UiButton variant="ghost" data-autofocus :disabled="loggingOut" @click="logoutOpen = false">Cancel</UiButton>
+        <UiButton variant="danger" :loading="loggingOut" @click="logout">Log out</UiButton>
+      </template>
+    </UiDialog>
 
     <div
       class="sb__resize"
@@ -604,30 +686,39 @@ const agentsNeedingAttention = computed(() => {
 .sb__foot {
   display: flex;
   align-items: center;
-  gap: 2px;
-  height: 40px;
-  padding: 0 var(--space-2) 0 var(--space-4);
-  border-top: 1px solid var(--line-soft);
   gap: var(--space-1);
+  height: 40px;
+  padding: 0 var(--space-2) 0 var(--space-2);
+  border-top: 1px solid var(--line-soft);
 }
-.sb__settings {
-  flex: 1;
-  min-width: 0;
+.sb__foot :deep(.menu) { flex: 0 1 auto; min-width: 0; }
+.sb__foot :deep(.menu:first-child) { flex-shrink: 0; }
+/* Code settings sits alone in the corner: just the current agent's logo. */
+.sb__foot :deep(.menu:last-child) { flex: none; margin-left: auto; }
+.sb__btn {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  max-width: 100%;
   height: 28px;
   padding: 0 var(--space-2);
-  margin-left: calc(var(--space-2) * -1);
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--fg-subtle);
   text-align: left;
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.sb__settings:hover { background: var(--bg-hover); color: var(--fg); }
-.sb__settings svg { width: 15px; height: 15px; stroke-width: 1.75; flex: none; }
-.sb__settings-note { margin-left: auto; font-size: var(--text-2xs); color: var(--ripe-waiting-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb__btn:hover, .sb__btn.is-open { background: var(--bg-hover); color: var(--fg); }
+.sb__btn svg { width: 15px; height: 15px; stroke-width: 1.75; flex: none; }
+.sb__btn .sb__chev { width: 12px; height: 12px; stroke-width: 2; opacity: 0.6; }
+.sb__btn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The agent is the chat's own, so it reads a step stronger than the generic Settings button. */
+.sb__btn--agent { width: 28px; justify-content: center; padding: 0; color: var(--fg-muted); }
+.sb__btn .sb__agent-icon { width: 15px; height: 15px; stroke-width: initial; }
+.sb__btn .sb__agent-icon.agent-icon--codex { color: var(--fg); }
+.sb__logout { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
+.sb__logout--error { margin-top: var(--space-2); color: var(--ripe-error-fg); }
+.sb__dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ripe-waiting); }
 
 .sb__resize {
   position: absolute;

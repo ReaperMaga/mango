@@ -322,6 +322,16 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
+    /** The sidebar's agent choice: for the chat on screen, and for new chats from now on. */
+    chooseAgent(agent: AgentId) {
+      const open = this.activeThread
+      if (open && !open.parentId) this.setAgent(open.id, agent)
+      else {
+        this.defaultAgent = agent
+        this.persist()
+      }
+    },
+
     /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
     setModel(id: string, model: string, efforts?: string[]) {
       const t = this.byId(id)

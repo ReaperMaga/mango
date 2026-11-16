@@ -284,7 +284,7 @@ const mock = (() => {
       case 'pty_kill': ptys.delete(args.id); return
       case 'agent_auth_status': return {
         agent: args.agent, installed: !!setupTools.find(t => t.id === args.agent)?.installed, loggedIn: args.agent === 'claude',
-        account: args.agent === 'claude' ? 'you@example.com' : null, plan: args.agent === 'claude' ? 'max' : null,
+        account: args.agent === 'claude' ? 'you@example.com' : null, plan: args.agent === 'claude' ? 'pro' : null, organization: null,
         method: args.agent === 'claude' ? 'claude.ai' : null, detail: args.agent === 'claude' ? null : 'Not logged in',
       }
       case 'agent_logout': return

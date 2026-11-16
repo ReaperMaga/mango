@@ -16,7 +16,9 @@ const parent = computed(() => (thread.value?.parentId ? threads.byId(thread.valu
 
 /* ---------- empty pane: draft settings live here until the first send ---------- */
 const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'], effort: null as string | null })
-watch(() => draft.agent, (a) => { draft.model = AGENTS[a].models[0]!.id; draft.effort = null; threads.defaultAgent = a })
+/* The agent is chosen in the sidebar (Code settings); an empty pane follows the default. */
+watch(() => threads.defaultAgent, (a) => { draft.agent = a })
+watch(() => draft.agent, (a) => { draft.model = AGENTS[a].models[0]!.id; draft.effort = null })
 const draftText = ref('')
 const draftFiles = ref<Attachment[]>([])
 
@@ -144,7 +146,6 @@ function onKey(e: KeyboardEvent) {
           :autofocus="active"
           @send="(text, attachments) => threads.send(thread!.id, text, attachments)"
           @stop="threads.stop(thread!.id)"
-          @update:agent="a => threads.setAgent(thread!.id, a)"
           @update:model="m => threads.setModel(thread!.id, m)"
           @update:mode="m => threads.setMode(thread!.id, m)"
           @update:effort="e => threads.setEffort(thread!.id, e)"
@@ -160,7 +161,7 @@ function onKey(e: KeyboardEvent) {
           ref="composer"
           v-model:text="draftText"
           v-model:attachments="draftFiles"
-          v-model:agent="draft.agent"
+          :agent="draft.agent"
           v-model:model="draft.model"
           v-model:mode="draft.mode"
           v-model:effort="draft.effort"

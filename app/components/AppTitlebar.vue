@@ -3,6 +3,7 @@ import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin,
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
+import { useUsage } from '~/stores/usage'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
@@ -11,9 +12,22 @@ import { isEnvPath } from '~/utils/envPath'
 
 const ws = useWorkspace()
 const threads = useThreads()
+const usage = useUsage()
 const mod = ref('Ctrl')
 const native = ref(false)
-onMounted(() => { mod.value = modLabel(); native.value = isTauri() })
+
+/* Limits are read now and then in the background (it spends no quota), so an early reset is noticed
+   while you work, not only when you open Usage. */
+const USAGE_POLL_MS = 15 * 60_000
+let usageTimer: ReturnType<typeof setInterval> | undefined
+let usageFirst: ReturnType<typeof setTimeout> | undefined
+onMounted(() => {
+  mod.value = modLabel()
+  native.value = isTauri()
+  usageFirst = setTimeout(() => void usage.refreshReadable(), 4000)
+  usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
+})
+onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
 
 /** The active project when it is a folder inside a remote environment. */
 const remote = computed(() => remotePlace(ws.activeProjectPath))
@@ -144,8 +158,17 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <span class="tabular">{{ attention.length }}</span>
       </button>
 
-      <UiIconButton label="Usage limits" :shortcut="`${mod}+Shift+U`" :active="ws.dialog === 'usage'" size="sm" @click="ws.openUsage()">
-        <Gauge />
+      <UiIconButton
+        :label="usage.hasReset ? 'Usage limits: a limit was reset' : 'Usage limits'"
+        :shortcut="`${mod}+Shift+U`"
+        :active="ws.dialog === 'usage'"
+        size="sm"
+        @click="ws.openUsage()"
+      >
+        <span class="tb__gauge">
+          <Gauge />
+          <span v-if="usage.hasReset" class="tb__gauge-dot" aria-hidden="true" />
+        </span>
       </UiIconButton>
       <UiIconButton
         v-if="ws.hasProject"
@@ -289,4 +312,16 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__win-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .tb__win-btn--close:hover { background: var(--ripe-error); color: white; }
 .tb:not(:has(.tb__win)) { padding-right: var(--space-3); }
+.tb__gauge { position: relative; display: inline-grid; place-items: center; }
+/* A limit was reset early: a mark on the gauge, until it is dismissed in Usage. */
+.tb__gauge-dot {
+  position: absolute;
+  top: -3px;
+  right: -4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ripe-queued);
+  box-shadow: 0 0 0 2px var(--bg-app);
+}
 </style>
