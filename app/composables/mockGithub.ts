@@ -1,4 +1,4 @@
-import type { GhItem } from '~/types/ipc'
+import type { GhCheck, GhItem, GhMergeMethod } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -29,7 +29,7 @@ const PICTURE = `data:image/svg+xml,${encodeURIComponent(`<svg xmlns="http://www
 <rect x="560" y="251" width="24" height="20" rx="5" fill="#f0a640"/>
 </svg>`)}`
 
-export function mockGhItem(path: string, reference: string): GhItem {
+function parse(path: string, reference: string) {
   const ref = reference.trim()
   const url = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/(pull|pulls|issues)\/(\d+)/i.exec(ref)
   const short = /^(?:([\w.-]+)\/([\w.-]+))?#?(\d+)$/.exec(ref)
@@ -40,15 +40,54 @@ export function mockGhItem(path: string, reference: string): GhItem {
   const number = Number(url?.[5] ?? short?.[3])
   // Even numbers are pull requests, odd ones issues, unless the link says which.
   const isPr = url ? url[4]!.toLowerCase() !== 'issues' || number % 2 === 0 : number % 2 === 0
+  return { host, owner, repo, number, isPr, key: `${host}/${owner}/${repo}#${number}` }
+}
+
+/** When each pull request was first read: its checks finish one after another from then on. */
+const firstRead = new Map<string, number>()
+/** Pull requests merged in this session. */
+const mergedHere = new Set<string>()
+const HEAD = 'd013dd471daf6f6672ea035294ab4f01282f9c38'
+
+/** Three CI jobs that pass one by one; on pull requests other than #42 the Windows one fails. */
+function mockChecks(key: string, owner: string, repo: string, number: number, done: boolean): GhCheck[] {
+  const since = done ? Infinity : Date.now() - (firstRead.get(key) ?? Date.now())
+  const run = `https://github.com/${owner}/${repo}/actions/runs/4386139`
+  const job = (name: string, after: number, fails = false, required = false): GhCheck => ({
+    name, workflow: 'CI', required, description: null, url: `${run}/job/${name.length}`,
+    state: since < after ? 'pending' : fails ? 'failure' : 'success',
+  })
+  return [
+    job('Frontend', 8_000, false, true),
+    job('Backend (Linux)', 18_000),
+    job('Backend (Windows)', 30_000, number !== 42),
+  ]
+}
+
+export function mockGhMerge(path: string, reference: string, _method: GhMergeMethod, headSha: string) {
+  const { key, isPr, number } = parse(path, reference)
+  if (!isPr) throw new Error('GitHub refused the merge: issues cannot be merged.')
+  if (mergedHere.has(key) || (number !== 42 && number % 3 === 0)) throw new Error('GitHub refused the merge: Pull Request is not mergeable')
+  if (headSha !== HEAD) throw new Error('The branch got new commits since this was read. Look at them, then merge again.')
+  mergedHere.add(key)
+}
+
+export function mockGhItem(path: string, reference: string): GhItem {
+  const { host, owner, repo, number, isPr, key } = parse(path, reference)
   const now = Date.now()
   const at = (h: number) => new Date(now - h * 3_600_000).toISOString()
 
   if (isPr) {
+    if (!firstRead.has(key)) firstRead.set(key, now)
+    const state = mergedHere.has(key) || (number !== 42 && number % 3 === 0) ? 'merged' : 'open'
+    const checkRuns = mockChecks(key, owner, repo, number, state === 'merged')
+    const checks = checkRuns.some(c => c.state === 'failure') ? 'failure'
+      : checkRuns.some(c => c.state === 'pending') ? 'pending' : 'success'
     return {
       kind: 'pr', url: `https://${host}/${owner}/${repo}/pull/${number}`, host, owner, repo, number,
       title: number === 42 ? 'fix(chat): keep the pane when its tab closes' : 'feat(git): show ahead and behind counts in the branch popup',
       // The one the simulated agent just opened is open; others vary so the list shows a few states.
-      state: number === 42 || number % 3 !== 0 ? 'open' : 'merged', stateReason: null,
+      state, stateReason: null,
       author: { login: 'you', avatarUrl: null },
       createdAt: at(0.2), updatedAt: at(0.1),
       bodyHtml: `<h2>Why</h2>
@@ -71,7 +110,10 @@ export function mockGhItem(path: string, reference: string): GhItem {
       comments: 2,
       headRef: number === 42 ? 'fix/pane-fallback' : 'feat/branch-counts', baseRef: 'main',
       additions: 38, deletions: 11, changedFiles: 3,
-      reviewDecision: 'review_required', checks: 'pending',
+      reviewDecision: 'review_required', checks, checkRuns, headSha: HEAD,
+      mergeable: state === 'open' ? 'mergeable' : null,
+      mergeState: state !== 'open' ? null : checks === 'success' ? 'clean' : 'unstable',
+      mergeMethods: ['merge', 'squash', 'rebase'], defaultMergeMethod: 'squash', canMerge: true,
     }
   }
   return {
@@ -88,5 +130,6 @@ export function mockGhItem(path: string, reference: string): GhItem {
     labels: [{ name: 'bug', color: 'd73a4a' }],
     comments: 0,
     headRef: null, baseRef: null, additions: null, deletions: null, changedFiles: null, reviewDecision: null, checks: null,
+    checkRuns: [], headSha: null, mergeable: null, mergeState: null, mergeMethods: [], defaultMergeMethod: null, canMerge: false,
   }
 }

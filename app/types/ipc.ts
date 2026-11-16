@@ -194,6 +194,36 @@ export interface GhItem {
   reviewDecision: 'approved' | 'changes_requested' | 'review_required' | null
   /** The latest commit's checks. */
   checks: 'success' | 'failure' | 'pending' | null
+  /** Each check on the latest commit; empty for issues. */
+  checkRuns: GhCheck[]
+  /** The commit the branch points at; `gh_merge` only goes through while it still does. */
+  headSha: string | null
+  /** "unknown" while GitHub is still working it out. */
+  mergeable: 'mergeable' | 'conflicting' | 'unknown' | null
+  /** GitHub's `mergeStateStatus`, lower case. */
+  mergeState: GhMergeState | null
+  /** The merge methods the repository allows. */
+  mergeMethods: GhMergeMethod[]
+  defaultMergeMethod: GhMergeMethod | null
+  /** The account gh is signed in with may merge (write access or more). */
+  canMerge: boolean
+}
+
+export type GhMergeMethod = 'merge' | 'squash' | 'rebase'
+export type GhMergeState = 'clean' | 'blocked' | 'behind' | 'dirty' | 'unstable' | 'has_hooks' | 'draft' | 'unknown'
+
+/** One check on a pull request's latest commit: a GitHub Actions job, another app's check run, or a commit status. */
+export interface GhCheck {
+  name: string
+  /** The workflow a GitHub Actions job belongs to. */
+  workflow: string | null
+  state: 'success' | 'failure' | 'pending' | 'cancelled' | 'skipped' | 'neutral'
+  /** Its log or details page. */
+  url: string | null
+  /** A commit status's one-line description. */
+  description: string | null
+  /** Branch protection requires it before merging. */
+  required: boolean
 }
 
 /* ---------- project files (the Files view and the editor) ----------
@@ -387,6 +417,11 @@ export interface Commands {
    * the project at `path`). Needs the GitHub CLI, signed in; the error says what to do when it is not.
    */
   gh_item: [{ path: string; reference: string }, GhItem]
+  /**
+   * Merge a pull request on GitHub, only while its branch still points at `headSha` (otherwise it
+   * fails and says the branch moved). The local checkout is not touched.
+   */
+  gh_merge: [{ path: string; reference: string; method: GhMergeMethod; headSha: string }, void]
 
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]

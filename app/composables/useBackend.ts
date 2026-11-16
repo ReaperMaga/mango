@@ -3,7 +3,7 @@ import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockFiles } from '~/composables/mockFiles'
-import { mockGhItem } from '~/composables/mockGithub'
+import { mockGhItem, mockGhMerge } from '~/composables/mockGithub'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -275,6 +275,7 @@ const mock = (() => {
         return data
       }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
+      case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'voice_models': return voiceModels.map(m => ({ ...m }))
       case 'voice_download': return fakeVoiceDownload(args.model)
       case 'voice_download_cancel': voiceCancel.add(args.model); return

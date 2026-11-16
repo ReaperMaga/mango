@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ArrowRight, MessageSquare } from 'lucide-vue-next'
+import { ArrowRight, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX, ExternalLink, MessageSquare } from 'lucide-vue-next'
 import type { LinkedItem } from '~/types/chat'
+import type { GhCheck } from '~/types/ipc'
 import type { LinkDetail } from '~/stores/links'
 import { openExternal } from '~/composables/useBackend'
 import { safeHtml } from '~/utils/safeHtml'
@@ -25,6 +26,36 @@ const CHECKS = { success: 'Passed', failure: 'Failed', pending: 'Running' } as c
 const REVIEW = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Required' } as const
 const checks = computed(() => item.value?.checks ?? null)
 const review = computed(() => item.value?.reviewDecision ?? null)
+
+/* ---------- the checks, one by one ---------- */
+type CheckState = GhCheck['state']
+const ORDER: CheckState[] = ['failure', 'cancelled', 'pending', 'success', 'neutral', 'skipped']
+const CHECK_ICON = { failure: CircleX, cancelled: CircleSlash, pending: CircleDashed, success: CircleCheck, neutral: CircleMinus, skipped: CircleSlash }
+const CHECK_WORD = { failure: 'Failed', cancelled: 'Cancelled', pending: 'Running', success: 'Passed', neutral: 'Neutral', skipped: 'Skipped' }
+
+const runs = computed(() => [...(item.value?.checkRuns ?? [])].sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state)))
+/** One line for all of them: what failed first, then what runs, then what passed. */
+const summary = computed(() => {
+  const all = runs.value
+  if (!all.length) return checks.value ? { tone: checks.value, text: CHECKS[checks.value] } : null
+  const n = (s: CheckState) => all.filter(c => c.state === s).length
+  const [failed, cancelled, running, passed, skipped] = [n('failure'), n('cancelled'), n('pending'), n('success'), n('skipped') + n('neutral')]
+  if (!failed && !cancelled && !running) {
+    return { tone: 'success' as const, text: skipped ? `${passed} passed, ${skipped} skipped` : passed === 1 ? 'Passed' : `All ${passed} passed` }
+  }
+  const parts = [
+    failed && `${failed} failed`,
+    cancelled && `${cancelled} cancelled`,
+    running && `${running} running`,
+    passed && `${passed} passed`,
+  ].filter(Boolean)
+  return { tone: failed || cancelled ? 'failure' as const : 'pending' as const, text: parts.join(', ') }
+})
+/** The list opens by itself while anything is not green; the user's own choice sticks. */
+const listChoice = ref<boolean | null>(null)
+const listOpen = computed(() => listChoice.value ?? summary.value?.tone !== 'success')
+function toggleList() { listChoice.value = !listOpen.value }
+function openCheck(c: GhCheck) { if (c.url) openExternal(c.url).catch(() => {}) }
 
 const labelColor = (hex: string) => (/^[0-9a-f]{6}$/i.test(hex) ? `#${hex}` : 'var(--fg-faint)')
 
@@ -57,32 +88,67 @@ function onBodyClick(e: MouseEvent) {
       </span>
     </p>
 
-    <dl v-if="item?.kind === 'pr'" class="li__facts">
-      <div v-if="item.headRef && item.baseRef" class="li__fact">
-        <dt>Branch</dt>
-        <dd class="li__branches">
-          <code class="li__branch" :title="item.headRef">{{ item.headRef }}</code>
-          <ArrowRight class="li__into" aria-label="into" />
-          <code class="li__branch" :title="item.baseRef">{{ item.baseRef }}</code>
-        </dd>
-      </div>
-      <div v-if="item.changedFiles !== null" class="li__fact">
-        <dt>Changes</dt>
-        <dd class="tabular">
-          <span class="li__add">+{{ item.additions }}</span>
-          <span class="li__del">−{{ item.deletions }}</span>
-          <span class="li__files">in {{ item.changedFiles }} file{{ item.changedFiles === 1 ? '' : 's' }}</span>
-        </dd>
-      </div>
-      <div v-if="checks" class="li__fact">
-        <dt>Checks</dt>
-        <dd class="li__status"><span :class="`is-${checks}`">{{ CHECKS[checks] }}</span></dd>
-      </div>
-      <div v-if="review" class="li__fact">
-        <dt>Review</dt>
-        <dd class="li__status"><span :class="`is-${review}`">{{ REVIEW[review] }}</span></dd>
-      </div>
-    </dl>
+    <div v-if="item?.kind === 'pr'" class="li__facts">
+      <dl class="li__fact-list">
+        <div v-if="item.headRef && item.baseRef" class="li__fact">
+          <dt>Branch</dt>
+          <dd class="li__branches">
+            <code class="li__branch" :title="item.headRef">{{ item.headRef }}</code>
+            <ArrowRight class="li__into" aria-label="into" />
+            <code class="li__branch" :title="item.baseRef">{{ item.baseRef }}</code>
+          </dd>
+        </div>
+        <div v-if="item.changedFiles !== null" class="li__fact">
+          <dt>Changes</dt>
+          <dd class="tabular">
+            <span class="li__add">+{{ item.additions }}</span>
+            <span class="li__del">−{{ item.deletions }}</span>
+            <span class="li__files">in {{ item.changedFiles }} file{{ item.changedFiles === 1 ? '' : 's' }}</span>
+          </dd>
+        </div>
+        <div v-if="review" class="li__fact">
+          <dt>Review</dt>
+          <dd class="li__status"><span :class="`is-${review}`">{{ REVIEW[review] }}</span></dd>
+        </div>
+        <div v-if="summary" class="li__fact">
+          <dt>Checks</dt>
+          <dd class="li__status">
+            <button
+              v-if="runs.length"
+              type="button"
+              class="li__checks-toggle"
+              :class="`is-${summary.tone}`"
+              :aria-expanded="listOpen"
+              aria-controls="li-checks"
+              @click="toggleList"
+            >
+              <component :is="CHECK_ICON[summary.tone]" class="li__check-icon" aria-hidden="true" />
+              <span>{{ summary.text }}</span>
+              <component :is="listOpen ? ChevronDown : ChevronRight" class="li__chev" aria-hidden="true" />
+            </button>
+            <span v-else :class="`is-${summary.tone}`">{{ summary.text }}</span>
+          </dd>
+        </div>
+      </dl>
+      <ul v-if="runs.length && listOpen" id="li-checks" class="li__checks" aria-label="Checks">
+        <li v-for="(c, i) in runs" :key="`${c.workflow}/${c.name}/${i}`">
+          <button
+            type="button"
+            class="li__check"
+            :disabled="!c.url || undefined"
+            :title="c.description ?? (c.url ? 'Open the details on GitHub' : undefined)"
+            @click="openCheck(c)"
+          >
+            <component :is="CHECK_ICON[c.state]" class="li__check-icon" :class="`is-${c.state}`" aria-hidden="true" />
+            <span class="sr-only">{{ CHECK_WORD[c.state] }}:</span>
+            <span class="li__check-name">{{ c.name }}</span>
+            <span v-if="c.workflow || c.description" class="li__check-sub">{{ c.workflow ?? c.description }}</span>
+            <span v-if="c.required" class="li__check-req">Required</span>
+            <ExternalLink v-if="c.url" class="li__check-go" aria-hidden="true" />
+          </button>
+        </li>
+      </ul>
+    </div>
 
     <ul v-if="item?.labels.length" class="li__labels" aria-label="Labels">
       <li v-for="l in item.labels" :key="l.name" class="li__label">
@@ -142,7 +208,8 @@ function onBodyClick(e: MouseEvent) {
 .li__comments { display: inline-flex; align-items: center; gap: 3px; margin-left: auto; }
 .li__comments svg { width: 12px; height: 12px; stroke-width: 1.85; }
 
-.li__facts { display: grid; gap: 4px; margin: var(--space-1) 0 0; padding: var(--space-2) 0; border-block: 1px solid var(--line-soft); }
+.li__facts { display: grid; gap: var(--space-1); margin: var(--space-1) 0 0; padding: var(--space-2) 0; border-block: 1px solid var(--line-soft); }
+.li__fact-list { display: grid; gap: 4px; margin: 0; }
 .li__fact { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: var(--space-2); min-height: 22px; font-size: var(--text-xs); }
 .li__fact dt { color: var(--fg-faint); }
 .li__fact dd { display: flex; align-items: center; gap: var(--space-2); min-width: 0; margin: 0; color: var(--fg-muted); }
@@ -171,6 +238,54 @@ function onBodyClick(e: MouseEvent) {
 .li__status .is-failure, .li__status .is-changes_requested { color: var(--ripe-error-fg); }
 .li__status .is-pending { color: var(--ripe-running-fg); }
 .li__status .is-review_required { color: var(--fg-subtle); }
+
+/* Checks: a summary that opens the list, then one row per check, the ones that need a look first. */
+.li__checks-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 22px;
+  margin-left: -5px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  font-weight: 540;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.li__checks-toggle > span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li__checks-toggle:hover { background: var(--bg-hover); }
+.li__checks-toggle:focus-visible, .li__check:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.li__chev { flex: none; width: 12px; height: 12px; color: var(--fg-faint); }
+.li__check-icon { flex: none; width: 13px; height: 13px; stroke-width: 2; }
+.li__checks-toggle.is-success .li__check-icon, .li__check-icon.is-success { color: var(--ripe-done); }
+.li__checks-toggle.is-failure .li__check-icon, .li__check-icon.is-failure { color: var(--ripe-error); }
+.li__checks-toggle.is-pending .li__check-icon, .li__check-icon.is-pending { color: var(--ripe-running); }
+.li__check-icon.is-cancelled, .li__check-icon.is-skipped, .li__check-icon.is-neutral { color: var(--fg-faint); }
+.li__check-icon.is-pending, .li__checks-toggle.is-pending .li__check-icon { animation: li-turn 2.4s linear infinite; }
+@keyframes li-turn { to { transform: rotate(360deg); } }
+
+.li__checks { display: grid; gap: 1px; margin: 0 0 0 calc(64px + var(--space-2) - 5px); padding: 0; list-style: none; }
+.li__check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 24px;
+  padding: 0 5px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  text-align: left;
+  color: var(--fg-muted);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.li__check:not(:disabled):hover { background: var(--bg-hover); color: var(--fg); }
+.li__check:disabled { cursor: default; }
+.li__check-name { min-width: 0; flex: 0 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li__check-sub { min-width: 0; flex: 0 1000 auto; color: var(--fg-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.li__check-req { flex: none; font-size: var(--text-2xs); color: var(--fg-subtle); }
+.li__check-go { flex: none; width: 12px; height: 12px; margin-left: auto; color: var(--fg-faint); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.li__check:hover .li__check-go, .li__check:focus-visible .li__check-go { opacity: 1; }
 
 .li__labels { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
 .li__label {

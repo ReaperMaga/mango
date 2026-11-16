@@ -35,7 +35,44 @@ watch(list, (items) => {
 
 function open(l: LinkedItem) { links.focused = l.key }
 const currentDetail = computed(() => (current.value ? links.details[current.value.key] : undefined))
-const refreshing = computed(() => !!(currentDetail.value?.loading && currentDetail.value.item))
+const refreshing = computed(() => !!(currentDetail.value?.loading && currentDetail.value.item && !currentDetail.value.quiet))
+/** An open pull request (or draft) can be merged from here. */
+const mergeable = computed(() => {
+  const it = currentDetail.value?.item
+  return it?.kind === 'pr' && (it.state === 'open' || it.state === 'draft') ? it : null
+})
+
+/* ---------- keeping an open pull request current ---------- */
+/** While checks run or GitHub works out mergeability, look often; otherwise now and then. */
+const POLL_BUSY_MS = 10_000
+const POLL_IDLE_MS = 60_000
+let poller: ReturnType<typeof setTimeout> | undefined
+
+function pollDelay(): number | null {
+  const it = currentDetail.value?.item
+  if (!it || it.kind !== 'pr' || it.state === 'merged' || it.state === 'closed') return null
+  const busy = it.checkRuns.some(c => c.state === 'pending') || it.checks === 'pending'
+    || it.mergeable === 'unknown' || it.mergeState === 'unknown'
+  return busy ? POLL_BUSY_MS : POLL_IDLE_MS
+}
+function schedule() {
+  clearTimeout(poller)
+  const detail = currentDetail.value
+  if (!detail || detail.loading) return
+  const delay = pollDelay()
+  if (delay === null) return
+  // Counted from the last good read, so an item opened again catches up at once; after a failed
+  // read, wait the whole interval rather than ask again straight away.
+  const wait = detail.error ? delay : Math.max(0, delay - (Date.now() - detail.fetchedAt))
+  poller = setTimeout(poll, wait)
+}
+function poll() {
+  // Nobody is looking at a hidden window: try again later rather than spend requests.
+  if (document.hidden) { schedule(); return }
+  if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true, true)
+}
+watch(() => [current.value?.key, currentDetail.value?.loading, currentDetail.value?.fetchedAt], schedule, { immediate: true })
+onBeforeUnmount(() => clearTimeout(poller))
 function back() { links.focused = null }
 function refresh() { if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true) }
 function unlink(l: LinkedItem) {
@@ -125,6 +162,7 @@ watch(() => chat.value?.id, cancelAdd)
       <div class="lp__scroll">
         <LinksItem :key="current.key" :link="current" :detail="currentDetail" />
       </div>
+      <LinksMerge v-if="mergeable && chat" :key="current.key" :link="current" :item="mergeable" :project-path="chat.projectPath" />
       <footer class="lp__foot">
         <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
         <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />Refresh</UiButton>
