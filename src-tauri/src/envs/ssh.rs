@@ -212,6 +212,8 @@ mod tests {
             identity_file: Some("/k/id_ed25519".into()),
             incus_remote: Some("os1".into()),
             tailscale: None,
+            public_address: None,
+            direct: None,
         }
     }
 

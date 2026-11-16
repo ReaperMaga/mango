@@ -388,6 +388,8 @@ mod tests {
             identity_file: Some("".into()),
             incus_remote: Some("os1:".into()),
             tailscale: Some(EnvTailscale { tags: vec![" tag:mango ".into(), "".into()], auth_key_file: Some(" ".into()) }),
+            public_address: None,
+            direct: None,
         }
     }
 

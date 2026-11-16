@@ -348,6 +348,64 @@ export interface EnvHost {
   /** The Incus remote on the master that holds the instances (`incus remote list`); null is its default. */
   incusRemote: string | null
   tailscale: EnvTailscale | null
+  /** The address other people reach this server at, for share links over a public port; null uses the SSH host name. */
+  publicAddress?: string | null
+  /**
+   * Set for an environment joined from a share link (`env_join`): SSH goes straight into that one environment
+   * as its agent user. There is no master and no Incus: it has exactly one instance, `direct.instance`, which can't
+   * be started, stopped, created or deleted from here.
+   */
+  direct?: EnvDirect | null
+}
+
+export interface EnvDirect {
+  /** The environment's name, shown as the only instance. */
+  instance: string
+  /** Its pinned SSH host key (base64 `ssh-ed25519` blob). */
+  hostKey: string
+  /** Where it was shared from, as the link says, e.g. "forge/dev". */
+  sharedFrom: string
+  shareId: string
+  /** When access ends (unix ms); null = no end. */
+  expiresAt: number | null
+}
+
+/**
+ * How a share link reaches the environment:
+ * - `public`: a port on the server (an Incus proxy device) forwards to the environment's own SSH server, key-only.
+ * - `tailscale`: the environment's tailnet address (the person joining must be able to reach it on the tailnet).
+ */
+export type EnvShareVia = 'public' | 'tailscale'
+
+/** One person's access to an environment (a key in its agent user's authorized_keys). */
+export interface EnvShare {
+  id: string
+  /** Who it is for, e.g. "Sam". */
+  label: string
+  via: EnvShareVia
+  /** host:port the link connects to. */
+  endpoint: string
+  /** unix ms */
+  createdAt: number
+  /** unix ms; null = no end */
+  expiresAt: number | null
+}
+
+/** A new share: the link exists only here, once (Mango keeps no copy of its key). */
+export interface EnvShareLink {
+  share: EnvShare
+  /** `mango://join/…`, one line; also shown as a QR code. */
+  url: string
+}
+
+/** What a share link would add, before joining. */
+export interface EnvJoinPreview {
+  instance: string
+  sharedFrom: string
+  endpoint: string
+  expiresAt: number | null
+  /** An environment from this link (same share id) is already in the list. */
+  alreadyJoined: boolean
 }
 
 /**
@@ -603,6 +661,17 @@ export interface Commands {
   /** Open (or reuse) a tunnel to the instance's desktop. */
   env_desktop_open: [{ hostId: string; instance: string }, EnvDesktop]
   env_desktop_close: [{ hostId: string; instance: string }, void]
+
+  /* sharing: give someone full access to one environment (not the server) with a one-line link */
+  env_shares: [{ hostId: string; instance: string }, EnvShare[]]
+  /** Add an access key to the environment (setting up its SSH server and, for `public`, the forwarded port). */
+  env_share_create: [{ hostId: string; instance: string; label: string; via: EnvShareVia; expiresInDays: number | null }, EnvShareLink]
+  /** Remove that key (and the forwarded port when no public share is left). */
+  env_share_revoke: [{ hostId: string; instance: string; shareId: string }, void]
+  /** Read a pasted link without saving anything. */
+  env_join_preview: [{ link: string }, EnvJoinPreview]
+  /** Save the environment from a link (its key is stored in Mango's app data); returns the new direct host. */
+  env_join: [{ link: string; name: string | null }, EnvHost]
 }
 
 /** Events emitted by the backend. */
@@ -615,4 +684,6 @@ export interface Events {
   'agent://exit': AgentExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
+  /** A `mango://join/…` link was opened (deep link): show the join dialog for it. */
+  'envs://join': { link: string }
 }

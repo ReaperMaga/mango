@@ -522,6 +522,8 @@ mod tests {
             identity_file: None,
             incus_remote: Some("os1".into()),
             tailscale: ts,
+            public_address: None,
+            direct: None,
         }
     }
 

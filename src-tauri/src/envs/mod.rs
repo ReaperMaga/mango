@@ -21,6 +21,7 @@ pub mod recipes;
 pub mod remote;
 pub mod server;
 pub mod ssh;
+pub mod token;
 
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,30 @@ pub struct EnvHost {
     pub incus_remote: Option<String>,
     /// Join new instances to a tailnet; `None` keeps Tailscale out of it.
     pub tailscale: Option<EnvTailscale>,
+    /// The address other people reach this server at, for share links over a public port;
+    /// `None` uses the host name of `ssh`.
+    #[serde(default)]
+    pub public_address: Option<String>,
+    /// Set for an environment joined from a share link: SSH goes straight into that
+    /// environment (as its agent user), there is no master and no Incus.
+    #[serde(default)]
+    pub direct: Option<EnvDirect>,
+}
+
+/// A joined environment (see `token`): reached directly, with the key from the link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvDirect {
+    /// The environment's name, shown as the host's only instance.
+    pub instance: String,
+    /// Its pinned SSH host key: the base64 blob of an `ssh-ed25519` key.
+    pub host_key: String,
+    /// Where it was shared from, as the link says (e.g. "forge/dev").
+    pub shared_from: String,
+    /// The share's id.
+    pub share_id: String,
+    /// When access ends (unix ms); `None` = no end.
+    pub expires_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

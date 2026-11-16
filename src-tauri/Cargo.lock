@@ -2459,6 +2459,7 @@ dependencies = [
  "dirs 6.0.0",
  "portable-pty",
  "reqwest",
+ "ring",
  "rustls",
  "serde",
  "serde_json",

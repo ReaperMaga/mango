@@ -465,6 +465,8 @@ exit 0"#;
                 identity_file: None,
                 incus_remote: Some("os1".into()),
                 tailscale: None,
+                public_address: None,
+                direct: None,
             }
         }
 
