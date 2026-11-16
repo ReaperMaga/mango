@@ -23,6 +23,7 @@ export async function openFolderFlow() {
  *   Mod+W  close tab            Mod+1..9 switch tab     Mod+Shift+T  new terminal
  *   Mod+Shift+G  changes panel  Mod+,  settings
  *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
+ *   Mod+Shift+U  usage limits
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -39,6 +40,7 @@ export function useShortcuts() {
     if (k === '`' || (k === 'j' && !e.shiftKey)) { e.preventDefault(); e.stopPropagation(); if (!ws.settings) ws.toggleTerminal(); return }
     if (inTerminal) return // let the shell have everything else (Ctrl+C, Ctrl+W, …)
 
+    if (k === 'u' && e.shiftKey) { e.preventDefault(); ws.dialog === 'usage' ? (ws.dialog = null) : ws.openUsage(); return }
     if (k === ',') { e.preventDefault(); ws.settings ? (ws.settings = null) : ws.openSettings(); return }
     // Settings covers the workspace: its shortcuts must not act on what is hidden underneath.
     if (ws.settings) return

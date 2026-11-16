@@ -270,6 +270,7 @@ export interface Commands {
    * Start an agent CLI (only the known binaries) with piped stdio. Returns a process id.
    * Emits `agent://stdout` / `agent://stderr` per line and `agent://exit` once.
    */
+  /** `cwd` '' starts it in the home folder (for questions that need no project). */
   agent_spawn: [{ agent: 'claude' | 'codex'; args: string[]; cwd: string; env?: Record<string, string> | null }, string]
   /** Raw write to the process's stdin (include the trailing newline yourself). */
   agent_write: [{ id: string; data: string }, void]

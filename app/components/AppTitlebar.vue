@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, FolderOpen, FolderPlus, GitBranch, GitFork, Minus, PanelBottom, PanelLeft, Search, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, Minus, PanelBottom, PanelLeft, Search, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { appWindow, isTauri } from '~/composables/useBackend'
@@ -106,6 +106,9 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <span class="tabular">{{ attention.length }}</span>
       </button>
 
+      <UiIconButton label="Usage limits" :shortcut="`${mod}+Shift+U`" :active="ws.dialog === 'usage'" size="sm" @click="ws.openUsage()">
+        <Gauge />
+      </UiIconButton>
       <UiIconButton
         v-if="ws.hasProject"
         label="Toggle terminal"

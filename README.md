@@ -21,6 +21,7 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 - **Voice input:** press the microphone in the message box (or `Ctrl/⌘ Shift Space`) and speak; press it again and the transcript lands at the caret (Esc discards). Speech is turned into text on your computer by OpenAI's Whisper (run in Rust with candle), in any of its ~100 languages, detected automatically. In Settings > Voice pick a model (Tiny 154 MB, Base 293 MB, Small 969 MB), download it once from Hugging Face (pinned and checksum-verified), choose and test the microphone, fix the language, and optionally send as soon as the transcript is in.
 - **Updates:** checks the latest GitHub release at launch and every hour; **Update** in the titlebar downloads, verifies and installs it, then restarts Mango.
 - **Get started:** on the first launch, a dialog shows whether Claude Code, Codex and Git are installed and signed in, installs what is missing with each vendor's own installer (run in an embedded terminal, so you see and answer it), and signs you in. Open it again from the command palette.
+- **Usage limits:** the gauge in the titlebar (or `Ctrl/⌘ Shift U`, or the command palette) shows how much of each plan's 5-hour and weekly allowance Claude Code and Codex have used, per-model weekly limits where the plan has them, and when each window resets. Mango asks the CLIs themselves (`get_usage` for Claude Code, `account/rateLimits/read` for Codex), which spends no quota.
 - **Settings:** installed agents, sign in / sign out (runs the CLI's own login in an embedded terminal), default agent and permission mode, theme and color scheme (Mango, Blue, Purple, Pink, Graphite).
 - **Branches:** click the branch name (titlebar or Changes view) for a JetBrains-style popup: search, update / push / fetch, local and remote branches, and per-branch checkout, new branch from, merge, rebase, rename and delete. Results read as a short summary, such as "Pulled 3 commits into main" with the files and lines changed, instead of git's raw output; failures keep git's own words. For Unity VCS a new branch is a child of the one it starts from (`task` from `/main` is `/main/task`).
 - **Sidebar:** shows the chats of the project picked in the titlebar, grouped by status: Working on top, Settled and Archived at the bottom of the list, where they fold away.
@@ -79,6 +80,7 @@ node scripts/try-agent.ts claude /path/to/project "say hi" --mode ask
 | `Ctrl/⌘ Shift G` | Switch the sidebar between threads and changes |
 | `Ctrl/⌘ S` | Save the file in the active tab |
 | `Ctrl/⌘ ,` | Settings |
+| `Ctrl/⌘ Shift U` | Usage limits |
 | `Ctrl/⌘ \` | Split chat / close split |
 | `Ctrl/⌘ W` | Close tab |
 | `Ctrl/⌘ 1…9` | Switch tab |

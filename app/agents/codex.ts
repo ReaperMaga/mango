@@ -1,4 +1,4 @@
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, SteerInput, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
@@ -799,62 +799,37 @@ function run(options: AgentRunOptions): AgentRun {
   }
 }
 
+type Request = (method: string, params?: Json) => Promise<Json>
+
 /**
- * Codex's own model list (`model/list` on a short-lived app-server): the models the
- * signed-in account can use and the reasoning efforts each accepts. No turn is started.
+ * A short-lived app-server for questions that start no turn: `initialize`, then `work`
+ * with a request function, then the server is killed. `what` names the question in errors.
  */
-function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
+function askAppServer<T>(spawn: SpawnFn, what: string, work: (request: Request) => Promise<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     let transport: AgentTransport | null = null
     let done = false
     let nextId = 1
     const pending = new Map<number, (result: Json, error?: Json) => void>()
-    const finish = (models: AgentModel[] | null, why?: string) => {
+    const finish = (value: { ok: T } | null, why?: string) => {
       if (done) return
       done = true
       clearTimeout(timer)
       transport?.kill().catch(() => {})
-      if (models) resolve(models)
-      else reject(new Error(why ?? 'Codex did not list its models.'))
+      if (value) resolve(value.ok)
+      else reject(new Error(why ?? `Codex did not ${what}.`))
     }
-    const timer = setTimeout(() => finish(null, 'Codex took too long to list its models.'), 30_000)
-    const request = (method: string, params: Json) => new Promise<Json>((ok, fail) => {
+    const timer = setTimeout(() => finish(null, `Codex took too long to ${what}.`), 30_000)
+    const request: Request = (method, params) => new Promise<Json>((ok, fail) => {
       const id = nextId++
       pending.set(id, (result, error) => (error ? fail(new Error(String(error?.message ?? error))) : ok(result)))
-      transport?.write(JSON.stringify({ id, method, params })).catch(fail)
+      transport?.write(JSON.stringify(params === undefined ? { id, method } : { id, method, params })).catch(fail)
     })
 
-    async function list() {
+    async function start() {
       await request('initialize', { clientInfo: { name: 'mango', title: 'Mango', version: '0.1.0' }, capabilities: { experimentalApi: true } })
       await transport?.write(JSON.stringify({ method: 'initialized' }))
-      const all: Json[] = []
-      let cursor: string | null = null
-      for (let page = 0; page < 10; page++) {
-        const res: Json = await request('model/list', cursor ? { cursor } : {})
-        all.push(...(res?.data ?? []))
-        cursor = res?.nextCursor ?? null
-        if (!cursor) break
-      }
-      const efforts = (m: Json): string[] => (m?.supportedReasoningEfforts ?? []).map((e: Json) => String(e?.reasoningEffort ?? e)).filter(Boolean)
-      const fallback = all.find(m => m.isDefault)
-      const models: AgentModel[] = [{
-        id: 'default',
-        label: 'Default',
-        hint: fallback ? `Codex's choice: ${fallback.displayName ?? fallback.model}` : 'Whatever Codex is configured to use',
-        efforts: fallback ? efforts(fallback) : [],
-        defaultEffort: fallback?.defaultReasoningEffort ?? undefined,
-      }]
-      for (const m of all) {
-        if (m.hidden || typeof m.model !== 'string') continue
-        models.push({
-          id: m.model,
-          label: String(m.displayName ?? m.model),
-          hint: m.description || undefined,
-          efforts: efforts(m),
-          defaultEffort: m.defaultReasoningEffort ?? undefined,
-        })
-      }
-      finish(models)
+      finish({ ok: await work(request) })
     }
 
     spawn(['app-server'], {
@@ -866,15 +841,113 @@ function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
         pending.delete(m.id)
         settle(m.result, m.error)
       },
-      onExit: () => finish(null, 'Codex exited before listing its models.'),
+      onExit: () => finish(null, `Codex exited before it could ${what}.`),
     }).then((t) => {
       transport = t
       if (done) { t.kill().catch(() => {}); return }
-      list().catch(e => finish(null, e instanceof Error ? e.message : String(e)))
+      start().catch(e => finish(null, e instanceof Error ? e.message : String(e)))
     }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
   })
 }
 
-export const codexAdapter: AgentAdapter = { id: 'codex', run, listModels }
+/**
+ * Codex's own model list (`model/list` on a short-lived app-server): the models the
+ * signed-in account can use and the reasoning efforts each accepts. No turn is started.
+ */
+function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
+  return askAppServer(spawn, 'list its models', async (request) => {
+    const all: Json[] = []
+    let cursor: string | null = null
+    for (let page = 0; page < 10; page++) {
+      const res: Json = await request('model/list', cursor ? { cursor } : {})
+      all.push(...(res?.data ?? []))
+      cursor = res?.nextCursor ?? null
+      if (!cursor) break
+    }
+    const efforts = (m: Json): string[] => (m?.supportedReasoningEfforts ?? []).map((e: Json) => String(e?.reasoningEffort ?? e)).filter(Boolean)
+    const fallback = all.find(m => m.isDefault)
+    const models: AgentModel[] = [{
+      id: 'default',
+      label: 'Default',
+      hint: fallback ? `Codex's choice: ${fallback.displayName ?? fallback.model}` : 'Whatever Codex is configured to use',
+      efforts: fallback ? efforts(fallback) : [],
+      defaultEffort: fallback?.defaultReasoningEffort ?? undefined,
+    }]
+    for (const m of all) {
+      if (m.hidden || typeof m.model !== 'string') continue
+      models.push({
+        id: m.model,
+        label: String(m.displayName ?? m.model),
+        hint: m.description || undefined,
+        efforts: efforts(m),
+        defaultEffort: m.defaultReasoningEffort ?? undefined,
+      })
+    }
+    return models
+  })
+}
+
+/** A window's length in minutes → its id and name: 300 → 5-hour, 10080 → Weekly, 43200 → 30-day. */
+function windowName(mins: number): { id: string; label: string } {
+  if (mins === 300) return { id: 'five-hour', label: '5-hour' }
+  if (mins === 10080) return { id: 'weekly', label: 'Weekly' }
+  const label = mins % 1440 === 0 ? `${mins / 1440}-day` : mins % 60 === 0 ? `${mins / 60}-hour` : `${mins}-minute`
+  return { id: `window:${mins}`, label }
+}
+
+/** `account/rateLimits/read` → windows, shortest first. Limits other than the main one carry their name. */
+export function codexUsageWindows(res: Json): UsageWindow[] {
+  const snapshots: Json[] = []
+  if (res?.rateLimits) snapshots.push(res.rateLimits)
+  for (const snap of Object.values(res?.rateLimitsByLimitId ?? {}) as Json[]) {
+    if (snap && !snapshots.some(s => s.limitId === snap.limitId)) snapshots.push(snap)
+  }
+  const out: Array<UsageWindow & { mins: number }> = []
+  snapshots.forEach((snap, i) => {
+    const scope = i > 0 && snap.limitName ? String(snap.limitName) : null
+    if (i > 0 && !scope) return // an unnamed extra limit would read as a duplicate
+    for (const w of [snap.primary, snap.secondary]) {
+      const mins = Number(w?.windowDurationMins)
+      const used = Number(w?.usedPercent)
+      if (!Number.isFinite(mins) || mins <= 0 || !Number.isFinite(used)) continue
+      const name = windowName(mins)
+      const id = scope ? `${name.id}:${scope.toLowerCase()}` : name.id
+      if (out.some(x => x.id === id)) continue
+      const resets = Number(w.resetsAt)
+      out.push({
+        id,
+        label: scope ? `${name.label} · ${scope}` : name.label,
+        percent: Math.min(100, Math.max(0, used)),
+        resetsAt: Number.isFinite(resets) && resets > 0 ? resets * 1000 : null,
+        mins,
+      })
+    }
+  })
+  return out.sort((a, b) => a.mins - b.mins).map(({ mins: _mins, ...w }) => w)
+}
+
+/**
+ * The plan's usage limits (`account/rateLimits/read`): the windows Codex shows in
+ * `/status`. A paid plan has a 5-hour and a weekly window; the free plan a 30-day one.
+ */
+function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
+  return askAppServer(spawn, 'report its usage', async (request) => {
+    const account: Json = await request('account/read', {}).catch(() => null)
+    if (account && !account.account && account.requiresOpenaiAuth) throw new Error(SIGN_IN_HINT)
+    if (account?.account?.type === 'apiKey') {
+      return { plan: null, windows: [], note: 'No plan limits: Codex is signed in with an API key, billed per token.' }
+    }
+    const res: Json = await request('account/rateLimits/read')
+    const plan = account?.account?.planType ?? res?.rateLimits?.planType
+    const windows = codexUsageWindows(res)
+    return {
+      plan: typeof plan === 'string' && plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : null,
+      windows,
+      note: windows.length ? undefined : 'Codex reported no limits for this plan.',
+    }
+  })
+}
+
+export const codexAdapter: AgentAdapter = { id: 'codex', run, listModels, readUsage }
 
 export default codexAdapter
