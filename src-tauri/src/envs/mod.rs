@@ -13,11 +13,13 @@
 //!              install/update scripts, run in a PTY the user watches
 //! - `remote`:  a shell or sign-in terminal inside an instance, and the
 //!              desktop (noVNC) tunnel
+//! - `server`:  installing, updating and initialising Incus itself on the master
 
 pub mod hosts;
 pub mod incus;
 pub mod recipes;
 pub mod remote;
+pub mod server;
 pub mod ssh;
 
 use serde::{Deserialize, Serialize};

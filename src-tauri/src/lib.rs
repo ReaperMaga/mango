@@ -103,6 +103,7 @@ pub fn run() {
             envs::incus::env_instances,
             envs::incus::env_instance_action,
             envs::incus::env_create,
+            envs::server::env_server_setup,
             envs::recipes::env_components,
             envs::recipes::env_install,
             envs::remote::env_shell,
