@@ -6,6 +6,7 @@ import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { useGit } from '~/stores/git'
 import { parseFileTab } from '~/utils/fileTabs'
+import { parseEnvPath } from '~/utils/envPath'
 
 /**
  * The Files tool window on the right: the active project's folders as a tree,
@@ -40,8 +41,10 @@ const decorations = computed(() => {
   const dirKinds = new Map<string, Kind>()
   const status = git.status(path.value)
   if (!status?.isRepo || !status.root || !path.value) return { fileKinds, dirKinds }
-  const root = norm(status.root)
-  const project = norm(path.value)
+  // A remote project's git root is a folder inside its instance: compare the folders there.
+  const folder = (p: string) => norm(parseEnvPath(p)?.dir ?? p)
+  const root = folder(status.root)
+  const project = folder(path.value)
   // The project may be a folder inside the repository.
   const prefix = project === root ? '' : project.startsWith(`${root}/`) ? `${project.slice(root.length + 1)}/` : null
   if (prefix === null) return { fileKinds, dirKinds }

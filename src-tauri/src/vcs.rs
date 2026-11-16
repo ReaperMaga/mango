@@ -38,10 +38,8 @@ pub(crate) fn detect_on_disk(dir: &Path) -> Option<(Vcs, PathBuf)> {
 /// A remote project (`env://<hostId>/<instance>/<folder>`, see `envs::parse_env_path`) is
 /// always git, run inside its instance; Unity VCS is for folders on this computer.
 pub(crate) fn detect(app: &AppHandle, path: &str) -> Result<Backend, String> {
-    if let Some(folder) = envs::parse_env_path(path) {
-        let folder = folder?;
-        let host = hosts::get(app, &folder.host_id)?;
-        return Ok(Backend::Git(At::Env(Box::new(EnvAt { host, instance: folder.instance, dir: folder.dir }))));
+    if let Some(env) = env_at(app, path) {
+        return Ok(Backend::Git(At::Env(Box::new(env?))));
     }
     let dir = PathBuf::from(path.trim());
     let git = || Backend::Git(At::local(&dir));
@@ -52,6 +50,15 @@ pub(crate) fn detect(app: &AppHandle, path: &str) -> Result<Backend, String> {
         None if dir.is_dir() => plastic::workspace_by_cm(&dir).map_or_else(git, Backend::Plastic),
         None => git(),
     })
+}
+
+/// The instance folder behind a remote project path (`env://…`); `None` for a folder on this computer.
+pub(crate) fn env_at(app: &AppHandle, path: &str) -> Option<Result<EnvAt, String>> {
+    let folder = envs::parse_env_path(path)?;
+    Some(folder.and_then(|folder| {
+        let host = hosts::get(app, &folder.host_id)?;
+        Ok(EnvAt { host, instance: folder.instance, dir: folder.dir })
+    }))
 }
 
 /// Run `git` or `plastic` off the UI thread, for whichever the folder uses.

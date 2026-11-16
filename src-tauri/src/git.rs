@@ -615,7 +615,7 @@ impl EnvAt {
 
     /// Run `argv` as the agent user in this folder. A connection or environment problem
     /// is an error; anything else is the command's own result, as for a local process.
-    fn run(
+    pub(crate) fn run(
         &self,
         env: &[(String, String)],
         argv: &[String],
