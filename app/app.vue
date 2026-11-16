@@ -3,6 +3,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
+import { useBrowser } from '~/stores/browser'
 import { on } from '~/composables/useBackend'
 
 const ws = useWorkspace()
@@ -15,6 +16,8 @@ onMounted(async () => {
   await ws.init()
   ready.value = true
   updater.start()
+  // Drops the webviews a reloaded UI left behind, then listens for pages and agents.
+  void useBrowser().init()
 })
 
 useShortcuts()

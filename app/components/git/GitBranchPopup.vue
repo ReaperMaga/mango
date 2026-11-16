@@ -10,6 +10,7 @@ import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
 import { shortAgo } from '~/utils/time'
+import { useOverlay } from '~/composables/useOverlay'
 import { resultLines, units, vcsTerms } from '~/utils/vcs'
 
 /**
@@ -32,6 +33,7 @@ const WIDTH = 380
 const SUB_WIDTH = 270
 
 const open = ref(false)
+useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
 const pop = ref<HTMLElement | null>(null)
 const subEl = ref<HTMLElement | null>(null)

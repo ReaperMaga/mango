@@ -232,6 +232,22 @@ async function agentInput(text: string, files: Attachment[], remote: boolean) {
   return { prompt: text.trim(), images, readDirs: [] as string[], dropped: files.filter(a => !sent.has(a.path)) }
 }
 
+/**
+ * Mango's browser tools for a run in `threadId` (they belong to its top-level chat, whose
+ * browser tab the agent drives). Undefined when they cannot be had: the run goes on without.
+ */
+async function browserToolsFor(store: Store, threadId: string) {
+  const root = store.rootOf(threadId) ?? store.byId(threadId)
+  if (!root) return undefined
+  try {
+    // A remote project's URL works inside its environment (the backend forwards it there).
+    const mcp = await call('browser_mcp', { threadId: root.id, projectPath: root.projectPath })
+    return mcp?.url && mcp.name ? { url: mcp.url, name: mcp.name, readOnlyTools: mcp.readOnlyTools ?? [] } : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** `attachments`: files sent with `text`, already in the attachment store. */
 export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
@@ -449,6 +465,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     if (place.remote && !input.prompt.trim() && !input.images.length) {
       throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
     }
+    const browserMcp = await browserToolsFor(store, threadId)
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
@@ -457,6 +474,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       mode: thread.mode,
       effort: thread.effort ?? null,
       sessionId: thread.sessionId ?? null,
+      ...(browserMcp ? { browserMcp } : {}),
       spawn: spawnFor(thread.agent, thread.projectPath),
       emit,
     })

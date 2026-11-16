@@ -1,4 +1,5 @@
 import { parseDiffTab } from '~/utils/diffTabs'
+import { parseBrowserTab } from '~/utils/browserTabs'
 
 /**
  * Project files open in the main pane as tabs next to chats and diffs. The
@@ -17,6 +18,6 @@ export function parseFileTab(id: string | null | undefined) {
   return { projectPath, file, name: file.slice(cut + 1) || file, dir: cut > 0 ? file.slice(0, cut) : '' }
 }
 
-/** The project a diff or file tab belongs to; null for chats (ask the threads store). */
+/** The project a diff, file or browser tab belongs to; null for chats (ask the threads store). */
 export const tabProject = (id: string | null | undefined) =>
-  parseFileTab(id)?.projectPath ?? parseDiffTab(id)?.projectPath ?? null
+  parseFileTab(id)?.projectPath ?? parseDiffTab(id)?.projectPath ?? parseBrowserTab(id)?.projectPath ?? null

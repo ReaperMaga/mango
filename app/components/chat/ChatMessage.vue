@@ -116,6 +116,7 @@ ${a.path}`"
           class="msg__text"
           :text="seg.part.text"
           :base="thread.projectPath"
+          :thread-id="thread.id"
           :streaming="live && seg.i === lastTextIndex && seg.i === message.parts.length - 1"
         />
       </template>

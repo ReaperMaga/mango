@@ -61,6 +61,30 @@ const counts = (diff: DiffLine[]) => {
   return `+${add} −${del}`
 }
 
+/** The name Mango registers its browser tools under (`browser_mcp`, src-tauri/src/browser_mcp.rs). */
+const BROWSER_SERVER = 'mango-browser'
+
+/** What one of Mango's browser tools does, for its row: `navigate http://localhost:3000`. */
+function browserTarget(tool: string, input: any): string {
+  let i = input ?? {}
+  if (typeof i === 'string') { try { i = JSON.parse(i) ?? {} } catch { i = {} } }
+  const s = (v: unknown) => (typeof v === 'string' ? v : '')
+  const what = typeof i.ref === 'number' ? `[${i.ref}]` : s(i.selector)
+  switch (tool) {
+    case 'navigate': return `navigate ${s(i.url)}`.trim()
+    case 'snapshot': return 'read the page'
+    case 'click': return `click ${what}`.trim()
+    case 'type': return `type ${JSON.stringify(s(i.text))}${what ? ` into ${what}` : ''}${i.submit ? ' and submit' : ''}`
+    case 'press_key': return `press ${s(i.key)}`.trim()
+    case 'scroll': return `scroll ${s(i.direction)}`.trim()
+    case 'evaluate': { const x = s(i.script).replace(/\s+/g, ' '); return `evaluate ${x.length > 80 ? `${x.slice(0, 79)}…` : x}`.trim() }
+    case 'console_logs': return 'read the console'
+    case 'screenshot': return 'take a screenshot'
+    case 'go': return s(i.action) || 'go'
+    default: return tool.replace(/_/g, ' ')
+  }
+}
+
 /** How a Claude Code tool call is shown: which row, which target, and a diff when the input implies one. */
 function describeTool(name: string, input: any, cwd: string): ToolShape {
   const i = input ?? {}
@@ -117,6 +141,7 @@ function describeTool(name: string, input: any, cwd: string): ToolShape {
     default: {
       // MCP tools are named mcp__server__tool.
       const mcp = /^mcp__(.+?)__(.+)$/.exec(name)
+      if (mcp?.[1] === BROWSER_SERVER) return { tool: 'web', label: 'Browser', target: browserTarget(mcp[2]!, i) }
       const first = Object.values(i).find(v => typeof v === 'string') as string | undefined
       return { tool: 'other', label: 'Used', target: mcp ? `${mcp[1]} · ${mcp[2]}` : name, summary: first && first.length < 60 ? first : undefined }
     }
@@ -227,6 +252,7 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
       return { title: 'Claude Code has a plan and wants to start', command: String(i.plan ?? ''), reason: 'Allow to let it carry out the plan.' }
     default: {
       const d = describeTool(toolName, i, cwd)
+      if (d.label === 'Browser') return { title: 'Claude Code wants to use the browser', command: d.target || toolName, reason: '' }
       return { title: `Claude Code wants to use ${d.target || toolName}`, command: JSON.stringify(i, null, 2).slice(0, 1200), reason: '' }
     }
   }
@@ -665,6 +691,12 @@ function run(options: AgentRunOptions): AgentRun {
   if (options.sessionId) args.push('--resume', options.sessionId)
   // Attachments live outside the project: let Claude Code read them without asking.
   for (const dir of options.readDirs ?? []) args.push('--add-dir', dir)
+  // Mango's browser for this chat. Tools that only read the page run without asking.
+  const browser = options.browserMcp
+  if (browser) {
+    args.push('--mcp-config', JSON.stringify({ mcpServers: { [browser.name]: { type: 'http', url: browser.url } } }))
+    if (browser.readOnlyTools.length) args.push('--allowedTools', browser.readOnlyTools.map(t => `mcp__${browser.name}__${t}`).join(','))
+  }
 
   options.spawn(args, {
     onLine,

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { effortLabel } from '~/types/chat'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Reasoning effort as a slider: one stop per level the model accepts, lowest on the
@@ -19,6 +20,7 @@ const props = defineProps<{
 const emit = defineEmits<{ 'update:modelValue': [effort: string | null] }>()
 
 const open = ref(false)
+useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
 const pop = ref<HTMLElement | null>(null)
 const range = ref<HTMLInputElement | null>(null)

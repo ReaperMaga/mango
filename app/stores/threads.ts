@@ -7,6 +7,8 @@ import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
+import { isBrowserTab, parseBrowserTab } from '~/utils/browserTabs'
+import { useBrowser } from '~/stores/browser'
 import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
@@ -104,9 +106,10 @@ export const useThreads = defineStore('threads', {
       try {
         localStorage.setItem(LS_KEY, JSON.stringify({
           threads: this.threads,
-          // Diff and file tabs are views onto the disk, not something to restore next time.
-          tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id)),
-          panes: this.panes.map(p => (isDiffTab(p.threadId) || isFileTab(p.threadId) ? { ...p, threadId: null } : p)),
+          // Diff and file tabs are views onto the disk, and a browser's page dies with the app:
+          // none of them is something to restore next time.
+          tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id) && !isBrowserTab(id)),
+          panes: this.panes.map(p => (isDiffTab(p.threadId) || isFileTab(p.threadId) || isBrowserTab(p.threadId) ? { ...p, threadId: null } : p)),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }))
       } catch { /* storage unavailable */ }
@@ -181,6 +184,8 @@ export const useThreads = defineStore('threads', {
       const diff = parseDiffTab(id)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
       if (isFileTab(id)) useFiles().forget(id)
+      const browser = parseBrowserTab(id)
+      if (browser) useBrowser().forget(browser.browserId)
       // The neighbouring tab of the same project takes its place. Another project's chat
       // would show in the pane with no tab and no sidebar row, and a message sent there
       // would run in that other project's folder.
@@ -192,6 +197,32 @@ export const useThreads = defineStore('threads', {
         const empty = this.panes.find(p => p.threadId === null)
         if (empty) this.closePane(empty.id)
       }
+      this.persist()
+    },
+
+    /** Add a tab without showing it, after `after` when that is open (else at the end). */
+    addTab(id: string, after: string | null = null) {
+      if (this.tabs.includes(id)) return
+      const at = after ? this.tabs.indexOf(after) : -1
+      if (at >= 0) this.tabs.splice(at + 1, 0, id)
+      else this.tabs.push(id)
+    },
+
+    /**
+     * Show `id` in the pane beside the one showing `beside` (the active pane when that is not
+     * on screen), splitting when there is one pane. The focus stays where it was unless `focus`:
+     * a browser an agent or a link opens must not take the keyboard from the chat.
+     */
+    showBeside(id: string, beside: string | null, focus = false) {
+      this.addTab(id, beside)
+      const keep = this.activePaneId
+      if (!this.panes.some(p => p.threadId === id)) {
+        const anchor = this.panes.find(p => p.threadId === beside) ?? this.activePane
+        if (this.panes.length === 1) this.panes.push({ id: 'pane-b', threadId: id })
+        else this.panes.find(p => p.id !== anchor.id)!.threadId = id
+      }
+      const target = this.panes.find(p => p.threadId === id)!
+      this.activePaneId = focus || !this.panes.some(p => p.id === keep) ? target.id : keep
       this.persist()
     },
 

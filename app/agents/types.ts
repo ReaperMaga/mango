@@ -127,8 +127,22 @@ export interface AgentRunOptions {
   effort?: string | null
   /** From an earlier `session` event of the same thread, null for a new conversation. */
   sessionId: string | null
+  /**
+   * Mango's browser tools for this chat (an MCP server over HTTP on 127.0.0.1, see `browser_mcp`):
+   * register it with the CLI for this turn. `readOnlyTools` only read the page and may run
+   * without asking. Absent in remote environments and the browser preview.
+   */
+  browserMcp?: BrowserMcpServer
   spawn: SpawnFn
   emit(event: AgentEvent): void
+}
+
+/** Mango's browser tools, as an agent run gets them. */
+export interface BrowserMcpServer {
+  url: string
+  /** The server's name: Claude Code calls its tools `mcp__<name>__<tool>`. */
+  name: string
+  readOnlyTools: string[]
 }
 
 /** A message sent while a turn runs. Same shape as the turn's own prompt. */

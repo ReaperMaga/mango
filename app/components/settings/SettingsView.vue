@@ -7,6 +7,7 @@ import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Settings: a full view under the titlebar, not a dialog. It takes the place
@@ -32,6 +33,8 @@ const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
 ]
 
 const open = computed(() => ws.settings !== null)
+/* Settings covers the workspace; the browsers' native pages would show through. */
+useOverlay(() => open.value)
 /** Stays on the last section while the view fades out. */
 const section = ref<Section>(ws.settings ?? 'general')
 /** The other sections render while the view is open or fading out. */
