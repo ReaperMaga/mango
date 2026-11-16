@@ -2,6 +2,107 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## Unreleased
+
+### Agents and chats
+
+- **Queued messages:** a message written while an agent works waits in a queue above the input and goes out as the next turn, so the run is not disturbed. **Send now** hands it to the running turn instead; the agent reads it at its next step. Stop keeps the queue but sends nothing.
+- Chats are saved in a SQLite database.
+
+### Settings
+
+- **Changelog** in Settings and in the Settings menu of the sidebar: what changed in each version.
+
+### Environments
+
+- Remote projects open faster: ssh connections are reused and git reads are batched.
+
+## 0.1.10
+
+### Browser
+
+- Browser tabs beside the chats, with tools the agents can use.
+
+### Environments
+
+- Files, pull requests and the branch work for remote projects.
+
+## 0.1.9
+
+### Agents and chats
+
+- Mango's own **/create-pr** command.
+
+### Settings
+
+- **Subscription** and **Usage** tabs in Settings > Agents: the plan and organization each agent is signed in with, and its usage limits with their reset times. A limit that drops a lot before its scheduled reset is noticed and noted.
+- The agent choice and Settings moved into menus in the sidebar footer.
+
+### Sidebar and tabs
+
+- Tabs have a context menu.
+
+### Environments and pull requests
+
+- Git runs inside remote environments, so the Changes view and the branch popup work there too.
+- The pull request window shows the log of a GitHub Actions check.
+
+## 0.1.8
+
+### Environments
+
+- **Remote environments:** run a project in a container or VM on your own server over ssh and Incus, with a terminal and desktop per instance. Set them up in **Settings > Environments**.
+
+### Agents and chats
+
+- Sub-agent chats show tree lines under their parent in the sidebar.
+- Pictures in an agent's reply show when they come from files on your computer.
+
+## 0.1.7
+
+### Pull requests
+
+- Merge a pull request from the Pull requests window, and see the list of its checks.
+
+## 0.1.6
+
+### Agents and chats
+
+- **Pull requests and issues** an agent creates are linked to the chat and shown in a window on the right.
+- **Background tasks** (commands run in the background, sub-agents) show under the message box, with their output and a stop button. Sub-agents get a chat of their own.
+
+## 0.1.5
+
+### Agents and chats
+
+- **Slash commands** in the message box: type <kbd>/</kbd> for the commands and skills the agent offers.
+
+### Files and changes
+
+- Files and Changes moved to the right, next to the chat, as tool windows.
+- Pictures open in an image viewer.
+
+### Fixes
+
+- The agent logo is centred on the chip label, and the effort meter is coloured for the default level.
+
+## 0.1.4
+
+### Agents and chats
+
+- **Usage limits:** the 5-hour and weekly allowance of each agent, and when it resets.
+- Runs of tool calls and thinking fold into one summary line.
+- The Claude Code and Codex logos replace the plain dots.
+
+### Source control
+
+- Branch sections are folded by default, and you can clear local branches.
+- Sync results are summarized instead of showing raw git output.
+
+### Sidebar
+
+- Settled chats show a lime check mark.
+
 ## 0.1.3
 
 ### Agents and chats

@@ -32,7 +32,7 @@ export interface TerminalTab {
 export type ToolView = 'env' | 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'changelog'
 
 const LS_KEY = 'mango.workspace.v1'
 

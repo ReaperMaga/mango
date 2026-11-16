@@ -51,7 +51,7 @@ pnpm app:build    # release build + installers
 pnpm bump minor   # new version (patch, minor, major or an exact 1.2.3) in every file that holds it
 ```
 
-The version you are running, with the commit it was built from, is in Settings > General.
+The version you are running, with the commit it was built from, is in Settings > General. What changed in each version is in Settings > Changelog (the same file as the docs site's changelog, `docs/changelog.md`).
 
 Linux needs the Tauri system packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
 `librsvg2-dev`, `libayatana-appindicator3-dev`, `libssl-dev`).
