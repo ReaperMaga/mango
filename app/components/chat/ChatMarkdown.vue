@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { Marked } from 'marked'
+import type { Attachment } from '~/types/chat'
+import { chatImage, localBase, localImagePath } from '~/utils/chatImages'
+import { openImage } from '~/utils/imageViewer'
+import { baseName } from '~/utils/paths'
 
 /**
  * Renders agent markdown. Raw HTML in the source is escaped, never injected:
- * agent output is untrusted text.
+ * agent output is untrusted text. Pictures (`![alt](path)`) are shown only from
+ * files on this computer, never fetched from the web; `base` is the chat's project
+ * folder, for relative paths.
  */
-const props = defineProps<{ text: string; streaming?: boolean }>()
+const props = defineProps<{ text: string; streaming?: boolean; base?: string | null }>()
 
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
+/** The pictures of the last render, in order, for the viewer. */
+let shown: Attachment[] = []
 
 const md = new Marked({
   gfm: true,
@@ -18,15 +27,32 @@ const md = new Marked({
       const safe = /^(https?:|mailto:)/i.test(href) ? href : '#'
       return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${text}</a>`
     },
-    image({ text }) { return escape(text) },
+    image({ href, text }) {
+      const path = localBase(props.base) ? localImagePath(href) : null
+      if (!path) return escape(text)
+      const name = text.trim() || baseName(path)
+      const s = chatImage(path, props.base ?? null)
+      if (s.status === 'loading') return `<span class="md__img-note">${escape(name)}</span>`
+      if (s.status === 'error') return `<span class="md__img-note is-error" title="${escape(s.error)}">${escape(name)}: picture not found</span>`
+      const i = shown.push({ id: `md-img-${shown.length}`, name, path, mime: s.mime, size: s.size, kind: 'image', thumb: s.url }) - 1
+      return `<button type="button" class="md__img" data-img="${i}" aria-label="Open picture: ${escape(name)}"><img src="${escape(s.url)}" alt="${escape(text)}"></button>`
+    },
   },
 })
 
-const html = computed(() => md.parse(props.text) as string)
+const html = computed(() => {
+  shown = []
+  return md.parse(props.text) as string
+})
+
+function onClick(e: MouseEvent) {
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-img]')
+  if (el) openImage(shown, Number(el.dataset.img))
+}
 </script>
 
 <template>
-  <div class="md selectable" :class="{ 'is-streaming': streaming }" v-html="html" />
+  <div class="md selectable" :class="{ 'is-streaming': streaming }" @click="onClick" v-html="html" />
 </template>
 
 <style scoped>
@@ -63,6 +89,26 @@ const html = computed(() => md.parse(props.text) as string)
 .md :deep(table) { border-collapse: collapse; margin: 0 0 0.8em; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .md :deep(th), .md :deep(td) { padding: 4px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; }
 .md :deep(th) { color: var(--fg-muted); font-weight: 600; }
+
+/* A picture from the agent: framed on the inset ground, capped in height, opens full size on click. */
+.md :deep(.md__img) {
+  display: block;
+  max-width: 100%;
+  margin: 0.3em 0 0.7em;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  cursor: zoom-in;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.md :deep(.md__img:hover) { border-color: var(--line-strong); }
+.md :deep(.md__img:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.md :deep(.md__img img) { display: block; max-width: 100%; max-height: 420px; height: auto; object-fit: contain; }
+/* While it loads, or when it cannot be shown: its name in quiet ink. */
+.md :deep(.md__img-note) { color: var(--fg-subtle); font-size: var(--text-sm); }
+.md :deep(.md__img-note.is-error) { color: var(--fg-faint); }
 
 .md.is-streaming :deep(> *:last-child)::after {
   content: '';

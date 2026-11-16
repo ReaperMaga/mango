@@ -115,6 +115,7 @@ ${a.path}`"
           v-else-if="seg.part.type === 'text'"
           class="msg__text"
           :text="seg.part.text"
+          :base="thread.projectPath"
           :streaming="live && seg.i === lastTextIndex && seg.i === message.parts.length - 1"
         />
       </template>

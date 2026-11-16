@@ -63,7 +63,8 @@ app/
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts,
-                     githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML)
+                     githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
+                     chatImages.ts (pictures in agent replies)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -73,6 +74,7 @@ src-tauri/src/
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in)
+  images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
@@ -108,7 +110,9 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.
 - Installing works the same way: `setup.rs` picks the vendor's own installer per OS and runs it in a PTY the
   user watches. The frontend only names a tool id; never build an install command line from webview input.
-- Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that. A pull request's
+- Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that. Pictures in a
+  reply (`![alt](path)`) come only from local files through `chat_image`, which reads nothing but real raster
+  images; never fetch a picture URL from the web (it can carry data out of the chat). A pull request's
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
   trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.

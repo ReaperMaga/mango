@@ -247,6 +247,16 @@ export interface FsListing {
   truncated: boolean
 }
 
+/** A picture an agent's reply points at (`chat_image`). */
+export interface ChatImage {
+  /** The whole file, base64. */
+  data: string
+  /** Read from the file's bytes, not its name. */
+  mime: string
+  size: number
+  modifiedMs: number
+}
+
 export interface FileBytes {
   /** The whole file, base64. */
   data: string
@@ -439,6 +449,12 @@ export interface Commands {
   attachment_import: [{ path: string }, AttachmentInfo]
   /** A stored attachment's bytes as base64. Paths outside the store are refused. */
   attachment_read: [{ path: string }, string]
+  /**
+   * A picture an agent's reply shows (`![alt](path)`): an absolute path anywhere on this computer,
+   * or relative to `base`, the chat's project folder. Only real PNG, JPEG, GIF, WebP, AVIF or BMP
+   * files are read (checked by their bytes, not their name), up to 25 MB.
+   */
+  chat_image: [{ path: string; base: string | null }, ChatImage]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
