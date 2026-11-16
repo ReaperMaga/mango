@@ -1,0 +1,80 @@
+# Keeps the release build's Rust cache warm.
+#
+# Releases run on tag pushes, and a run for a tag can only restore caches saved on its
+# own ref or on main. Without this workflow every release compiles all dependencies from
+# scratch. This builds exactly what release.yml builds (same toolchain, profile, config
+# and cache key) on main, so the next tag starts from compiled dependencies.
+#
+# The schedule keeps the cache from expiring: GitHub evicts entries unused for 7 days.
+name: Rust cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/rust-cache.yml'
+      - '.github/workflows/release.yml'
+  schedule:
+    - cron: '0 4 * * 1,4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rust-cache-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 10
+
+jobs:
+  build:
+    name: Warm cache (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: Linux x64
+            os: ubuntu-22.04
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
+            libayatana-appindicator3-dev libssl-dev patchelf xdg-utils
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Same key as release.yml. Saves only when the dependencies changed (the key hashes
+      # Cargo.lock, Cargo.toml and the compiler version).
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: release
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The release build without installers. The updater config is passed as in
+      # release.yml so the build sees the same Tauri config; it only matters when
+      # bundling, so no signing key is needed here.
+      - name: Build
+        run: pnpm tauri build --no-bundle --config src-tauri/tauri.updater.conf.json
