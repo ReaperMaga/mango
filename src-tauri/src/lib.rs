@@ -3,6 +3,9 @@ mod attachments;
 mod agents;
 mod auth;
 mod bin;
+mod browser;
+mod browser_mcp;
+mod browser_remote;
 mod envs;
 mod files;
 mod git;
@@ -32,9 +35,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Voice input records in the webview. Mango loads only its own pages, and recording
         // starts only when the user presses the microphone, so grant it without a second prompt
-        // (WebKitGTK would otherwise deny it outright).
-        .on_permission_request(|_, kind| match kind {
-            PermissionKind::Microphone => PermissionResponse::Allow,
+        // (WebKitGTK would otherwise deny it outright). Only for Mango's own view: pages in the
+        // browser (`browser-*` webviews) get the webview's default answer.
+        .on_permission_request(|webview, kind| match kind {
+            PermissionKind::Microphone if webview.label() == "main" => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
         })
         .manage(pty::PtyState::default())
@@ -45,6 +49,8 @@ pub fn run() {
         .manage(envs::hosts::EnvsState::default())
         .manage(envs::remote::DesktopState::default())
         .manage(envs::join::JoinLinkState::default())
+        .manage(browser::BrowserState::default())
+        .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
             Ok(())
@@ -134,6 +140,15 @@ pub fn run() {
             envs::shares::env_share_revoke,
             envs::join::env_join_preview,
             envs::join::env_join,
+            browser::browser_open,
+            browser::browser_bounds,
+            browser::browser_navigate,
+            browser::browser_go,
+            browser::browser_devtools,
+            browser::browser_close,
+            browser::browser_reset,
+            browser::browser_screenshot,
+            browser_mcp::browser_mcp,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
@@ -142,6 +157,7 @@ pub fn run() {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
                 app.state::<envs::remote::DesktopState>().kill_all();
+                app.state::<browser_remote::RemoteBrowserState>().kill_all();
             }
         });
 }

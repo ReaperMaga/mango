@@ -2701,10 +2701,12 @@ name = "mango"
 version = "0.1.9"
 dependencies = [
  "base64 0.23.1",
+ "cairo-rs",
  "candle-core",
  "candle-nn",
  "candle-transformers",
  "dirs 6.0.0",
+ "gtk",
  "portable-pty",
  "reqwest",
  "ring",
@@ -2721,6 +2723,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tauri-plugin-updater",
  "uuid",
+ "webkit2gtk",
 ]
 
 [[package]]
