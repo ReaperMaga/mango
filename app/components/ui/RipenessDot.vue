@@ -5,12 +5,14 @@ import type { ThreadStatus } from '~/types/chat'
  * Mango's signature status mark: a small fruit whose colour and fill show how
  * ripe a thread is. archived and queued are hollow (grey, then unripe leaf green), running is
  * half-filled mango whose level breathes, waiting is full blush (needs you),
- * done is full lime, error is red.
+ * error is red. done leaves the fruit shape behind: a lime disc with a check cut
+ * out of it, so a settled thread reads as finished at a glance.
  */
 type DotStatus = ThreadStatus | 'archived'
 const props = withDefaults(defineProps<{ status: DotStatus; size?: number; unseen?: boolean }>(), { size: 12, unseen: false })
 
 const clipId = useId()
+const maskId = useId()
 const body = 'M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z'
 
 const labels: Record<DotStatus, string> = {
@@ -33,7 +35,17 @@ const labels: Record<DotStatus, string> = {
     :aria-label="labels[props.status]"
     :title="labels[props.status]"
   >
-    <svg :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
+    <svg v-if="props.status === 'done'" :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
+      <defs>
+        <mask :id="maskId">
+          <rect width="12" height="12" fill="#fff" />
+          <path class="ripe__tick" d="M3.6 6.2 5.3 7.9 8.5 4.4" />
+        </mask>
+      </defs>
+      <!-- settled: a full lime disc with the check cut out so the ground shows through -->
+      <circle class="ripe__done" cx="6" cy="6" r="5.4" :mask="`url(#${maskId})`" />
+    </svg>
+    <svg v-else :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
       <defs>
         <clipPath :id="clipId">
           <rect class="ripe__level" x="0" y="0" width="12" height="12" />
@@ -63,6 +75,8 @@ const labels: Record<DotStatus, string> = {
 .ripe__flesh { fill: var(--c); stroke: var(--c); stroke-width: 1.2; transition: fill var(--dur-med) var(--ease-out), stroke var(--dur-med) var(--ease-out); }
 .ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); }
 .ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; }
+.ripe__done { fill: var(--c); transition: fill var(--dur-med) var(--ease-out); }
+.ripe__tick { fill: none; stroke: #000; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
 .ripe--archived { --c: var(--ripe-idle); --level: 12px; }
 .ripe--archived .ripe__leaf { fill: var(--ripe-idle); }

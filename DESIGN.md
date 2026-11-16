@@ -416,7 +416,7 @@ Corners are softly rounded and the radius follows the size of the thing: 4px for
 
 Borders are 1px hairlines in the line tokens, never heavier. Tinted borders are made by mixing a status colour toward transparent (35 to 60%). The user's message bubble has one squared corner (4px, bottom right) so it reads as spoken from the right; that is the only asymmetric radius besides the canvas corner.
 
-The system's one figurative shape is the ripeness dot: a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. The app mark (`ui/MangoMark.vue`, and `assets/icon.svg`, the source of the app icons) is the same fruit, fully ripe in Ripe Mango with the leaf in Unripe Leaf Green, and a Roman inscription capital M (thick and thin strokes, bracketed serifs) cut out of the flesh so the ground shows through. Everything else is rectangles and circles.
+The system's one figurative shape is the ripeness dot: a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. The app mark (`ui/MangoMark.vue`, and `assets/icon.svg`, the source of the app icons) is the same fruit, fully ripe in Ripe Mango with the leaf in Unripe Leaf Green, and a Roman inscription capital M (thick and thin strokes, bracketed serifs) cut out of the flesh so the ground shows through. Everything else is rectangles and circles (the settled state of the ripeness dot is a circle with a check cut out).
 
 ## Components
 
@@ -431,7 +431,7 @@ The signature. A fruit-shaped mark, 12px by default (11px in tabs, 9px in the ti
 - **Queued:** hollow, Unripe Leaf Green.
 - **Working:** half filled, Ripening Mango, and the fill level breathes between roughly a third and two thirds on a 1.8s loop.
 - **Needs you:** full, Blush Coral.
-- **Done:** full, Ripe Lime.
+- **Done:** the fruit gives way to a success mark: a full Ripe Lime disc with a check cut out of it, so the ground shows through.
 - **Failed:** full, Bruise Red, leaf dimmed.
 - **Unseen:** a done or needs-you result the user has not looked at gets a 1.5px halo ring in the status colour, 3px outside the fruit, at 45% opacity. The row's title goes to primary ink at 560 at the same time.
 
