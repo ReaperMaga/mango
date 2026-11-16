@@ -68,6 +68,8 @@ function menu(t: Thread): MenuItem[] {
 
 <style scoped>
 .sbs { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+/* A grid, so the context menu's empty inline anchor collapses instead of adding a line box under each row. */
+.sbs > li { display: grid; min-width: 0; }
 .sbs__row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;
