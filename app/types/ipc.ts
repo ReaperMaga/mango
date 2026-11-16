@@ -53,6 +53,8 @@ export interface AuthStatus {
   account: string | null
   /** e.g. "max", "pro" */
   plan: string | null
+  /** a team or company the account belongs to; null for a personal account */
+  organization: string | null
   /** e.g. "claude.ai", "ChatGPT", "API key" */
   method: string | null
   /** raw first line of the CLI's status output */
