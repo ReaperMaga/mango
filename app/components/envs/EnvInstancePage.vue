@@ -222,7 +222,9 @@ function takeIntent() {
   if (!intent || !inst.value) return
   delete envs.intents[key.value]
   if (intent === 'login-claude') login('claude', 'Claude Code')
+  else if (intent === 'login-gh') login('gh', 'GitHub CLI')
   else if (intent === 'open-project') projectOpen.value = true
+  else if (intent === 'open-desktop') desktopShown.value = true
 }
 
 watch(inst, (i) => { if (i) takeIntent() })

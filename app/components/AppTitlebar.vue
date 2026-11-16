@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
+import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
@@ -17,6 +18,18 @@ onMounted(() => { mod.value = modLabel(); native.value = isTauri() })
 /** The active project when it is a folder inside a remote environment. */
 const remote = computed(() => remotePlace(ws.activeProjectPath))
 
+/* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
+const envs = useEnvironments()
+const where = computed(() => projectWhere())
+const whereMenu = ref<{ show: () => void } | null>(null)
+const whereMenuItems = computed(() => whereItems(where.value, w => ws.setWhere(w), () => envs.openView()))
+// The saved servers name the places in the project menu (reading them is local and quick).
+onMounted(() => { if (!envs.loaded) envs.load().catch(() => {}) })
+function chooseWhere() {
+  whereMenu.value?.show()
+  void refreshEnvs()
+}
+
 const projectItems = computed<MenuItem[]>(() => [
   ...ws.openProjects.map(p => ({
     label: p.name,
@@ -29,6 +42,9 @@ const projectItems = computed<MenuItem[]>(() => [
   { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: ws.openProjects.length > 0, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
+  ...(envs.hosts.length
+    ? [{ label: 'Projects go to…', hint: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
+    : []),
   ...(ws.activeProject
     ? [{ label: `Close ${ws.activeProject.name}`, icon: X, divider: true, onSelect: () => ws.closeProject(ws.activeProject!.path) }]
     : []),
@@ -61,23 +77,32 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <PanelLeft />
       </UiIconButton>
 
-      <UiMenu :items="projectItems" :width="260" label="Projects">
+      <UiMenu :items="projectItems" :width="280" label="Projects">
         <template #default="{ toggle, open }">
-          <button type="button" class="tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
-            <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
-            <ChevronDown class="tb__chev" />
-          </button>
+          <!-- The Where list opens from the project menu and hangs from the same button. -->
+          <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
+            <template #default>
+              <button type="button" class="tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+                <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+                <ChevronDown class="tb__chev" />
+              </button>
+            </template>
+          </UiMenu>
         </template>
       </UiMenu>
 
-      <span
+      <!-- Where a remote project runs, in place of a branch; the Environment tool window has the rest. -->
+      <button
         v-if="remote"
+        type="button"
         class="tb__remote"
-        :title="`Remote environment: instance ${remote.instance} on ${remote.host}, folder ${remote.dir}`"
+        :class="{ 'is-open': ws.toolPanel === 'env' }"
+        :title="`Remote environment: ${remote.where}, folder ${remote.dir}`"
+        @click="ws.toggleEnv()"
       >
         <Server aria-hidden="true" />
         <span class="tb__remote-where">{{ remote.where }}</span>
-      </span>
+      </button>
       <GitBranchPopup v-else-if="ws.activeProject?.isGit" :path="ws.activeProjectPath">
         <template #default="{ toggle, open }">
           <button
@@ -190,9 +215,12 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
   min-width: 0;
   height: 26px;
   padding: 0 6px;
+  border-radius: var(--radius-sm);
   font-size: var(--text-xs);
   color: var(--fg-subtle);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+.tb__remote:hover, .tb__remote.is-open { background: var(--bg-hover); color: var(--fg); }
 .tb__remote svg { width: 13px; height: 13px; flex: none; stroke-width: 1.85; }
 .tb__remote-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

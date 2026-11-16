@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvProbe, EnvShare, EnvShareVia,
+  EnvDirListing, EnvProbe, EnvShare, EnvShareVia,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
@@ -18,6 +18,8 @@ export const ENV_IMAGES = [
 
 /** Where projects go inside an instance unless the user picks another folder. */
 export const ENV_WORK_DIR = '/home/agent/work'
+/** The agent user's home inside an instance (`~`). */
+export const ENV_HOME_DIR = '/home/agent'
 
 /**
  * The one-click components, for choosing them before an instance exists (the create dialog).
@@ -48,9 +50,10 @@ export type EnvDialog =
 
 /**
  * Something to do once a page shows: for an instance (keyed by `instanceKey`) a next step chosen
- * after creating it; for a server (keyed by its id) leading to the Incus setup after adding it.
+ * after creating it, or asked for from elsewhere (the chat's place menu, the clone dialog);
+ * for a server (keyed by its id) leading to the Incus setup after adding it.
  */
-export type EnvIntent = 'login-claude' | 'open-project' | 'setup-incus'
+export type EnvIntent = 'login-claude' | 'login-gh' | 'open-project' | 'open-desktop' | 'setup-incus'
 
 /** How a server is doing, for its row and its page: reachability first, then Incus. */
 export type HostTone = 'ready' | 'setup' | 'bad' | 'checking' | 'unknown'
@@ -333,9 +336,24 @@ export const useEnvironments = defineStore('environments', {
       return call('env_login', { hostId, instance, tool, cols, rows })
     },
 
-    /** Make sure a folder exists in the instance (optionally cloning into it); returns its absolute path. */
-    prepareDir(hostId: string, instance: string, dir: string, cloneUrl: string | null) {
-      return call('env_prepare_dir', { hostId, instance, dir, cloneUrl })
+    /**
+     * Make sure a folder exists in the instance, cloning into it or running `git init` in it when asked;
+     * returns its absolute path.
+     */
+    prepareDir(hostId: string, instance: string, dir: string, cloneUrl: string | null, gitInit = false) {
+      return call('env_prepare_dir', { hostId, instance, dir, cloneUrl, ...(gitInit ? { gitInit: true } : {}) })
+    },
+
+    /** The sub-folders of `dir` inside the instance (`~` is the agent's home). Throws with a readable message. */
+    listDir(hostId: string, instance: string, dir: string): Promise<EnvDirListing> {
+      return call('env_list_dir', { hostId, instance, dir })
+    },
+
+    /** Settings > Environments on an instance's page, with something for the page to do once it shows. */
+    openInstance(hostId: string, instance: string, intent?: EnvIntent) {
+      if (intent) this.intents[instanceKey(hostId, instance)] = intent
+      this.select(hostId, instance)
+      this.openView()
     },
 
     async openDesktop(hostId: string, instance: string) {

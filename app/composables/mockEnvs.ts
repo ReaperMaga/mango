@@ -1,5 +1,5 @@
 import type {
-  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
+  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvDirListing, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
   EnvProbe, EnvShare, EnvShareLink, EnvShareVia,
 } from '~/types/ipc'
 
@@ -258,6 +258,82 @@ function validHost(host: EnvHost): EnvHost {
   const publicAddress = host.publicAddress?.trim() || null
   if (publicAddress && !/^[\w.:-]+$/.test(publicAddress)) throw new Error('The public address is a host name or an IP address, without spaces.')
   return { ...host, name, ssh, identityFile: host.identityFile?.trim() || null, incusRemote: host.incusRemote?.trim() || null, publicAddress, direct: null }
+}
+
+/* ---------- folders inside the instances (env_list_dir, env_prepare_dir) ---------- */
+
+/** Every folder an instance has, as absolute paths, and whether each is a git repository. */
+type Tree = Map<string, boolean>
+
+/** The usual top of a Linux system, the same everywhere. */
+const SYSTEM_DIRS = ['/bin', '/boot', '/dev', '/etc', '/home', '/lib', '/media', '/mnt', '/opt', '/proc', '/root', '/run', '/srv', '/sys', '/tmp', '/usr', '/usr/local', '/usr/share', '/var', '/var/log', '/var/lib']
+
+/** What is in `~/work` per instance, by name: [folder, is a git repo, its sub-folders]. */
+const WORK: Record<string, Array<[string, boolean, string[]]>> = {
+  dev: [
+    ['shop', true, ['src', 'src/components', 'src/pages', 'public', 'tests', 'scripts', 'node_modules']],
+    ['api', true, ['cmd', 'internal', 'internal/http', 'internal/store', 'migrations', 'deploy']],
+    ['docs-site', true, ['content', 'content/guides', 'static', 'themes']],
+    ['playground', false, ['notes', 'sketches']],
+  ],
+  'gpu-box': [
+    ['vision-train', true, ['data', 'notebooks', 'models', 'scripts']],
+    ['datasets', false, ['coco', 'imagenet-mini']],
+  ],
+  'ci-runner': [
+    ['runner-config', true, ['jobs', 'templates']],
+  ],
+  staging: [
+    ['shop', true, ['src', 'public', 'deploy']],
+  ],
+  review: [
+    ['shop', true, ['src', 'src/components', 'tests', 'node_modules']],
+    ['pr-1482', true, ['src', 'tests']],
+  ],
+}
+
+const trees = new Map<string, Tree>()
+
+function treeOf(hostId: string, i: MockInstance): Tree {
+  const key = `${hostId}/${i.name}`
+  let t = trees.get(key)
+  if (t) return t
+  t = new Map<string, boolean>()
+  for (const d of SYSTEM_DIRS) t.set(d, false)
+  for (const d of [AGENT_HOME, `${AGENT_HOME}/.cache`, `${AGENT_HOME}/.config`, `${AGENT_HOME}/.local`, `${AGENT_HOME}/bin`, WORK_DIR]) t.set(d, false)
+  for (const [name, git, subs] of WORK[i.name] ?? []) {
+    t.set(`${WORK_DIR}/${name}`, git)
+    for (const sub of subs) t.set(`${WORK_DIR}/${name}/${sub}`, false)
+  }
+  trees.set(key, t)
+  return t
+}
+
+/** An absolute, normalised path: `~` is the agent's home, `.` and `..` are resolved. */
+function resolveDir(raw: string): string {
+  let s = String(raw ?? '').trim()
+  if (!s) throw new Error('Enter a folder.')
+  if (s === '~' || s.startsWith('~/')) s = AGENT_HOME + s.slice(1)
+  else if (!s.startsWith('/')) s = `${WORK_DIR}/${s}`
+  const parts: string[] = []
+  for (const p of s.split('/')) {
+    if (!p || p === '.') continue
+    if (p === '..') parts.pop()
+    else parts.push(p)
+  }
+  return `/${parts.join('/')}`
+}
+
+const parentOf = (dir: string) => (dir === '/' ? null : dir.slice(0, dir.lastIndexOf('/')) || '/')
+
+/** Adds `dir` and every folder above it. */
+function mkdirs(t: Tree, dir: string) {
+  for (let d: string | null = dir; d && d !== '/'; d = parentOf(d)) if (!t.has(d)) t.set(d, false)
+}
+
+function children(t: Tree, dir: string): string[] {
+  const prefix = dir === '/' ? '/' : `${dir}/`
+  return [...t.keys()].filter(p => p.startsWith(prefix) && p !== dir && !p.slice(prefix.length).includes('/'))
 }
 
 /** `forge/dev`: where a share link says it is from. */
@@ -565,15 +641,43 @@ export function createMockEnvs(ctx: MockEnvContext) {
       case 'env_prepare_dir': {
         const { h, i } = instanceOf(args.hostId, args.instance)
         mustRun(h, i)
-        const raw = String(args.dir ?? '').trim()
-        if (!raw) throw new Error('Enter a folder.')
-        const dir = (raw.startsWith('/') ? raw : raw.startsWith('~') ? `${AGENT_HOME}${raw.slice(1)}` : `${WORK_DIR}/${raw}`).replace(/\/+$/, '') || '/'
-        if (dir.split('/').includes('..')) throw new Error('The folder cannot contain "..".')
+        const dir = resolveDir(args.dir)
+        if (dir === '/') throw new Error('Pick a folder below /.')
         await latency(args.cloneUrl ? 1800 : 300)
-        if (args.cloneUrl && !/^(https:\/\/|git@|ssh:\/\/)/.test(String(args.cloneUrl))) {
-          throw new Error(`git clone failed: "${args.cloneUrl}" is not a repository URL Mango can clone.`)
+        const t = treeOf(h.host.id, i)
+        if (args.cloneUrl) {
+          const url = String(args.cloneUrl)
+          if (!/^(https:\/\/|git@|ssh:\/\/)/.test(url)) {
+            throw new Error(`git clone failed: "${url}" is not a repository URL Mango can clone`)
+          }
+          if (/private|secret/i.test(url)) {
+            throw new Error('git clone failed: could not read Username for \'https://github.com\': terminal prompts disabled')
+          }
+          if (t.has(dir) && (t.get(dir) || children(t, dir).length)) {
+            throw new Error(`git clone failed: destination path '${dir.slice(dir.lastIndexOf('/') + 1)}' already exists and is not an empty directory`)
+          }
+          mkdirs(t, dir)
+          t.set(dir, true)
+          for (const sub of ['src', 'tests', '.github']) t.set(`${dir}/${sub}`, false)
+          return dir
         }
+        mkdirs(t, dir)
+        if (args.gitInit) t.set(dir, true)
         return dir
+      }
+
+      case 'env_list_dir': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        mustRun(h, i)
+        const dir = resolveDir(args.dir)
+        await latency(160)
+        const t = treeOf(h.host.id, i)
+        if (dir !== '/' && !t.has(dir)) throw new Error(`There is no folder ${dir} in ${i.name}`)
+        const entries = children(t, dir)
+          .map(path => ({ name: path.slice(path.lastIndexOf('/') + 1), path, isGit: t.get(path) === true }))
+          .filter(e => !e.name.startsWith('.'))
+          .sort((a, b) => a.name.localeCompare(b.name))
+        return { dir, parent: parentOf(dir), entries, truncated: false } satisfies EnvDirListing
       }
 
       case 'env_desktop_open': {

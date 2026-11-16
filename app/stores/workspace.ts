@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AgentInfo, ProjectInfo, TerminalProfile } from '~/types/ipc'
+import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types/ipc'
 import type { PermissionMode } from '~/agents/types'
 import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
@@ -25,8 +25,11 @@ export interface TerminalTab {
   shell: string | null
 }
 
-/** The tool windows that open on the right: the project's files, source control, and the chat's pull requests and issues. */
-export type ToolView = 'files' | 'changes' | 'links'
+/**
+ * The tool windows that open on the right: where the project runs (this computer or an environment),
+ * the project's files, source control, and the chat's pull requests and issues.
+ */
+export type ToolView = 'env' | 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general'
 
@@ -97,7 +100,15 @@ function loadHostsFor(projects: ProjectInfo[]) {
   if (!envs.loaded) envs.load().catch(() => {})
 }
 
-const toolView = (v: unknown): ToolView | null => (v === 'files' || v === 'changes' || v === 'links' ? v : null)
+const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' ? v : null)
+
+/** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
+const whereOf = (v: unknown): EnvRemote | null => {
+  const o = v as Partial<EnvRemote> | null
+  return o && typeof o.hostId === 'string' && o.hostId && typeof o.instance === 'string' && o.instance
+    ? { hostId: o.hostId, instance: o.instance }
+    : null
+}
 
 let tabSeq = 0
 
@@ -147,8 +158,16 @@ export const useWorkspace = defineStore('workspace', {
       settings: null as null | SettingsSection,
 
       paletteOpen: false,
-      /** which dialog is open: a project dialog, "Get started" (setup) or the usage limits */
-      dialog: null as null | 'new' | 'clone' | 'setup' | 'usage',
+      /**
+       * which dialog is open: a project dialog ('open-env' picks a folder inside an environment),
+       * "Get started" (setup) or the usage limits
+       */
+      dialog: null as null | 'new' | 'clone' | 'open-env' | 'setup' | 'usage',
+      /**
+       * Where Open folder, New project and Clone put a project: an environment, or null for this
+       * computer. The last choice, remembered.
+       */
+      where: whereOf(prefs.where),
       /**
        * The "Get started" dialog was shown and closed. Unset in prefs from older
        * builds, which already ran: only a first run starts out false.
@@ -187,6 +206,7 @@ export const useWorkspace = defineStore('workspace', {
           terminalCursorBlink: this.terminalCursorBlink,
           defaultMode: this.defaultMode,
           setupSeen: this.setupSeen,
+          where: this.where,
           openProjects: this.openProjects.map(p => p.path),
           activeProjectPath: this.activeProjectPath,
         }))
@@ -269,6 +289,12 @@ export const useWorkspace = defineStore('workspace', {
       return info
     },
 
+    /** Remember where new projects go (null: this computer). */
+    setWhere(where: EnvRemote | null) {
+      this.where = where ? { hostId: where.hostId, instance: where.instance } : null
+      this.persist()
+    },
+
     closeProject(path: string) {
       this.openProjects = this.openProjects.filter(p => p.path !== path)
       if (this.activeProjectPath === path) this.activeProjectPath = this.openProjects[0]?.path ?? null
@@ -343,6 +369,10 @@ export const useWorkspace = defineStore('workspace', {
     /** Show the chat's pull requests and issues on the right; again to close it. */
     toggleLinks(force?: boolean) {
       this.toggleTool('links', force)
+    },
+    /** Show where the project runs (this computer or an environment) on the right; again to close it. */
+    toggleEnv(force?: boolean) {
+      this.toggleTool('env', force)
     },
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {

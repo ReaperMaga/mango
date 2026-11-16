@@ -8,9 +8,13 @@ import type { ProjectInfo } from '~/types/ipc'
 /**
  * Project hub: shown when no project is open. Four ways in (open, new,
  * clone, a remote environment), then the recent list. Arrow keys walk every row; Enter opens;
- * Delete forgets the focused recent project.
+ * Delete forgets the focused recent project. With environments saved, "Where" above the actions
+ * says where open, new and clone put the project (this computer or an environment).
  */
 const ws = useWorkspace()
+const envs = useEnvironments()
+const where = computed(() => projectWhere())
+const whereName = computed(() => (where.value ? envLabels(where.value.hostId, where.value.instance).label : null))
 
 const mod = modLabel()
 const ariaMod = mod === 'Ctrl' ? 'Control' : 'Meta'
@@ -25,11 +29,11 @@ interface Action {
   run: () => void | Promise<void>
 }
 
-const actions: Action[] = [
+const actions = computed<Action[]>(() => [
   {
     id: 'open',
     title: 'Open folder',
-    description: 'Work on a project that is already on disk.',
+    description: whereName.value ? `Browse the folders in ${whereName.value}.` : 'Work on a project that is already on disk.',
     icon: FolderOpen,
     keys: [mod, 'O'],
     primary: true,
@@ -38,7 +42,7 @@ const actions: Action[] = [
   {
     id: 'new',
     title: 'New project',
-    description: 'Create an empty folder, with git if you want it.',
+    description: whereName.value ? `Create a folder in ${whereName.value}, with git if you want it.` : 'Create an empty folder, with git if you want it.',
     icon: FolderPlus,
     keys: [mod, 'N'],
     run: () => { ws.dialog = 'new' },
@@ -46,7 +50,7 @@ const actions: Action[] = [
   {
     id: 'clone',
     title: 'Clone repository',
-    description: 'Pull a repo from GitHub or any git remote.',
+    description: whereName.value ? `Clone a repo from GitHub or any git remote into ${whereName.value}.` : 'Pull a repo from GitHub or any git remote.',
     icon: GitFork,
     keys: [],
     run: () => { ws.dialog = 'clone' },
@@ -57,9 +61,9 @@ const actions: Action[] = [
     description: 'Work in a container or VM on your own server.',
     icon: Server,
     keys: [],
-    run: () => useEnvironments().openView(),
+    run: () => envs.openView(),
   },
-]
+])
 
 /* ---------- errors ---------- */
 
@@ -164,6 +168,7 @@ function onKey(e: KeyboardEvent) {
 }
 
 onMounted(() => {
+  if (!envs.loaded) envs.load().catch(() => {})
   window.addEventListener('keydown', onKey)
   tick = setInterval(() => { now.value = Date.now() }, 30_000)
 })
@@ -181,6 +186,11 @@ onBeforeUnmount(() => {
         <h1 class="hub__title">Mango</h1>
         <p class="hub__lede">Run Claude Code and Codex side by side on your projects.</p>
       </header>
+
+      <div v-if="envs.hosts.length" class="hub__where">
+        <span aria-hidden="true">Projects go to</span>
+        <ProjectWhere variant="quiet" label="Projects go to" :model-value="where" @update:model-value="ws.setWhere" />
+      </div>
 
       <ul class="actions" aria-label="Start">
         <li v-for="a in actions" :key="a.id">
@@ -325,6 +335,19 @@ onBeforeUnmount(() => {
   font-size: var(--text-md);
   color: var(--fg-muted);
 }
+
+/* ---------- where ---------- */
+.hub__where {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: calc(var(--space-2) * -1) 0 var(--space-2);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+  color: var(--fg-subtle);
+}
+.hub__where > span { flex: none; }
 
 /* ---------- shared row ---------- */
 ul { list-style: none; margin: 0; padding: 0; }

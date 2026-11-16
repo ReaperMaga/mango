@@ -146,6 +146,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
         >
           <template v-for="(it, i) in items" :key="i">
             <div v-if="it.divider" class="menu__sep" role="separator" />
+            <div v-if="it.group" class="menu__group" role="presentation">{{ it.group }}</div>
             <button
               type="button"
               class="menu__item"
@@ -192,6 +193,16 @@ defineExpose({ show: () => show(), showAt, close, toggle })
   font-size: var(--text-sm);
 }
 .menu__sep { height: 1px; margin: var(--space-1) var(--space-2); background: var(--line-soft); }
+.menu__group {
+  padding: var(--space-2) var(--space-2) 2px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.menu__sep + .menu__group { padding-top: var(--space-1); }
 .menu__item {
   display: flex;
   align-items: center;
