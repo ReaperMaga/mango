@@ -626,6 +626,12 @@ export interface EnvRemote { hostId: string; instance: string }
 /** What `env_login` can sign in to inside an instance (each CLI's own flow, in a terminal). */
 export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'tailscale'
 
+/** One chat as saved in the chat history (`chats_save`): the chat itself is JSON. */
+export interface ChatRow { id: string; projectPath: string; updatedAt: number; data: string }
+
+/** The saved chat history (`chats_load`): every chat's JSON, and the layout's (null before the first save). */
+export interface ChatSnapshot { threads: string[]; ui: string | null }
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -767,6 +773,10 @@ export interface Commands {
    * files are read (checked by their bytes, not their name), up to 25 MB.
    */
   chat_image: [{ path: string; base: string | null }, ChatImage]
+  /** Every saved chat and the layout, from the chat history database. */
+  chats_load: [Record<string, never>, ChatSnapshot]
+  /** Save the chats that changed and delete the removed ones, in one transaction; `ui` only when it changed. */
+  chats_save: [{ upsert: ChatRow[]; remove: string[]; ui: string | null }, void]
 
   /*
    * The browser. Each browser is a native webview, its own label `browser-<id>` (`id`: letters,

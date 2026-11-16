@@ -67,7 +67,7 @@ app/
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
+                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -80,6 +80,7 @@ src-tauri/src/
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
+  chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
@@ -135,13 +136,22 @@ scripts/try-agent.ts run an adapter against the real CLI
   Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`). The `git_*`, `fs_*` and `gh_*`
   commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
   repository is read from the remotes there); anything else that touches the local disk must skip them (`isEnvPath`).
+- Remote round trips are the cost to watch (a fresh SSH connection is ~1 s on a distant server). Short captured commands
+  share one background connection per host (`ssh::batch_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
+  terminals, agents and tunnels keep their own. Git reads that would run one after another go in one call (`git::run_all`),
+  and reads skip the login shell (`EnvAt::run_plain`, which falls back to it when a tool is missing); anything that may run
+  hooks keeps it. Long commands and the connection check (`ssh::run_alone`) use their own connection. Measure with the ignored
+  `files::tests::remote_timing` test.
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State
 - Chat statuses are defined in `types/chat.ts` (`ThreadStatus`, `displayStatus`): Idle, Working, Settled,
   Archived, plus "Needs you" and "Failed" which only a run can set. While a run is active it owns the status.
-- Threads, tabs and prefs persist to localStorage (`threads.ts`, `workspace.ts`). Loading must tolerate data
-  written by older builds (`normalizeLoaded`).
+- Chats and their layout persist to a SQLite file in the app data folder (`chats.rs`, `utils/chatHistory.ts`):
+  one row per chat holding its JSON, saved debounced and incrementally. `persist(id)` marks one chat changed,
+  `persist()` compares them all (and is the only way deletions reach the database), `persistLayout()` is tabs and
+  panes only; mutate a chat without one of them and the change is not saved. Prefs persist to localStorage
+  (`workspace.ts`). Loading must tolerate data written by older builds (`normalizeLoaded`).
 - Git is slow and external: all git state goes through `stores/git.ts`, which refreshes after every action.
 - A chat may work in its own linked git worktree (`Thread.worktree`, `utils/worktrees.ts`). Anything that acts on
   "the folder the user is looking at" (Changes, Files, branch, new terminal) uses `threads.workdir`, not

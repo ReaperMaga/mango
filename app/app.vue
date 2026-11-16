@@ -12,7 +12,7 @@ const updater = useUpdater()
 const ready = ref(false)
 
 onMounted(async () => {
-  threads.load()
+  await threads.load()
   await ws.init()
   ready.value = true
   updater.start()

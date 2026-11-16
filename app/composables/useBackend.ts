@@ -106,6 +106,8 @@ export const appWindow = {
 /* Browser mock                                                        */
 /* ------------------------------------------------------------------ */
 
+const MOCK_CHATS = 'mango.preview.chats'
+
 const mock = (() => {
   const listeners = new Map<string, Set<(p: unknown) => void>>()
   const emit = (event: string, payload: unknown) => listeners.get(event)?.forEach(fn => fn(payload))
@@ -237,6 +239,19 @@ const mock = (() => {
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
       case 'recent_projects': return [...recent]
+      // The preview keeps chats in localStorage, under a key of its own (the app's is the old one it migrates from).
+      case 'chats_load': {
+        const raw = JSON.parse(localStorage.getItem(MOCK_CHATS) || 'null') ?? {}
+        return { threads: Object.values(raw.threads ?? {}), ui: raw.ui ?? null }
+      }
+      case 'chats_save': {
+        const raw = JSON.parse(localStorage.getItem(MOCK_CHATS) || 'null') ?? {}
+        const threads: Record<string, string> = raw.threads ?? {}
+        for (const r of args.upsert) threads[r.id] = r.data
+        for (const id of args.remove) delete threads[id]
+        localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
+        return
+      }
       case 'open_project': {
         const existing = recent.find(r => r.path === args.path)
         return remember({ ...(existing ?? { path: args.path, name: basename(args.path), isGit: true, branch: 'main' }), lastOpened: Date.now() })

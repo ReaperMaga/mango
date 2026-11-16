@@ -6,6 +6,7 @@ mod bin;
 mod browser;
 mod browser_mcp;
 mod browser_remote;
+mod chats;
 mod envs;
 mod files;
 mod git;
@@ -50,6 +51,7 @@ pub fn run() {
         .manage(envs::remote::DesktopState::default())
         .manage(envs::join::JoinLinkState::default())
         .manage(browser::BrowserState::default())
+        .manage(chats::ChatsState::default())
         .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
@@ -81,6 +83,8 @@ pub fn run() {
             attachments::attachment_import,
             attachments::attachment_read,
             images::chat_image,
+            chats::chats_load,
+            chats::chats_save,
             auth::agent_auth_status,
             auth::agent_logout,
             setup::setup_check,

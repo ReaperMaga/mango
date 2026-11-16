@@ -337,7 +337,7 @@ printf 'saved %s\n' "$m"
     fn run(env: &EnvAt, script: &str, args: &[&str], stdin: Option<Vec<u8>>, cap: usize) -> Result<Output, String> {
         let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
         argv.extend(args.iter().map(|a| a.to_string()));
-        env.run(&[], &argv, stdin, cap, LOCAL_TIMEOUT)
+        env.run_plain(&[], &argv, stdin, cap, LOCAL_TIMEOUT)
     }
 
     /// The script's own output, after [`MARK`].
@@ -890,5 +890,53 @@ mod tests {
             assert!(code == Some(14) || code == Some(0));
             fs::remove_dir_all(&dir).ok();
         }
+    }
+
+    /// Times the remote Changes and Files reads against a real joined environment, the way a
+    /// poll does them: `MANGO_SSH_BENCH=user@host`, with `MANGO_SSH_BENCH_PORT`,
+    /// `MANGO_SSH_BENCH_KEY` (the key; its pinned host key in `<key>.known_hosts`) and
+    /// `MANGO_SSH_BENCH_DIR` (a git work tree there, with a changed file `a.txt`).
+    /// `cargo test --lib remote_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn remote_timing() {
+        use crate::envs::{EnvDirect, EnvHost};
+        use crate::git::{At, EnvAt, LOCAL_TIMEOUT as LOCAL};
+        use std::time::Instant;
+        let var = |k: &str| std::env::var(k).unwrap_or_else(|_| panic!("set {k}"));
+        let host = EnvHost {
+            id: "bench".into(),
+            name: "Bench".into(),
+            ssh: var("MANGO_SSH_BENCH"),
+            port: std::env::var("MANGO_SSH_BENCH_PORT").ok().and_then(|p| p.parse().ok()),
+            identity_file: Some(var("MANGO_SSH_BENCH_KEY")),
+            incus_remote: None,
+            tailscale: None,
+            public_address: None,
+            direct: Some(EnvDirect {
+                instance: "bench".into(),
+                host_key: String::new(),
+                shared_from: String::new(),
+                share_id: String::new(),
+                expires_at: None,
+            }),
+        };
+        let env = EnvAt { host, instance: "bench".into(), dir: var("MANGO_SSH_BENCH_DIR") };
+        let at = At::Env(Box::new(env.clone()));
+        let time = |what: &str, f: &dyn Fn() -> Result<(), String>| {
+            let mut runs = Vec::new();
+            for _ in 0..5 {
+                let t = Instant::now();
+                f().unwrap_or_else(|e| panic!("{what}: {e}"));
+                runs.push(t.elapsed().as_millis());
+            }
+            println!("{what:<16} first {:>5} ms, then {:?} ms", runs[0], &runs[1..]);
+        };
+        time("ssh true", &|| env.run_plain(&[], &["true".into()], None, 1 << 20, LOCAL).map(|_| ()));
+        time("git status", &|| git::status_of(&at).map(|s| assert!(s.is_repo)));
+        time("git diff", &|| git::diff_of(&at, "a.txt", false).map(|d| assert!(!d.is_empty())));
+        time("git log", &|| git::log(&at, 50).map(|_| ()));
+        time("git branches", &|| git::branches(&at).map(|_| ()));
+        time("files list", &|| remote::list_dir(&env, "").map(|_| ()));
     }
 }
