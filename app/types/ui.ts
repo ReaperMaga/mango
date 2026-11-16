@@ -9,6 +9,8 @@ export interface MenuItem {
   danger?: boolean
   /** renders a divider before this item */
   divider?: boolean
+  /** a small heading before this item, starting a group (e.g. a server's name over its environments) */
+  group?: string
   /** small muted text on the right (e.g. a shortcut) */
   kbd?: string
   onSelect?: () => void

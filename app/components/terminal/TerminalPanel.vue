@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { ChevronDown, Maximize2, Minimize2, Plus, RefreshCw, Settings, SquareTerminal, X } from 'lucide-vue-next'
+import { ChevronDown, Maximize2, Minimize2, Plus, RefreshCw, Server, Settings, SquareTerminal, X } from 'lucide-vue-next'
 import type { MenuItem } from '~/types/ui'
-import { useWorkspace } from '~/stores/workspace'
+import { useWorkspace, type TerminalTab } from '~/stores/workspace'
+import { envPath, isEnvPath, parseEnvPath } from '~/utils/envPath'
+import { whereItems } from '~/composables/usePlace'
+import { refreshEnvs } from '~/composables/envProjects'
+import { useEnvironments } from '~/stores/environments'
 
 /**
  * Docked terminal panel at the bottom of the main column.
@@ -10,6 +14,13 @@ import { useWorkspace } from '~/stores/workspace'
 const props = defineProps<{ container: HTMLElement | null }>()
 
 const ws = useWorkspace()
+
+/** Hover text: the shell and folder, or for a shell in a remote environment, where it runs. */
+function tabTitle(tab: TerminalTab) {
+  const place = remotePlace(tab.cwd)
+  const where = place ? `Shell in ${place.where} — ${place.dir}` : [tab.shell, tab.cwd ?? tab.title].filter(Boolean).join(' — ')
+  return tab.exited ? `${where} — (exited)` : where
+}
 
 const DEFAULT_H = 0.34
 const TALL_H = 0.7
@@ -123,17 +134,47 @@ onBeforeUnmount(() => {
   if (dragging.value) document.body.style.cursor = ''
 })
 
-/** Shells to open a terminal with: every one found on this machine, plus the way to settings. */
+/** The active project's environment, when it is remote: what a plain "new terminal" opens. */
+const projectEnv = computed(() => parseEnvPath(ws.activeProjectPath))
+
+/** "+" opens a shell where the project runs. */
+const newLabel = computed(() => projectEnv.value
+  ? `New shell in ${projectEnv.value.instance}`
+  : ws.defaultTerminalProfile ? `New ${ws.defaultTerminalProfile.name} terminal` : 'New terminal')
+
+/**
+ * Where a new terminal can run: the project's environment first (when remote), the shells found on this
+ * machine, then every environment (a shell in its agent's home), and the way to settings.
+ */
 const profileItems = computed<MenuItem[]>(() => {
   const fallback = ws.defaultTerminalProfile
-  const items: MenuItem[] = ws.terminalProfiles.map(p => ({
+  const items: MenuItem[] = []
+  const env = projectEnv.value
+  if (env) {
+    items.push({
+      label: `Shell in ${env.instance}`,
+      hint: env.dir,
+      icon: Server,
+      kbd: 'Default',
+      onSelect: () => ws.newTerminal(),
+    })
+  }
+  const local: MenuItem[] = ws.terminalProfiles.map((p, i) => ({
+    ...(i === 0 && env ? { group: 'This computer', divider: true } : {}),
     label: p.name,
     hint: p.path,
     icon: SquareTerminal,
-    kbd: p.id === fallback?.id ? 'Default' : undefined,
+    kbd: !env && p.id === fallback?.id ? 'Default' : undefined,
     onSelect: () => ws.newTerminal(undefined, p.id),
   }))
-  if (!items.length) items.push({ label: ws.terminalProfilesLoading ? 'Looking for shells…' : 'No shells found', disabled: true })
+  if (!local.length) local.push({ label: ws.terminalProfilesLoading ? 'Looking for shells…' : 'No shells found', disabled: true, divider: !!env })
+  items.push(...local)
+
+  // Every environment, grouped by server; the last item of whereItems is "Manage environments…".
+  const envItems = whereItems(null, (where) => {
+    if (where) ws.newTerminal(envPath({ ...where, dir: '/home/agent' }))
+  }, () => useEnvironments().openView())
+  items.push(...envItems.slice(1, -1))
   items.push(
     { label: 'Look for shells again', icon: RefreshCw, divider: true, onSelect: () => ws.loadTerminalProfiles() },
     { label: 'Terminal settings…', icon: Settings, onSelect: () => ws.openSettings('terminal') },
@@ -181,7 +222,7 @@ const profileItems = computed<MenuItem[]>(() => {
           :data-tab-id="tab.id"
           :aria-selected="tab.id === ws.activeTerminalId"
           :tabindex="tab.id === ws.activeTerminalId ? 0 : -1"
-          :title="[tab.shell, tab.cwd ?? tab.title, tab.exited ? '(exited)' : ''].filter(Boolean).join(' — ')"
+          :title="tabTitle(tab)"
           @click="activate(tab.id)"
           @mousedown.middle.prevent
           @auxclick.middle.prevent="ws.closeTerminal(tab.id)"
@@ -189,7 +230,7 @@ const profileItems = computed<MenuItem[]>(() => {
           @keydown.space.prevent="activate(tab.id)"
           @keydown="onTabKey($event, i)"
         >
-          <SquareTerminal class="term-tab__icon" aria-hidden="true" />
+          <component :is="isEnvPath(tab.cwd) ? Server : SquareTerminal" class="term-tab__icon" aria-hidden="true" />
           <span class="term-tab__title">{{ tab.title }}</span>
           <span v-if="tab.shell" class="term-tab__shell">{{ tab.shell }}</span>
           <button
@@ -204,7 +245,7 @@ const profileItems = computed<MenuItem[]>(() => {
           </button>
         </div>
         <div class="terminal-panel__new">
-          <UiIconButton :label="ws.defaultTerminalProfile ? `New ${ws.defaultTerminalProfile.name} terminal` : 'New terminal'" size="sm" @click="ws.newTerminal()">
+          <UiIconButton :label="newLabel" size="sm" @click="ws.newTerminal()">
             <Plus />
           </UiIconButton>
           <UiMenu :items="profileItems" placement="bottom-start" :width="280" label="New terminal with…">
@@ -213,11 +254,11 @@ const profileItems = computed<MenuItem[]>(() => {
                 type="button"
                 class="terminal-panel__pick"
                 :class="{ 'is-open': open }"
-                aria-label="Choose a shell for a new terminal"
-                :title="open ? undefined : 'Choose a shell'"
+                aria-label="Choose where a new terminal runs"
+                :title="open ? undefined : 'Choose a shell or an environment'"
                 aria-haspopup="menu"
                 :aria-expanded="open"
-                @click="toggle"
+                @click="() => { if (!open) refreshEnvs({ once: true }); toggle() }"
               >
                 <ChevronDown />
               </button>

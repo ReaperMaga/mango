@@ -5,6 +5,7 @@ import { useThreads } from '~/stores/threads'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { disposeEditorModel, editorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
+import { isEnvPath } from '~/utils/envPath'
 
 /**
  * The Files view and the editor tabs it opens. The tree is read one folder at
@@ -94,6 +95,8 @@ export const useFiles = defineStore('files', {
 
     /** Read one folder. `quiet` keeps the old entries on screen while it reloads. */
     async loadDir(projectPath: string, dir: string, quiet = false) {
+      // A remote project's folders are not on this computer (the Files view says so instead).
+      if (isEnvPath(projectPath)) return
       const tree = this.treeOf(projectPath)
       if (!tree.dirs[dir]) tree.dirs[dir] = { entries: null, loading: false, error: null, truncated: false }
       const state = tree.dirs[dir]!
@@ -153,6 +156,7 @@ export const useFiles = defineStore('files', {
 
     /** Re-read what is on screen: open folders and open files. After focus, an agent's turn, a git action. */
     async refresh(projectPath: string) {
+      if (isEnvPath(projectPath)) return
       const tree = this.trees[projectPath]
       if (tree) {
         const dirs = ['', ...tree.expanded].filter(d => tree.dirs[d]?.entries)
@@ -170,6 +174,7 @@ export const useFiles = defineStore('files', {
      * project's preview tab; `pin` opens a tab that stays.
      */
     async openFile(projectPath: string, file: string, pin = false) {
+      if (isEnvPath(projectPath)) return
       const threads = useThreads()
       const id = fileTabId(projectPath, file)
       this.treeOf(projectPath).selected = file

@@ -3,6 +3,7 @@ import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
 import { pickFolder } from '~/composables/useBackend'
+import { projectWhere } from '~/composables/envProjects'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
 export const isMod = (e: KeyboardEvent | MouseEvent) =>
@@ -10,7 +11,21 @@ export const isMod = (e: KeyboardEvent | MouseEvent) =>
 
 export const modLabel = () => (/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl')
 
+/**
+ * Open folder: where the user last chose (`ws.where`). On this computer that is the system's
+ * folder picker; in an environment, Mango's own picker that browses the folders there.
+ */
 export async function openFolderFlow() {
+  const ws = useWorkspace()
+  if (projectWhere()) {
+    ws.dialog = 'open-env'
+    return
+  }
+  await openLocalFolder()
+}
+
+/** The system's folder picker, then open what was picked. */
+export async function openLocalFolder() {
   const ws = useWorkspace()
   const path = await pickFolder('Open folder')
   if (path) await ws.openProject(path)
@@ -24,6 +39,7 @@ export async function openFolderFlow() {
  *   Mod+Shift+G  changes panel  Mod+,  settings
  *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
  *   Mod+Shift+U  usage limits   Mod+Shift+P  pull requests panel
+ *   Mod+Shift+H  environment panel (where the project runs)
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -57,6 +73,7 @@ export function useShortcuts() {
     if (k === 'g' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleGit(); return }
     if (k === 'e' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleFiles(); return }
     if (k === 'p' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleLinks(); return }
+    if (k === 'h' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleEnv(); return }
     if (k === 's' && !e.shiftKey) {
       // Never the browser's "save page"; only a file tab has something to save.
       e.preventDefault()

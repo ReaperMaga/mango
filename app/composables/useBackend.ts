@@ -4,6 +4,8 @@ import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhMerge } from '~/composables/mockGithub'
+import { createMockEnvs } from '~/composables/mockEnvs'
+import { isEnvPath } from '~/utils/envPath'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -18,7 +20,24 @@ type Args<K extends keyof Commands> = Commands[K][0]
 type Result<K extends keyof Commands> = Commands[K][1]
 type Unlisten = () => void
 
+/**
+ * Commands that read or change this computer's disk (or run in a local folder). A remote
+ * project's path (`env://…`, see utils/envPath.ts) is not a folder here: they refuse it
+ * before it reaches the backend. Callers check `isEnvPath` first; this is the safety net.
+ */
+const LOCAL_ONLY = /^(git_|fs_|gh_)|^(open_project|forget_project|pty_spawn)$/
+
+function refuseRemote(cmd: string, args: unknown): Error | null {
+  if (!LOCAL_ONLY.test(cmd) || !args || typeof args !== 'object') return null
+  const a = args as Record<string, unknown>
+  return [a.path, a.root, a.cwd].some(v => typeof v === 'string' && isEnvPath(v))
+    ? new Error('Not available for remote environments yet.')
+    : null
+}
+
 export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Promise<Result<K>> {
+  const refused = refuseRemote(cmd, args)
+  if (refused) throw refused
   if (isTauri()) {
     const { invoke } = await import('@tauri-apps/api/core')
     return invoke<Result<K>>(cmd, (args ?? {}) as Record<string, unknown>)
@@ -106,9 +125,17 @@ const mock = (() => {
   const basename = (p: string) => p.replace(/\/+$/, '').split('/').pop() || p
 
   /* A tiny fake shell so the terminal panel has something to talk to. */
-  interface FakePty { cwd: string; line: string }
+  interface FakePty {
+    cwd: string
+    line: string
+    /** A shell inside a remote environment: its prompt's `user@instance`. */
+    remote?: string
+  }
   const ptys = new Map<string, FakePty>()
-  const prompt = (p: FakePty) => `\x1b[32m${basename(p.cwd)}\x1b[0m \x1b[33m❯\x1b[0m `
+  const newPtyId = () => `pty-${Math.random().toString(36).slice(2, 8)}`
+  const prompt = (p: FakePty) => (p.remote
+    ? `\x1b[32m${p.remote}\x1b[0m:\x1b[34m${p.cwd.replace(/^\/home\/agent(?=\/|$)/, '~')}\x1b[0m$ `
+    : `\x1b[32m${basename(p.cwd)}\x1b[0m \x1b[33m❯\x1b[0m `)
   const runLine = (id: string, p: FakePty, line: string) => {
     const out = (s: string) => emit('pty://data', { id, data: s })
     const [cmd, ...rest] = line.trim().split(/\s+/)
@@ -122,7 +149,9 @@ const mock = (() => {
       case 'clear': out('\x1b[2J\x1b[H'); break
       case 'git': out('On branch main\r\nnothing to commit, working tree clean\r\n'); break
       case 'exit': emit('pty://exit', { id, code: 0 }); ptys.delete(id); return
-      default: out(`\x1b[2mbrowser preview: \x1b[0m${cmd}\x1b[2m runs for real inside the Mango app\x1b[0m\r\n`)
+      default: out(p.remote
+        ? `\x1b[2msimulated: \x1b[0m${cmd}\x1b[2m runs inside the instance in the Mango app\x1b[0m\r\n`
+        : `\x1b[2mbrowser preview: \x1b[0m${cmd}\x1b[2m runs for real inside the Mango app\x1b[0m\r\n`)
     }
     out(prompt(p))
   }
@@ -189,6 +218,19 @@ const mock = (() => {
     return { id, name: clean, path, mime, size, kind: attachmentKind(mime) }
   }
 
+  /* Remote environments: made-up servers and instances (mockEnvs.ts); their shells are fake ptys too. */
+  const envs = createMockEnvs({
+    emit,
+    newPty: newPtyId,
+    openShell({ cwd, label, banner }) {
+      const id = newPtyId()
+      const p: FakePty = { cwd, line: '', remote: label }
+      ptys.set(id, p)
+      setTimeout(() => emit('pty://data', { id, data: `${banner}\r\n${prompt(p)}` }), 30)
+      return id
+    },
+  })
+
   async function call(cmd: string, args: any): Promise<any> {
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
@@ -214,7 +256,7 @@ const mock = (() => {
         id: t.id as AgentInfo['id'], name: t.name, installed: t.installed, version: t.version, path: t.path,
       })) satisfies AgentInfo[]
       case 'pty_spawn': {
-        const id = `pty-${Math.random().toString(36).slice(2, 8)}`
+        const id = newPtyId()
         const p: FakePty = { cwd: args.cwd || home, line: '' }
         ptys.set(id, p)
         setTimeout(() => emit('pty://data', { id, data: `\x1b[2mMango browser preview — a real login shell runs here inside the desktop app.\x1b[0m\r\n${prompt(p)}` }), 30)
@@ -247,10 +289,11 @@ const mock = (() => {
       case 'agent_logout': return
       case 'setup_check': return setupTools.map(t => ({ ...t }))
       case 'setup_install': {
-        const id = `pty-${Math.random().toString(36).slice(2, 8)}`
+        const id = newPtyId()
         fakeInstall(id, args.tool)
         return id
       }
+      // Local or in a remote environment (`remote`), the preview has no CLI: runAgentTurn simulates instead.
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': return
       case 'update_check': return {
@@ -289,6 +332,7 @@ const mock = (() => {
     }
     if (cmd.startsWith('git_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
+    if (cmd.startsWith('env_')) return envs(cmd, args)
     throw new Error(`mock: unknown command ${cmd}`)
   }
 

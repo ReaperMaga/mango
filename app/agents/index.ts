@@ -4,6 +4,7 @@ import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
 import { forAgent, makeThumb } from '~/utils/attachments'
+import { parseEnvPath } from '~/utils/envPath'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -86,10 +87,22 @@ function ensureListening() {
   return listening
 }
 
-function spawnFor(agent: AgentId, cwd: string): SpawnFn {
+/**
+ * Where the agent's CLI runs for a project: `cwd` is the folder the adapter sees. A remote
+ * project (`env://…`) runs inside its instance, in the folder there.
+ */
+function placeOf(projectPath: string) {
+  const loc = parseEnvPath(projectPath)
+  return loc
+    ? { cwd: loc.dir, remote: { hostId: loc.hostId, instance: loc.instance } }
+    : { cwd: projectPath, remote: null }
+}
+
+function spawnFor(agent: AgentId, projectPath: string): SpawnFn {
+  const { cwd, remote } = placeOf(projectPath)
   return async (args, h, env) => {
     await ensureListening()
-    const id = await call('agent_spawn', { agent, args, cwd, env: env ?? null })
+    const id = await call('agent_spawn', { agent, args, cwd, env: env ?? null, ...(remote ? { remote } : {}) })
     handlers.set(id, h)
     for (const deliver of backlog.get(id) ?? []) deliver(h)
     backlog.delete(id)
@@ -108,7 +121,8 @@ function spawnFor(agent: AgentId, cwd: string): SpawnFn {
 export async function listAgentModels(agent: AgentId, cwd: string): Promise<AgentModel[] | null> {
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
-  return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
+  // The list is kept per agent, not per project: ask the CLI on this computer, also for a remote project.
+  return adapter.listModels ? adapter.listModels(spawnFor(agent, parseEnvPath(cwd) ? '' : cwd)) : null
 }
 
 /**
@@ -118,7 +132,7 @@ export async function listAgentModels(agent: AgentId, cwd: string): Promise<Agen
 export async function listAgentCommands(agent: AgentId, cwd: string): Promise<AgentCommand[] | null> {
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
-  return adapter.listCommands ? adapter.listCommands(spawnFor(agent, cwd), cwd) : null
+  return adapter.listCommands ? adapter.listCommands(spawnFor(agent, cwd), placeOf(cwd).cwd) : null
 }
 
 /**
@@ -143,8 +157,10 @@ const MAX_TOOL_IMAGES = 8
  * Keeps the images a tool produced: the bytes go to the attachment store (so the chat
  * history holds only a path and a small preview), then they appear on the tool's row.
  */
-async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }>, images: ToolImage[]) {
+async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }>, images: ToolImage[], remote = false) {
   for (const img of images) {
+    // A file the CLI saved in a remote environment is not on this computer's disk.
+    if (remote && !img.data) continue
     if ((part.images?.length ?? 0) >= MAX_TOOL_IMAGES) return
     try {
       let info, data: string
@@ -202,6 +218,20 @@ function settleParts(msgs: Message[], status: 'done' | 'error' | 'stopped') {
 
 const TASK_END_SUMMARY = { done: 'finished', error: 'failed', stopped: 'stopped' } as const
 
+/**
+ * What a run gets for a message and its attachments. A `remote` run (the CLI is in a remote
+ * environment) cannot read this computer's disk: pictures go inline, every other file (and a
+ * picture too large to send inline) stays behind and is listed in `dropped`.
+ */
+async function agentInput(text: string, files: Attachment[], remote: boolean) {
+  const read = (path: string) => call('attachment_read', { path })
+  if (!files.length) return { prompt: text, images: [], readDirs: [] as string[], dropped: [] as Attachment[] }
+  if (!remote) return { ...(await forAgent(text, files, read)), dropped: [] as Attachment[] }
+  const { images } = await forAgent(text, files.filter(a => a.kind === 'image'), read)
+  const sent = new Set(images.map(i => i.path))
+  return { prompt: text.trim(), images, readDirs: [] as string[], dropped: files.filter(a => !sent.has(a.path)) }
+}
+
 /** `attachments`: files sent with `text`, already in the attachment store. */
 export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
@@ -219,6 +249,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   store._setStatus(threadId, 'running')
 
   const main: Target = { threadId, msgs: [first], msg: first }
+  const place = placeOf(thread.projectPath)
   /** Sub-agents' chats, by the id of the tool call that started each. */
   const subs = new Map<string, Target>()
   const targetFor = (agent: string | undefined) => (agent ? subs.get(agent) : main)
@@ -295,7 +326,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
-        if (e.images?.length) void keepToolImages(store, part, e.images)
+        if (e.images?.length) void keepToolImages(store, part, e.images, !!place.remote)
         break
       }
       case 'tool-end': {
@@ -306,7 +337,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
-        if (e.images?.length) void keepToolImages(store, part, e.images)
+        if (e.images?.length) void keepToolImages(store, part, e.images, !!place.remote)
         // `gh pr create` and the like: the new pull request or issue belongs to this chat.
         store._linkCreated(to.threadId, part)
         store.persist()
@@ -400,13 +431,27 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     store._touch(threadId)
   }
 
+  /** Tell the user which files stayed behind (a remote run cannot read this computer's disk). */
+  const noteDropped = (dropped: Attachment[]) => {
+    if (!dropped.length) return
+    const names = dropped.map(a => a.name).join(', ')
+    push(main, {
+      type: 'notice',
+      level: 'info',
+      text: `Not sent: ${names}. The agent runs in a remote environment and can't read files on this computer; only pictures go along. Copy files into the instance from a terminal.`,
+    })
+  }
+
   try {
     const adapter = await adapters[thread.agent]()
-    const input = attachments.length
-      ? await forAgent(text, attachments, path => call('attachment_read', { path }))
-      : { prompt: text, images: [], readDirs: [] }
+    const { dropped, ...input } = await agentInput(text, attachments, !!place.remote)
+    noteDropped(dropped)
+    if (place.remote && !input.prompt.trim() && !input.images.length) {
+      throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
+    }
     const run = adapter.run({
-      cwd: thread.projectPath,
+      cwd: place.cwd,
+      remote: !!place.remote,
       ...input,
       model: thread.model,
       mode: thread.mode,
@@ -419,15 +464,16 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       run,
       async steer(text, files) {
         if (!run.steer) return false
-        const input = files.length
-          ? await forAgent(text, files, path => call('attachment_read', { path }))
-          : { prompt: text, images: [], readDirs: [] }
+        const { dropped, ...input } = await agentInput(text, files, !!place.remote)
+        // A message with nothing that can go along waits for the next turn, which says why.
+        if (place.remote && !input.prompt.trim() && !input.images.length) return false
         if (runs.get(threadId)?.run !== run || !(await run.steer(input))) return false
         // The steered message is the last one in the chat: what the agent does next goes below it.
         if (runs.get(threadId)?.run === run) {
           store._setIdle(threadId, false)
           const next = store._pushAgentMessage(threadId)
           if (next) { main.msgs.push(next); main.msg = next }
+          noteDropped(dropped)
         }
         return true
       },

@@ -3,6 +3,7 @@ mod attachments;
 mod agents;
 mod auth;
 mod bin;
+mod envs;
 mod files;
 mod git;
 mod github;
@@ -16,12 +17,16 @@ mod updater;
 mod vcs;
 mod voice;
 
-use tauri::webview::{PermissionKind, PermissionResponse};
+use tauri::webview::{PageLoadEvent, PermissionKind, PermissionResponse};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First: a second Mango (started by a mango:// link on Windows and Linux) hands its
+        // arguments to this one (through the deep-link plugin, see `envs::join`) and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| envs::join::focus_main(app)))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -37,6 +42,18 @@ pub fn run() {
         .manage(projects::ProjectsState::default())
         .manage(updater::UpdaterState::default())
         .manage(voice::VoiceState::default())
+        .manage(envs::hosts::EnvsState::default())
+        .manage(envs::remote::DesktopState::default())
+        .manage(envs::join::JoinLinkState::default())
+        .setup(|app| {
+            envs::join::setup_deep_link(app.handle());
+            Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
+                envs::join::page_loaded(webview.app_handle());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             projects::recent_projects,
             projects::open_project,
@@ -95,6 +112,27 @@ pub fn run() {
             voice::voice_download_cancel,
             voice::voice_delete,
             voice::voice_transcribe,
+            envs::hosts::env_hosts,
+            envs::hosts::env_host_save,
+            envs::hosts::env_host_remove,
+            envs::hosts::env_probe,
+            envs::incus::env_instances,
+            envs::incus::env_instance_action,
+            envs::incus::env_create,
+            envs::server::env_server_setup,
+            envs::recipes::env_components,
+            envs::recipes::env_install,
+            envs::remote::env_shell,
+            envs::remote::env_login,
+            envs::remote::env_prepare_dir,
+            envs::remote::env_list_dir,
+            envs::remote::env_desktop_open,
+            envs::remote::env_desktop_close,
+            envs::shares::env_shares,
+            envs::shares::env_share_create,
+            envs::shares::env_share_revoke,
+            envs::join::env_join_preview,
+            envs::join::env_join,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
@@ -102,6 +140,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
+                app.state::<envs::remote::DesktopState>().kill_all();
             }
         });
 }

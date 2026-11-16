@@ -2,6 +2,8 @@
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
+import { useEnvironments } from '~/stores/environments'
+import { on } from '~/composables/useBackend'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -24,6 +26,20 @@ function onFilesChanged(e: Event) {
 }
 onMounted(() => window.addEventListener('mango:files-changed', onFilesChanged))
 onBeforeUnmount(() => window.removeEventListener('mango:files-changed', onFilesChanged))
+
+/* A `mango://join/…` link was opened: Settings > Environments, with the join dialog filled in. */
+let unlistenJoin: (() => void) | undefined
+onMounted(async () => {
+  // The backend repeats a link that started the app (the page may not have listened yet): act on each link once.
+  const seen = new Map<string, number>()
+  unlistenJoin = await on('envs://join', ({ link }) => {
+    const now = Date.now()
+    if (now - (seen.get(link) ?? -Infinity) < 15_000) return
+    seen.set(link, now)
+    useEnvironments().openJoin(link)
+  })
+})
+onBeforeUnmount(() => unlistenJoin?.())
 </script>
 
 <template>
@@ -37,6 +53,7 @@ onBeforeUnmount(() => window.removeEventListener('mango:files-changed', onFilesC
     </main>
     <ProjectNewProjectDialog />
     <ProjectCloneDialog />
+    <ProjectOpenEnvFolderDialog />
     <SetupGettingStarted />
     <UsageDialog />
     <SettingsView />

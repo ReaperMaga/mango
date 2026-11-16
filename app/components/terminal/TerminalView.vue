@@ -7,6 +7,7 @@ import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import type { PtyDataEvent, PtyExitEvent } from '~/types/ipc'
 import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
 import { cssVar, hex2, toHex } from '~/utils/cssColor'
+import { parseEnvPath } from '~/utils/envPath'
 
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
@@ -168,7 +169,11 @@ async function spawn() {
     // The tab's shell, if it is still installed; otherwise the backend's default.
     const profile = ws.terminalProfiles.find(p => p.id === props.tab.profileId)
     const command = profile ? [profile.path, ...profile.args] : null
-    const id = await call('pty_spawn', { cwd: props.tab.cwd, cols, rows, command })
+    // A remote project's terminal is a login shell inside its instance; the rest works the same (a pty id).
+    const remote = parseEnvPath(props.tab.cwd)
+    const id = remote
+      ? await call('env_shell', { hostId: remote.hostId, instance: remote.instance, cwd: remote.dir, cols, rows })
+      : await call('pty_spawn', { cwd: props.tab.cwd, cols, rows, command })
     if (disposed) {
       call('pty_kill', { id }).catch(() => {})
       return

@@ -32,6 +32,8 @@ const emit = defineEmits<{
   failed: [message: string]
   /** a sign-in link appeared in the output */
   link: [url: string]
+  /** raw output, for hosts that react to what the CLI asks (a code to paste, a key to press) */
+  output: [data: string]
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -262,6 +264,7 @@ function handleData(e: PtyDataEvent) {
   if (e.id !== ptyId) return
   term?.write(e.data)
   scanLinks(e.data)
+  emit('output', e.data)
 }
 
 function handleExit(e: PtyExitEvent) {
@@ -402,7 +405,12 @@ onBeforeUnmount(() => {
   fitAddon = null
 })
 
-defineExpose({ focus: () => term?.focus(), kill })
+/** Type into the program, as if the user had (answering a prompt for them, pasting a code). */
+function send(data: string) {
+  if (ptyId && !exited) call('pty_write', { id: ptyId, data }).catch(() => {})
+}
+
+defineExpose({ focus: () => term?.focus(), kill, send })
 </script>
 
 <template>
