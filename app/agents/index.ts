@@ -356,7 +356,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.images?.length) void keepToolImages(store, part, e.images, !!place.remote)
         // `gh pr create` and the like: the new pull request or issue belongs to this chat.
         store._linkCreated(to.threadId, part)
-        store.persist()
+        store.persist(to.threadId)
         break
       }
       case 'subagent-start': {

@@ -86,7 +86,7 @@ const agentOptions = ids.map(id => ({ value: id, label: AGENTS[id].name, icon: (
 
 function setDefault(agent: AgentId) {
   threads.defaultAgent = agent
-  threads.persist()
+  threads.persistLayout()
 }
 
 /** Say so when the chosen default can't answer yet. */
