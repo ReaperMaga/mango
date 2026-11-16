@@ -73,6 +73,10 @@ The [install page](../guide/install) links to these names for the version in `pa
 
 The workflow can also be started by hand (**Run workflow** in GitHub Actions). A manual run builds every platform and keeps the installers as workflow artifacts, without creating a release: use it to try a build before tagging.
 
+### Build cache
+
+A run for a tag can only restore caches saved on that tag or on `main`, so a release cannot reuse what the previous release compiled. `.github/workflows/rust-cache.yml` does the same release build (without installers) on `main` whenever `src-tauri/` changes, and twice a week so the cache does not expire. Both workflows use the cache key `release`; the release workflow only reads it. A release then compiles Mango itself instead of every dependency. If the cache is cold (new `Cargo.lock`, new Rust version), run **Rust cache** by hand before tagging.
+
 ## Documentation
 
 The documentation site deploys from `.github/workflows/docs.yml` on every push to `main`: it builds the site with `pnpm docs:build` and publishes it to GitHub Pages at <https://reapermaga.github.io/mango/>. GitHub Pages must be set to deploy from GitHub Actions in the repository settings.

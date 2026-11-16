@@ -129,9 +129,14 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Restores the compiled dependencies that rust-cache.yml saves on main. A run for a
+      # tag can read caches from main but not from other tags, so saving here would only
+      # fill the cache quota with entries no later release can use.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          shared-key: release
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
