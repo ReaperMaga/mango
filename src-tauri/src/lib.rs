@@ -3,6 +3,7 @@ mod attachments;
 mod agents;
 mod auth;
 mod bin;
+mod envs;
 mod files;
 mod git;
 mod github;
@@ -36,6 +37,8 @@ pub fn run() {
         .manage(projects::ProjectsState::default())
         .manage(updater::UpdaterState::default())
         .manage(voice::VoiceState::default())
+        .manage(envs::hosts::EnvsState::default())
+        .manage(envs::remote::DesktopState::default())
         .invoke_handler(tauri::generate_handler![
             projects::recent_projects,
             projects::open_project,
@@ -93,6 +96,20 @@ pub fn run() {
             voice::voice_download_cancel,
             voice::voice_delete,
             voice::voice_transcribe,
+            envs::hosts::env_hosts,
+            envs::hosts::env_host_save,
+            envs::hosts::env_host_remove,
+            envs::hosts::env_probe,
+            envs::incus::env_instances,
+            envs::incus::env_instance_action,
+            envs::incus::env_create,
+            envs::recipes::env_components,
+            envs::recipes::env_install,
+            envs::remote::env_shell,
+            envs::remote::env_login,
+            envs::remote::env_prepare_dir,
+            envs::remote::env_desktop_open,
+            envs::remote::env_desktop_close,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
@@ -100,6 +117,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
+                app.state::<envs::remote::DesktopState>().kill_all();
             }
         });
 }

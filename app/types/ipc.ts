@@ -322,6 +322,98 @@ export interface Transcript {
   duration: number
 }
 
+/* ---------- remote environments ----------
+ * Incus instances (containers and VMs) on a "master" server Mango reaches over SSH.
+ * Mango runs nothing of its own there: each action is one `ssh … incus …` call that uses
+ * the user's own SSH keys. Instances are addressed as { hostId, instance }.
+ */
+
+/** Tailscale for a server's instances: they join the tailnet with these tags. */
+export interface EnvTailscale {
+  /** e.g. ['tag:mango']; the tailnet's ACLs decide what the tags may reach. */
+  tags: string[]
+  /** A file on the master holding a Tailscale auth key. Null: interactive sign-in (the installer prints a link). */
+  authKeyFile: string | null
+}
+
+/** A master server. `id` is '' when adding one with `env_host_save`. */
+export interface EnvHost {
+  id: string
+  name: string
+  /** `user@host`, or an alias from ~/.ssh/config */
+  ssh: string
+  port: number | null
+  /** A private key on this computer; null uses the SSH defaults. */
+  identityFile: string | null
+  /** The Incus remote on the master that holds the instances (`incus remote list`); null is its default. */
+  incusRemote: string | null
+  tailscale: EnvTailscale | null
+}
+
+export interface EnvProbe {
+  /** SSH worked and `incus` answered. */
+  ok: boolean
+  incusVersion: string | null
+  /** Instance remotes the master's `incus` knows. */
+  remotes: string[]
+  error: string | null
+}
+
+export type EnvKind = 'container' | 'vm'
+export type EnvInstanceStatus = 'running' | 'stopped' | 'starting' | 'stopping' | 'frozen' | 'error' | 'unknown'
+
+export interface EnvInstance {
+  name: string
+  kind: EnvKind
+  status: EnvInstanceStatus
+  /** The image's description, e.g. "Ubuntu noble amd64 (20261101_07:42)". */
+  image: string | null
+  ipv4: string[]
+  /** Address on the tailnet, once it has joined one. */
+  tailscaleIp: string | null
+  cpus: number | null
+  /** e.g. "8GiB" */
+  memory: string | null
+  /** Unix ms */
+  createdAt: number
+}
+
+export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
+
+/** What an instance can have installed with one click (and updated the same way). */
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'desktop' | 'tailscale'
+
+export interface EnvComponent {
+  id: EnvComponentId
+  name: string
+  description: string
+  installed: boolean
+  version: string | null
+  /** Installed along with it when missing. */
+  requires: EnvComponentId[]
+}
+
+export interface EnvCreateInput {
+  hostId: string
+  name: string
+  /** e.g. 'images:ubuntu/24.04' (VMs use the '/cloud' variant automatically) */
+  image: string
+  kind: EnvKind
+  cpus: number | null
+  memoryGib: number | null
+  diskGib: number | null
+  components: EnvComponentId[]
+}
+
+/** The desktop of an instance, served by noVNC through a tunnel on this computer. */
+export interface EnvDesktop { url: string }
+
+/** Where a remote agent run happens. */
+export interface EnvRemote { hostId: string; instance: string }
+
+/** What `env_login` can sign in to inside an instance (each CLI's own flow, in a terminal). */
+export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'tailscale'
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -349,7 +441,7 @@ export interface Commands {
    * Emits `agent://stdout` / `agent://stderr` per line and `agent://exit` once.
    */
   /** `cwd` '' starts it in the home folder (for questions that need no project). */
-  agent_spawn: [{ agent: 'claude' | 'codex'; args: string[]; cwd: string; env?: Record<string, string> | null }, string]
+  agent_spawn: [{ agent: 'claude' | 'codex'; args: string[]; cwd: string; env?: Record<string, string> | null; remote?: EnvRemote | null }, string]
   /** Raw write to the process's stdin (include the trailing newline yourself). */
   agent_write: [{ id: string; data: string }, void]
   agent_close_stdin: [{ id: string }, void]
@@ -460,6 +552,33 @@ export interface Commands {
    * `language` is a Whisper code such as "en"; null detects it.
    */
   voice_transcribe: [{ model: VoiceModelId; audio: string; language: string | null }, Transcript]
+
+  /* remote environments (see EnvHost) */
+  env_hosts: [Record<string, never>, EnvHost[]]
+  /** Add (id '') or update a server; returns it with its id. */
+  env_host_save: [{ host: EnvHost }, EnvHost]
+  /** Forget a server (its instances are untouched). */
+  env_host_remove: [{ id: string }, void]
+  /** Can Mango reach it over SSH, and what does its incus know? */
+  env_probe: [{ hostId: string }, EnvProbe]
+  env_instances: [{ hostId: string }, EnvInstance[]]
+  /** 'delete' removes the instance and everything in it (the UI confirms first). */
+  env_instance_action: [{ hostId: string; instance: string; action: EnvInstanceAction }, void]
+  /** Launch an instance and install `components`, in a terminal; returns the pty id. */
+  env_create: [{ input: EnvCreateInput; cols: number; rows: number }, string]
+  /** Which components are installed, with versions (runs a probe inside the instance). */
+  env_components: [{ hostId: string; instance: string }, EnvComponent[]]
+  /** Install or update components (with what they require), in a terminal; returns the pty id. */
+  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; cols: number; rows: number }, string]
+  /** A login shell as the agent user inside the instance; returns the pty id. */
+  env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
+  /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
+  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; cols: number; rows: number }, string]
+  /** Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given); returns its absolute path. */
+  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null }, string]
+  /** Open (or reuse) a tunnel to the instance's desktop. */
+  env_desktop_open: [{ hostId: string; instance: string }, EnvDesktop]
+  env_desktop_close: [{ hostId: string; instance: string }, void]
 }
 
 /** Events emitted by the backend. */
