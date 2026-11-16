@@ -1,4 +1,4 @@
-import type { FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { ChatImage, FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
@@ -138,6 +138,17 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
     case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
   }
   throw new Error(`mock: unknown command ${cmd}`)
+}
+
+/** `chat_image` in the browser preview: only the demo project's pictures, by relative or absolute path. */
+export async function mockChatImage(path: string, base: string | null): Promise<ChatImage> {
+  await wait(40)
+  const root = base ?? ''
+  const rel = root && path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path
+  const f = root && !rel.startsWith('/') ? filesOf(root).get(clean(rel)) : undefined
+  if (!f || f.text !== null) throw new Error(`The browser preview can only show pictures from the demo project, not ${path}`)
+  const b = readBytes(root, rel)
+  return { data: b.data, mime: 'image/png', size: b.size, modifiedMs: b.modifiedMs }
 }
 
 /** Browser preview only: change a file "on disk", the way an agent would, to try the editor's conflict handling. */

@@ -2,7 +2,7 @@ import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupToo
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
-import { mockFiles } from '~/composables/mockFiles'
+import { mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhMerge } from '~/composables/mockGithub'
 
 /**
@@ -274,6 +274,7 @@ const mock = (() => {
         if (data === undefined) throw new Error('The attachment is gone from disk.')
         return data
       }
+      case 'chat_image': return mockChatImage(args.path, args.base)
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'voice_models': return voiceModels.map(m => ({ ...m }))

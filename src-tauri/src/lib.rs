@@ -6,6 +6,7 @@ mod bin;
 mod files;
 mod git;
 mod github;
+mod images;
 mod plastic;
 mod projects;
 mod pty;
@@ -56,6 +57,7 @@ pub fn run() {
             attachments::attachment_save,
             attachments::attachment_import,
             attachments::attachment_read,
+            images::chat_image,
             auth::agent_auth_status,
             auth::agent_logout,
             setup::setup_check,

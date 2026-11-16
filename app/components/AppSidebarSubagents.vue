@@ -19,6 +19,17 @@ const now = useNow()
 const children = computed(() => threads.childrenOf(props.parentId))
 const visibleIds = computed(() => new Set(threads.panes.map(p => p.threadId)))
 
+/**
+ * Where the tree lines sit. The trunk runs under the parent's dot: the chat row's dot (centre 15px)
+ * at the first level, a sub-agent row's dot (centre 35px + 16px a level) below that. The elbow
+ * stops 3px short of this level's dots (left edge 30px + 16px a level).
+ */
+const treeVars = computed(() => {
+  const trunk = props.depth === 0 ? 15 : 35 + (props.depth - 1) * 16
+  const dot = 30 + props.depth * 16
+  return { '--depth': props.depth, '--trunk': `${trunk}px`, '--elbow': `${dot - 3 - trunk}px` }
+})
+
 function open(t: Thread) {
   if (t.projectPath !== ws.activeProjectPath) ws.setActiveProject(t.projectPath)
   threads.show(t.id)
@@ -44,7 +55,7 @@ function menu(t: Thread): MenuItem[] {
 </script>
 
 <template>
-  <ul class="sbs" role="list" :style="{ '--depth': depth }">
+  <ul class="sbs" role="list" :style="treeVars">
     <li v-for="c in children" :key="c.id">
       <div
         class="sbs__row"
@@ -68,6 +79,30 @@ function menu(t: Thread): MenuItem[] {
 
 <style scoped>
 .sbs { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+/* A grid, so the context menu's empty inline anchor collapses instead of adding a line box under each row. */
+.sbs > li { position: relative; display: grid; min-width: 0; }
+
+/*
+ * Tree lines: a trunk under the parent's dot, an elbow into each child's dot. The trunk runs on
+ * past a child (and its own sub-agents) until the last sibling, which ends it with a rounded corner.
+ */
+.sbs > li::before, .sbs > li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  left: var(--trunk);
+  pointer-events: none;
+  border-left: 1px solid var(--line-strong);
+}
+.sbs > li::before {
+  top: 0;
+  height: 14px;
+  width: var(--elbow);
+  border-bottom: 1px solid var(--line-strong);
+  border-bottom-left-radius: var(--radius-sm);
+}
+/* Down past this child and across the gap to the next sibling. */
+.sbs > li:not(:last-child)::after { top: 0; bottom: -1px; }
 .sbs__row {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;
