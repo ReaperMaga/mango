@@ -1,8 +1,17 @@
 //! Instances on a master: list, create, start/stop/restart/delete.
-//! STUB: filled in by the backend work on this branch.
+//!
+//! Each action is one `ssh master incus …` call. Creating runs in a terminal
+//! the user watches: one master-side script launches the instance, waits for
+//! it (a VM's agent can take minutes), waits for its network, then installs
+//! the chosen components with the same script as `env_install` (`recipes`).
+
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tauri::{AppHandle, State};
+
+use super::{hosts, recipes, ssh, valid_image, valid_instance, EnvHost};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -39,16 +48,353 @@ pub struct EnvCreateInput {
     pub components: Vec<String>,
 }
 
+/* ---------- listing ---------- */
+
+fn status_of(s: &str) -> &'static str {
+    match s.to_ascii_lowercase().as_str() {
+        "running" | "ready" | "thawed" => "running",
+        "stopped" => "stopped",
+        "starting" => "starting",
+        "stopping" | "aborting" => "stopping",
+        "frozen" | "freezing" => "frozen",
+        "error" | "broken" => "error",
+        _ => "unknown",
+    }
+}
+
+/// `true` for 100.64.0.0/10, the range Tailscale hands out.
+fn is_tailnet(ip: &str) -> bool {
+    let mut it = ip.split('.').map(|p| p.parse::<u8>());
+    matches!((it.next(), it.next()), (Some(Ok(100)), Some(Ok(b))) if (64..=127).contains(&b))
+}
+
+/// `limits.cpu`: a count ("4") or a pinned set ("0-3,6").
+fn cpu_count(s: &str) -> Option<u32> {
+    let s = s.trim();
+    if let Ok(n) = s.parse::<u32>() {
+        return Some(n);
+    }
+    let mut n = 0u32;
+    for part in s.split(',') {
+        match part.split_once('-') {
+            Some((a, b)) => {
+                let (a, b) = (a.trim().parse::<u32>().ok()?, b.trim().parse::<u32>().ok()?);
+                n += b.checked_sub(a)? + 1;
+            }
+            None => {
+                part.trim().parse::<u32>().ok()?;
+                n += 1;
+            }
+        }
+    }
+    (n > 0).then_some(n)
+}
+
+/// RFC 3339 (`2026-11-01T07:42:10.123456789Z`, or with a `+02:00` offset) to Unix ms.
+fn rfc3339_ms(s: &str) -> Option<u64> {
+    let num = |a: usize, b: usize| s.get(a..b)?.parse::<i64>().ok();
+    let (y, mo, d) = (num(0, 4)?, num(5, 7)?, num(8, 10)?);
+    let (h, mi, sec) = (num(11, 13)?, num(14, 16)?, num(17, 19)?);
+    let mut rest = s.get(19..)?;
+    let mut ms = 0i64;
+    if let Some(frac) = rest.strip_prefix('.') {
+        let digits: String = frac.chars().take_while(|c| c.is_ascii_digit()).collect();
+        ms = format!("{digits:0<3}")[..3].parse().ok()?;
+        rest = &frac[digits.len()..];
+    }
+    let offset_min = match rest {
+        "Z" | "z" | "" => 0,
+        o if o.len() == 6 => {
+            let sign = if o.starts_with('-') { -1 } else { 1 };
+            sign * (o[1..3].parse::<i64>().ok()? * 60 + o[4..6].parse::<i64>().ok()?)
+        }
+        _ => return None,
+    };
+    // Days since 1970-01-01 (Howard Hinnant's days_from_civil).
+    let y2 = if mo <= 2 { y - 1 } else { y };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * (mo + if mo > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + h * 3600 + mi * 60 + sec - offset_min * 60;
+    u64::try_from(secs * 1000 + ms).ok()
+}
+
+fn config_str<'a>(inst: &'a Value, key: &str) -> Option<&'a str> {
+    ["expanded_config", "config"]
+        .iter()
+        .find_map(|c| inst.get(c)?.get(key)?.as_str())
+        .filter(|s| !s.is_empty())
+}
+
+/// One instance from `incus list --format json` (which includes its state).
+fn parse_instance(inst: &Value) -> Option<EnvInstance> {
+    let name = inst.get("name")?.as_str()?.to_string();
+    let kind = match inst.get("type").and_then(Value::as_str) {
+        Some("virtual-machine") => "vm",
+        _ => "container",
+    };
+    let state = inst.get("state").filter(|s| s.is_object());
+    let status = state
+        .and_then(|s| s.get("status"))
+        .or_else(|| inst.get("status"))
+        .and_then(Value::as_str)
+        .map_or("unknown", status_of);
+
+    let mut ipv4 = Vec::new();
+    let mut tailscale_ip = None;
+    if let Some(nets) = state.and_then(|s| s.get("network")).and_then(Value::as_object) {
+        let mut names: Vec<&String> = nets.keys().collect();
+        names.sort();
+        for dev in names {
+            let net = &nets[dev];
+            if dev == "lo" || net.get("type").and_then(Value::as_str) == Some("loopback") {
+                continue;
+            }
+            let addrs = net.get("addresses").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+            for a in addrs {
+                let (Some("inet"), Some(ip)) =
+                    (a.get("family").and_then(Value::as_str), a.get("address").and_then(Value::as_str))
+                else {
+                    continue;
+                };
+                if is_tailnet(ip) && tailscale_ip.is_none() {
+                    tailscale_ip = Some(ip.to_string());
+                }
+                let global = a.get("scope").and_then(Value::as_str).is_none_or(|s| s == "global");
+                if dev != "tailscale0" && global {
+                    ipv4.push(ip.to_string());
+                }
+            }
+        }
+    }
+
+    let created_at = inst
+        .get("created_at")
+        .and_then(Value::as_str)
+        .and_then(rfc3339_ms)
+        .filter(|ms| *ms > 0)
+        .or_else(|| config_str(inst, "user.mango.created")?.parse().ok())
+        .unwrap_or(0);
+
+    Some(EnvInstance {
+        name,
+        kind: kind.into(),
+        status: status.into(),
+        image: config_str(inst, "image.description").map(String::from),
+        ipv4,
+        tailscale_ip,
+        cpus: config_str(inst, "limits.cpu").and_then(cpu_count),
+        memory: config_str(inst, "limits.memory").map(String::from),
+        created_at,
+    })
+}
+
+/// `incus list --format json` to instances. Pure, for tests.
+pub(crate) fn parse_instances(json: &str) -> Result<Vec<EnvInstance>, String> {
+    let v: Value = serde_json::from_str(json).map_err(|e| format!("The server's instance list was not readable: {e}"))?;
+    let list = v.as_array().ok_or("The server's instance list was not readable.")?;
+    Ok(list.iter().filter_map(parse_instance).collect())
+}
+
 #[tauri::command]
 pub async fn env_instances(app: AppHandle, host_id: String) -> Result<Vec<EnvInstance>, String> {
-    let _ = (app, host_id);
-    Err("Not built yet".into())
+    super::blocking(move || {
+        let host = hosts::get(&app, &host_id)?;
+        let mut remote = vec!["incus".to_string(), "list".into()];
+        remote.extend(ssh::remote_prefix(&host));
+        remote.extend(["--format".into(), "json".into()]);
+        let out = ssh::run(&host, &remote, Duration::from_secs(30))?;
+        parse_instances(&out)
+    })
+    .await
+}
+
+/* ---------- start / stop / restart / delete ---------- */
+
+fn incus(host: &EnvHost, args: &[&str], secs: u64) -> Result<String, String> {
+    let mut remote = vec!["incus".to_string()];
+    remote.extend(args.iter().map(|s| s.to_string()));
+    ssh::run(host, &remote, Duration::from_secs(secs))
+}
+
+/// Errors after which forcing would not help (or the goal is already met).
+fn final_error(e: &str) -> bool {
+    let l = e.to_lowercase();
+    ["already", "not found", "not running", "isn't running", "ssh", "could not connect", "has no `incus`"]
+        .iter()
+        .any(|k| l.contains(k))
+}
+
+/// A message for a failed action, or `None` when the instance is already where it should be.
+fn action_error(host: &EnvHost, instance: &str, action: &str, e: String) -> Option<String> {
+    let l = e.to_lowercase();
+    let done = match action {
+        "start" => l.contains("already running"),
+        "stop" => l.contains("already stopped") || l.contains("not running") || l.contains("isn't running"),
+        "delete" => l.contains("not found"),
+        _ => false,
+    };
+    if done {
+        return None;
+    }
+    if l.contains("not found") {
+        return Some(format!("{instance} no longer exists on {}.", host.name));
+    }
+    match e.strip_prefix("Error: ") {
+        Some(msg) => Some(format!("Could not {action} {instance}: {msg}")),
+        None => Some(e),
+    }
+}
+
+fn act(host: &EnvHost, instance: &str, action: &str) -> Result<(), String> {
+    let t = ssh::target(host, instance);
+    let t = t.as_str();
+    let r = match action {
+        "start" => incus(host, &["start", t], 120),
+        "stop" => incus(host, &["stop", t, "--timeout", "30"], 75).or_else(|e| {
+            if final_error(&e) {
+                Err(e)
+            } else {
+                incus(host, &["stop", t, "--force"], 60)
+            }
+        }),
+        "restart" => incus(host, &["restart", t, "--timeout", "30"], 75).or_else(|e| {
+            let l = e.to_lowercase();
+            if l.contains("not running") || l.contains("isn't running") || l.contains("already stopped") {
+                incus(host, &["start", t], 120)
+            } else if final_error(&e) {
+                Err(e)
+            } else {
+                incus(host, &["restart", t, "--force"], 90)
+            }
+        }),
+        "delete" => incus(host, &["delete", "--force", t], 180),
+        other => return Err(format!("\"{other}\" is not something Mango can do to an instance.")),
+    };
+    match r {
+        Ok(_) => Ok(()),
+        Err(e) => action_error(host, instance, action, e).map_or(Ok(()), Err),
+    }
 }
 
 #[tauri::command]
 pub async fn env_instance_action(app: AppHandle, host_id: String, instance: String, action: String) -> Result<(), String> {
-    let _ = (app, host_id, instance, action);
-    Err("Not built yet".into())
+    super::blocking(move || {
+        valid_instance(&instance)?;
+        if !["start", "stop", "restart", "delete"].contains(&action.as_str()) {
+            return Err(format!("\"{action}\" is not something Mango can do to an instance."));
+        }
+        let host = hosts::get(&app, &host_id)?;
+        act(&host, &instance, &action)
+    })
+    .await
+}
+
+/* ---------- create ---------- */
+
+/// Launches `$T` (`incus launch "$@"`), waits for it to answer and reach the network,
+/// then installs (`recipes::MASTER_INSTALL`). Arguments: T SCRIPT KEY TUN, launch args.
+const CREATE: &str = r##"T=$1 SCRIPT=$2 KEY=$3 TUN=$4
+shift 4
+command -v incus >/dev/null 2>&1 || fail "this server has no incus command."
+if incus info "$T" >/dev/null 2>&1; then
+  fail "an instance called $T already exists. Pick another name."
+fi
+say "Launching $T from $1"
+incus launch "$@" || fail "incus could not launch $T (see above). If a half-made $T is left over, delete it in Mango."
+say "Waiting for $T to boot"
+start=$(date +%s)
+until incus exec "$T" -- true >/dev/null 2>&1; do
+  el=$(( $(date +%s) - start ))
+  [ "$el" -lt 300 ] || fail "$T did not answer within 5 minutes. A VM needs the incus agent, which images: images include; check it with incus console $T, then install the components from Mango."
+  echo "    still starting (${el} s)"
+  sleep 5
+done
+say "Waiting for the network in $T"
+start=$(date +%s)
+until incus exec "$T" -- sh -c 'getent hosts github.com >/dev/null 2>&1'; do
+  el=$(( $(date +%s) - start ))
+  [ "$el" -lt 120 ] || fail "$T has no working network or DNS after 2 minutes. Check its network on the server, then install the components from Mango."
+  echo "    no network yet (${el} s)"
+  sleep 3
+done
+incus exec "$T" -- sh -c 'command -v cloud-init >/dev/null 2>&1 || exit 0; echo "    letting cloud-init finish"; timeout 600 cloud-init status --wait >/dev/null 2>&1 || true'
+"##;
+
+/// Validated create input, ready to become command lines.
+#[derive(Debug, Clone, PartialEq)]
+struct CreatePlan {
+    /// `incus launch` arguments: image, target, flags.
+    launch: Vec<String>,
+    install: Option<recipes::InstallPlan>,
+}
+
+/// `images:ubuntu/24.04` -> `images:ubuntu/24.04/cloud` for VMs: the cloud variant runs
+/// cloud-init, which grows the root filesystem to the requested disk size.
+fn vm_image(image: &str) -> String {
+    match image.strip_prefix("images:") {
+        Some(alias) if alias.split('/').count() == 2 => format!("{image}/cloud"),
+        _ => image.to_string(),
+    }
+}
+
+fn create_plan(host: &EnvHost, input: &EnvCreateInput, now_ms: u64) -> Result<CreatePlan, String> {
+    let name = input.name.trim();
+    valid_instance(name)?;
+    let image = input.image.trim();
+    valid_image(image)?;
+    let vm = match input.kind.as_str() {
+        "container" => false,
+        "vm" => true,
+        other => return Err(format!("\"{other}\" is not an instance type. Pick a container or a VM.")),
+    };
+    let check = |v: Option<u32>, lo: u32, hi: u32, what: &str| match v {
+        Some(n) if !(lo..=hi).contains(&n) => Err(format!("Pick {lo} to {hi} {what}.")),
+        _ => Ok(()),
+    };
+    check(input.cpus, 1, 64, "CPUs")?;
+    check(input.memory_gib, 1, 512, "GiB of memory")?;
+    check(input.disk_gib, 4, 2048, "GiB of disk")?;
+
+    let install = if input.components.is_empty() {
+        None
+    } else {
+        Some(recipes::install_plan(host, name, &input.components)?)
+    };
+
+    let mut launch = vec![if vm { vm_image(image) } else { image.to_string() }, ssh::target(host, name)];
+    if vm {
+        launch.push("--vm".into());
+    }
+    if let Some(n) = input.cpus {
+        launch.extend(["-c".into(), format!("limits.cpu={n}")]);
+    }
+    if let Some(n) = input.memory_gib {
+        launch.extend(["-c".into(), format!("limits.memory={n}GiB")]);
+    }
+    if let Some(n) = input.disk_gib {
+        launch.extend(["-d".into(), format!("root,size={n}GiB")]);
+    }
+    launch.extend(["-c".into(), format!("user.mango.created={now_ms}")]);
+    Ok(CreatePlan { launch, install })
+}
+
+/// The remote argv (for `ssh::argv`) creating the instance.
+fn create_remote(host: &EnvHost, name: &str, plan: &CreatePlan) -> Vec<String> {
+    let script = format!(
+        "{}{CREATE}if [ -n \"$SCRIPT\" ]; then\n{}fi\nsay \"$T is ready.\"\n",
+        recipes::MASTER_PRELUDE,
+        recipes::MASTER_INSTALL
+    );
+    let mut a = vec!["sh".to_string(), "-c".into(), script, "mango-create".into()];
+    match &plan.install {
+        Some(p) => a.extend(recipes::master_install_args(&ssh::target(host, name), p)),
+        None => a.extend([ssh::target(host, name), String::new(), String::new(), String::new()]),
+    }
+    a.extend(plan.launch.iter().cloned());
+    a
 }
 
 #[tauri::command]
@@ -59,6 +405,248 @@ pub async fn env_create(
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
-    let _ = (app, state, input, cols, rows);
-    Err("Not built yet".into())
+    let host = hosts::get(&app, &input.host_id)?;
+    let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    let plan = create_plan(&host, &input, now_ms)?;
+    let argv = ssh::argv(&host, ssh::Mode::Tty, &create_remote(&host, input.name.trim(), &plan))?;
+    crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Shaped like `incus list --format json` from Incus 6.x (trimmed).
+    const LIST: &str = r#"[
+      {
+        "architecture": "x86_64",
+        "config": {
+          "image.architecture": "amd64",
+          "image.description": "Ubuntu noble amd64 (20261101_07:42)",
+          "image.os": "Ubuntu",
+          "limits.cpu": "4",
+          "limits.memory": "8GiB",
+          "user.mango.created": "1762000000000",
+          "volatile.base_image": "abc"
+        },
+        "devices": {},
+        "ephemeral": false,
+        "profiles": ["default"],
+        "stateful": false,
+        "description": "",
+        "created_at": "2026-11-01T07:42:10.123456789Z",
+        "expanded_config": {
+          "image.description": "Ubuntu noble amd64 (20261101_07:42)",
+          "limits.cpu": "4",
+          "limits.memory": "8GiB"
+        },
+        "expanded_devices": {},
+        "name": "dev",
+        "status": "Running",
+        "status_code": 103,
+        "last_used_at": "2026-11-16T09:00:00Z",
+        "location": "none",
+        "type": "container",
+        "project": "default",
+        "backups": null,
+        "state": {
+          "status": "Running",
+          "status_code": 103,
+          "disk": {},
+          "memory": {"usage": 123},
+          "network": {
+            "eth0": {
+              "addresses": [
+                {"family": "inet", "address": "10.42.0.15", "netmask": "24", "scope": "global"},
+                {"family": "inet6", "address": "fd42::15", "netmask": "64", "scope": "global"},
+                {"family": "inet6", "address": "fe80::1", "netmask": "64", "scope": "link"}
+              ],
+              "counters": {}, "hwaddr": "00:16:3e:00:00:01", "host_name": "veth1", "mtu": 1500,
+              "state": "up", "type": "broadcast"
+            },
+            "lo": {
+              "addresses": [{"family": "inet", "address": "127.0.0.1", "netmask": "8", "scope": "local"}],
+              "type": "loopback", "state": "up"
+            },
+            "tailscale0": {
+              "addresses": [
+                {"family": "inet", "address": "100.101.7.8", "netmask": "32", "scope": "global"},
+                {"family": "inet6", "address": "fd7a:115c:a1e0::1", "netmask": "128", "scope": "global"}
+              ],
+              "type": "point-to-point", "state": "up"
+            }
+          },
+          "pid": 4242,
+          "processes": 31
+        },
+        "snapshots": null
+      },
+      {
+        "config": {"image.description": "Debian bookworm amd64 (20261101_05:24)", "limits.cpu": "0-1,4"},
+        "created_at": "2026-11-02T10:00:00+01:00",
+        "expanded_config": {"image.description": "Debian bookworm amd64 (20261101_05:24)", "limits.cpu": "0-1,4"},
+        "name": "build-vm",
+        "status": "Stopped",
+        "type": "virtual-machine",
+        "state": {"status": "Stopped", "network": null}
+      },
+      {
+        "name": "odd",
+        "status": "Freezing",
+        "type": "container",
+        "created_at": "0001-01-01T00:00:00Z",
+        "config": {"user.mango.created": "1700000000000"},
+        "state": null
+      }
+    ]"#;
+
+    #[test]
+    fn parses_instances() {
+        let v = parse_instances(LIST).unwrap();
+        assert_eq!(v.len(), 3);
+        let dev = &v[0];
+        assert_eq!(dev.name, "dev");
+        assert_eq!(dev.kind, "container");
+        assert_eq!(dev.status, "running");
+        assert_eq!(dev.image.as_deref(), Some("Ubuntu noble amd64 (20261101_07:42)"));
+        assert_eq!(dev.ipv4, ["10.42.0.15"]);
+        assert_eq!(dev.tailscale_ip.as_deref(), Some("100.101.7.8"));
+        assert_eq!(dev.cpus, Some(4));
+        assert_eq!(dev.memory.as_deref(), Some("8GiB"));
+        assert_eq!(dev.created_at, 1_793_518_930_123);
+
+        let vm = &v[1];
+        assert_eq!((vm.kind.as_str(), vm.status.as_str()), ("vm", "stopped"));
+        assert!(vm.ipv4.is_empty() && vm.tailscale_ip.is_none());
+        assert_eq!(vm.cpus, Some(3));
+        assert_eq!(vm.memory, None);
+        assert_eq!(vm.created_at, 1_793_610_000_000);
+
+        let odd = &v[2];
+        assert_eq!(odd.status, "frozen");
+        assert_eq!(odd.created_at, 1_700_000_000_000);
+        assert_eq!(odd.image, None);
+
+        assert!(parse_instances("Error: nope").is_err());
+        assert!(parse_instances("[]").unwrap().is_empty());
+    }
+
+    #[test]
+    fn small_parsers() {
+        assert_eq!(rfc3339_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(rfc3339_ms("2000-03-01T00:00:00.5Z"), Some(951_868_800_500));
+        assert_eq!(rfc3339_ms("1970-01-01T01:00:00+01:00"), Some(0));
+        assert_eq!(rfc3339_ms("garbage"), None);
+        assert!(is_tailnet("100.64.0.1") && is_tailnet("100.127.255.255"));
+        assert!(!is_tailnet("100.128.0.1") && !is_tailnet("10.0.0.1") && !is_tailnet("fd7a::1"));
+        assert_eq!(cpu_count("2"), Some(2));
+        assert_eq!(cpu_count("0-3"), Some(4));
+        assert_eq!(cpu_count("x"), None);
+        assert_eq!(status_of("Running"), "running");
+        assert_eq!(status_of("Whatever"), "unknown");
+    }
+
+    fn host() -> EnvHost {
+        EnvHost {
+            id: "h".into(),
+            name: "Lab".into(),
+            ssh: "me@lab".into(),
+            port: None,
+            identity_file: None,
+            incus_remote: Some("os1".into()),
+            tailscale: None,
+        }
+    }
+
+    fn input() -> EnvCreateInput {
+        EnvCreateInput {
+            host_id: "h".into(),
+            name: "dev".into(),
+            image: "images:ubuntu/24.04".into(),
+            kind: "vm".into(),
+            cpus: Some(4),
+            memory_gib: Some(8),
+            disk_gib: Some(40),
+            components: vec!["claude".into(), "tailscale".into()],
+        }
+    }
+
+    #[test]
+    fn create_plan_and_line() {
+        let p = create_plan(&host(), &input(), 42).unwrap();
+        assert_eq!(
+            p.launch,
+            [
+                "images:ubuntu/24.04/cloud", "os1:dev", "--vm", "-c", "limits.cpu=4", "-c", "limits.memory=8GiB", "-d",
+                "root,size=40GiB", "-c", "user.mango.created=42"
+            ]
+        );
+        assert!(p.install.as_ref().unwrap().tailscale);
+        let remote = create_remote(&host(), "dev", &p);
+        assert_eq!(&remote[..2], ["sh", "-c"]);
+        assert!(remote[2].contains("incus launch \"$@\"") && remote[2].contains("incus exec \"$T\" -t -- bash -c"));
+        assert_eq!(&remote[3..5], ["mango-create", "os1:dev"]);
+        assert_eq!(remote[7], "1");
+        assert_eq!(remote[8], "images:ubuntu/24.04/cloud");
+        let l = ssh::line(&remote);
+        assert!(l.ends_with(" 1 images:ubuntu/24.04/cloud os1:dev --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=40GiB -c user.mango.created=42"), "{l}");
+
+        // A container with nothing to install: no flags it didn't ask for, empty install args.
+        let mut i = input();
+        i.kind = "container".into();
+        i.cpus = None;
+        i.memory_gib = None;
+        i.disk_gib = None;
+        i.components.clear();
+        let p = create_plan(&host(), &i, 1).unwrap();
+        assert_eq!(p.launch, ["images:ubuntu/24.04", "os1:dev", "-c", "user.mango.created=1"]);
+        assert!(p.install.is_none());
+        let remote = create_remote(&host(), "dev", &p);
+        assert_eq!(&remote[4..8], ["os1:dev", "", "", ""]);
+    }
+
+    #[test]
+    fn create_refuses_bad_input() {
+        let bad: Vec<Box<dyn Fn(&mut EnvCreateInput)>> = vec![
+            Box::new(|i| i.name = "1dev".into()),
+            Box::new(|i| i.image = "images:ubuntu 24".into()),
+            Box::new(|i| i.kind = "pod".into()),
+            Box::new(|i| i.cpus = Some(0)),
+            Box::new(|i| i.cpus = Some(65)),
+            Box::new(|i| i.memory_gib = Some(513)),
+            Box::new(|i| i.disk_gib = Some(3)),
+            Box::new(|i| i.components = vec!["docker".into()]),
+        ];
+        for f in bad {
+            let mut i = input();
+            f(&mut i);
+            assert!(create_plan(&host(), &i, 0).is_err(), "{i:?}");
+        }
+    }
+
+    #[test]
+    fn vm_images() {
+        assert_eq!(vm_image("images:debian/12"), "images:debian/12/cloud");
+        assert_eq!(vm_image("images:ubuntu/24.04/cloud"), "images:ubuntu/24.04/cloud");
+        assert_eq!(vm_image("images:ubuntu/24.04/amd64"), "images:ubuntu/24.04/amd64");
+        assert_eq!(vm_image("ubuntu:24.04"), "ubuntu:24.04");
+    }
+
+    #[test]
+    fn action_errors() {
+        let h = host();
+        assert_eq!(action_error(&h, "dev", "start", "Error: The instance is already running".into()), None);
+        assert_eq!(action_error(&h, "dev", "stop", "Error: The instance is already stopped".into()), None);
+        assert_eq!(action_error(&h, "dev", "delete", "Error: Failed checking instance exists \"os1:dev\": Instance not found".into()), None);
+        assert_eq!(
+            action_error(&h, "dev", "start", "Error: Instance not found".into()).as_deref(),
+            Some("dev no longer exists on Lab.")
+        );
+        assert_eq!(
+            action_error(&h, "dev", "start", "Error: Failed to start device \"eth0\"".into()).as_deref(),
+            Some("Could not start dev: Failed to start device \"eth0\"")
+        );
+        assert!(final_error("Could not connect to Lab over SSH."));
+        assert!(!final_error("Error: Failed shutting down instance: context deadline exceeded"));
+    }
 }
