@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, MessageSquarePlus, Settings,
-  Files, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun,
+  Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -76,6 +76,7 @@ const actions = computed<Item[]>(() => {
     { id: 'new-project', group: 'Actions', label: 'New project…', icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
     { id: 'clone', group: 'Actions', label: 'Clone repository…', icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
     { id: 'environments', group: 'Actions', label: 'Environments', detail: 'Remote containers and VMs', icon: Server, keywords: 'remote environment server ssh incus container vm instance cloud machine', run: () => useEnvironments().openView() },
+    { id: 'join-env', group: 'Actions', label: 'Join a shared environment', detail: 'With a link someone sent you', icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => useEnvironments().openJoin() },
   )
   if (inWorkspace) {
     items.push(

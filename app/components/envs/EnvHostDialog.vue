@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-vue-next'
 import { isTauri, pickFiles } from '~/composables/useBackend'
-import { sshUser, useEnvironments } from '~/stores/environments'
+import { sshHostName, sshUser, useEnvironments } from '~/stores/environments'
 import type { EnvHost } from '~/types/ipc'
 
 /**
@@ -20,18 +20,22 @@ const editing = computed(() => !!hostId.value)
 /** Opened to add a server (it may already be saved by "Save and check"). */
 const adding = ref(true)
 
+/** Renaming an environment joined from a link: its name is all that is the user's to change. */
+const direct = computed(() => (hostId.value ? envs.host(hostId.value)?.direct ?? null : null))
+
 const name = ref('')
 const ssh = ref('')
 const port = ref('')
 const identityFile = ref('')
 const incusRemote = ref('')
+const publicAddress = ref('')
 const tsOn = ref(false)
 const tsTags = ref('')
 const tsKeyFile = ref('')
 
 const touched = ref(false)
 const busy = ref<null | 'save' | 'check'>(null)
-type Field = 'name' | 'ssh' | 'port' | 'identityFile' | 'incusRemote' | 'tags' | 'authKeyFile' | 'general'
+type Field = 'name' | 'ssh' | 'port' | 'identityFile' | 'incusRemote' | 'publicAddress' | 'tags' | 'authKeyFile' | 'general'
 const serverError = ref<{ field: Field; message: string } | null>(null)
 const canBrowse = isTauri()
 
@@ -71,6 +75,7 @@ watch(open, (isOpen) => {
   port.value = h?.port ? String(h.port) : ''
   identityFile.value = h?.identityFile ?? ''
   incusRemote.value = h?.incusRemote ?? ''
+  publicAddress.value = h?.publicAddress ?? ''
   tsOn.value = !!h?.tailscale
   tsTags.value = h?.tailscale?.tags.join(' ') ?? 'tag:mango'
   tsKeyFile.value = h?.tailscale?.authKeyFile ?? ''
@@ -106,13 +111,26 @@ const keyFileError = computed(() => {
   return /^(\/|~\/)/.test(p) && !p.split('/').includes('..') ? null : 'Use a path on the server: /abs/path or ~/path.'
 })
 
-const clientError = computed(() => sshError.value ?? portError.value ?? tagsError.value ?? keyFileError.value)
+const publicError = computed(() => {
+  const a = publicAddress.value.trim()
+  if (!a) return null
+  return /^[\w.:-]+$/.test(a) && !a.startsWith('-') ? null : 'Enter a host name or an IP address, without spaces.'
+})
+/** What a share over the internet uses when no public address is set. */
+const publicPlaceholder = computed(() => (ssh.value.trim() ? sshHostName(ssh.value.trim()) : 'build-box.example.com'))
+const nameError = computed(() => (direct.value && touched.value && !name.value.trim() ? 'Give it a name.' : null))
+
+const clientError = computed(() => (direct.value
+  ? nameError.value
+  : sshError.value ?? portError.value ?? publicError.value ?? tagsError.value ?? keyFileError.value))
 
 function errorFor(field: Field): string | null {
   if (serverError.value?.field === field) return serverError.value.message
   if (!touched.value) return null
+  if (field === 'name') return nameError.value
   if (field === 'ssh') return sshError.value
   if (field === 'port') return portError.value
+  if (field === 'publicAddress') return publicError.value
   if (field === 'tags') return tagsError.value
   if (field === 'authKeyFile') return keyFileError.value
   return null
@@ -124,6 +142,7 @@ function fieldOf(message: string): Field {
   if (m.includes('ssh destination')) return 'ssh'
   if (m.includes('key file')) return 'identityFile'
   if (m.includes('incus remote')) return 'incusRemote'
+  if (m.includes('public address')) return 'publicAddress'
   if (m.includes('tailscale tag')) return 'tags'
   if (m.includes('path on the server')) return 'authKeyFile'
   if (m.includes('name')) return 'name'
@@ -133,7 +152,11 @@ function fieldOf(message: string): Field {
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 function build(): EnvHost {
+  const saved = hostId.value ? envs.host(hostId.value) : null
+  // A joined environment keeps everything from its link; only the name changes.
+  if (saved?.direct) return { ...saved, name: name.value.trim() }
   return {
+    publicAddress: publicAddress.value.trim() || null,
     id: hostId.value,
     name: name.value.trim(),
     ssh: ssh.value.trim(),
@@ -194,8 +217,22 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="adding ? 'Add server' : 'Edit server'" :width="520" @close="close">
-    <form id="env-host-form" class="hf" novalidate @submit.prevent="submit">
+  <UiDialog :open="open" :title="direct ? 'Rename' : adding ? 'Add server' : 'Edit server'" :width="direct ? 420 : 520" @close="close">
+    <form v-if="direct" id="env-host-form" class="hf" novalidate @submit.prevent="submit">
+      <UiField
+        label="Name"
+        for="hf-name"
+        :hint="`How it's listed in Mango. Shared from ${direct.sharedFrom}; the owner's name for it stays ${direct.instance}.`"
+        :error="errorFor('name')"
+      >
+        <input id="hf-name" v-model="name" class="input" type="text" :placeholder="direct.instance" autocomplete="off" spellcheck="false">
+      </UiField>
+      <p v-if="serverError?.field === 'general'" class="hf__error" role="alert">
+        <CircleAlert aria-hidden="true" />
+        <span class="selectable">{{ serverError.message }}</span>
+      </p>
+    </form>
+    <form v-else id="env-host-form" class="hf" novalidate @submit.prevent="submit">
       <p class="hf__lede">
         A Linux server you can reach with <code>ssh</code>, where you can use <code>sudo</code>. Mango installs Incus there if
         it isn't yet, and runs each action as one SSH command with your own keys; nothing of Mango's keeps running there.
@@ -269,6 +306,25 @@ function close() {
           placeholder="Default"
           autocomplete="off"
           spellcheck="false"
+        >
+      </UiField>
+
+      <UiField
+        label="Public address"
+        for="hf-public"
+        hint="Optional. Where people you share an environment with reach this server over the internet. Defaults to the SSH host."
+        :error="errorFor('publicAddress')"
+      >
+        <input
+          id="hf-public"
+          v-model="publicAddress"
+          class="input hf__mono"
+          type="text"
+          :placeholder="publicPlaceholder"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          :aria-invalid="!!errorFor('publicAddress') || undefined"
         >
       </UiField>
 
@@ -350,6 +406,7 @@ function close() {
 
     <template #footer>
       <UiButton
+        v-if="!direct"
         class="hf__check"
         :loading="busy === 'check' || probing"
         :disabled="!!busy"

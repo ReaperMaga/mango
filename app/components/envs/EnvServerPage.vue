@@ -211,6 +211,11 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
         </dd>
         <dd v-else class="sp__off">Off</dd>
       </div>
+      <div class="sp__fact">
+        <dt>Public address</dt>
+        <dd v-if="host.publicAddress"><span class="sp__mono selectable">{{ host.publicAddress }}</span>, for share links over the internet</dd>
+        <dd v-else class="sp__off">The SSH host, for share links over the internet</dd>
+      </div>
     </dl>
     <div v-if="probe && !probe.reachable" class="sp__problem">
       <p class="sp__problem-text selectable">{{ probe.error ?? 'The server did not answer.' }}</p>

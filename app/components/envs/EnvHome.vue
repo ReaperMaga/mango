@@ -1,17 +1,32 @@
 <script setup lang="ts">
-import { ChevronRight, Plus, Server, TriangleAlert } from 'lucide-vue-next'
-import { hostState, instanceKey, useEnvironments } from '~/stores/environments'
-import type { EnvInstance } from '~/types/ipc'
+import { Box, ChevronRight, Link2, Plus, Server, TriangleAlert } from 'lucide-vue-next'
+import { directState, hostState, instanceKey, shareDay, shareExpired, useEnvironments } from '~/stores/environments'
+import type { EnvHost, EnvInstance } from '~/types/ipc'
+import { useNow } from '~/utils/time'
 import EnvStatus from './EnvStatus.vue'
 
 /**
  * The first page of Settings > Environments: every server with its state and,
- * where Incus is ready, its instances. A row opens the server's or the
- * instance's page; adding a server or an environment opens its dialog.
+ * where Incus is ready, its instances; then the environments others shared with
+ * the user ("Shared with you"), each a row straight to its page. Adding a
+ * server, creating an environment or joining one with a link opens its dialog.
  */
 const envs = useEnvironments()
+const now = useNow()
 
-const stateOf = (id: string) => hostState(envs.probes[id], !!envs.probing[id])
+/** Only joined environments: they lead, and the pitch for a server of one's own follows. */
+const onlyJoined = computed(() => !envs.servers.length && envs.joined.length > 0)
+
+const stateOf = (id: string) => {
+  const h = envs.host(id)
+  return h?.direct ? directState(h, envs.probes[id], !!envs.probing[id]) : hostState(envs.probes[id], !!envs.probing[id])
+}
+/** "until 23 Nov", "access ended 15 Nov", or nothing for a share with no end. */
+const accessLine = (h: EnvHost) => {
+  const at = h.direct?.expiresAt
+  if (!at) return null
+  return shareExpired(at, now.value) ? `access ended ${shareDay(at, now.value)}` : `until ${shareDay(at, now.value)}`
+}
 const ready = (id: string) => envs.probes[id]?.ok === true
 const instancesOf = (id: string) => envs.instances[id] ?? null
 
@@ -29,19 +44,23 @@ function openSetup(id: string) {
 </script>
 
 <template>
-  <div class="eh">
+  <div class="eh" :class="{ 'eh--joined-only': onlyJoined }">
     <header class="eh__head">
       <div class="eh__intro">
         <h2 class="eh__title" data-page-title tabindex="-1">Environments</h2>
         <p class="eh__desc">
-          Containers and VMs on your own servers, reached over SSH. A project opened in one runs its chats' agent there.
+          Containers and VMs on your own servers, reached over SSH, and environments others share with you. A project opened
+          in one runs its chats' agent there.
         </p>
       </div>
-      <UiButton v-if="envs.hosts.length" size="sm" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+      <span v-if="envs.hosts.length" class="eh__head-actions">
+        <UiButton variant="ghost" size="sm" @click="envs.openJoin()"><Link2 />Join with a link</UiButton>
+        <UiButton v-if="envs.servers.length" size="sm" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+      </span>
     </header>
 
-    <!-- no servers yet -->
-    <div v-if="envs.loaded && !envs.hosts.length" class="eh__empty">
+    <!-- no servers yet (with nothing joined either, or after what was shared) -->
+    <div v-if="envs.loaded && !envs.servers.length" class="eh__empty">
       <h3 class="eh__empty-title">Run agents on your own server</h3>
       <p class="eh__empty-text">
         Add a Linux server you can reach with <code>ssh</code>. Mango installs Incus there if it isn't yet, creates
@@ -52,7 +71,11 @@ function openSetup(id: string) {
         All it needs is SSH access with your own keys, and sudo for the one-time Incus setup. Nothing of Mango's keeps
         running on the server.
       </p>
-      <UiButton variant="primary" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+      <UiButton :variant="onlyJoined ? 'secondary' : 'primary'" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+      <p v-if="!envs.hosts.length" class="eh__empty-join">
+        Have a link?
+        <button type="button" class="eh__link" @click="envs.openJoin()">Join a shared environment</button>
+      </p>
     </div>
 
     <div v-else-if="!envs.loaded" class="eh__list" aria-busy="true" aria-label="Loading servers">
@@ -61,8 +84,8 @@ function openSetup(id: string) {
       </div>
     </div>
 
-    <ul v-else class="eh__list" aria-label="Servers">
-      <li v-for="h in envs.hosts" :key="h.id" class="host">
+    <ul v-else class="eh__list" aria-label="Your servers">
+      <li v-for="h in envs.servers" :key="h.id" class="host">
         <button type="button" class="row row--host" :data-row="h.id" @click="envs.select(h.id)">
           <Server class="row__icon" aria-hidden="true" />
           <span class="row__main">
@@ -116,6 +139,38 @@ function openSetup(id: string) {
         </template>
       </li>
     </ul>
+
+    <!-- environments joined from someone's link: no server, no Incus; each is its own page -->
+    <section v-if="envs.joined.length" class="eh__shared" aria-labelledby="eh-shared">
+      <h3 id="eh-shared" class="eh__h3">
+        Shared with you
+        <span class="eh__count tabular">{{ envs.joined.length }}</span>
+      </h3>
+      <ul class="eh__list">
+        <li v-for="h in envs.joined" :key="h.id" class="host">
+          <button type="button" class="row row--host" :data-row="instanceKey(h.id, h.direct!.instance)" @click="envs.select(h.id)">
+            <Box class="row__icon" aria-hidden="true" />
+            <span class="row__main">
+              <span class="row__name">{{ h.name }}</span>
+              <span class="row__meta">
+                <span class="row__clip">from <span class="row__mono">{{ h.direct!.sharedFrom }}</span></span>
+                <template v-if="accessLine(h)">
+                  <span aria-hidden="true">·</span>
+                  <span class="row__access tabular" :class="{ 'is-ended': shareExpired(h.direct!.expiresAt, now) }">{{ accessLine(h) }}</span>
+                </template>
+              </span>
+            </span>
+            <span class="state" :class="`state--${stateOf(h.id).tone}`">
+              <span v-if="stateOf(h.id).tone === 'checking'" class="ring" aria-hidden="true" />
+              <TriangleAlert v-else-if="stateOf(h.id).tone === 'bad'" class="state__warn" aria-hidden="true" />
+              <span v-else class="state__mark" aria-hidden="true" />
+              <span class="state__word">{{ stateOf(h.id).label }}</span>
+            </span>
+            <ChevronRight class="row__go" aria-hidden="true" />
+          </button>
+        </li>
+      </ul>
+    </section>
   </div>
 </template>
 
@@ -133,7 +188,37 @@ function openSetup(id: string) {
 }
 .eh__title:focus { outline: none; }
 .eh__desc { margin: 0; max-width: 62ch; font-size: var(--text-sm); color: var(--fg-subtle); text-wrap: pretty; }
-.eh__head > :deep(.btn) { flex: none; }
+.eh__head-actions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
+
+/* Only environments others shared: they lead, the pitch for an own server follows. */
+.eh--joined-only .eh__empty { order: 2; padding-top: var(--space-3); border-top: 0; }
+.eh--joined-only .eh__shared { order: 1; padding-top: var(--space-2); }
+
+.eh__h3 {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-lg);
+  font-weight: 620;
+  letter-spacing: -0.01em;
+}
+.eh__count { font-size: var(--text-xs); font-weight: 500; color: var(--fg-faint); }
+.eh__shared { display: grid; }
+.row__access { flex: none; }
+.row__access.is-ended { font-weight: 560; color: var(--ripe-waiting-fg); }
+
+.eh__empty-join { margin: var(--space-1) 0 0; font-size: var(--text-sm); color: var(--fg-subtle); }
+.eh__link {
+  color: var(--accent-ink);
+  font-weight: 560;
+  border-radius: var(--radius-xs);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 2px;
+  transition: text-decoration-color var(--dur-fast) var(--ease-out);
+}
+.eh__link:hover { text-decoration-color: currentColor; }
 
 /* ---- no servers yet ---- */
 .eh__empty {

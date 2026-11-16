@@ -16,6 +16,9 @@ export interface RemotePlace {
 export function remotePlace(path: string | null | undefined): RemotePlace | null {
   const loc = parseEnvPath(path)
   if (!loc) return null
-  const host = useEnvironments().host(loc.hostId)?.name ?? 'a server Mango no longer knows'
+  const saved = useEnvironments().host(loc.hostId)
+  const host = saved?.name ?? 'a server Mango no longer knows'
+  // A joined environment has no server of the user's: it is known by its own name ("review, shared").
+  if (saved?.direct) return { instance: loc.instance, host, dir: loc.dir, where: `${saved.name}, shared` }
   return { instance: loc.instance, host, dir: loc.dir, where: `${loc.instance} on ${host}` }
 }

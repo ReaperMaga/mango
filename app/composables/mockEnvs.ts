@@ -1,5 +1,6 @@
 import type {
-  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvLoginTool, EnvProbe,
+  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
+  EnvProbe, EnvShare, EnvShareLink, EnvShareVia,
 } from '~/types/ipc'
 
 /**
@@ -8,6 +9,8 @@ import type {
  * get created and get things installed. Terminal-based commands play plausible output
  * into a fake terminal (the same `pty://data` / `pty://exit` events a real one sends),
  * then change the state the way the real thing would. Nothing leaves the browser.
+ * Sharing works too: a share makes a real-looking `mango://join/…` link (made-up keys), and
+ * joining one adds a direct host whose one instance is the very instance it was shared from.
  */
 
 export interface MockEnvContext {
@@ -48,6 +51,10 @@ interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp'> {
   tsIp: string | null
   /** Installed components and their versions. */
   installed: Partial<Record<EnvComponentId, string>>
+  /** Who it is shared with (keys in its agent user's authorized_keys). */
+  shares?: EnvShare[]
+  /** Its own SSH server is set up (the first share does that, slowly). */
+  sshd?: boolean
 }
 
 interface MockHost {
@@ -56,6 +63,32 @@ interface MockHost {
   /** null: Incus is not installed yet. */
   incusVersion: string | null
   os: string
+}
+
+/**
+ * What a share link carries (the same fields as the backend's `ShareToken`, src-tauri/src/envs/token.rs):
+ * `mango://join/` + base64url of this as JSON. The preview's keys are made up.
+ */
+interface ShareToken { v: 1; id: string; n: string; f: string; h: string; p: number; u: string; k: string; hk: string; e: number }
+const JOIN_PREFIX = 'mango://join/'
+
+const b64url = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+const unb64url = (s: string) => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0)))
+const fakeKey = (n: number) => b64url(Array.from({ length: n }, () => String.fromCharCode(33 + Math.floor(Math.random() * 90))).join(''))
+
+/** Read a pasted link the way the backend does: whitespace and line breaks from chat apps don't count. */
+function readLink(raw: string): ShareToken {
+  const link = String(raw ?? '').replace(/\s+/g, '')
+  if (!link) throw new Error('Paste the link you were sent.')
+  if (!link.startsWith(JOIN_PREFIX)) throw new Error('That is not a Mango share link. Share links start with mango://join/.')
+  let t: ShareToken
+  try {
+    t = JSON.parse(unb64url(link.slice(JOIN_PREFIX.length)))
+  } catch {
+    throw new Error('This link is incomplete or damaged. Copy the whole link again; it is one long line.')
+  }
+  if (t?.v !== 1 || !t.id || !t.n || !t.h || !t.k || !t.hk) throw new Error('This link is incomplete or damaged. Copy the whole link again; it is one long line.')
+  return t
 }
 
 const now = Date.now()
@@ -79,6 +112,11 @@ const hosts: MockHost[] = [
         name: 'dev', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
         addr: '10.88.0.12', tsIp: '100.101.7.33', cpus: 4, memory: '8GiB', createdAt: now - 12 * DAY,
         installed: { ...all(['base', 'node', 'claude', 'codex', 'gh', 'tailscale']), claude: '2.3.9' },
+        sshd: true,
+        shares: [
+          { id: 'sh-sam', label: 'Sam', via: 'public', endpoint: 'forge.lan:22101', createdAt: now - 2 * DAY, expiresAt: now + 5 * DAY },
+          { id: 'sh-ci', label: 'Review bot', via: 'tailscale', endpoint: '100.101.7.33:22022', createdAt: now - 9 * DAY, expiresAt: now - DAY },
+        ],
       },
       {
         name: 'gpu-box', kind: 'vm', status: 'stopped', image: 'Ubuntu noble amd64 cloud (20261028_07:42)',
@@ -132,7 +170,32 @@ const hosts: MockHost[] = [
     os: 'Ubuntu 24.04.3 LTS',
     instances: [],
   },
+  {
+    // Joined from someone else's link: one environment, no server, no Incus.
+    host: {
+      id: 'h-joined-review',
+      name: 'review',
+      ssh: 'agent@198.51.100.42',
+      port: 2203,
+      identityFile: null,
+      incusRemote: null,
+      tailscale: null,
+      direct: { instance: 'review', hostKey: 'AAAAC3NzaC1lZDI1NTE5AAAAIMockHostKeyForThePreview', sharedFrom: 'lab/review', shareId: 'sh-lab-review', expiresAt: now + 6 * DAY },
+    },
+    incusVersion: null,
+    os: 'Ubuntu 24.04.3 LTS',
+    instances: [
+      {
+        name: 'review', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
+        addr: '10.40.0.9', tsIp: null, cpus: 4, memory: '8GiB', createdAt: now - 20 * DAY,
+        installed: all(['base', 'node', 'claude', 'gh']),
+      },
+    ],
+  },
 ]
+
+/** Share ids a joined environment's key was revoked under (by its owner, here in the preview). */
+const revoked = new Set<string>()
 
 function hostOf(hostId: string): MockHost {
   const h = hosts.find(x => x.host.id === hostId)
@@ -192,8 +255,13 @@ function validHost(host: EnvHost): EnvHost {
   if (/\s/.test(ssh) || ssh.startsWith('-')) throw new Error('The SSH address cannot contain spaces or start with "-".')
   if (host.port !== null && !(Number.isInteger(host.port) && host.port > 0 && host.port < 65536)) throw new Error('The port must be a number from 1 to 65535.')
   if (host.tailscale?.tags.some(t => !/^tag:[a-z0-9-]+$/i.test(t))) throw new Error('Tailscale tags look like tag:name.')
-  return { ...host, name, ssh, identityFile: host.identityFile?.trim() || null, incusRemote: host.incusRemote?.trim() || null }
+  const publicAddress = host.publicAddress?.trim() || null
+  if (publicAddress && !/^[\w.:-]+$/.test(publicAddress)) throw new Error('The public address is a host name or an IP address, without spaces.')
+  return { ...host, name, ssh, identityFile: host.identityFile?.trim() || null, incusRemote: host.incusRemote?.trim() || null, publicAddress, direct: null }
 }
+
+/** `forge/dev`: where a share link says it is from. */
+const sharedFrom = (h: MockHost, i: MockInstance) => `${h.host.name}/${i.name}`
 
 /** A placeholder for the instance's desktop: what the iframe shows in the preview. */
 function desktopPage(instance: string, host: string): string {
@@ -257,7 +325,17 @@ export function createMockEnvs(ctx: MockEnvContext) {
 
       case 'env_host_save': {
         await latency(120)
-        const host = validHost(args.host as EnvHost)
+        const given = args.host as EnvHost
+        if (given.id && hostOf(given.id).host.direct) {
+          // A joined environment: only its name is the user's to change; the rest came from the link.
+          const h = hostOf(given.id)
+          const name = given.name.trim()
+          if (!name) throw new Error('Give it a name.')
+          h.host = { ...h.host, name }
+          return structuredClone(h.host)
+        }
+        if (!given.id && given.direct) throw new Error('Join a shared environment with its link instead.')
+        const host = validHost(given)
         if (!host.id) {
           const saved = { ...host, id: `h-${rid()}` }
           hosts.push({ host: saved, instances: [], incusVersion: null, os: 'Ubuntu 24.04.3 LTS' })
@@ -278,6 +356,18 @@ export function createMockEnvs(ctx: MockEnvContext) {
       case 'env_probe': {
         const h = hostOf(args.hostId)
         await latency(650)
+        const d = h.host.direct
+        if (d) {
+          // Straight into the environment, as its agent user, with the key from the link.
+          const i = h.instances[0]!
+          const where = `${h.host.ssh} port ${h.host.port ?? 22}`
+          const fail = (error: string): EnvProbe => ({
+            ok: false, reachable: false, incus: null, incusVersion: null, os: null, canSetup: false, setupNote: null, remotes: [], error,
+          })
+          if (revoked.has(d.shareId) || (d.expiresAt && d.expiresAt <= Date.now())) return fail(`${h.host.ssh}: Permission denied (publickey). (simulated)`)
+          if (i.status !== 'running') return fail(`ssh: connect to host ${where}: Connection refused (simulated)`)
+          return { ok: true, reachable: true, incus: null, incusVersion: null, os: h.os, canSetup: false, setupNote: null, remotes: [], error: null }
+        }
         if (unreachable(h.host)) {
           const where = h.host.ssh.replace(/^[^@]*@/, '')
           return {
@@ -299,6 +389,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
 
       case 'env_server_setup': {
         const h = hostOf(args.hostId)
+        if (h.host.direct) throw new Error('A shared environment has no server of yours to set up.')
         if (unreachable(h.host)) throw new Error(`Could not reach ${h.host.name} over SSH: connection timed out (simulated).`)
         await latency(150)
         const id = ctx.newPty()
@@ -328,6 +419,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
       case 'env_instances': {
         const h = hostOf(args.hostId)
         await latency(450)
+        if (h.host.direct) return h.instances.map(view)
         if (unreachable(h.host)) throw new Error(`Could not reach ${h.host.name} over SSH: connection timed out (simulated).`)
         if (!h.incusVersion) throw new Error(`Incus is not installed on ${h.host.name} yet.`)
         return h.instances.map(view)
@@ -335,6 +427,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
 
       case 'env_instance_action': {
         const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error(`${i.name} is shared with you: only its owner can start, stop or delete it.`)
         const action = args.action as EnvInstanceAction
         if (action === 'delete') {
           await latency(900)
@@ -363,6 +456,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
       case 'env_create': {
         const input = args.input as EnvCreateInput
         const h = hostOf(input.hostId)
+        if (h.host.direct) throw new Error('A shared environment has no server to create environments on.')
         const name = input.name.trim()
         if (!/^[a-z][a-z0-9-]{0,62}$/.test(name) || name.endsWith('-')) {
           throw new Error('Instance names start with a letter and use lower-case letters, digits and "-" (at most 63).')
@@ -493,6 +587,101 @@ export function createMockEnvs(ctx: MockEnvContext) {
       case 'env_desktop_close':
         await latency(60)
         return
+
+      /* ---- sharing ---- */
+
+      case 'env_shares': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner of an environment can share it.')
+        await latency(350)
+        mustRun(h, i)
+        return structuredClone(i.shares ?? []).sort((a, b) => b.createdAt - a.createdAt)
+      }
+
+      case 'env_share_create': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner of an environment can share it.')
+        mustRun(h, i)
+        const label = String(args.label ?? '').trim()
+        if (!label) throw new Error('Say who the link is for, so you know whose access to revoke later.')
+        if (label.length > 60) throw new Error('Keep who it is for under 60 characters.')
+        const via = args.via as EnvShareVia
+        if (via === 'tailscale' && !i.tsIp) throw new Error(`Install Tailscale on ${i.name} and sign it in first.`)
+        if (!i.installed.base) throw new Error(`${i.name} has no agent user yet. Install the Base system component first.`)
+        // The first share sets up the environment's own SSH server: slow, once.
+        await latency(i.sshd ? 900 : 4200)
+        i.sshd = true
+        const shares = (i.shares ??= [])
+        const host = via === 'public' ? (h.host.publicAddress || h.host.ssh.replace(/^[^@]*@/, '')) : i.tsIp!
+        // Public shares of one instance share its forwarded port (22100–22999); Tailscale ones use 22022.
+        const taken = h.instances.flatMap(x => x.shares ?? []).filter(s => s.via === 'public').map(s => Number(s.endpoint.split(':').pop()))
+        const own = shares.find(s => s.via === 'public')
+        const port = via === 'tailscale' ? 22022 : own ? Number(own.endpoint.split(':').pop()) : Math.max(22100, ...taken) + 1
+        const days = args.expiresInDays as number | null
+        const created = Date.now()
+        const share: EnvShare = {
+          id: `sh-${rid()}`, label, via, endpoint: `${host}:${port}`, createdAt: created,
+          expiresAt: days ? created + days * DAY : null,
+        }
+        shares.unshift(share)
+        const token: ShareToken = {
+          v: 1, id: share.id, n: i.name, f: sharedFrom(h, i), h: host, p: port, u: 'agent',
+          k: fakeKey(32), hk: `AAAAC3NzaC1lZDI1NTE5AAAAI${fakeKey(24)}`, e: share.expiresAt ? Math.floor(share.expiresAt / 1000) : 0,
+        }
+        // What the owner may still need to do, the way the backend words it.
+        const note = via === 'public'
+          ? `If a firewall guards ${h.host.name}, open TCP port ${port} there. ufw is active on it: sudo ufw allow ${port}/tcp`
+          : `Only devices your tailnet's access rules let reach ${host} can use this link.`
+        return { share: structuredClone(share), url: `${JOIN_PREFIX}${b64url(JSON.stringify(token))}`, note } satisfies EnvShareLink
+      }
+
+      case 'env_share_revoke': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        mustRun(h, i)
+        await latency(500)
+        i.shares = (i.shares ?? []).filter(s => s.id !== args.shareId)
+        revoked.add(String(args.shareId))
+        return
+      }
+
+      case 'env_join_preview': {
+        await latency(120)
+        const t = readLink(args.link)
+        return {
+          instance: t.n,
+          sharedFrom: t.f,
+          endpoint: `${t.h}:${t.p}`,
+          expiresAt: t.e ? t.e * 1000 : null,
+          alreadyJoined: hosts.some(x => x.host.direct?.shareId === t.id),
+        } satisfies EnvJoinPreview
+      }
+
+      case 'env_join': {
+        const t = readLink(args.link)
+        if (t.e && t.e * 1000 <= Date.now()) throw new Error('Access through this link has ended. Ask for a new one.')
+        await latency(400)
+        const name = String(args.name ?? '').trim() || t.n
+        const existing = hosts.find(x => x.host.direct?.shareId === t.id)
+        // A link from one of the preview's own servers leads into that very instance (installs show on both sides).
+        const [ownerName, instName] = t.f.split('/')
+        const owner = hosts.find(x => !x.host.direct && x.host.name === ownerName)?.instances.find(x => x.name === instName)
+        const inst: MockInstance = owner ?? {
+          name: t.n, kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
+          addr: `10.60.0.${10 + Math.floor(Math.random() * 200)}`, tsIp: null, cpus: null, memory: null, createdAt: Date.now() - 4 * DAY,
+          installed: all(['base', 'claude']),
+        }
+        const host: EnvHost = {
+          id: existing?.host.id ?? `h-${rid()}`, name, ssh: `${t.u}@${t.h}`, port: t.p, identityFile: null, incusRemote: null, tailscale: null,
+          direct: { instance: t.n, hostKey: t.hk, sharedFrom: t.f, shareId: t.id, expiresAt: t.e ? t.e * 1000 : null },
+        }
+        if (existing) {
+          existing.host = host
+          existing.instances = [inst]
+        } else {
+          hosts.push({ host, instances: [inst], incusVersion: null, os: 'Ubuntu 24.04.3 LTS' })
+        }
+        return structuredClone(host)
+      }
     }
     throw new Error(`mock: unknown command ${cmd}`)
   }

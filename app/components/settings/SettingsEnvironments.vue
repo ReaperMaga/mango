@@ -6,6 +6,7 @@ import EnvServerPage from '~/components/envs/EnvServerPage.vue'
 import EnvInstancePage from '~/components/envs/EnvInstancePage.vue'
 import EnvHostDialog from '~/components/envs/EnvHostDialog.vue'
 import EnvCreateDialog from '~/components/envs/EnvCreateDialog.vue'
+import EnvJoinDialog from '~/components/envs/EnvJoinDialog.vue'
 
 /**
  * Settings > Environments. Three levels in the content column: the list of
@@ -20,8 +21,13 @@ const props = defineProps<{ active: boolean }>()
 
 const envs = useEnvironments()
 const root = ref<HTMLElement | null>(null)
-const sel = computed(() => envs.selected)
-const host = computed(() => (sel.value ? envs.host(sel.value.hostId) : null))
+const host = computed(() => (envs.selected ? envs.host(envs.selected.hostId) : null))
+/** Where we are; a joined environment has no server page, so it is always its one instance. */
+const sel = computed<EnvSelection | null>(() => {
+  const s = envs.selected
+  const direct = host.value?.direct
+  return s && direct ? { hostId: s.hostId, instance: direct.instance } : s
+})
 
 const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥' : 'Alt'
 
@@ -57,7 +63,7 @@ onBeforeUnmount(() => clearInterval(settleTimer))
 function up() {
   const s = sel.value
   if (!s) return
-  if (s.instance) envs.select(s.hostId)
+  if (s.instance && !host.value?.direct) envs.select(s.hostId)
   else envs.home()
 }
 
@@ -104,14 +110,19 @@ watch(sel, async (now, before) => {
         <li class="crumbs__item">
           <button type="button" class="crumbs__link" @click="envs.home()">Environments</button>
         </li>
-        <li class="crumbs__item">
+        <!-- a joined environment: Environments › its name -->
+        <li v-if="host?.direct" class="crumbs__item">
+          <ChevronRight class="crumbs__sep" aria-hidden="true" />
+          <span class="crumbs__here" aria-current="location">{{ host.name }}</span>
+        </li>
+        <li v-else class="crumbs__item">
           <ChevronRight class="crumbs__sep" aria-hidden="true" />
           <button v-if="sel.instance" type="button" class="crumbs__link" @click="envs.select(sel.hostId)">
             {{ host?.name ?? 'Server' }}
           </button>
           <span v-else class="crumbs__here" aria-current="location">{{ host?.name ?? 'Server' }}</span>
         </li>
-        <li v-if="sel.instance" class="crumbs__item">
+        <li v-if="sel.instance && !host?.direct" class="crumbs__item">
           <ChevronRight class="crumbs__sep" aria-hidden="true" />
           <span class="crumbs__here" aria-current="location">{{ sel.instance }}</span>
         </li>
@@ -131,6 +142,7 @@ watch(sel, async (now, before) => {
 
     <EnvHostDialog />
     <EnvCreateDialog />
+    <EnvJoinDialog />
   </div>
 </template>
 
