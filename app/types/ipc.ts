@@ -103,6 +103,11 @@ export interface GitStatus {
   isRepo: boolean
   /** Repository root (absolute), null when not a repo. */
   root: string | null
+  /**
+   * Set when this folder is a linked git worktree (`git worktree add`): the root of the
+   * repository's main working tree, in the same form as `root`. Null for the main one and for Unity VCS.
+   */
+  mainRoot: string | null
   /** Current branch, null when detached or not a repo. */
   branch: string | null
   /** Short hash of HEAD (Unity VCS: the loaded changeset number), null on an unborn branch. */
@@ -126,6 +131,26 @@ export interface GitCommit {
 }
 
 export interface GitBranches { current: string | null; local: string[] }
+
+/**
+ * One working tree of a repository (`git worktree list`): the main one the clone made, and the
+ * linked ones that let chats work on their own branches side by side.
+ */
+export interface GitWorktree {
+  /** Its folder, in the same form as the `path` asked about (an `env://` path for a remote project). */
+  path: string
+  /** Checked-out branch, null when detached. */
+  branch: string | null
+  /** Short hash of its HEAD, null when unborn. */
+  head: string | null
+  /** The repository's main working tree. */
+  isMain: boolean
+  /** The working tree the asked-about folder is in. */
+  isCurrent: boolean
+  locked: boolean
+  /** Its folder is gone; git would drop it on `worktree prune`. */
+  prunable: boolean
+}
 
 /** A local branch and how it stands against its upstream. */
 export interface GitLocalBranch {
@@ -689,6 +714,19 @@ export interface Commands {
    * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
    */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
+  /** The repository's working trees, the main one first. Empty for Unity VCS or no repository. */
+  git_worktrees: [{ path: string }, GitWorktree[]]
+  /**
+   * Add a linked worktree for `branch` in a folder the backend picks beside the repository
+   * (`<parent>/<repo>.worktrees/<branch>`). `create`: a new branch from `from` (HEAD when null);
+   * otherwise an existing local branch that no other worktree has checked out.
+   */
+  git_worktree_add: [{ path: string; branch: string; from: string | null; create: boolean }, GitWorktree]
+  /**
+   * Remove the linked worktree at `worktree` (its folder); the branch is kept. Refuses the main
+   * one, and one with uncommitted or untracked changes unless `force`.
+   */
+  git_worktree_remove: [{ path: string; worktree: string; force: boolean }, void]
 
   /** One folder of a project (`dir` "" for the top). */
   /**
