@@ -28,7 +28,7 @@ export interface TerminalTab {
 /** The tool windows that open on the right: the project's files, source control, and the chat's pull requests and issues. */
 export type ToolView = 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
-export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general'
 
 const LS_KEY = 'mango.workspace.v1'
 

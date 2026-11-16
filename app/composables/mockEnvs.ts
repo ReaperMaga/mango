@@ -50,7 +50,13 @@ interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp'> {
   installed: Partial<Record<EnvComponentId, string>>
 }
 
-interface MockHost { host: EnvHost; instances: MockInstance[]; incusVersion: string }
+interface MockHost {
+  host: EnvHost
+  instances: MockInstance[]
+  /** null: Incus is not installed yet. */
+  incusVersion: string | null
+  os: string
+}
 
 const now = Date.now()
 const all = (ids: EnvComponentId[]) => Object.fromEntries(ids.map(id => [id, CATALOG.find(c => c.id === id)!.latest])) as MockInstance['installed']
@@ -67,6 +73,7 @@ const hosts: MockHost[] = [
       tailscale: { tags: ['tag:mango'], authKeyFile: '/root/.config/mango/tailscale.key' },
     },
     incusVersion: '6.18',
+    os: 'Ubuntu 24.04.3 LTS',
     instances: [
       {
         name: 'dev', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
@@ -96,6 +103,7 @@ const hosts: MockHost[] = [
       tailscale: null,
     },
     incusVersion: '6.0.4',
+    os: 'Debian GNU/Linux 13 (trixie)',
     instances: [
       {
         name: 'ci-runner', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261020_07:42)',
@@ -108,6 +116,21 @@ const hosts: MockHost[] = [
         installed: all(['base', 'node', 'claude', 'desktop']),
       },
     ],
+  },
+  {
+    // A fresh server: reachable over SSH, no Incus yet (Mango offers to install it).
+    host: {
+      id: 'h-fresh',
+      name: 'fresh-vps',
+      ssh: 'ops@198.51.100.7',
+      port: null,
+      identityFile: null,
+      incusRemote: null,
+      tailscale: null,
+    },
+    incusVersion: null,
+    os: 'Ubuntu 24.04.3 LTS',
+    instances: [],
   },
 ]
 
@@ -237,7 +260,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
         const host = validHost(args.host as EnvHost)
         if (!host.id) {
           const saved = { ...host, id: `h-${rid()}` }
-          hosts.push({ host: saved, instances: [], incusVersion: '6.18' })
+          hosts.push({ host: saved, instances: [], incusVersion: null, os: 'Ubuntu 24.04.3 LTS' })
           return structuredClone(saved)
         }
         const h = hostOf(host.id)
@@ -258,17 +281,55 @@ export function createMockEnvs(ctx: MockEnvContext) {
         if (unreachable(h.host)) {
           const where = h.host.ssh.replace(/^[^@]*@/, '')
           return {
-            ok: false, incusVersion: null, remotes: [],
+            ok: false, reachable: false, incus: null, incusVersion: null, os: null, canSetup: false, setupNote: null, remotes: [],
             error: `ssh: connect to host ${where} port ${h.host.port ?? 22}: Connection timed out (simulated)`,
           } satisfies EnvProbe
         }
-        return { ok: true, incusVersion: h.incusVersion, remotes: ['local', 'images'], error: null } satisfies EnvProbe
+        if (!h.incusVersion) {
+          return {
+            ok: false, reachable: true, incus: 'missing', incusVersion: null, os: h.os, canSetup: true, setupNote: null,
+            remotes: [], error: null,
+          } satisfies EnvProbe
+        }
+        return {
+          ok: true, reachable: true, incus: 'ready', incusVersion: h.incusVersion, os: h.os, canSetup: true, setupNote: null,
+          remotes: ['local', 'images'], error: null,
+        } satisfies EnvProbe
+      }
+
+      case 'env_server_setup': {
+        const h = hostOf(args.hostId)
+        if (unreachable(h.host)) throw new Error(`Could not reach ${h.host.name} over SSH: connection timed out (simulated).`)
+        await latency(150)
+        const id = ctx.newPty()
+        const fresh = !h.incusVersion
+        play(id, [
+          [0, dim(`$ ssh ${h.host.ssh} sh -s  # Mango's Incus setup`)],
+          [300, `==> ${h.os}`],
+          ...(fresh
+            ? [
+                [500, '==> Adding the Zabbly package repository for Incus (stable)'],
+                [900, '==> Installing incus, incus-ui-canonical'],
+                [1600, 'Setting up incus (1:6.18-ubuntu24.04-202611080412) ...'],
+                [700, '==> Initialising: storage pool "default" (btrfs), network incusbr0 (NAT)'],
+                [600, `==> Adding ${h.host.ssh.replace(/@.*/, '')} to the incus-admin group`],
+              ] as Array<[number, string]>
+            : [
+                [600, '==> Updating incus'],
+                [1200, 'incus is already the newest version (1:6.18-ubuntu24.04-202611080412).'],
+                [300, '==> Already initialised'],
+              ] as Array<[number, string]>),
+          [400, ok(`Incus 6.18 is ready ${dim('(simulated: the browser preview installs nothing)')}`)],
+        ])
+        setTimeout(() => { h.incusVersion = '6.18' }, fresh ? 5000 : 2800)
+        return id
       }
 
       case 'env_instances': {
         const h = hostOf(args.hostId)
         await latency(450)
         if (unreachable(h.host)) throw new Error(`Could not reach ${h.host.name} over SSH: connection timed out (simulated).`)
+        if (!h.incusVersion) throw new Error(`Incus is not installed on ${h.host.name} yet.`)
         return h.instances.map(view)
       }
 

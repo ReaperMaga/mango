@@ -350,11 +350,30 @@ export interface EnvHost {
   tailscale: EnvTailscale | null
 }
 
+/**
+ * Incus on a server, as `env_probe` finds it:
+ * - `ready`: installed, initialised, and usable by the SSH user
+ * - `missing`: not installed (`env_server_setup` can install it when `canSetup`)
+ * - `uninitialised`: installed but has no storage pool or network yet (`env_server_setup` initialises it)
+ * - `no-access`: installed, but the SSH user may not use it (not in `incus-admin`; setup adds them)
+ */
+export type EnvIncusState = 'ready' | 'missing' | 'uninitialised' | 'no-access'
+
 export interface EnvProbe {
-  /** SSH worked and `incus` answered. */
+  /** SSH worked and Incus is ready to use. */
   ok: boolean
+  /** SSH worked (whatever the state of Incus). */
+  reachable: boolean
+  /** null when the server could not be reached. */
+  incus: EnvIncusState | null
   incusVersion: string | null
-  /** Instance remotes the master's `incus` knows. */
+  /** The server's OS, e.g. "Ubuntu 24.04.1 LTS". */
+  os: string | null
+  /** Mango can install, initialise or update Incus here (a supported distribution with systemd). */
+  canSetup: boolean
+  /** Why it can't, when `canSetup` is false and Incus isn't ready (e.g. "Fedora is not supported yet"). */
+  setupNote: string | null
+  /** Instance remotes the server's `incus` knows. */
   remotes: string[]
   error: string | null
 }
@@ -561,6 +580,11 @@ export interface Commands {
   env_host_remove: [{ id: string }, void]
   /** Can Mango reach it over SSH, and what does its incus know? */
   env_probe: [{ hostId: string }, EnvProbe]
+  /**
+   * Install Incus on the server (or update it when installed), initialise it when it has no storage
+   * pool or network, and let the SSH user use it. Runs in a terminal (sudo may ask for a password); returns the pty id.
+   */
+  env_server_setup: [{ hostId: string; cols: number; rows: number }, string]
   env_instances: [{ hostId: string }, EnvInstance[]]
   /** 'delete' removes the instance and everything in it (the UI confirms first). */
   env_instance_action: [{ hostId: string; instance: string; action: EnvInstanceAction }, void]

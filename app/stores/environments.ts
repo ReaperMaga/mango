@@ -131,7 +131,10 @@ export const useEnvironments = defineStore('environments', {
       try {
         this.probes[hostId] = await call('env_probe', { hostId })
       } catch (e) {
-        this.probes[hostId] = { ok: false, incusVersion: null, remotes: [], error: message(e) }
+        this.probes[hostId] = {
+          ok: false, reachable: false, incus: null, incusVersion: null, os: null,
+          canSetup: false, setupNote: null, remotes: [], error: message(e),
+        }
       } finally {
         this.probing[hostId] = false
       }
@@ -180,6 +183,10 @@ export const useEnvironments = defineStore('environments', {
     },
 
     /* Terminal-based: each returns the pty id to attach a terminal view to. */
+    /** Install, initialise or update Incus on the server, in a terminal. Probe again when it exits. */
+    setupServer(hostId: string, cols: number, rows: number) {
+      return call('env_server_setup', { hostId, cols, rows })
+    },
     create(input: EnvCreateInput, cols: number, rows: number) {
       return call('env_create', { input, cols, rows })
     },
