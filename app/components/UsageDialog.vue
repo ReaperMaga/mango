@@ -100,7 +100,7 @@ function signIn() {
               :aria-valuenow="Math.round(w.percent)"
               :aria-label="`${AGENTS[id].name}, ${w.label} limit used`"
             >
-              <span class="use__fill" :style="{ width: `${w.percent}%` }" />
+              <span class="use__fill" :style="{ '--rest': `${100 - w.percent}%` }" />
             </span>
             <span class="use__pct tabular">{{ Math.round(w.percent) }}%</span>
             <span class="use__reset tabular" :title="resetTitle(w.resetsAt)">{{ resetText(w.resetsAt, now) }}</span>
@@ -179,10 +179,11 @@ function signIn() {
 }
 .use__fill {
   position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: inherit;
+  inset: 0;
   background: var(--accent);
-  transition: width var(--dur-med) var(--ease-out);
+  /* Revealed by clipping, not by width: no layout work while it moves. */
+  clip-path: inset(0 var(--rest, 100%) 0 0 round var(--radius-pill));
+  transition: clip-path var(--dur-med) var(--ease-out);
 }
 .use__pct { text-align: right; font-weight: 560; color: var(--fg); }
 .use__reset { color: var(--fg-subtle); font-size: var(--text-xs); white-space: nowrap; }
