@@ -72,8 +72,9 @@ fn login_line(host: &EnvHost, instance: &str, tool: &str) -> Result<Vec<String>,
         "claude" => as_agent(need("claude", "Claude Code") + "exec claude auth login"),
         // Device-code sign-in: nothing needs to reach a browser on the instance.
         "codex" => as_agent(need("codex", "Codex") + "exec codex login --device-auth"),
-        // Then let git use gh's sign-in for https remotes (cloning private repositories).
-        "gh" => as_agent(need("gh", "The GitHub CLI") + "gh auth login && exec gh auth setup-git"),
+        // Browser (device) sign-in without prompts: there is no browser in the instance, so GH_BROWSER=echo
+        // prints the device page and Mango opens it here. Then git uses gh's sign-in for https remotes.
+        "gh" => as_agent(need("gh", "The GitHub CLI") + "GH_BROWSER=echo gh auth login --hostname github.com --git-protocol https --web && exec gh auth setup-git"),
         // Root (incus exec runs as root; sudo in a joined environment): it joins the whole instance to the tailnet.
         "tailscale" => {
             let mut script = need("tailscale", "Tailscale") + "exec tailscale up --ssh";
@@ -786,7 +787,7 @@ mod tests {
         let l = ssh::line(&login_line(&h, "dev", "codex").unwrap());
         assert!(l.contains("exec codex login --device-auth'"), "{l}");
         let l = ssh::line(&login_line(&h, "dev", "gh").unwrap());
-        assert!(l.contains("gh auth login && exec gh auth setup-git'"), "{l}");
+        assert!(l.contains("GH_BROWSER=echo gh auth login --hostname github.com --git-protocol https --web && exec gh auth setup-git'"), "{l}");
 
         // Tailscale runs as root, with the server's tags.
         let mut ts = h.clone();

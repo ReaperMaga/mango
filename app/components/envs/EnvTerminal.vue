@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, CircleCheck, Copy, ExternalLink, SquareTerminal, TriangleAlert } from 'lucide-vue-next'
+import { Check, ChevronDown, CircleCheck, Copy, ExternalLink, SquareTerminal, TriangleAlert } from 'lucide-vue-next'
 import { openExternal } from '~/composables/useBackend'
 import { copyToClipboard } from '~/utils/agentCli'
 import LoginTerminal from '~/components/settings/LoginTerminal.vue'
@@ -57,6 +57,7 @@ const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
 
 const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
+const codeId = useId()
 
 const heading = computed(() => {
   if (phase.value === 'done') return props.doneTitle
@@ -86,7 +87,85 @@ function retry() {
   phase.value = 'running'
   note.value = ''
   link.value = null
+  resetSignIn()
   attempt.value++
+}
+
+/* ---------- sign-in in the browser ----------
+ * A CLI signing in inside an environment can't open a browser there. Mango opens the sign-in page
+ * here as soon as the CLI prints it, shows the one-time code a device sign-in asks for (GitHub,
+ * Codex), takes the code Claude Code wants pasted back, and answers GitHub's "Press Enter" for the
+ * user. The terminal stays available under "Show output" for anything else the CLI asks.
+ */
+const showOutput = ref(!props.signIn)
+const deviceCode = ref<string | null>(null)
+const codeCopied = ref(false)
+const wantsCode = ref(false)
+const pasted = ref('')
+const sentCode = ref(false)
+let opened = false
+let outputText = ''
+const answered = new Set<string>()
+
+function resetSignIn() {
+  showOutput.value = !props.signIn
+  deviceCode.value = null
+  codeCopied.value = false
+  wantsCode.value = false
+  pasted.value = ''
+  sentCode.value = false
+  opened = false
+  outputText = ''
+  answered.clear()
+}
+
+function onLink(url: string) {
+  link.value = url
+  if (props.signIn && !opened) {
+    opened = true
+    openExternal(url)
+  }
+}
+
+// eslint-disable-next-line no-control-regex
+const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[@-_]/g
+/** Prompts Mango answers for the user, once each: [what the CLI asks, what to type]. */
+const ANSWERS: Array<[RegExp, string]> = [
+  [/press enter to open/i, '\r'],
+  [/authenticate git with your github credentials\?/i, 'Y\r'],
+]
+
+function onOutput(data: string) {
+  if (!props.signIn) return
+  outputText = (outputText + data.replace(ANSI, '')).slice(-8192)
+  for (const [ask, reply] of ANSWERS) {
+    if (!answered.has(ask.source) && ask.test(outputText)) {
+      answered.add(ask.source)
+      term.value?.send(reply)
+    }
+  }
+  if (!deviceCode.value && /one-time code|device code|enter (this|the) code|user code/i.test(outputText)) {
+    const codes = outputText.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/g)
+    if (codes?.length) {
+      deviceCode.value = codes[codes.length - 1]!
+      copyToClipboard(deviceCode.value).then(() => { codeCopied.value = true }).catch(() => {})
+    }
+  }
+  if (!wantsCode.value && /paste (the |your )?(authentication |authorization )?code/i.test(outputText)) wantsCode.value = true
+}
+
+async function copyCode() {
+  if (!deviceCode.value) return
+  await copyToClipboard(deviceCode.value)
+  codeCopied.value = true
+}
+
+function sendCode() {
+  const code = pasted.value.trim()
+  if (!code) return
+  term.value?.send(`${code}\r`)
+  sentCode.value = true
+  pasted.value = ''
 }
 
 async function copyLink() {
@@ -138,7 +217,53 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
       {{ note }} The output is kept below.
     </p>
 
-    <div class="job__term" @focusin="focused = true" @focusout="focused = false">
+    <div v-if="signIn && phase === 'running'" class="signin">
+      <p class="signin__lead">
+        <template v-if="!link">Waiting for the sign-in page…</template>
+        <template v-else-if="sentCode">Code sent. Finishing the sign-in…</template>
+        <template v-else>The sign-in page is open in your browser. Sign in there to continue.</template>
+      </p>
+      <div v-if="deviceCode" class="signin__code">
+        <span class="signin__code-label">Enter this code on the page</span>
+        <span class="signin__code-value selectable">{{ deviceCode }}</span>
+        <UiButton variant="ghost" size="sm" @click="copyCode">
+          <Check v-if="codeCopied" /><Copy v-else />{{ codeCopied ? 'Copied' : 'Copy' }}
+        </UiButton>
+      </div>
+      <form v-else-if="wantsCode && !sentCode" class="signin__paste" @submit.prevent="sendCode">
+        <label class="signin__code-label" :for="codeId">When the page shows a code, paste it here</label>
+        <div class="signin__paste-row">
+          <input
+            :id="codeId"
+            v-model="pasted"
+            class="signin__input"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="Code from the browser"
+          >
+          <UiButton size="sm" type="submit" :disabled="!pasted.trim()">Continue</UiButton>
+        </div>
+      </form>
+    </div>
+
+    <button
+      v-if="signIn"
+      type="button"
+      class="job__toggle"
+      :aria-expanded="showOutput"
+      @click="showOutput = !showOutput"
+    >
+      <ChevronDown class="job__toggle-icon" :class="{ 'is-open': showOutput }" aria-hidden="true" />
+      {{ showOutput ? 'Hide output' : 'Show output' }}
+    </button>
+
+    <div
+      class="job__term"
+      :class="{ 'is-collapsed': !showOutput }"
+      :inert="!showOutput || undefined"
+      @focusin="focused = true"
+      @focusout="focused = false"
+    >
       <LoginTerminal
         ref="term"
         :key="attempt"
@@ -147,13 +272,14 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
         :rows="rows"
         @exit="onExit"
         @failed="onFailed"
-        @link="link = $event"
+        @link="onLink"
+        @output="onOutput"
       />
     </div>
 
-    <p v-if="phase === 'running' && (signIn || $slots.hint)" class="job__hint">
+    <p v-if="phase === 'running' && (signIn ? showOutput : $slots.hint)" class="job__hint">
       <slot name="hint">
-        Finish in your browser. If the page gives you a code, press <kbd>{{ modKey }}</kbd><kbd>V</kbd> to paste it here,
+        If the page gives you a code, press <kbd>{{ modKey }}</kbd><kbd>V</kbd> to paste it here,
         then <kbd>Enter</kbd>. The code may stay hidden as you paste.
       </slot>
     </p>
@@ -215,6 +341,65 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
   border-top: 1px solid var(--line-soft);
   background: var(--term-bg);
 }
+/* Kept running (and sized) while folded away: the sign-in still reads its output. */
+.job__term.is-collapsed {
+  height: 0;
+  overflow: hidden;
+  border-top: 0;
+  visibility: hidden;
+}
+.signin {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-3);
+}
+.signin__lead { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
+.signin__code {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+.signin__code-label { font-size: var(--text-xs); color: var(--fg-subtle); }
+.signin__code-value {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--fg);
+}
+.signin__paste { display: grid; gap: var(--space-1); }
+.signin__paste-row { display: flex; gap: var(--space-2); }
+.signin__input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 var(--space-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.signin__input:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.job__toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  padding: var(--space-1) var(--space-3);
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  background: none;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  text-align: left;
+  cursor: pointer;
+}
+.job__toggle:hover { color: var(--fg-muted); }
+.job__toggle:focus-visible { outline: 2px solid var(--accent-line); outline-offset: -2px; }
+.job__toggle-icon { width: 13px; height: 13px; transition: transform var(--dur-fast) var(--ease-out); }
+.job__toggle-icon.is-open { transform: rotate(180deg); }
 .job__hint {
   margin: 0;
   padding: var(--space-2) var(--space-3);
