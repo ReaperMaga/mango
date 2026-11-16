@@ -659,6 +659,10 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
 /* A logo, not a glyph: full strength, a touch larger than the chip's chevrons. */
 .cp__chip .cp__agent-icon { width: 13px; height: 13px; opacity: 1; }
 .cp__chip .cp__agent-icon.agent-icon--codex { color: var(--fg); }
+/* Centre the logo on the capitals, not on Inter's line box, whose descender
+   room sits the text ~1.5px high. The agent chip never shrinks, so nothing
+   needs clipping, and trimming would cut ascenders if it did. */
+.cp__chip--agent .cp__chip-text { overflow: visible; text-box: trim-both cap alphabetic; }
 
 .cp__voice {
   display: flex;
