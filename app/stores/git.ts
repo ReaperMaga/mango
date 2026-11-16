@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GitBranches, GitCommit, GitFile, GitStatus } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
@@ -32,6 +32,8 @@ export interface GitRepoState {
   expanded: string[]
   /** Diff cache by key. */
   diffs: Record<string, GitDiffEntry>
+  /** The repository's working trees, main first (`git worktree list`); null until read. */
+  worktrees: GitWorktree[] | null
 }
 
 export const HISTORY_LIMIT = 20
@@ -47,7 +49,7 @@ const parseKey = (key: string) => {
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
 const newRepo = (): GitRepoState => ({
-  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {},
+  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null,
 })
 
 /* Refreshes are coalesced per project: one running, at most one queued behind it. */
@@ -72,6 +74,8 @@ export const useGit = defineStore('git', {
 
   getters: {
     repo: s => (path: string | null | undefined): GitRepoState | null => (path ? s.repos[path] ?? null : null),
+    /** The working trees of the repository at `path` (main first); empty until read or for Unity VCS. */
+    worktrees: s => (path: string | null | undefined): GitWorktree[] => (path ? s.repos[path]?.worktrees ?? [] : []),
     status: s => (path: string | null | undefined): GitStatus | null => (path ? s.repos[path]?.status ?? null : null),
     /** Rows of the Staged section. */
     stagedFiles: s => (path: string | null | undefined): GitFile[] =>
@@ -134,7 +138,7 @@ export const useGit = defineStore('git', {
         repo.error = null
         this.syncProject(path, status)
         if (!status.isRepo) {
-          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {} })
+          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null })
           return
         }
         this.reconcileDiffs(path)
@@ -143,6 +147,8 @@ export const useGit = defineStore('git', {
           ...repo.expanded.map(key => this.loadDiff(path, key)),
           repo.branches === null || moved ? this.loadBranches(path) : null,
           repo.historyOpen && repo.logHead !== status.head ? this.loadLog(path) : null,
+          // Worktrees come and go rarely: read once, and again when one is added or removed (or branches move).
+          status.vcs === 'git' && (repo.worktrees === null || moved) ? this.loadWorktrees(path) : null,
         ])
       } catch (e) {
         repo.error = reason(e)
@@ -199,6 +205,14 @@ export const useGit = defineStore('git', {
       try {
         repo.branches = await call('git_branches', { path })
       } catch { /* the switcher falls back to the current branch */ }
+    },
+
+    async loadWorktrees(path: string) {
+      const repo = this.ensure(path)
+      try {
+        const list = await call('git_worktrees', { path })
+        if (JSON.stringify(list) !== JSON.stringify(repo.worktrees)) repo.worktrees = list
+      } catch { /* keep the last list */ }
     },
 
     async loadLog(path: string) {

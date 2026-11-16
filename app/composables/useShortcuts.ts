@@ -63,6 +63,7 @@ export function useShortcuts() {
     // Settings covers the workspace: its shortcuts must not act on what is hidden underneath.
     if (ws.settings) return
 
+    if (k === 'n' && e.shiftKey) { e.preventDefault(); ws.openWorktreeDialog(); return }
     if (k === 'n' && !e.shiftKey) {
       e.preventDefault()
       if (ws.activeProjectPath) threads.create(ws.activeProjectPath)

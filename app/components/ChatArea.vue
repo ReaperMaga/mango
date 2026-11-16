@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FileCode, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FileCode, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
@@ -76,7 +76,8 @@ function tabTitle(t: Tab, i: number) {
     const where = isBlank(t.browser.url) ? 'New tab' : t.browser.url
     return `${where}${owner ? `\nOpened by ${owner.title}` : ''}${keys}`
   }
-  return `${t.title}${keys}`
+  const wt = t.kind === 'chat' ? t.thread.worktree : null
+  return `${t.title}${keys}${wt ? `\nWorktree: ${wt}${t.thread.branch ? ` (${t.thread.branch})` : ''}` : ''}`
 }
 
 /*
@@ -221,6 +222,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           <template v-if="t.kind === 'chat'">
             <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
             <span class="ca__tab-title">{{ t.title }}</span>
+            <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own worktree${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
           </template>
           <template v-else-if="t.kind === 'diff'">
             <FileDiff class="ca__tab-icon" aria-hidden="true" />
@@ -393,6 +395,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 }
 @keyframes ca-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ca__tab-spin { animation-duration: 2.4s; } }
+.ca__tab-wt { flex: none; width: 12px; height: 12px; stroke-width: 1.85; color: var(--fg-faint); }
 .ca__tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A file opened with a single click: the next one replaces it until it is edited or double-clicked. */
 .ca__tab-title.is-preview { font-style: italic; }

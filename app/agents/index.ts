@@ -252,6 +252,8 @@ async function browserToolsFor(store: Store, threadId: string) {
 export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
   if (!thread) return
+  /** Where the agent works: the chat's own worktree, or the project folder. */
+  const workdir = store.workdirFor(threadId) ?? thread.projectPath
 
   // The browser preview has no backend to run CLIs: simulate, and say so.
   if (!isTauri()) {
@@ -265,7 +267,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   store._setStatus(threadId, 'running')
 
   const main: Target = { threadId, msgs: [first], msg: first }
-  const place = placeOf(thread.projectPath)
+  const place = placeOf(workdir)
   /** Sub-agents' chats, by the id of the tool call that started each. */
   const subs = new Map<string, Target>()
   const targetFor = (agent: string | undefined) => (agent ? subs.get(agent) : main)
@@ -475,7 +477,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       effort: thread.effort ?? null,
       sessionId: thread.sessionId ?? null,
       ...(browserMcp ? { browserMcp } : {}),
-      spawn: spawnFor(thread.agent, thread.projectPath),
+      spawn: spawnFor(thread.agent, workdir),
       emit,
     })
     runs.set(threadId, {
@@ -502,7 +504,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
 
   await finished
   // The agent probably changed files: let whoever shows them (the changes panel) catch up.
-  window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path: thread.projectPath } }))
+  window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path: workdir } }))
 }
 
 export type { Thread }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
-  GitBranch, Minus, Plus, RefreshCw, Undo2, X,
+  FolderGit2, GitBranch, Minus, Plus, RefreshCw, Undo2, X,
 } from 'lucide-vue-next'
 import type { GitFile } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
@@ -13,6 +13,7 @@ import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { resultLines, units, vcsTerms } from '~/utils/vcs'
 import { isEnvPath } from '~/utils/envPath'
+import { worktreeName } from '~/utils/worktrees'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
@@ -23,7 +24,10 @@ const ws = useWorkspace()
 const git = useGit()
 const now = useNow()
 
-const path = computed(() => ws.activeProjectPath)
+/** The working copy in view: the active chat's worktree, or the project. */
+const path = computed(() => useThreads().workdir ?? ws.activeProjectPath)
+/** Set when that is a linked worktree (a chat's own, or a project opened from one): named in the header. */
+const linkedWorktree = computed(() => (path.value && (path.value !== ws.activeProjectPath || repo.value?.status?.mainRoot) ? path.value : null))
 const repo = computed(() => git.repo(path.value))
 const status = computed(() => repo.value?.status ?? null)
 const isRepo = computed(() => !!status.value?.isRepo)
@@ -281,7 +285,9 @@ function onListKey(e: KeyboardEvent) {
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <section class="gp" aria-label="Changes">
     <header class="gp__head">
-      <h2 class="gp__title">Changes</h2>
+      <h2 class="gp__title">
+        Changes<span v-if="linkedWorktree" class="gp__wt" :title="`Worktree: ${linkedWorktree}`"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
+      </h2>
       <div class="gp__tools">
         <template v-if="isRepo && !terms.remotes">
           <button type="button" class="gp__sync" :aria-label="updateTitle" :title="updateTitle" :disabled="waiting" @click="path && git.pull(path)">
@@ -549,6 +555,19 @@ function onListKey(e: KeyboardEvent) {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.gp__title { display: flex; align-items: center; gap: var(--space-2); }
+.gp__wt {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 400;
+  color: var(--fg-subtle);
+}
+.gp__wt svg { width: 12px; height: 12px; flex: none; stroke-width: 1.85; color: var(--accent-ink); }
+.gp__wt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .gp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
 .gp__sync {

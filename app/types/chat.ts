@@ -135,8 +135,14 @@ export interface Thread {
   archived?: boolean
   /** The CLI's own session id, used to resume the conversation on the next turn. */
   sessionId?: string | null
-  /** git branch or worktree the agent works on */
+  /** The git branch the chat started on (for a worktree chat: its worktree's branch). */
   branch?: string | null
+  /**
+   * The linked git worktree (its folder) the chat works in, so it can run beside other chats of the
+   * project without touching their files. Null or missing: the project folder itself.
+   * Sub-agent chats leave it unset and work where their top-level chat does.
+   */
+  worktree?: string | null
   /**
    * Set on a sub-agent's chat: the chat (or sub-agent) that started it. Such a chat is read-only,
    * filled by the parent's run, and listed under its parent instead of on its own.
