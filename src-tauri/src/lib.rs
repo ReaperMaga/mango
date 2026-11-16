@@ -111,6 +111,11 @@ pub fn run() {
             envs::remote::env_prepare_dir,
             envs::remote::env_desktop_open,
             envs::remote::env_desktop_close,
+            envs::shares::env_shares,
+            envs::shares::env_share_create,
+            envs::shares::env_share_revoke,
+            envs::join::env_join_preview,
+            envs::join::env_join,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

@@ -17,9 +17,11 @@
 
 pub mod hosts;
 pub mod incus;
+pub mod join;
 pub mod recipes;
 pub mod remote;
 pub mod server;
+pub mod shares;
 pub mod ssh;
 pub mod token;
 

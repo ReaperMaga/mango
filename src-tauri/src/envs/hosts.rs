@@ -83,6 +83,15 @@ pub(crate) fn clean(mut h: EnvHost) -> Result<EnvHost, String> {
     if let Some(r) = &h.incus_remote {
         valid_remote(r)?;
     }
+    h.public_address = h.public_address.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+    if let Some(a) = &h.public_address {
+        let ok = a.len() <= 253
+            && !a.starts_with('-')
+            && a.chars().all(|c| c.is_ascii_alphanumeric() || ".-:".contains(c));
+        if !ok {
+            return Err(format!("\"{a}\" is not an address. Use a host name or an IP address."));
+        }
+    }
     if let Some(ts) = &mut h.tailscale {
         ts.tags = ts.tags.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
         for t in &ts.tags {
@@ -110,10 +119,20 @@ pub async fn env_host_save(app: AppHandle, host: EnvHost) -> Result<EnvHost, Str
         let _guard = state.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut list = load(&app)?;
         if h.id.trim().is_empty() {
+            if h.direct.is_some() {
+                return Err("Join a shared environment with its link instead.".into());
+            }
             h.id = uuid::Uuid::new_v4().to_string();
             list.push(h.clone());
         } else if let Some(slot) = list.iter_mut().find(|x| x.id == h.id) {
-            *slot = h.clone();
+            if slot.direct.is_some() {
+                // A joined environment: only its name is the user's to change; the rest came from the link.
+                slot.name = h.name.clone();
+                h = slot.clone();
+            } else {
+                h.direct = None;
+                *slot = h.clone();
+            }
         } else {
             return Err("That server is no longer in Mango's list.".into());
         }
