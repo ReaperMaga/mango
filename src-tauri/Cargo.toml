@@ -39,6 +39,8 @@ sha2 = "0.10"
 # Share links: Ed25519 keys (already in the tree through rustls).
 ring = "0.17"
 base64 = "0.23"
+# Chat history: SQLite compiled in (no system library to find on Windows or macOS).
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 # The browser on Linux: Tauri packs child webviews into the window's GTK box, so browser.rs moves
 # them into an overlay above Mango's own webview, and takes screenshots through WebKitGTK.

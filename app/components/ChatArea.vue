@@ -95,7 +95,7 @@ watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join
     }
   }
   if (threads.panes.length > 1 && threads.panes.every(p => !p.threadId)) threads.closePane('pane-b')
-  else if (moved) threads.persist()
+  else if (moved) threads.persistLayout()
 }, { immediate: true })
 
 /* split resize */

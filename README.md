@@ -37,8 +37,10 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 
 Mango uses the agents' own sign-in: it never sees or stores your credentials.
 
-Chat history is stored in the webview's localStorage for now; the agents keep
-their own session files (`~/.claude`, `~/.codex`) as usual.
+Chat history is saved in a SQLite database, `chats.sqlite3` in Mango's app data
+folder. Saves are incremental: only the chats that changed are written, and a
+reply is saved while it streams. Chats from older versions move there on first
+launch. The agents keep their own session files (`~/.claude`, `~/.codex`) as usual.
 
 ## Run it
 
@@ -127,5 +129,4 @@ DESIGN.md             design system
 
 - Multiple-choice questions from agents.
 - "Always allow" rules for approvals.
-- Move chat history from localStorage to a file in the app data dir.
 - Per-thread git worktrees.

@@ -13,7 +13,9 @@ import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
+import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
 
+/** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
 /** A message that is a slash command (`/compact`, `/review …`): it runs as a turn of its own. */
@@ -88,31 +90,62 @@ export const useThreads = defineStore('threads', {
   },
 
   actions: {
-    load() {
+    /**
+     * Read the chat history (a SQLite file, see `utils/chatHistory.ts`) and start saving to it.
+     * The first time, chats saved by older builds in localStorage move into it.
+     */
+    async load() {
+      let threads: Thread[] = []
+      let layout: any = null
       try {
-        const raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
-        if (raw?.threads) {
-          // Anything that was mid-run when the app closed is no longer running.
-          this.threads = raw.threads.map(normalizeLoaded)
-          this.tabs = (raw.tabs ?? []).filter((id: string) => this.threads.some(t => t.id === id))
-          this.panes = raw.panes?.length ? raw.panes : this.panes
-          this.activePaneId = this.panes.some(p => p.id === raw.activePaneId) ? raw.activePaneId : this.panes[0]!.id
-          this.defaultAgent = raw.defaultAgent ?? 'claude'
+        ({ threads, layout } = await loadHistory())
+      } catch (e) {
+        console.error('Mango could not read the chat history:', e)
+      }
+      let migrating = false
+      if (!threads.length && !layout) {
+        try {
+          const old = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
+          if (Array.isArray(old?.threads)) { threads = old.threads; layout = old; migrating = true }
+        } catch { /* nothing to move */ }
+      }
+      try {
+        // Anything that was mid-run when the app closed is no longer running.
+        this.threads = threads.map(normalizeLoaded)
+        if (layout) {
+          this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id))
+          this.panes = Array.isArray(layout.panes) && layout.panes.length ? layout.panes : this.panes
+          this.activePaneId = this.panes.some(p => p.id === layout.activePaneId) ? layout.activePaneId : this.panes[0]!.id
+          this.defaultAgent = layout.defaultAgent in AGENTS ? layout.defaultAgent : 'claude'
         }
       } catch { /* start fresh */ }
-    },
-
-    persist() {
-      try {
-        localStorage.setItem(LS_KEY, JSON.stringify({
-          threads: this.threads,
+      attachHistory({
+        threads: () => this.threads,
+        byId: id => this.byId(id),
+        layout: () => ({
           // Diff and file tabs are views onto the disk, and a browser's page dies with the app:
           // none of them is something to restore next time.
           tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id) && !isBrowserTab(id)),
           panes: this.panes.map(p => (isDiffTab(p.threadId) || isFileTab(p.threadId) || isBrowserTab(p.threadId) ? { ...p, threadId: null } : p)),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
-        }))
-      } catch { /* storage unavailable */ }
+        }),
+      })
+      // Statuses changed by loading (a run cut off by closing the app) are saved too.
+      markChanged()
+      if (migrating && await flushHistory()) localStorage.removeItem(LS_KEY)
+    },
+
+    /**
+     * Save soon (debounced). With chat ids, only those chats are compared; without, every chat is,
+     * which also drops deleted ones. The layout (tabs, panes) is compared every time.
+     */
+    persist(ids?: string | string[]) {
+      markChanged(ids)
+    },
+
+    /** Save the layout only: tabs, panes, the default agent. */
+    persistLayout() {
+      markChanged([])
     },
 
     /** Seed realistic demo threads for a project (command palette: “Load demo threads”). */
@@ -150,7 +183,7 @@ export const useThreads = defineStore('threads', {
       }
       this.threads.push(t)
       this.show(t.id)
-      this.persist()
+      this.persist(t.id)
       return t
     },
 
@@ -167,7 +200,7 @@ export const useThreads = defineStore('threads', {
       }
       const t = this.byId(id)
       if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
-      this.persist()
+      this.persist(id)
     },
 
     closeTab(id: string) {
@@ -197,7 +230,7 @@ export const useThreads = defineStore('threads', {
         const empty = this.panes.find(p => p.threadId === null)
         if (empty) this.closePane(empty.id)
       }
-      this.persist()
+      this.persistLayout()
     },
 
     /** Add a tab without showing it, after `after` when that is open (else at the end). */
@@ -223,7 +256,7 @@ export const useThreads = defineStore('threads', {
       }
       const target = this.panes.find(p => p.threadId === id)!
       this.activePaneId = focus || !this.panes.some(p => p.id === keep) ? target.id : keep
-      this.persist()
+      this.persistLayout()
     },
 
     /** Show `next` in the place of the tab `old` (browsing diffs reuses one tab instead of piling them up). */
@@ -256,7 +289,7 @@ export const useThreads = defineStore('threads', {
       const next = threadId ?? this.visibleTabs.find(id => id !== current) ?? null
       this.panes.push({ id: 'pane-b', threadId: next })
       this.activePaneId = 'pane-b'
-      this.persist()
+      this.persistLayout()
     },
 
     closePane(paneId: string) {
@@ -264,7 +297,7 @@ export const useThreads = defineStore('threads', {
       this.panes = this.panes.filter(p => p.id !== paneId)
       this.panes[0]!.id = 'pane-a'
       this.activePaneId = 'pane-a'
-      this.persist()
+      this.persistLayout()
     },
 
     /**
@@ -302,7 +335,7 @@ export const useThreads = defineStore('threads', {
       t.status = status
       t.seen = true
       t.archived = false
-      this.persist()
+      this.persist(id)
     },
 
     /** Put a chat away: it leaves the list and its tab closes, nothing is deleted. */
@@ -312,19 +345,19 @@ export const useThreads = defineStore('threads', {
       t.archived = true
       t.seen = true
       this.closeTab(id)
-      this.persist()
+      this.persist(id)
     },
 
     unarchive(id: string) {
       const t = this.byId(id)
       if (!t) return
       t.archived = false
-      this.persist()
+      this.persist(id)
     },
 
     rename(id: string, title: string) {
       const t = this.byId(id)
-      if (t && title.trim()) { t.title = title.trim(); this.persist() }
+      if (t && title.trim()) { t.title = title.trim(); this.persist(id) }
     },
 
     /** Delete a chat, with the sub-agent chats under it. */
@@ -351,7 +384,7 @@ export const useThreads = defineStore('threads', {
         t.sessionId = null
       }
       this.defaultAgent = agent
-      this.persist()
+      this.persist(id)
     },
 
     /** The sidebar's agent choice: for the chat on screen, and for new chats from now on. */
@@ -360,7 +393,7 @@ export const useThreads = defineStore('threads', {
       if (open && !open.parentId) this.setAgent(open.id, agent)
       else {
         this.defaultAgent = agent
-        this.persist()
+        this.persistLayout()
       }
     },
 
@@ -370,17 +403,17 @@ export const useThreads = defineStore('threads', {
       if (!t) return
       t.model = model
       if (t.effort && efforts && !efforts.includes(t.effort)) t.effort = null
-      this.persist()
+      this.persist(id)
     },
 
     setEffort(id: string, effort: string | null) {
       const t = this.byId(id)
-      if (t) { t.effort = effort; this.persist() }
+      if (t) { t.effort = effort; this.persist(id) }
     },
 
     setMode(id: string, mode: Thread['mode']) {
       const t = this.byId(id)
-      if (t) { t.mode = mode; this.persist() }
+      if (t) { t.mode = mode; this.persist(id) }
     },
 
     /**
@@ -403,7 +436,7 @@ export const useThreads = defineStore('threads', {
       t.messages.push(msg)
       if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
-      this.persist()
+      this.persist(t.id)
       if (isBusy(t)) {
         // A command waits for the turn to end and then runs on its own; anything else steers.
         if (!isCommand(text) && await steerRun(t.id, text.trim(), attachments)) return
@@ -427,11 +460,11 @@ export const useThreads = defineStore('threads', {
         t.sessionId = null
         const m = this._pushAgentMessage(id)
         if (m) this._pushPart(id, m, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
-        this.persist()
+        this.persist(id)
         return
       }
       t.status = 'queued'
-      this.persist()
+      this.persist(id)
       // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
       await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
     },
@@ -459,7 +492,7 @@ export const useThreads = defineStore('threads', {
       part.state = allow ? 'allowed' : 'denied'
       const stillWaiting = t.messages.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
       if (!stillWaiting && t.status === 'waiting') t.status = 'running'
-      this.persist()
+      this.persist(threadId)
       if (part.id) respondApproval(threadId, part.id, allow)
       // The simulated agent (browser preview) awaits this instead.
       approvalWaiters.get(`${threadId}:${messageId}:${partIndex}`)?.(allow)
@@ -496,7 +529,7 @@ export const useThreads = defineStore('threads', {
       const had = links.find(l => l.key === link.key)
       if (had) Object.assign(had, { url: link.url, kind: link.kind, ...(link.title ? { title: link.title } : {}), ...(link.state ? { state: link.state } : {}) })
       else links.push({ ...link })
-      this.persist()
+      this.persist(t.id)
       return !had
     },
 
@@ -505,7 +538,7 @@ export const useThreads = defineStore('threads', {
       if (!t?.links) return
       t.links = t.links.filter(l => l.key !== key)
       if (!t.links.length) delete t.links
-      this.persist()
+      this.persist(t.id)
     },
 
     /** What GitHub said about an item, on every chat that links it. */
@@ -566,7 +599,7 @@ export const useThreads = defineStore('threads', {
         ...(opts.agentType ? { agentType: opts.agentType } : {}),
       }
       this.threads.push(t)
-      this.persist()
+      this.persist([t.id, parentId])
       return this.byId(t.id)
     },
 
@@ -627,11 +660,13 @@ export const useThreads = defineStore('threads', {
       const visible = this.panes.some(p => p.threadId === id)
       if (outcome === 'done') t.seen = visible
       this._touch(id)
-      this.persist()
+      this.persist(id)
     },
+    /** The chat changed (an agent's output too): note the time, and save it soon. */
     _touch(id: string) {
       const t = this.byId(id)
       if (t) t.updatedAt = Date.now()
+      this.persist(id)
     },
   },
 })
