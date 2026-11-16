@@ -32,8 +32,9 @@ function endResize() {
 <template>
   <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
     <AppToolEnv v-if="ws.toolPanel === 'env'" />
-    <!-- A remote project has nothing on this computer's disk for these views to read. -->
-    <AppToolRemote v-else-if="remote" :title="LABELS[ws.toolPanel ?? 'files']" />
+    <!-- A remote project has nothing on this computer's disk for Files and Pull requests to read
+         (Changes runs git inside the environment). -->
+    <AppToolRemote v-else-if="remote && ws.toolPanel !== 'changes'" :title="LABELS[ws.toolPanel ?? 'files']" />
     <FilesPanel v-else-if="ws.toolPanel === 'files'" />
     <LinksPanel v-else-if="ws.toolPanel === 'links'" />
     <GitPanel v-else />

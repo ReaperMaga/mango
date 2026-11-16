@@ -3,7 +3,6 @@ import type { GitBranches, GitCommit, GitFile, GitStatus } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
-import { isEnvPath } from '~/utils/envPath'
 
 /** The one action that can run at a time. */
 export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init'
@@ -98,10 +97,9 @@ export const useGit = defineStore('git', {
     /**
      * Re-read the repository: status, then whatever is on screen that depends
      * on it (open diffs, branches, history). Safe to call often.
-     * A remote project (`env://…`) has no repository on this computer: nothing to read.
+     * A remote project (`env://…`) works the same: the backend runs git in its environment.
      */
     refresh(path: string): Promise<void> {
-      if (isEnvPath(path)) return Promise.resolve()
       const current = running.get(path)
       if (current) {
         // Something may have changed since that read started: run once more after it.
@@ -126,7 +124,6 @@ export const useGit = defineStore('git', {
     },
 
     async read(path: string) {
-      if (isEnvPath(path)) return
       const repo = this.ensure(path)
       if (!repo.status) repo.loading = true
       try {
@@ -181,7 +178,6 @@ export const useGit = defineStore('git', {
     },
 
     async loadDiff(path: string, key: string) {
-      if (isEnvPath(path)) return
       const repo = this.ensure(path)
       const { file, staged } = parseKey(key)
       if (!repo.diffs[key]) repo.diffs[key] = { text: null, loading: false, error: null }
@@ -257,7 +253,7 @@ export const useGit = defineStore('git', {
      * not. Failures land in `lastError`; resolves to whether it succeeded.
      */
     async run(path: string, action: GitAction, work: () => Promise<string | void>): Promise<boolean> {
-      if (this.busy || isEnvPath(path)) return false
+      if (this.busy) return false
       this.busy = action
       this.busyPath = path
       this.lastError = null

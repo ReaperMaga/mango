@@ -70,7 +70,7 @@ src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
   setup.rs           "Get started": what is installed, per-OS installer recipes run in a PTY (`setup_install`)
-  vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches
+  vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
