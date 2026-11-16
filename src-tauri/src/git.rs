@@ -3,15 +3,18 @@
 //! hooks, credentials and config behave exactly as they do in a terminal.
 
 use std::collections::HashMap;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
+
+use crate::envs::ssh::{self, Mode};
+use crate::envs::EnvHost;
 
 /// Local commands finish in milliseconds; this only catches a stuck process.
 pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -545,47 +548,174 @@ fn tools() -> &'static (PathBuf, Option<OsString>) {
     })
 }
 
-struct Git {
-    cmd: Command,
+// ---------------------------------------------------------------------------
+// Where the repository is
+// ---------------------------------------------------------------------------
+
+/// A folder git runs in: on this computer, or inside a remote environment, where
+/// the instance's own `git` runs as its agent user over SSH (see `envs/`).
+#[derive(Debug, Clone)]
+pub(crate) enum At {
+    Local(PathBuf),
+    Env(Box<EnvAt>),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct EnvAt {
+    pub host: EnvHost,
+    pub instance: String,
+    /// Absolute folder inside the instance (checked by `envs::valid_instance_dir`).
+    pub dir: String,
+}
+
+impl At {
+    pub(crate) fn local(path: impl Into<PathBuf>) -> At {
+        At::Local(path.into())
+    }
+
+    /// The same place, another folder (a work tree's root, as git printed it).
+    fn moved(&self, dir: String) -> At {
+        match self {
+            At::Local(_) => At::Local(PathBuf::from(dir)),
+            At::Env(e) => At::Env(Box::new(EnvAt { dir, ..(**e).clone() })),
+        }
+    }
+
+    /// The folder, for messages.
+    fn shown(&self) -> String {
+        match self {
+            At::Local(p) => p.display().to_string(),
+            At::Env(e) => format!("{} in {}", e.dir, e.instance),
+        }
+    }
+
+    /// Refuse a folder that isn't there. Inside an environment the command itself
+    /// checks (it starts with `cd`), which saves a connection.
+    fn check(&self) -> Result<(), String> {
+        match self {
+            At::Local(p) => existing_dir(&p.to_string_lossy()).map(|_| ()),
+            At::Env(_) => Ok(()),
+        }
+    }
+
+    /// Key for the work tree root cache (remote folders only).
+    fn env_key(&self) -> Option<String> {
+        match self {
+            At::Local(_) => None,
+            At::Env(e) => Some(format!("{}\u{0}{}\u{0}{}", e.host.id, e.instance, e.dir)),
+        }
+    }
+}
+
+impl EnvAt {
+    /// The command line for the master (or a joined environment) running `argv` here.
+    fn remote(&self, env: &[(String, String)], argv: &[String]) -> Result<Vec<String>, String> {
+        ssh::in_instance(&self.host, &self.instance, Mode::Batch, &ssh::as_agent(Some(&self.dir), env, argv))
+    }
+
+    /// Run `argv` as the agent user in this folder. A connection or environment problem
+    /// is an error; anything else is the command's own result, as for a local process.
+    fn run(
+        &self,
+        env: &[(String, String)],
+        argv: &[String],
+        stdin: Option<Vec<u8>>,
+        cap: usize,
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        let cmd = ssh::command(&ssh::argv(&self.host, Mode::Batch, &self.remote(env, argv)?)?);
+        let out = run_process(cmd, stdin, cap, timeout, "ssh", "ssh was not found. Install the OpenSSH client.")?;
+        if out.ok() {
+            return Ok(out);
+        }
+        let stderr = lossy(&out.stderr);
+        // ssh exits 255 on connection trouble (a capped read can also end it that way);
+        // incus says `Error: …` (instance stopped or gone), and sudo explains itself.
+        let infra = (out.code == Some(255) && !out.truncated)
+            || stderr.lines().any(|l| l.starts_with("Error: ") || l.starts_with("sudo: "));
+        if infra {
+            return Err(ssh::explain(&self.host, out.code, &stderr, ""));
+        }
+        // `as_agent` could not enter the folder.
+        if let Some(line) = stderr.lines().find(|l| l.starts_with("Mango: the folder ")) {
+            return Err(format!("The folder {}", &line["Mango: the folder ".len()..]));
+        }
+        if out.code == Some(127) && (stderr.contains("git: command not found") || stderr.contains("git: not found")) {
+            return Err(format!(
+                "git is not installed in {}. Install it there (for example `sudo apt install git` in its terminal), then try again.",
+                self.instance
+            ));
+        }
+        Ok(out)
+    }
+
+    /// Run a fixed `sh` script in this folder; `args` are its `$1`, `$2`, ….
+    fn sh(&self, script: &str, args: &[&str]) -> Result<Output, String> {
+        let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
+        argv.extend(args.iter().map(|a| a.to_string()));
+        self.run(&[], &argv, None, usize::MAX, LOCAL_TIMEOUT)
+    }
+}
+
+/// Work tree roots of remote folders, so an action costs one SSH connection instead of
+/// two. Every status read refreshes it; a stale entry only makes git fail with its own message.
+fn env_roots() -> &'static Mutex<HashMap<String, String>> {
+    static ROOTS: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    ROOTS.get_or_init(Default::default)
+}
+
+fn remember_root(at: &At, root: Option<&str>) {
+    let (Some(key), Ok(mut roots)) = (at.env_key(), env_roots().lock()) else { return };
+    match root {
+        Some(r) => roots.insert(key, r.to_string()),
+        None => roots.remove(&key),
+    };
+}
+
+/// One git invocation: a local process, or an SSH command line for a remote folder.
+struct Git<'a> {
+    at: &'a At,
+    args: Vec<String>,
+    env: Vec<(&'static str, &'static str)>,
     stdin: Option<Vec<u8>>,
     cap: usize,
     timeout: Duration,
 }
 
-/// A git invocation in `dir` that can never wait for a terminal.
-fn git(dir: &Path) -> Git {
-    let (bin, path) = tools();
-    let mut cmd = Command::new(bin);
-    crate::bin::hide_console(&mut cmd);
-    cmd.current_dir(dir)
-        // Never hang on a credential prompt nobody can see.
-        .env("GIT_TERMINAL_PROMPT", "0")
-        // File names are data, not glob patterns (`pages/[id].vue`).
-        .env("GIT_LITERAL_PATHSPECS", "1")
-        .args(["--no-pager", "-c", "core.quotepath=off", "-c", "color.ui=never"]);
-    if let Some(path) = path {
-        cmd.env("PATH", path);
+/// A git invocation in `at` that can never wait for a terminal.
+fn git(at: &At) -> Git<'_> {
+    Git {
+        at,
+        args: ["--no-pager", "-c", "core.quotepath=off", "-c", "color.ui=never"].map(String::from).to_vec(),
+        env: vec![
+            // Never hang on a credential prompt nobody can see.
+            ("GIT_TERMINAL_PROMPT", "0"),
+            // File names are data, not glob patterns (`pages/[id].vue`).
+            ("GIT_LITERAL_PATHSPECS", "1"),
+        ],
+        stdin: None,
+        cap: usize::MAX,
+        timeout: LOCAL_TIMEOUT,
     }
-    Git { cmd, stdin: None, cap: usize::MAX, timeout: LOCAL_TIMEOUT }
 }
 
-impl Git {
-    fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
-        self.cmd.arg(arg);
+impl Git<'_> {
+    fn arg(mut self, arg: impl AsRef<str>) -> Self {
+        self.args.push(arg.as_ref().to_string());
         self
     }
     fn args<I, S>(mut self, args: I) -> Self
     where
         I: IntoIterator<Item = S>,
-        S: AsRef<OsStr>,
+        S: AsRef<str>,
     {
-        self.cmd.args(args);
+        self.args.extend(args.into_iter().map(|a| a.as_ref().to_string()));
         self
     }
     /// For commands that only look: don't take the index lock, so polling
     /// never collides with the user's (or an agent's) own git.
     fn read_only(mut self) -> Self {
-        self.cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        self.env.push(("GIT_OPTIONAL_LOCKS", "0"));
         self
     }
     fn slow(mut self) -> Self {
@@ -601,9 +731,30 @@ impl Git {
         self.cap = bytes;
         self
     }
+    fn env_remove(mut self, key: &str) -> Self {
+        self.env.retain(|(k, _)| *k != key);
+        self
+    }
 
     fn run(self) -> Result<Output, String> {
-        run_process(self.cmd, self.stdin, self.cap, self.timeout, "git", "git is not installed or not on PATH")
+        match self.at {
+            At::Local(dir) => {
+                let (bin, path) = tools();
+                let mut cmd = Command::new(bin);
+                crate::bin::hide_console(&mut cmd);
+                cmd.current_dir(dir).envs(self.env.iter().copied()).args(&self.args);
+                if let Some(path) = path {
+                    cmd.env("PATH", path);
+                }
+                run_process(cmd, self.stdin, self.cap, self.timeout, "git", "git is not installed or not on PATH")
+            }
+            At::Env(e) => {
+                let env: Vec<(String, String)> = self.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+                let mut argv = vec!["git".to_string()];
+                argv.extend(self.args);
+                e.run(&env, &argv, self.stdin, self.cap, self.timeout)
+            }
+        }
     }
 
     /// Run and turn a non-zero exit into an error.
@@ -644,7 +795,7 @@ pub(crate) fn existing_dir(path: &str) -> Result<PathBuf, String> {
 
 /// The work tree containing `dir` and the short hash of its HEAD (when it
 /// has a commit). `None` when `dir` is not inside a work tree.
-fn locate(dir: &Path) -> Result<Option<(String, Option<String>)>, String> {
+fn locate(dir: &At) -> Result<Option<(String, Option<String>)>, String> {
     let out = git(dir)
         .read_only()
         .args(["rev-parse", "--show-toplevel", "--short", "HEAD"])
@@ -668,15 +819,22 @@ fn locate(dir: &Path) -> Result<Option<(String, Option<String>)>, String> {
 }
 
 /// Repository root for a command that needs one.
-fn require_root(path: &str) -> Result<PathBuf, String> {
-    let dir = existing_dir(path)?;
-    match locate(&dir)? {
-        Some((root, _)) => Ok(PathBuf::from(root)),
-        None => Err(format!("{} is not inside a git repository", dir.display())),
+fn require_root(at: &At) -> Result<At, String> {
+    at.check()?;
+    let cached = at.env_key().and_then(|k| env_roots().lock().ok()?.get(&k).cloned());
+    if let Some(root) = cached {
+        return Ok(at.moved(root));
+    }
+    match locate(at)? {
+        Some((root, _)) => {
+            remember_root(at, Some(&root));
+            Ok(at.moved(root))
+        }
+        None => Err(format!("{} is not inside a git repository", at.shown())),
     }
 }
 
-fn read_status(dir: &Path, untracked: bool) -> Result<ParsedStatus, String> {
+fn read_status(dir: &At, untracked: bool) -> Result<ParsedStatus, String> {
     let out = git(dir)
         .read_only()
         .args(["status", "--porcelain=v2", "--branch", "-z"])
@@ -686,7 +844,7 @@ fn read_status(dir: &Path, untracked: bool) -> Result<ParsedStatus, String> {
     Ok(parse_status(&out.stdout))
 }
 
-fn has_head(root: &Path) -> Result<bool, String> {
+fn has_head(root: &At) -> Result<bool, String> {
     Ok(git(root)
         .read_only()
         .args(["rev-parse", "-q", "--verify", "HEAD^{commit}"])
@@ -706,9 +864,9 @@ pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
         input.extend_from_slice(p.as_bytes());
         input.push(0);
     }
-    let mut cmd = git(dir).read_only().args(["check-ignore", "-z", "--stdin"]).stdin(input);
+    let at = At::local(dir);
     // check-ignore refuses literal pathspecs; the paths arrive on stdin, never as patterns.
-    cmd.cmd.env_remove("GIT_LITERAL_PATHSPECS");
+    let cmd = git(&at).read_only().args(["check-ignore", "-z", "--stdin"]).stdin(input).env_remove("GIT_LITERAL_PATHSPECS");
     // Exit 0: some are ignored, 1: none are, 128: not a repository.
     match cmd.run() {
         Ok(out) if out.ok() => out
@@ -721,12 +879,14 @@ pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
     }
 }
 
-pub(crate) fn status_of(path: &str) -> Result<GitStatus, String> {
-    let dir = existing_dir(path)?;
-    let Some((root, head)) = locate(&dir)? else {
+pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
+    at.check()?;
+    let found = locate(at)?;
+    remember_root(at, found.as_ref().map(|(root, _)| root.as_str()));
+    let Some((root, head)) = found else {
         return Ok(GitStatus::default());
     };
-    let parsed = read_status(&dir, true)?;
+    let parsed = read_status(at, true)?;
     Ok(GitStatus {
         vcs: Vcs::Git,
         repository: None,
@@ -749,8 +909,8 @@ pub(crate) fn status_of(path: &str) -> Result<GitStatus, String> {
 // Diff
 // ---------------------------------------------------------------------------
 
-pub(crate) fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn diff_of(at: &At, file: &str, staged: bool) -> Result<String, String> {
+    let root = require_root(at)?;
     let file = clean_rel(file)?;
     let diff = |paths: &[&str]| -> Result<String, String> {
         let mut cmd = git(&root)
@@ -796,11 +956,8 @@ pub(crate) fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, St
     if !tracked.stdout.is_empty() {
         return Ok(String::new());
     }
-    let target = root.join(file);
-    match fs::symlink_metadata(&target) {
-        Err(_) => return Ok(String::new()),
-        Ok(meta) if meta.is_dir() => return Ok(String::new()),
-        Ok(_) => {}
+    if !matches!(entry(&root, file), Ok(Entry::File)) {
+        return Ok(String::new());
     }
     let out = git(&root)
         .read_only()
@@ -819,8 +976,8 @@ pub(crate) fn diff_of(path: &str, file: &str, staged: bool) -> Result<String, St
 // Staging and discarding
 // ---------------------------------------------------------------------------
 
-pub(crate) fn stage(path: &str, files: &[String]) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn stage(at: &At, files: &[String]) -> Result<(), String> {
+    let root = require_root(at)?;
     if files.is_empty() {
         git(&root).args(["add", "-A"]).run_ok("git add")?;
         return Ok(());
@@ -834,8 +991,8 @@ pub(crate) fn stage(path: &str, files: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-pub(crate) fn unstage(path: &str, files: &[String]) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn unstage(at: &At, files: &[String]) -> Result<(), String> {
+    let root = require_root(at)?;
     for file in files {
         clean_rel(file)?;
     }
@@ -874,6 +1031,67 @@ pub(crate) fn unstage(path: &str, files: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `sh` script (in an environment's work tree): what `$1` is, like `fs::symlink_metadata`.
+const ENTRY_KIND: &str = r#"if [ -L "$1" ]; then echo file; elif [ -d "$1" ]; then echo dir; elif [ -e "$1" ]; then echo file; else echo missing; fi"#;
+
+/// `sh` script (in an environment's work tree) doing what [`remove_untracked`] does: a real
+/// folder is refused (exit 3), then the file goes, then each parent folder that is now empty,
+/// up to (never including) the work tree root.
+const REMOVE_UNTRACKED: &str = r#"f=$1
+if [ -d "$f" ] && [ ! -L "$f" ]; then exit 3; fi
+if [ ! -e "$f" ] && [ ! -L "$f" ]; then exit 0; fi
+rm -f -- "$f" || exit 1
+d=$(dirname -- "$f")
+while [ "$d" != . ] && [ "$d" != / ] && rmdir -- "$d" 2>/dev/null; do d=$(dirname -- "$d"); done
+exit 0"#;
+
+/// What is at a path in the work tree, not following a symlink.
+#[derive(Debug, PartialEq, Eq)]
+enum Entry {
+    Missing,
+    Dir,
+    File,
+}
+
+fn entry(root: &At, rel: &str) -> Result<Entry, String> {
+    let rel = clean_rel(rel)?;
+    match root {
+        At::Local(root) => match fs::symlink_metadata(root.join(rel)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Entry::Missing),
+            Err(e) => Err(format!("Could not read {rel}: {e}")),
+            Ok(meta) if meta.is_dir() => Ok(Entry::Dir),
+            Ok(_) => Ok(Entry::File),
+        },
+        At::Env(e) => {
+            let out = e.sh(ENTRY_KIND, &[rel])?;
+            match out.line().as_str() {
+                "dir" => Ok(Entry::Dir),
+                "file" => Ok(Entry::File),
+                "missing" => Ok(Entry::Missing),
+                _ => Err(out.error(&format!("Reading {rel}"))),
+            }
+        }
+    }
+}
+
+/// [`remove_untracked`] for a work tree here or in an environment.
+fn remove_untracked_at(root: &At, rel: &str) -> Result<(), String> {
+    let e = match root {
+        At::Local(root) => return remove_untracked(root, rel),
+        At::Env(e) => e,
+    };
+    let rel = clean_rel(rel)?;
+    let out = e.sh(REMOVE_UNTRACKED, &[rel])?;
+    match out.code {
+        Some(0) => Ok(()),
+        Some(3) => Err(format!(
+            "{} is a folder with its own repository; delete it yourself if you mean to",
+            rel.trim_end_matches('/')
+        )),
+        _ => Err(format!("Could not delete {rel}: {}", out.combined())),
+    }
+}
+
 /// Delete an untracked file, then any folders that only existed to hold it.
 pub(crate) fn remove_untracked(root: &Path, rel: &str) -> Result<(), String> {
     let target = root.join(clean_rel(rel)?);
@@ -910,8 +1128,8 @@ pub(crate) fn remove_untracked(root: &Path, rel: &str) -> Result<(), String> {
 ///
 /// An empty list means every working-tree change; staged-only files and
 /// conflicts are left alone.
-pub(crate) fn discard(path: &str, files: &[String]) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn discard(at: &At, files: &[String]) -> Result<(), String> {
+    let root = require_root(at)?;
     for file in files {
         clean_rel(file)?;
     }
@@ -980,7 +1198,7 @@ pub(crate) fn discard(path: &str, files: &[String]) -> Result<(), String> {
             .run_ok("git rm --cached")?;
     }
     for file in intent_to_add.iter().chain(&untracked) {
-        remove_untracked(&root, file)?;
+        remove_untracked_at(&root, file)?;
     }
     Ok(())
 }
@@ -989,7 +1207,7 @@ pub(crate) fn discard(path: &str, files: &[String]) -> Result<(), String> {
 // Commit, sync, history, branches
 // ---------------------------------------------------------------------------
 
-fn short_head(root: &Path) -> Result<String, String> {
+fn short_head(root: &At) -> Result<String, String> {
     Ok(git(root)
         .read_only()
         .args(["rev-parse", "--short", "HEAD"])
@@ -997,8 +1215,8 @@ fn short_head(root: &Path) -> Result<String, String> {
         .line())
 }
 
-pub(crate) fn commit(path: &str, message: &str, amend: bool) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn commit(at: &At, message: &str, amend: bool) -> Result<String, String> {
+    let root = require_root(at)?;
     let message = message.trim();
     if message.is_empty() && !amend {
         return Err("Write a commit message first".into());
@@ -1044,7 +1262,7 @@ pub(crate) fn commit(path: &str, message: &str, amend: bool) -> Result<String, S
     Err(out.error("git commit"))
 }
 
-fn remotes(root: &Path) -> Result<Vec<String>, String> {
+fn remotes(root: &At) -> Result<Vec<String>, String> {
     let out = git(root).read_only().arg("remote").run_ok("git remote")?;
     Ok(out.text().lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
 }
@@ -1113,13 +1331,13 @@ fn describe_size(size: &DiffSize) -> String {
 }
 
 /// Full hash of HEAD, `None` on an unborn branch.
-fn head_oid(root: &Path) -> Option<String> {
+fn head_oid(root: &At) -> Option<String> {
     let out = git(root).read_only().args(["rev-parse", "-q", "--verify", "HEAD^{commit}"]).run().ok()?;
     Some(out.line()).filter(|s| out.ok() && !s.is_empty())
 }
 
 /// Commits reachable from `to` but not from `from`, merges left out.
-fn commits_between(root: &Path, from: &str, to: &str) -> u64 {
+fn commits_between(root: &At, from: &str, to: &str) -> u64 {
     git(root)
         .read_only()
         .args(["rev-list", "--count", "--no-merges"])
@@ -1131,7 +1349,7 @@ fn commits_between(root: &Path, from: &str, to: &str) -> u64 {
         .unwrap_or(0)
 }
 
-fn diff_size(root: &Path, from: &str, to: &str) -> DiffSize {
+fn diff_size(root: &At, from: &str, to: &str) -> DiffSize {
     git(root)
         .read_only()
         .args(["diff", "--numstat", "--no-color", "--no-ext-diff"])
@@ -1145,7 +1363,7 @@ fn diff_size(root: &Path, from: &str, to: &str) -> DiffSize {
 }
 
 /// Every remote-tracking ref and the commit it points at.
-fn remote_refs(root: &Path) -> HashMap<String, String> {
+fn remote_refs(root: &At) -> HashMap<String, String> {
     git(root)
         .read_only()
         .args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
@@ -1193,8 +1411,8 @@ fn describe_behind(status: &ParsedStatus) -> Option<String> {
     })
 }
 
-pub(crate) fn fetch(path: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn fetch(at: &At) -> Result<String, String> {
+    let root = require_root(at)?;
     if remotes(&root)?.is_empty() {
         return Err(NO_REMOTE.into());
     }
@@ -1211,8 +1429,8 @@ pub(crate) fn fetch(path: &str) -> Result<String, String> {
     })
 }
 
-pub(crate) fn pull(path: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn pull(at: &At) -> Result<String, String> {
+    let root = require_root(at)?;
     if remotes(&root)?.is_empty() {
         return Err(NO_REMOTE.into());
     }
@@ -1259,8 +1477,8 @@ pub(crate) fn pull(path: &str) -> Result<String, String> {
     Err(explain_sync_failure(out.error("git pull")))
 }
 
-pub(crate) fn push(path: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn push(at: &At) -> Result<String, String> {
+    let root = require_root(at)?;
     let status = read_status(&root, false)?;
     let Some(branch) = status.branch else {
         return Err("HEAD is detached, so there is no branch to push. Switch to a branch first.".into());
@@ -1304,8 +1522,8 @@ pub(crate) fn push(path: &str) -> Result<String, String> {
     })
 }
 
-pub(crate) fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
-    let root = require_root(path)?;
+pub(crate) fn log(at: &At, limit: u32) -> Result<Vec<GitCommit>, String> {
+    let root = require_root(at)?;
     if !has_head(&root)? {
         return Ok(Vec::new());
     }
@@ -1318,8 +1536,8 @@ pub(crate) fn log(path: &str, limit: u32) -> Result<Vec<GitCommit>, String> {
     Ok(parse_log(&out.text()))
 }
 
-pub(crate) fn branches(path: &str) -> Result<GitBranches, String> {
-    let root = require_root(path)?;
+pub(crate) fn branches(at: &At) -> Result<GitBranches, String> {
+    let root = require_root(at)?;
     let head = git(&root)
         .read_only()
         .args(["symbolic-ref", "-q", "--short", "HEAD"])
@@ -1340,8 +1558,8 @@ pub(crate) fn branches(path: &str) -> Result<GitBranches, String> {
     Ok(GitBranches { current, local })
 }
 
-pub(crate) fn checkout(path: &str, branch: &str, create: bool) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn checkout(at: &At, branch: &str, create: bool) -> Result<(), String> {
+    let root = require_root(at)?;
     let branch = branch.trim();
     if branch.is_empty() {
         return Err("Enter a branch name".into());
@@ -1365,8 +1583,8 @@ pub(crate) fn checkout(path: &str, branch: &str, create: bool) -> Result<(), Str
     Ok(())
 }
 
-pub(crate) fn branch_list(path: &str) -> Result<GitBranchList, String> {
-    let root = require_root(path)?;
+pub(crate) fn branch_list(at: &At) -> Result<GitBranchList, String> {
+    let root = require_root(at)?;
     let head = git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]).run()?;
     let current = Some(head.line()).filter(|b| head.ok() && !b.is_empty());
     let format = [
@@ -1393,14 +1611,14 @@ pub(crate) fn branch_list(path: &str) -> Result<GitBranchList, String> {
     Ok(GitBranchList { current, local, remote, remotes: remotes(&root)? })
 }
 
-fn valid_new_branch(root: &Path, name: &str) -> Result<(), String> {
+fn valid_new_branch(root: &At, name: &str) -> Result<(), String> {
     let ok = git(root).read_only().args(["check-ref-format", "--branch"]).arg(name).run()?;
     if ok.ok() { Ok(()) } else { Err(format!("\"{name}\" is not a valid branch name")) }
 }
 
 /// Create `name` at `from` (or at HEAD) and optionally switch to it.
-pub(crate) fn branch_create(path: &str, name: &str, from: Option<&str>, checkout: bool) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn branch_create(at: &At, name: &str, from: Option<&str>, checkout: bool) -> Result<(), String> {
+    let root = require_root(at)?;
     let name = safe_ref(name)?;
     valid_new_branch(&root, name)?;
     let mut cmd = if checkout { git(&root).args(["switch", "-c"]) } else { git(&root).arg("branch") };
@@ -1414,8 +1632,8 @@ pub(crate) fn branch_create(path: &str, name: &str, from: Option<&str>, checkout
 
 /// Check out a remote branch such as "origin/feature": switch to the local
 /// branch of that name if there is one, otherwise create it tracking the remote.
-pub(crate) fn checkout_remote(path: &str, branch: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn checkout_remote(at: &At, branch: &str) -> Result<String, String> {
+    let root = require_root(at)?;
     let branch = safe_ref(branch)?;
     let remote = remotes(&root)?
         .into_iter()
@@ -1438,7 +1656,7 @@ pub(crate) fn checkout_remote(path: &str, branch: &str) -> Result<String, String
 }
 
 /// What to tell the user when a merge or rebase stopped on conflicts.
-fn conflict_report(root: &Path, what: &str, abort: &str) -> Option<String> {
+fn conflict_report(root: &At, what: &str, abort: &str) -> Option<String> {
     let conflicted: Vec<String> = read_status(root, false)
         .map(|s| s.files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect())
         .unwrap_or_default();
@@ -1457,8 +1675,8 @@ fn conflict_report(root: &Path, what: &str, abort: &str) -> Option<String> {
 }
 
 /// Merge `branch` into the current branch.
-pub(crate) fn merge(path: &str, branch: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn merge(at: &At, branch: &str) -> Result<String, String> {
+    let root = require_root(at)?;
     let branch = safe_ref(branch)?;
     let before = head_oid(&root);
     let current = read_status(&root, false).ok().and_then(|s| s.branch).unwrap_or_else(|| "HEAD".into());
@@ -1479,8 +1697,8 @@ pub(crate) fn merge(path: &str, branch: &str) -> Result<String, String> {
 }
 
 /// Rebase the current branch onto `onto`.
-pub(crate) fn rebase(path: &str, onto: &str) -> Result<String, String> {
-    let root = require_root(path)?;
+pub(crate) fn rebase(at: &At, onto: &str) -> Result<String, String> {
+    let root = require_root(at)?;
     let onto = safe_ref(onto)?;
     let before = head_oid(&root);
     let current = read_status(&root, false).ok().and_then(|s| s.branch).unwrap_or_else(|| "HEAD".into());
@@ -1503,8 +1721,8 @@ pub(crate) fn rebase(path: &str, onto: &str) -> Result<String, String> {
     Err(conflict_report(&root, "Rebase", "git rebase --abort").unwrap_or_else(|| out.error("git rebase")))
 }
 
-pub(crate) fn branch_rename(path: &str, from: &str, to: &str) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn branch_rename(at: &At, from: &str, to: &str) -> Result<(), String> {
+    let root = require_root(at)?;
     let from = safe_ref(from)?;
     let to = safe_ref(to)?;
     valid_new_branch(&root, to)?;
@@ -1515,8 +1733,8 @@ pub(crate) fn branch_rename(path: &str, from: &str, to: &str) -> Result<(), Stri
 /// Delete a local branch. Without `force`, git refuses branches whose commits
 /// are not merged anywhere; that refusal comes back as an error mentioning
 /// "not fully merged" so the UI can offer to delete anyway.
-pub(crate) fn branch_delete(path: &str, branch: &str, force: bool) -> Result<(), String> {
-    let root = require_root(path)?;
+pub(crate) fn branch_delete(at: &At, branch: &str, force: bool) -> Result<(), String> {
+    let root = require_root(at)?;
     let branch = safe_ref(branch)?;
     git(&root)
         .arg("branch")
@@ -1526,16 +1744,17 @@ pub(crate) fn branch_delete(path: &str, branch: &str, force: bool) -> Result<(),
     Ok(())
 }
 
-pub(crate) fn init(path: &str) -> Result<(), String> {
-    let dir = existing_dir(path)?;
-    if locate(&dir)?.is_some() {
+pub(crate) fn init(at: &At) -> Result<(), String> {
+    at.check()?;
+    if locate(at)?.is_some() {
         return Ok(());
     }
-    let configured = git(&dir)
+    let dir = at;
+    let configured = git(dir)
         .read_only()
         .args(["config", "--get", "init.defaultBranch"])
         .run()?;
-    let mut cmd = git(&dir);
+    let mut cmd = git(dir);
     if !configured.ok() || configured.line().is_empty() {
         // Git's built-in default is still "master"; follow the hosts instead.
         cmd = cmd.args(["-c", "init.defaultBranch=main"]);
@@ -1577,7 +1796,7 @@ mod tests {
         sh(&work, &["push", "-q", "-u", "origin", "feature/x"]);
         sh(&work, &["switch", "-q", "main"]);
         sh(&work, &["branch", "-q", "-D", "feature/x"]);
-        let path = work.to_str().unwrap();
+        let path = &At::local(&work);
 
         // Listing: one local branch, two remote ones, no origin/HEAD.
         let list = branch_list(path).unwrap();
@@ -1875,6 +2094,34 @@ mod tests {
     }
 
     #[test]
+    fn remote_folders_run_git_as_the_agent() {
+        let host = EnvHost {
+            id: "h".into(), name: "Lab".into(), ssh: "me@lab".into(), port: None, identity_file: None,
+            incus_remote: None, tailscale: None, public_address: None, direct: None,
+        };
+        let at = At::Env(Box::new(EnvAt { host, instance: "dev".into(), dir: "/home/agent/work/my shop".into() }));
+        let root = at.moved("/home/agent/work".into());
+        assert_eq!(root.shown(), "/home/agent/work in dev");
+        assert!(root.check().is_ok(), "no local disk check for a remote folder");
+        let At::Env(e) = &root else { unreachable!() };
+        let cmd = git(&root).read_only().args(["add", "-A", "--", "pages/[id].vue", "it's.txt"]);
+        let env: Vec<(String, String)> = cmd.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut argv = vec!["git".to_string()];
+        argv.extend(cmd.args.iter().cloned());
+        let line = ssh::line(&e.remote(&env, &argv).unwrap());
+        assert!(line.starts_with("incus exec dev -T -- runuser -u agent -- env HOME=/home/agent"), "{line}");
+        for part in ["GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1", "GIT_OPTIONAL_LOCKS=0", "mango /home/agent/work git --no-pager"] {
+            assert!(line.contains(part), "{part}: {line}");
+        }
+        assert!(line.ends_with(r"add -A -- 'pages/[id].vue' 'it'\''s.txt'"), "{line}");
+        // Roots are remembered per remote folder only.
+        assert_eq!(At::local("/x").env_key(), None);
+        remember_root(&at, Some("/home/agent/work"));
+        assert_eq!(require_root(&at).unwrap().shown(), "/home/agent/work in dev");
+        remember_root(&at, None);
+    }
+
+    #[test]
     fn path_chunks() {
         let paths: Vec<String> = (0..450).map(|i| format!("f{i}")).collect();
         let parts = chunks(&paths);
@@ -1905,6 +2152,9 @@ mod tests {
         fn path(&self) -> &str {
             self.0.to_str().unwrap()
         }
+        fn at(&self) -> At {
+            At::local(&self.0)
+        }
         fn write(&self, rel: &str, text: &str) {
             let p = self.0.join(rel);
             fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1914,21 +2164,21 @@ mod tests {
             fs::read_to_string(self.0.join(rel)).ok()
         }
         fn git(&self, args: &[&str]) -> Output {
-            let out = git(&self.0).args(args).run().unwrap();
+            let out = git(&At::local(&self.0)).args(args).run().unwrap();
             assert!(out.ok(), "git {args:?}: {}", out.combined());
             out
         }
         /// A repository with an identity that doesn't depend on the machine.
         fn repo() -> Self {
             let s = Scratch::new();
-            init(s.path()).unwrap();
+            init(&s.at()).unwrap();
             s.git(&["config", "user.name", "Mango Test"]);
             s.git(&["config", "user.email", "test@mango.invalid"]);
             s.git(&["config", "commit.gpgsign", "false"]);
             s
         }
         fn entry(&self, rel: &str) -> Option<GitFile> {
-            status_of(self.path()).unwrap().files.into_iter().find(|f| f.path == rel)
+            status_of(&self.at()).unwrap().files.into_iter().find(|f| f.path == rel)
         }
         fn codes(&self, rel: &str) -> (Option<String>, Option<String>) {
             self.entry(rel).map(|f| (f.index, f.worktree)).unwrap_or((None, None))
@@ -1945,7 +2195,7 @@ mod tests {
     }
 
     fn have_git() -> bool {
-        git(&std::env::temp_dir()).arg("--version").run().map(|o| o.ok()).unwrap_or(false)
+        git(&At::local(std::env::temp_dir())).arg("--version").run().map(|o| o.ok()).unwrap_or(false)
     }
 
     #[test]
@@ -1956,14 +2206,14 @@ mod tests {
         let s = Scratch::new();
         // Keep discovery from finding a repository above the temp folder.
         fs::create_dir_all(s.0.join("plain")).unwrap();
-        let status = status_of(s.0.join("plain").to_str().unwrap()).unwrap();
+        let status = status_of(&At::local(s.0.join("plain"))).unwrap();
         if status.is_repo {
             return; // the temp folder itself lives inside a repository
         }
         assert_eq!(status.root, None);
         assert!(status.files.is_empty());
-        assert!(status_of(s.0.join("missing").to_str().unwrap()).is_err());
-        assert!(stage(s.path(), &[]).unwrap_err().contains("not inside a git repository"));
+        assert!(status_of(&At::local(s.0.join("missing"))).is_err());
+        assert!(stage(&s.at(), &[]).unwrap_err().contains("not inside a git repository"));
     }
 
     #[test]
@@ -1972,13 +2222,13 @@ mod tests {
             return;
         }
         let s = Scratch::repo();
-        let status = status_of(s.path()).unwrap();
+        let status = status_of(&s.at()).unwrap();
         assert!(status.is_repo);
         assert_eq!(status.root.as_deref(), Some(s.path()));
         assert_eq!(status.head, None);
         assert!(status.branch.is_some());
-        assert!(log(s.path(), 20).unwrap().is_empty());
-        let b = branches(s.path()).unwrap();
+        assert!(log(&s.at(), 20).unwrap().is_empty());
+        let b = branches(&s.at()).unwrap();
         assert_eq!(b.current, status.branch);
         assert_eq!(b.local, [status.branch.clone().unwrap()]);
 
@@ -1986,26 +2236,26 @@ mod tests {
         s.write("docs/read me.md", "hello\n");
         assert_eq!(s.codes("docs/read me.md"), pair(None, Some("?")));
 
-        stage(s.path(), &[]).unwrap();
+        stage(&s.at(), &[]).unwrap();
         assert_eq!(s.codes("a.txt"), pair(Some("A"), None));
         // No HEAD yet: unstaging has to go through `git rm --cached`.
-        unstage(s.path(), &["a.txt".into()]).unwrap();
+        unstage(&s.at(), &["a.txt".into()]).unwrap();
         assert_eq!(s.codes("a.txt"), pair(None, Some("?")));
         assert_eq!(s.codes("docs/read me.md"), pair(Some("A"), None));
-        unstage(s.path(), &[]).unwrap();
+        unstage(&s.at(), &[]).unwrap();
         assert_eq!(s.codes("docs/read me.md"), pair(None, Some("?")));
         assert_eq!(s.read("a.txt").as_deref(), Some("one\n"));
 
-        let err = commit(s.path(), "nothing yet", false).unwrap_err();
+        let err = commit(&s.at(), "nothing yet", false).unwrap_err();
         assert!(err.contains("Nothing is staged"), "{err}");
-        assert!(commit(s.path(), "   ", false).is_err());
+        assert!(commit(&s.at(), "   ", false).is_err());
 
-        stage(s.path(), &[]).unwrap();
-        let hash = commit(s.path(), "First commit\n\n# kept: not a comment", false).unwrap();
-        let status = status_of(s.path()).unwrap();
+        stage(&s.at(), &[]).unwrap();
+        let hash = commit(&s.at(), "First commit\n\n# kept: not a comment", false).unwrap();
+        let status = status_of(&s.at()).unwrap();
         assert_eq!(status.head.as_deref(), Some(hash.as_str()));
         assert!(status.files.is_empty());
-        let history = log(s.path(), 20).unwrap();
+        let history = log(&s.at(), 20).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].subject, "First commit");
         assert_eq!(history[0].short_hash, hash);
@@ -2023,54 +2273,54 @@ mod tests {
         s.write("src/keep.rs", &body);
         s.write("app/pages/[id].vue", "<template>one</template>\n");
         s.write("i.vue", "decoy\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "base", false).unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
 
         // Unstaged edit.
         s.write("app/pages/[id].vue", "<template>two</template>\n");
-        let d = diff_of(s.path(), "app/pages/[id].vue", false).unwrap();
+        let d = diff_of(&s.at(), "app/pages/[id].vue", false).unwrap();
         assert!(d.contains("-<template>one</template>") && d.contains("+<template>two</template>"), "{d}");
-        assert_eq!(diff_of(s.path(), "app/pages/[id].vue", true).unwrap(), "");
+        assert_eq!(diff_of(&s.at(), "app/pages/[id].vue", true).unwrap(), "");
         // Brackets are literal: the decoy `i.vue` matches the glob but is not touched.
-        stage(s.path(), &["app/pages/[id].vue".into()]).unwrap();
+        stage(&s.at(), &["app/pages/[id].vue".into()]).unwrap();
         s.write("i.vue", "decoy changed\n");
         assert_eq!(s.codes("i.vue"), pair(None, Some("M")));
         assert_eq!(s.codes("app/pages/[id].vue"), pair(Some("M"), None));
-        assert!(diff_of(s.path(), "app/pages/[id].vue", true).unwrap().contains("+<template>two</template>"));
-        assert_eq!(diff_of(s.path(), "app/pages/[id].vue", false).unwrap(), "");
+        assert!(diff_of(&s.at(), "app/pages/[id].vue", true).unwrap().contains("+<template>two</template>"));
+        assert_eq!(diff_of(&s.at(), "app/pages/[id].vue", false).unwrap(), "");
 
         // Untracked: all added, from the repository root or a subfolder.
         s.write("notes/to do.md", "- first\n- second\n");
-        let d = diff_of(s.path(), "notes/to do.md", false).unwrap();
+        let d = diff_of(&s.at(), "notes/to do.md", false).unwrap();
         assert!(d.contains("new file mode") && d.contains("+- first") && d.contains("+- second"), "{d}");
         let sub = s.0.join("src");
-        assert_eq!(diff_of(sub.to_str().unwrap(), "notes/to do.md", false).unwrap(), d);
+        assert_eq!(diff_of(&At::local(&sub), "notes/to do.md", false).unwrap(), d);
 
         // Staged rename with an edit shows only the edit.
         s.git(&["mv", "src/keep.rs", "src/moved.rs"]);
         s.write("src/moved.rs", &body.replace("line 7\n", "line seven\n"));
-        stage(s.path(), &["src/moved.rs".into()]).unwrap();
+        stage(&s.at(), &["src/moved.rs".into()]).unwrap();
         let entry = s.entry("src/moved.rs").unwrap();
         assert_eq!(entry.index.as_deref(), Some("R"));
         assert_eq!(entry.orig_path.as_deref(), Some("src/keep.rs"));
-        let d = diff_of(s.path(), "src/moved.rs", true).unwrap();
+        let d = diff_of(&s.at(), "src/moved.rs", true).unwrap();
         assert!(d.contains("rename from src/keep.rs") && d.contains("+line seven"), "{d}");
         assert!(!d.contains("+line 1\n"), "{d}");
 
         // Binary files are a one-line notice.
         fs::write(s.0.join("blob.bin"), [0u8, 159, 146, 150, 0, 1, 2, 3]).unwrap();
-        let d = diff_of(s.path(), "blob.bin", false).unwrap();
+        let d = diff_of(&s.at(), "blob.bin", false).unwrap();
         assert!(d.lines().any(|l| l.starts_with("Binary files ") && l.ends_with(" differ")), "{d}");
 
         // Oversized diffs are cut at a line boundary with the marker.
         let big: String = (0..60_000).map(|i| format!("row number {i:07}\n")).collect();
         s.write("big.txt", &big);
-        let d = diff_of(s.path(), "big.txt", false).unwrap();
+        let d = diff_of(&s.at(), "big.txt", false).unwrap();
         assert!(d.len() <= DIFF_CAP + DIFF_TRUNCATED.len() + 1, "{}", d.len());
         assert!(d.ends_with(&format!("\n{DIFF_TRUNCATED}\n")));
         assert!(d.len() > DIFF_CAP / 2);
 
-        assert!(diff_of(s.path(), "../escape", false).is_err());
+        assert!(diff_of(&s.at(), "../escape", false).is_err());
     }
 
     #[test]
@@ -2085,48 +2335,48 @@ mod tests {
         s.write("staged-edit.txt", "v1\n");
         s.write("pages/[id].vue", "v1\n");
         s.write("pages/i.vue", "v1\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "base", false).unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
 
         // Unstaged edit goes back to HEAD.
         s.write("tracked.txt", "v2\n");
-        discard(s.path(), &["tracked.txt".into()]).unwrap();
+        discard(&s.at(), &["tracked.txt".into()]).unwrap();
         assert_eq!(s.read("tracked.txt").as_deref(), Some("v1\n"));
 
         // Staged + unstaged: only the unstaged part goes; the staged version survives.
         s.write("both.txt", "staged\n");
-        stage(s.path(), &["both.txt".into()]).unwrap();
+        stage(&s.at(), &["both.txt".into()]).unwrap();
         s.write("both.txt", "unstaged\n");
         assert_eq!(s.codes("both.txt"), pair(Some("M"), Some("M")));
-        discard(s.path(), &["both.txt".into()]).unwrap();
+        discard(&s.at(), &["both.txt".into()]).unwrap();
         assert_eq!(s.read("both.txt").as_deref(), Some("staged\n"));
         assert_eq!(s.codes("both.txt"), pair(Some("M"), None));
 
         // A deleted file comes back.
         fs::remove_file(s.0.join("removed.txt")).unwrap();
         assert_eq!(s.codes("removed.txt"), pair(None, Some("D")));
-        discard(s.path(), &["removed.txt".into()]).unwrap();
+        discard(&s.at(), &["removed.txt".into()]).unwrap();
         assert_eq!(s.read("removed.txt").as_deref(), Some("v1\n"));
 
         // Untracked file is deleted along with the folders made for it; its neighbour stays.
         s.write("new dir/deep/scratch file.txt", "x\n");
         s.write("new dir/keep.txt", "x\n");
-        discard(s.path(), &["new dir/deep/scratch file.txt".into()]).unwrap();
+        discard(&s.at(), &["new dir/deep/scratch file.txt".into()]).unwrap();
         assert!(!s.0.join("new dir/deep").exists());
         assert_eq!(s.read("new dir/keep.txt").as_deref(), Some("x\n"));
 
         // Brackets are not a glob: `pages/i.vue` keeps its edit.
         s.write("pages/[id].vue", "v2\n");
         s.write("pages/i.vue", "v2\n");
-        discard(s.path(), &["pages/[id].vue".into()]).unwrap();
+        discard(&s.at(), &["pages/[id].vue".into()]).unwrap();
         assert_eq!(s.read("pages/[id].vue").as_deref(), Some("v1\n"));
         assert_eq!(s.read("pages/i.vue").as_deref(), Some("v2\n"));
 
         // Staged-only new file: unstaged and deleted. Staged-only edit: back to HEAD.
         s.write("fresh.txt", "new\n");
         s.write("staged-edit.txt", "v2\n");
-        stage(s.path(), &["fresh.txt".into(), "staged-edit.txt".into()]).unwrap();
-        discard(s.path(), &["fresh.txt".into(), "staged-edit.txt".into()]).unwrap();
+        stage(&s.at(), &["fresh.txt".into(), "staged-edit.txt".into()]).unwrap();
+        discard(&s.at(), &["fresh.txt".into(), "staged-edit.txt".into()]).unwrap();
         assert!(!s.0.join("fresh.txt").exists());
         assert_eq!(s.entry("fresh.txt"), None);
         assert_eq!(s.read("staged-edit.txt").as_deref(), Some("v1\n"));
@@ -2135,22 +2385,22 @@ mod tests {
         // `add -N` placeholder: removed like an untracked file, not emptied.
         s.write("intent.txt", "content\n");
         s.git(&["add", "-N", "intent.txt"]);
-        discard(s.path(), &["intent.txt".into()]).unwrap();
+        discard(&s.at(), &["intent.txt".into()]).unwrap();
         assert!(!s.0.join("intent.txt").exists());
         assert_eq!(s.entry("intent.txt"), None);
 
         // Paths that are clean, unknown or outside are left alone.
-        discard(s.path(), &["tracked.txt".into(), "no/such/file".into()]).unwrap();
-        assert!(discard(s.path(), &["../outside.txt".into()]).is_err());
+        discard(&s.at(), &["tracked.txt".into(), "no/such/file".into()]).unwrap();
+        assert!(discard(&s.at(), &["../outside.txt".into()]).is_err());
         assert_eq!(s.read("tracked.txt").as_deref(), Some("v1\n"));
 
         // Discard everything: working-tree changes go, staged work is kept.
         s.write("tracked.txt", "again\n");
         s.write("loose.txt", "x\n");
         s.write("kept-staged.txt", "staged new\n");
-        stage(s.path(), &["kept-staged.txt".into()]).unwrap();
-        discard(s.path(), &[]).unwrap();
-        let status = status_of(s.path()).unwrap();
+        stage(&s.at(), &["kept-staged.txt".into()]).unwrap();
+        discard(&s.at(), &[]).unwrap();
+        let status = status_of(&s.at()).unwrap();
         let left: Vec<&str> = status.files.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(left, ["both.txt", "kept-staged.txt"]);
         assert!(status.files.iter().all(|f| f.worktree.is_none()));
@@ -2168,19 +2418,19 @@ mod tests {
         let s = Scratch::repo();
         let body: String = (1..=30).map(|i| format!("line {i}\n")).collect();
         s.write("old name.txt", &body);
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "base", false).unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
 
         s.git(&["mv", "old name.txt", "new name.txt"]);
         assert_eq!(s.entry("new name.txt").unwrap().orig_path.as_deref(), Some("old name.txt"));
-        unstage(s.path(), &["new name.txt".into()]).unwrap();
+        unstage(&s.at(), &["new name.txt".into()]).unwrap();
         assert_eq!(s.codes("old name.txt"), pair(None, Some("D")));
         assert_eq!(s.codes("new name.txt"), pair(None, Some("?")));
 
         // And discarding a staged rename puts the original back.
-        stage(s.path(), &[]).unwrap();
-        discard(s.path(), &["new name.txt".into()]).unwrap();
-        assert!(status_of(s.path()).unwrap().files.is_empty());
+        stage(&s.at(), &[]).unwrap();
+        discard(&s.at(), &["new name.txt".into()]).unwrap();
+        assert!(status_of(&s.at()).unwrap().files.is_empty());
         assert_eq!(s.read("old name.txt"), Some(body));
         assert!(!s.0.join("new name.txt").exists());
     }
@@ -2192,61 +2442,61 @@ mod tests {
         }
         let s = Scratch::repo();
         s.write("a.txt", "base\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "base", false).unwrap();
-        let main = status_of(s.path()).unwrap().branch.unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+        let main = status_of(&s.at()).unwrap().branch.unwrap();
 
-        checkout(s.path(), "feat/side panel", true).unwrap_err();
-        assert!(checkout(s.path(), "-x", true).is_err());
-        checkout(s.path(), "feat/panel", true).unwrap();
-        let b = branches(s.path()).unwrap();
+        checkout(&s.at(), "feat/side panel", true).unwrap_err();
+        assert!(checkout(&s.at(), "-x", true).is_err());
+        checkout(&s.at(), "feat/panel", true).unwrap();
+        let b = branches(&s.at()).unwrap();
         assert_eq!(b.current.as_deref(), Some("feat/panel"));
         assert!(b.local.contains(&main) && b.local.contains(&"feat/panel".to_string()));
 
         s.write("a.txt", "theirs\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "side", false).unwrap();
-        let amended = commit(s.path(), "side, reworded", true).unwrap();
-        let history = log(s.path(), 1).unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "side", false).unwrap();
+        let amended = commit(&s.at(), "side, reworded", true).unwrap();
+        let history = log(&s.at(), 1).unwrap();
         assert_eq!(history.len(), 1);
         assert_eq!(history[0].subject, "side, reworded");
         assert_eq!(history[0].short_hash, amended);
 
-        checkout(s.path(), &main, false).unwrap();
+        checkout(&s.at(), &main, false).unwrap();
         assert_eq!(s.read("a.txt").as_deref(), Some("base\n"));
         s.write("a.txt", "ours\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "main side", false).unwrap();
-        assert_eq!(log(s.path(), 20).unwrap().len(), 2);
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "main side", false).unwrap();
+        assert_eq!(log(&s.at(), 20).unwrap().len(), 2);
 
         // A real conflict: reported as such, and neither discard nor unstage touches it.
-        let merge = git(&s.0).args(["merge", "feat/panel"]).run().unwrap();
+        let merge = git(&s.at()).args(["merge", "feat/panel"]).run().unwrap();
         assert!(!merge.ok());
         let entry = s.entry("a.txt").unwrap();
         assert!(entry.conflicted);
-        assert!(discard(s.path(), &["a.txt".into()]).unwrap_err().contains("merge conflicts"));
-        discard(s.path(), &[]).unwrap();
-        unstage(s.path(), &[]).unwrap();
+        assert!(discard(&s.at(), &["a.txt".into()]).unwrap_err().contains("merge conflicts"));
+        discard(&s.at(), &[]).unwrap();
+        unstage(&s.at(), &[]).unwrap();
         assert!(s.entry("a.txt").unwrap().conflicted);
         assert!(s.read("a.txt").unwrap().contains("<<<<<<<"));
-        let err = commit(s.path(), "merge", false).unwrap_err();
+        let err = commit(&s.at(), "merge", false).unwrap_err();
         assert!(err.contains("merge conflicts"), "{err}");
-        assert!(diff_of(s.path(), "a.txt", false).unwrap().contains("@@@"));
+        assert!(diff_of(&s.at(), "a.txt", false).unwrap().contains("@@@"));
 
         // Staging the resolved file ends the conflict and the merge can be committed.
         s.write("a.txt", "resolved\n");
-        stage(s.path(), &["a.txt".into()]).unwrap();
-        commit(s.path(), "Merge feat/panel", false).unwrap();
-        assert!(status_of(s.path()).unwrap().files.is_empty());
+        stage(&s.at(), &["a.txt".into()]).unwrap();
+        commit(&s.at(), "Merge feat/panel", false).unwrap();
+        assert!(status_of(&s.at()).unwrap().files.is_empty());
 
         // Detached HEAD has no branch.
-        let first = log(s.path(), 20).unwrap().last().unwrap().hash.clone();
+        let first = log(&s.at(), 20).unwrap().last().unwrap().hash.clone();
         s.git(&["checkout", "-q", "--detach", &first]);
-        let status = status_of(s.path()).unwrap();
+        let status = status_of(&s.at()).unwrap();
         assert_eq!(status.branch, None);
         assert!(first.starts_with(status.head.as_deref().unwrap()));
-        assert_eq!(branches(s.path()).unwrap().current, None);
-        assert!(push(s.path()).unwrap_err().contains("detached"));
+        assert_eq!(branches(&s.at()).unwrap().current, None);
+        assert!(push(&s.at()).unwrap_err().contains("detached"));
     }
 
     #[test]
@@ -2256,37 +2506,37 @@ mod tests {
         }
         let s = Scratch::repo();
         s.write("a.txt", "one\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "one", false).unwrap();
-        let branch = status_of(s.path()).unwrap().branch.unwrap();
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "one", false).unwrap();
+        let branch = status_of(&s.at()).unwrap().branch.unwrap();
 
         // No remote at all: a readable error, not a silent success.
-        assert!(fetch(s.path()).unwrap_err().contains("no remote"));
-        assert!(push(s.path()).unwrap_err().contains("no remote"));
+        assert!(fetch(&s.at()).unwrap_err().contains("no remote"));
+        assert!(push(&s.at()).unwrap_err().contains("no remote"));
 
         // A bare repository next door stands in for the server.
         let remote = Scratch::new();
-        git(&remote.0).args(["init", "-q", "--bare"]).run_ok("init").unwrap();
+        git(&remote.at()).args(["init", "-q", "--bare"]).run_ok("init").unwrap();
         s.git(&["remote", "add", "origin", remote.path()]);
-        assert!(pull(s.path()).unwrap_err().contains("Publish it first"));
+        assert!(pull(&s.at()).unwrap_err().contains("Publish it first"));
 
         // First push publishes and starts tracking.
-        push(s.path()).unwrap();
-        let status = status_of(s.path()).unwrap();
+        push(&s.at()).unwrap();
+        let status = status_of(&s.at()).unwrap();
         assert_eq!(status.upstream.as_deref(), Some(format!("origin/{branch}").as_str()));
         assert_eq!((status.ahead, status.behind), (0, 0));
 
         s.write("a.txt", "two\n");
-        stage(s.path(), &[]).unwrap();
-        commit(s.path(), "two", false).unwrap();
-        assert_eq!(status_of(s.path()).unwrap().ahead, 1);
-        push(s.path()).unwrap();
-        assert_eq!(status_of(s.path()).unwrap().ahead, 0);
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "two", false).unwrap();
+        assert_eq!(status_of(&s.at()).unwrap().ahead, 1);
+        push(&s.at()).unwrap();
+        assert_eq!(status_of(&s.at()).unwrap().ahead, 0);
 
         // A second clone pushes; the first sees it after fetch and gets it with pull.
         let other = Scratch::new();
         // The bare repository's own HEAD may name a different default branch.
-        git(&other.0)
+        git(&other.at())
             .args(["clone", "-q", "-b", branch.as_str(), remote.path(), "."])
             .run_ok("clone")
             .unwrap();
@@ -2294,14 +2544,14 @@ mod tests {
         other.git(&["config", "user.email", "other@mango.invalid"]);
         other.git(&["config", "commit.gpgsign", "false"]);
         other.write("b.txt", "from other\n");
-        stage(other.path(), &[]).unwrap();
-        commit(other.path(), "other", false).unwrap();
-        push(other.path()).unwrap();
+        stage(&other.at(), &[]).unwrap();
+        commit(&other.at(), "other", false).unwrap();
+        push(&other.at()).unwrap();
 
-        fetch(s.path()).unwrap();
-        assert_eq!(status_of(s.path()).unwrap().behind, 1);
-        pull(s.path()).unwrap();
+        fetch(&s.at()).unwrap();
+        assert_eq!(status_of(&s.at()).unwrap().behind, 1);
+        pull(&s.at()).unwrap();
         assert_eq!(s.read("b.txt").as_deref(), Some("from other\n"));
-        assert_eq!(status_of(s.path()).unwrap().behind, 0);
+        assert_eq!(status_of(&s.at()).unwrap().behind, 0);
     }
 }

@@ -228,6 +228,42 @@ export interface GhCheck {
   required: boolean
 }
 
+/** A job's or step's state: like a check's, plus "queued" for one that has not started. */
+export type GhRunState = GhCheck['state'] | 'queued'
+
+/** One step of a GitHub Actions job, with its share of the log. */
+export interface GhJobStep {
+  number: number
+  name: string
+  state: GhRunState
+  /** ISO timestamps. */
+  startedAt: string | null
+  completedAt: string | null
+  /** Its log lines without timestamps: untrusted text with ANSI colour codes and `##[group]`-style markers. */
+  lines: string[]
+  /** Earlier lines left out of a very long step. */
+  omitted: number
+}
+
+/** A GitHub Actions job as `gh_job` reads it. */
+export interface GhJob {
+  id: number
+  name: string
+  workflow: string | null
+  /** The job's page on GitHub. */
+  url: string
+  state: GhRunState
+  startedAt: string | null
+  completedAt: string | null
+  steps: GhJobStep[]
+  /** The log was read; GitHub has it only once the job finished. */
+  logReady: boolean
+  /** Why a finished job's log could not be read. */
+  logError: string | null
+  /** The log was too long and its end is missing. */
+  logTruncated: boolean
+}
+
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
  * refuses anything that leads outside it.
@@ -334,6 +370,197 @@ export interface Transcript {
   duration: number
 }
 
+/* ---------- remote environments ----------
+ * Incus instances (containers and VMs) on a "master" server Mango reaches over SSH.
+ * Mango runs nothing of its own there: each action is one `ssh … incus …` call that uses
+ * the user's own SSH keys. Instances are addressed as { hostId, instance }.
+ */
+
+/** Tailscale for a server's instances: they join the tailnet with these tags. */
+export interface EnvTailscale {
+  /** e.g. ['tag:mango']; the tailnet's ACLs decide what the tags may reach. */
+  tags: string[]
+  /** A file on the master holding a Tailscale auth key. Null: interactive sign-in (the installer prints a link). */
+  authKeyFile: string | null
+}
+
+/** A master server. `id` is '' when adding one with `env_host_save`. */
+export interface EnvHost {
+  id: string
+  name: string
+  /** `user@host`, or an alias from ~/.ssh/config */
+  ssh: string
+  port: number | null
+  /** A private key on this computer; null uses the SSH defaults. */
+  identityFile: string | null
+  /** The Incus remote on the master that holds the instances (`incus remote list`); null is its default. */
+  incusRemote: string | null
+  tailscale: EnvTailscale | null
+  /** The address other people reach this server at, for share links over a public port; null uses the SSH host name. */
+  publicAddress?: string | null
+  /**
+   * Set for an environment joined from a share link (`env_join`): SSH goes straight into that one environment
+   * as its agent user. There is no master and no Incus: it has exactly one instance, `direct.instance`, which can't
+   * be started, stopped, created or deleted from here.
+   */
+  direct?: EnvDirect | null
+}
+
+export interface EnvDirect {
+  /** The environment's name, shown as the only instance. */
+  instance: string
+  /** Its pinned SSH host key (base64 `ssh-ed25519` blob). */
+  hostKey: string
+  /** Where it was shared from, as the link says, e.g. "forge/dev". */
+  sharedFrom: string
+  shareId: string
+  /** When access ends (unix ms); null = no end. */
+  expiresAt: number | null
+}
+
+/**
+ * How a share link reaches the environment:
+ * - `public`: a port on the server (an Incus proxy device) forwards to the environment's own SSH server, key-only.
+ * - `tailscale`: the environment's tailnet address (the person joining must be able to reach it on the tailnet).
+ */
+export type EnvShareVia = 'public' | 'tailscale'
+
+/** One person's access to an environment (a key in its agent user's authorized_keys). */
+export interface EnvShare {
+  id: string
+  /** Who it is for, e.g. "Sam". */
+  label: string
+  via: EnvShareVia
+  /** host:port the link connects to. */
+  endpoint: string
+  /** unix ms */
+  createdAt: number
+  /** unix ms; null = no end */
+  expiresAt: number | null
+}
+
+/** A new share: the link exists only here, once (Mango keeps no copy of its key). */
+export interface EnvShareLink {
+  share: EnvShare
+  /** `mango://join/…`, one line; also shown as a QR code. */
+  url: string
+  /** What the owner may still need to do, e.g. open the port in a firewall (with a ufw command when ufw is active). */
+  note?: string | null
+}
+
+/** What a share link would add, before joining. */
+export interface EnvJoinPreview {
+  instance: string
+  sharedFrom: string
+  endpoint: string
+  expiresAt: number | null
+  /** An environment from this link (same share id) is already in the list. */
+  alreadyJoined: boolean
+}
+
+/**
+ * Incus on a server, as `env_probe` finds it:
+ * - `ready`: installed, initialised, and usable by the SSH user
+ * - `missing`: not installed (`env_server_setup` can install it when `canSetup`)
+ * - `uninitialised`: installed but has no storage pool or network yet (`env_server_setup` initialises it)
+ * - `no-access`: installed, but the SSH user may not use it (not in `incus-admin`; setup adds them)
+ */
+export type EnvIncusState = 'ready' | 'missing' | 'uninitialised' | 'no-access'
+
+export interface EnvProbe {
+  /** SSH worked and Incus is ready to use. */
+  ok: boolean
+  /** SSH worked (whatever the state of Incus). */
+  reachable: boolean
+  /** null when the server could not be reached. */
+  incus: EnvIncusState | null
+  incusVersion: string | null
+  /** The server's OS, e.g. "Ubuntu 24.04.1 LTS". */
+  os: string | null
+  /** Mango can install, initialise or update Incus here (a supported distribution with systemd). */
+  canSetup: boolean
+  /** Why it can't, when `canSetup` is false and Incus isn't ready (e.g. "Fedora is not supported yet"). */
+  setupNote: string | null
+  /** Instance remotes the server's `incus` knows. */
+  remotes: string[]
+  error: string | null
+}
+
+export type EnvKind = 'container' | 'vm'
+export type EnvInstanceStatus = 'running' | 'stopped' | 'starting' | 'stopping' | 'frozen' | 'error' | 'unknown'
+
+export interface EnvInstance {
+  name: string
+  kind: EnvKind
+  status: EnvInstanceStatus
+  /** The image's description, e.g. "Ubuntu noble amd64 (20261101_07:42)". */
+  image: string | null
+  ipv4: string[]
+  /** Address on the tailnet, once it has joined one. */
+  tailscaleIp: string | null
+  cpus: number | null
+  /** e.g. "8GiB" */
+  memory: string | null
+  /** Unix ms */
+  createdAt: number
+}
+
+export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
+
+/** What an instance can have installed with one click (and updated the same way). */
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'desktop' | 'tailscale'
+
+export interface EnvComponent {
+  id: EnvComponentId
+  name: string
+  description: string
+  installed: boolean
+  version: string | null
+  /** Installed along with it when missing. */
+  requires: EnvComponentId[]
+}
+
+export interface EnvCreateInput {
+  hostId: string
+  name: string
+  /** e.g. 'images:ubuntu/24.04' (VMs use the '/cloud' variant automatically) */
+  image: string
+  kind: EnvKind
+  cpus: number | null
+  memoryGib: number | null
+  diskGib: number | null
+  components: EnvComponentId[]
+}
+
+/** A folder inside an environment, for picking where a project lives. */
+export interface EnvDirEntry {
+  name: string
+  /** Absolute path inside the environment. */
+  path: string
+  /** Has a `.git` folder. */
+  isGit: boolean
+}
+
+export interface EnvDirListing {
+  /** The folder listed (absolute, normalised; `~` resolved to the agent's home). */
+  dir: string
+  /** Its parent; null at `/`. */
+  parent: string | null
+  /** Sub-folders only, sorted by name; hidden ones (`.x`) left out. */
+  entries: EnvDirEntry[]
+  /** More than the limit (500) existed. */
+  truncated: boolean
+}
+
+/** The desktop of an instance, served by noVNC through a tunnel on this computer. */
+export interface EnvDesktop { url: string }
+
+/** Where a remote agent run happens. */
+export interface EnvRemote { hostId: string; instance: string }
+
+/** What `env_login` can sign in to inside an instance (each CLI's own flow, in a terminal). */
+export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'tailscale'
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -361,7 +588,7 @@ export interface Commands {
    * Emits `agent://stdout` / `agent://stderr` per line and `agent://exit` once.
    */
   /** `cwd` '' starts it in the home folder (for questions that need no project). */
-  agent_spawn: [{ agent: 'claude' | 'codex'; args: string[]; cwd: string; env?: Record<string, string> | null }, string]
+  agent_spawn: [{ agent: 'claude' | 'codex'; args: string[]; cwd: string; env?: Record<string, string> | null; remote?: EnvRemote | null }, string]
   /** Raw write to the process's stdin (include the trailing newline yourself). */
   agent_write: [{ id: string; data: string }, void]
   agent_close_stdin: [{ id: string }, void]
@@ -434,6 +661,11 @@ export interface Commands {
    * fails and says the branch moved). The local checkout is not touched.
    */
   gh_merge: [{ path: string; reference: string; method: GhMergeMethod; headSha: string }, void]
+  /**
+   * A GitHub Actions job by its link (a check's `url`, `…/actions/runs/<run>/job/<job>`): its steps,
+   * and once it finished, its log split into them. Other links are refused.
+   */
+  gh_job: [{ url: string }, GhJob]
 
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]
@@ -478,6 +710,54 @@ export interface Commands {
    * `language` is a Whisper code such as "en"; null detects it.
    */
   voice_transcribe: [{ model: VoiceModelId; audio: string; language: string | null }, Transcript]
+
+  /* remote environments (see EnvHost) */
+  env_hosts: [Record<string, never>, EnvHost[]]
+  /** Add (id '') or update a server; returns it with its id. */
+  env_host_save: [{ host: EnvHost }, EnvHost]
+  /** Forget a server (its instances are untouched). */
+  env_host_remove: [{ id: string }, void]
+  /** Can Mango reach it over SSH, and what does its incus know? */
+  env_probe: [{ hostId: string }, EnvProbe]
+  /**
+   * Install Incus on the server (or update it when installed), initialise it when it has no storage
+   * pool or network, and let the SSH user use it. Runs in a terminal (sudo may ask for a password); returns the pty id.
+   */
+  env_server_setup: [{ hostId: string; cols: number; rows: number }, string]
+  env_instances: [{ hostId: string }, EnvInstance[]]
+  /** 'delete' removes the instance and everything in it (the UI confirms first). */
+  env_instance_action: [{ hostId: string; instance: string; action: EnvInstanceAction }, void]
+  /** Launch an instance and install `components`, in a terminal; returns the pty id. */
+  env_create: [{ input: EnvCreateInput; cols: number; rows: number }, string]
+  /** Which components are installed, with versions (runs a probe inside the instance). */
+  env_components: [{ hostId: string; instance: string }, EnvComponent[]]
+  /** Install or update components (with what they require), in a terminal; returns the pty id. */
+  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; cols: number; rows: number }, string]
+  /** A login shell as the agent user inside the instance; returns the pty id. */
+  env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
+  /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
+  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; cols: number; rows: number }, string]
+  /**
+   * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
+   * `git init` in a new or empty folder when `gitInit`); returns its absolute path.
+   */
+  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean }, string]
+  /** The sub-folders of `dir` inside the environment (as the agent user); `dir` may be '~'. */
+  env_list_dir: [{ hostId: string; instance: string; dir: string }, EnvDirListing]
+  /** Open (or reuse) a tunnel to the instance's desktop. */
+  env_desktop_open: [{ hostId: string; instance: string }, EnvDesktop]
+  env_desktop_close: [{ hostId: string; instance: string }, void]
+
+  /* sharing: give someone full access to one environment (not the server) with a one-line link */
+  env_shares: [{ hostId: string; instance: string }, EnvShare[]]
+  /** Add an access key to the environment (setting up its SSH server and, for `public`, the forwarded port). */
+  env_share_create: [{ hostId: string; instance: string; label: string; via: EnvShareVia; expiresInDays: number | null }, EnvShareLink]
+  /** Remove that key (and the forwarded port when no public share is left). */
+  env_share_revoke: [{ hostId: string; instance: string; shareId: string }, void]
+  /** Read a pasted link without saving anything. */
+  env_join_preview: [{ link: string }, EnvJoinPreview]
+  /** Save the environment from a link (its key is stored in Mango's app data); returns the new direct host. */
+  env_join: [{ link: string; name: string | null }, EnvHost]
 }
 
 /** Events emitted by the backend. */
@@ -490,4 +770,6 @@ export interface Events {
   'agent://exit': AgentExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
+  /** A `mango://join/…` link was opened (deep link): show the join dialog for it. */
+  'envs://join': { link: string }
 }

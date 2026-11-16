@@ -1,10 +1,14 @@
 import { defineStore } from 'pinia'
-import type { GhItem, GhMergeMethod } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhMergeMethod } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
 import { linkFromItem } from '~/utils/githubLinks'
+import { isEnvPath } from '~/utils/envPath'
+
+/** GitHub is asked through `gh` in the project's folder: a remote project has none on this computer. */
+const REMOTE = 'Pull requests are not available for remote environments yet.'
 
 /**
  * Pull requests and issues as GitHub reports them, for the Pull requests tool window. Which items
@@ -23,11 +27,35 @@ export interface LinkDetail {
   bodyAt: number
 }
 
+/** A GitHub Actions job as last read, for the check log view. */
+export interface JobDetail {
+  job: GhJob | null
+  loading: boolean
+  error: string | null
+  fetchedAt: number
+}
+
+/** The check whose log the tool window shows, over the pull request it belongs to. */
+export interface OpenCheck {
+  /** The pull request's link key: the log closes when another item opens. */
+  linkKey: string
+  /** Its details link, a GitHub Actions job (see `isJobUrl`). */
+  url: string
+  name: string
+  workflow: string | null
+}
+
+/** A check's details link that `gh_job` can read: a GitHub Actions job. */
+export const isJobUrl = (url: string | null | undefined): url is string =>
+  !!url && /^https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+
 /** The picture links in a description are signed for a few minutes only: read it again before they lapse. */
 const STALE_MS = 4 * 60_000
 
 /** The latest read started per link key: an older read that finishes later is dropped. */
 const reads = new Map<string, number>()
+/** The same for job reads, by job link. */
+const jobReads = new Map<string, number>()
 
 const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e))
 
@@ -37,6 +65,10 @@ export const useLinks = defineStore('links', {
     details: {} as Record<string, LinkDetail>,
     /** The item the tool window has open; null shows the chat's list. */
     focused: null as string | null,
+    /** GitHub Actions jobs, by link. */
+    jobs: {} as Record<string, JobDetail>,
+    /** The check whose log is open over its pull request; null shows the pull request. */
+    check: null as OpenCheck | null,
   }),
 
   actions: {
@@ -46,6 +78,7 @@ export const useLinks = defineStore('links', {
      * afresh on every read, and swapping them in would reload every picture each time.
      */
     async load(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, force = false, quiet = false) {
+      if (isEnvPath(projectPath)) return
       const had = this.details[link.key]
       // A read the user asked for goes ahead even while another runs; the newest one wins.
       if (had?.loading && (quiet || !force)) return
@@ -74,6 +107,7 @@ export const useLinks = defineStore('links', {
      * then read it again. Rejects with a message to show.
      */
     async merge(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, method: GhMergeMethod) {
+      if (isEnvPath(projectPath)) throw new Error(REMOTE)
       const headSha = this.details[link.key]?.item?.headSha
       if (!headSha) throw new Error('Read the pull request again before merging it.')
       try {
@@ -93,6 +127,7 @@ export const useLinks = defineStore('links', {
       const threads = useThreads()
       const chat = threads.rootOf(threadId)
       if (!chat) throw new Error('That chat is gone.')
+      if (isEnvPath(chat.projectPath)) throw new Error(REMOTE)
       let item: GhItem
       try {
         item = await call('gh_item', { path: chat.projectPath, reference: reference.trim() })
@@ -104,6 +139,32 @@ export const useLinks = defineStore('links', {
       threads.link(chat.id, link)
       this.focused = link.key
       return link
+    },
+
+    /** Show a check's log over the pull request `linkKey`. Only GitHub Actions jobs have one here. */
+    openCheck(linkKey: string, check: GhCheck) {
+      if (!isJobUrl(check.url)) return
+      this.check = { linkKey, url: check.url, name: check.name, workflow: check.workflow }
+    },
+
+    closeCheck() {
+      this.check = null
+    },
+
+    /** Read a job (its steps, and its log once it finished). The newest read wins. */
+    async loadJob(url: string) {
+      const had = this.jobs[url]
+      const mine = (jobReads.get(url) ?? 0) + 1
+      jobReads.set(url, mine)
+      this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: true, error: null }
+      try {
+        const job = await call('gh_job', { url })
+        if (jobReads.get(url) !== mine) return
+        this.jobs[url] = { job, loading: false, error: null, fetchedAt: Date.now() }
+      } catch (e) {
+        if (jobReads.get(url) !== mine) return
+        this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: false, error: message(e) }
+      }
     },
 
     /** Open an item in the tool window. */

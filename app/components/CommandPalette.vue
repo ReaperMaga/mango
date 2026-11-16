@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, MessageSquarePlus, Settings,
-  Files, Moon, PanelBottom, PanelLeft, Search, SquareTerminal, Sun,
+  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
+  Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
+import { useEnvironments } from '~/stores/environments'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
+import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
 
 /**
@@ -16,6 +18,19 @@ import type { ThreadStatus } from '~/types/chat'
  */
 const ws = useWorkspace()
 const threads = useThreads()
+const envs = useEnvironments()
+
+/** Environments known to be usable right now (from what the store already has). */
+function knownPlaces() {
+  const out: Array<{ hostId: string; instance: string }> = []
+  for (const h of envs.servers) {
+    for (const i of envs.instances[h.id] ?? []) if (envState(h.id, i.name).tone === 'ready') out.push({ hostId: h.id, instance: i.name })
+  }
+  for (const h of envs.joined) {
+    if (envState(h.id, h.direct!.instance).tone !== 'bad') out.push({ hostId: h.id, instance: h.direct!.instance })
+  }
+  return out
+}
 
 type Group = 'Actions' | 'Threads' | 'Projects'
 
@@ -70,15 +85,40 @@ const actions = computed<Item[]>(() => {
   if (project) {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
   }
+  // With environments around, say where these put the project (the remembered choice).
+  const where = projectWhere()
+  const whereDetail = envs.hosts.length ? (where ? envLabels(where.hostId, where.instance).where : 'This computer') : undefined
   items.push(
-    { id: 'open-folder', group: 'Actions', label: 'Open folder…', icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
-    { id: 'new-project', group: 'Actions', label: 'New project…', icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
-    { id: 'clone', group: 'Actions', label: 'Clone repository…', icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
+    { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
+    { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
+    { id: 'clone', group: 'Actions', label: 'Clone repository…', detail: whereDetail, icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
+  )
+  // Straight into a known, usable environment: open a folder there (and make it the place for the next one).
+  if (where) {
+    items.push({ id: 'open-folder-local', group: 'Actions', label: 'Open folder on this computer…', icon: Laptop, keywords: 'project directory local disk', run: () => { ws.setWhere(null); return openLocalFolder() } })
+  }
+  for (const p of knownPlaces()) {
+    if (samePlace(p, where)) continue
+    const l = envLabels(p.hostId, p.instance)
+    items.push({
+      id: `open-folder-env:${p.hostId}/${p.instance}`,
+      group: 'Actions',
+      label: `Open folder in ${l.label}…`,
+      detail: l.shared ? 'Shared with you' : l.host,
+      icon: Server,
+      keywords: `project directory remote environment ${l.where}`,
+      run: () => { ws.setWhere(p); ws.dialog = 'open-env' },
+    })
+  }
+  items.push(
+    { id: 'environments', group: 'Actions', label: 'Environments', detail: 'Remote containers and VMs', icon: Server, keywords: 'remote environment server ssh incus container vm instance cloud machine', run: () => envs.openView() },
+    { id: 'join-env', group: 'Actions', label: 'Join a shared environment', detail: 'With a link someone sent you', icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => envs.openJoin() },
   )
   if (inWorkspace) {
     items.push(
       { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: [mod, '`'], keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
       { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: [mod, shift, 'T'], keywords: 'shell tab console', run: () => ws.newTerminal() },
+      { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: [mod, 'Shift', 'H'], detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: [mod, 'Shift', 'E'], keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: [mod, 'Shift', 'G'], keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
       { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: [mod, 'Shift', 'P'], keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
@@ -135,14 +175,16 @@ const projectItems = computed<Item[]>(() =>
   ws.recent.map((p, i) => {
     const isOpen = ws.openProjects.some(o => o.path === p.path)
     const current = p.path === ws.activeProjectPath
+    // A remote project: where it runs, then its folder inside the instance.
+    const remote = remotePlace(p.path)
     return {
       id: `project:${p.path}`,
       group: 'Projects' as const,
       label: p.name,
-      detail: tildify(p.path),
-      icon: Folder,
+      detail: remote ? `${remote.where} · ${remote.dir}` : tildify(p.path),
+      icon: remote ? Server : Folder,
       badge: current ? 'Current' : isOpen ? 'Open' : undefined,
-      keywords: `${p.path} ${p.branch ?? ''}`,
+      keywords: remote ? `${remote.where} ${remote.dir} remote environment` : `${p.path} ${p.branch ?? ''}`,
       rank: i,
       run: async () => {
         if (isOpen) ws.setActiveProject(p.path)
@@ -258,6 +300,8 @@ function segments(label: string, hits: number[]) {
 
 watch(() => ws.paletteOpen, async (open) => {
   if (open) {
+    // Environments not checked yet this session: once, so "Open folder in …" can list them.
+    void refreshEnvs({ once: true })
     returnFocus = document.activeElement as HTMLElement | null
     query.value = ''
     selected.value = 0

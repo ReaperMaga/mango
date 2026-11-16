@@ -97,6 +97,7 @@ export const useGit = defineStore('git', {
     /**
      * Re-read the repository: status, then whatever is on screen that depends
      * on it (open diffs, branches, history). Safe to call often.
+     * A remote project (`env://…`) works the same: the backend runs git in its environment.
      */
     refresh(path: string): Promise<void> {
       const current = running.get(path)

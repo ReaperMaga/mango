@@ -5,14 +5,18 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::git::{self, blocking, GitBranchList, GitBranches, GitCommit, GitStatus, Vcs};
+use tauri::AppHandle;
+
+use crate::envs::{self, hosts};
+use crate::git::{self, blocking, At, EnvAt, GitBranchList, GitBranches, GitCommit, GitStatus, Vcs};
 use crate::plastic;
 
 /// Where a folder's version control lives.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(crate) enum Backend {
-    /// A git work tree, or no version control at all (git is what `init` creates).
-    Git,
+    /// A git work tree, or no version control at all (git is what `init` creates),
+    /// on this computer or in a remote environment.
+    Git(At),
     /// A Unity VCS workspace and its root folder.
     Plastic(PathBuf),
 }
@@ -31,134 +35,142 @@ pub(crate) fn detect_on_disk(dir: &Path) -> Option<(Vcs, PathBuf)> {
     })
 }
 
-pub(crate) fn detect(path: &str) -> Backend {
-    let dir = PathBuf::from(path.trim());
-    match detect_on_disk(&dir) {
-        Some((Vcs::Plastic, root)) => Backend::Plastic(root),
-        Some((Vcs::Git, _)) => Backend::Git,
-        // Not on disk: maybe a workspace whose metadata lives elsewhere.
-        None if dir.is_dir() => plastic::workspace_by_cm(&dir).map_or(Backend::Git, Backend::Plastic),
-        None => Backend::Git,
+/// A remote project (`env://<hostId>/<instance>/<folder>`, see `envs::parse_env_path`) is
+/// always git, run inside its instance; Unity VCS is for folders on this computer.
+pub(crate) fn detect(app: &AppHandle, path: &str) -> Result<Backend, String> {
+    if let Some(folder) = envs::parse_env_path(path) {
+        let folder = folder?;
+        let host = hosts::get(app, &folder.host_id)?;
+        return Ok(Backend::Git(At::Env(Box::new(EnvAt { host, instance: folder.instance, dir: folder.dir }))));
     }
+    let dir = PathBuf::from(path.trim());
+    let git = || Backend::Git(At::local(&dir));
+    Ok(match detect_on_disk(&dir) {
+        Some((Vcs::Plastic, root)) => Backend::Plastic(root),
+        Some((Vcs::Git, _)) => git(),
+        // Not on disk: maybe a workspace whose metadata lives elsewhere.
+        None if dir.is_dir() => plastic::workspace_by_cm(&dir).map_or_else(git, Backend::Plastic),
+        None => git(),
+    })
 }
 
 /// Run `git` or `plastic` off the UI thread, for whichever the folder uses.
 macro_rules! dispatch {
-    ($path:ident, git => $git:expr, plastic($root:pat) => $plastic:expr) => {
-        blocking(move || match detect(&$path) {
+    ($app:ident, $path:ident, git($at:ident) => $git:expr, plastic($root:pat) => $plastic:expr) => {
+        blocking(move || match detect(&$app, &$path)? {
             Backend::Plastic($root) => $plastic,
-            Backend::Git => $git,
+            Backend::Git($at) => $git,
         })
         .await
     };
 }
 
 #[tauri::command]
-pub async fn git_status(path: String) -> Result<GitStatus, String> {
-    dispatch!(path, git => git::status_of(&path), plastic(root) => plastic::status(&root))
+pub async fn git_status(app: AppHandle, path: String) -> Result<GitStatus, String> {
+    dispatch!(app, path, git(at) => git::status_of(&at), plastic(root) => plastic::status(&root))
 }
 
 #[tauri::command]
-pub async fn git_diff(path: String, file: String, staged: bool) -> Result<String, String> {
-    dispatch!(path, git => git::diff_of(&path, &file, staged), plastic(root) => plastic::diff(&root, &file))
+pub async fn git_diff(app: AppHandle, path: String, file: String, staged: bool) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::diff_of(&at, &file, staged), plastic(root) => plastic::diff(&root, &file))
 }
 
 #[tauri::command]
-pub async fn git_stage(path: String, files: Vec<String>) -> Result<(), String> {
-    dispatch!(path, git => git::stage(&path, &files), plastic(root) => plastic::stage(&root, &files))
+pub async fn git_stage(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::stage(&at, &files), plastic(root) => plastic::stage(&root, &files))
 }
 
 #[tauri::command]
-pub async fn git_unstage(path: String, files: Vec<String>) -> Result<(), String> {
-    dispatch!(path, git => git::unstage(&path, &files), plastic(root) => plastic::unstage(&root, &files))
+pub async fn git_unstage(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::unstage(&at, &files), plastic(root) => plastic::unstage(&root, &files))
 }
 
 #[tauri::command]
-pub async fn git_discard(path: String, files: Vec<String>) -> Result<(), String> {
-    dispatch!(path, git => git::discard(&path, &files), plastic(root) => plastic::discard(&root, &files))
+pub async fn git_discard(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::discard(&at, &files), plastic(root) => plastic::discard(&root, &files))
 }
 
 /// Git commit, or Unity VCS checkin (no amend there).
 #[tauri::command]
-pub async fn git_commit(path: String, message: String, amend: bool) -> Result<String, String> {
-    dispatch!(path, git => git::commit(&path, &message, amend), plastic(root) => {
+pub async fn git_commit(app: AppHandle, path: String, message: String, amend: bool) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::commit(&at, &message, amend), plastic(root) => {
         if amend { plastic::unsupported("Amending a changeset") } else { plastic::checkin(&root, &message) }
     })
 }
 
 #[tauri::command]
-pub async fn git_fetch(path: String) -> Result<String, String> {
-    dispatch!(path, git => git::fetch(&path), plastic(_root) => plastic::unsupported("Fetch"))
+pub async fn git_fetch(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::fetch(&at), plastic(_root) => plastic::unsupported("Fetch"))
 }
 
 /// Git pull, or Unity VCS update.
 #[tauri::command]
-pub async fn git_pull(path: String) -> Result<String, String> {
-    dispatch!(path, git => git::pull(&path), plastic(root) => plastic::update(&root))
+pub async fn git_pull(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::pull(&at), plastic(root) => plastic::update(&root))
 }
 
 #[tauri::command]
-pub async fn git_push(path: String) -> Result<String, String> {
-    dispatch!(path, git => git::push(&path), plastic(_root) => plastic::unsupported("Push"))
+pub async fn git_push(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::push(&at), plastic(_root) => plastic::unsupported("Push"))
 }
 
 #[tauri::command]
-pub async fn git_log(path: String, limit: u32) -> Result<Vec<GitCommit>, String> {
-    dispatch!(path, git => git::log(&path, limit), plastic(root) => plastic::log(&root, limit))
+pub async fn git_log(app: AppHandle, path: String, limit: u32) -> Result<Vec<GitCommit>, String> {
+    dispatch!(app, path, git(at) => git::log(&at, limit), plastic(root) => plastic::log(&root, limit))
 }
 
 #[tauri::command]
-pub async fn git_branches(path: String) -> Result<GitBranches, String> {
-    dispatch!(path, git => git::branches(&path), plastic(root) => plastic::branches(&root))
+pub async fn git_branches(app: AppHandle, path: String) -> Result<GitBranches, String> {
+    dispatch!(app, path, git(at) => git::branches(&at), plastic(root) => plastic::branches(&root))
 }
 
 #[tauri::command]
-pub async fn git_checkout(path: String, branch: String, create: bool) -> Result<(), String> {
-    dispatch!(path, git => git::checkout(&path, &branch, create), plastic(root) => plastic::checkout(&root, &branch, create))
+pub async fn git_checkout(app: AppHandle, path: String, branch: String, create: bool) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::checkout(&at, &branch, create), plastic(root) => plastic::checkout(&root, &branch, create))
 }
 
 /// Local and remote branches with upstream state, newest commit first.
 #[tauri::command]
-pub async fn git_branch_list(path: String) -> Result<GitBranchList, String> {
-    dispatch!(path, git => git::branch_list(&path), plastic(root) => plastic::branch_list(&root))
+pub async fn git_branch_list(app: AppHandle, path: String) -> Result<GitBranchList, String> {
+    dispatch!(app, path, git(at) => git::branch_list(&at), plastic(root) => plastic::branch_list(&root))
 }
 
 #[tauri::command]
-pub async fn git_branch_create(path: String, name: String, from: Option<String>, checkout: bool) -> Result<(), String> {
-    dispatch!(path, git => git::branch_create(&path, &name, from.as_deref(), checkout),
+pub async fn git_branch_create(app: AppHandle, path: String, name: String, from: Option<String>, checkout: bool) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::branch_create(&at, &name, from.as_deref(), checkout),
         plastic(root) => plastic::branch_create(&root, &name, from.as_deref(), checkout))
 }
 
 /// Returns the name of the local branch that is now checked out.
 #[tauri::command]
-pub async fn git_checkout_remote(path: String, branch: String) -> Result<String, String> {
-    dispatch!(path, git => git::checkout_remote(&path, &branch), plastic(_root) => plastic::unsupported("Remote branches"))
+pub async fn git_checkout_remote(app: AppHandle, path: String, branch: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::checkout_remote(&at, &branch), plastic(_root) => plastic::unsupported("Remote branches"))
 }
 
 #[tauri::command]
-pub async fn git_merge(path: String, branch: String) -> Result<String, String> {
-    dispatch!(path, git => git::merge(&path, &branch), plastic(_root) => plastic::unsupported("Merging from Mango"))
+pub async fn git_merge(app: AppHandle, path: String, branch: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::merge(&at, &branch), plastic(_root) => plastic::unsupported("Merging from Mango"))
 }
 
 #[tauri::command]
-pub async fn git_rebase(path: String, onto: String) -> Result<String, String> {
-    dispatch!(path, git => git::rebase(&path, &onto), plastic(_root) => plastic::unsupported("Rebase"))
+pub async fn git_rebase(app: AppHandle, path: String, onto: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::rebase(&at, &onto), plastic(_root) => plastic::unsupported("Rebase"))
 }
 
 #[tauri::command]
-pub async fn git_branch_rename(path: String, from: String, to: String) -> Result<(), String> {
-    dispatch!(path, git => git::branch_rename(&path, &from, &to), plastic(root) => plastic::branch_rename(&root, &from, &to))
+pub async fn git_branch_rename(app: AppHandle, path: String, from: String, to: String) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::branch_rename(&at, &from, &to), plastic(root) => plastic::branch_rename(&root, &from, &to))
 }
 
 #[tauri::command]
-pub async fn git_branch_delete(path: String, branch: String, force: bool) -> Result<(), String> {
-    dispatch!(path, git => git::branch_delete(&path, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
+pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, force: bool) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
 }
 
 /// `git init` in `path`. Does nothing when it is already under version control.
 #[tauri::command]
-pub async fn git_init(path: String) -> Result<(), String> {
-    dispatch!(path, git => git::init(&path), plastic(_root) => Ok(()))
+pub async fn git_init(app: AppHandle, path: String) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::init(&at), plastic(_root) => Ok(()))
 }
 
 #[cfg(test)]

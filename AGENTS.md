@@ -54,8 +54,9 @@ app/
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
-    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem
-    settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
+    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
+    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance)
+    envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
@@ -64,20 +65,23 @@ app/
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies)
+                     chatImages.ts (pictures in agent replies), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
   setup.rs           "Get started": what is installed, per-OS installer recipes run in a PTY (`setup_install`)
-  vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches
+  vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
-  github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in)
+  github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
+  envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
+                     incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel),
+                     server.rs (install, set up and update Incus on the server)
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
@@ -116,6 +120,11 @@ scripts/try-agent.ts run an adapter against the real CLI
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
   trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.
+- Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
+  call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
+  `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
+  Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`); anything that touches the local disk
+  must skip them (`isEnvPath`).
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State

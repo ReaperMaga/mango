@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Bot, Mic, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
+import { Bot, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
+import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
@@ -13,6 +14,8 @@ import SettingsVoice from './SettingsVoice.vue'
  * canvas) and leaves the titlebar and its window controls alone.
  *
  * Open when `ws.settings` names a section; closing sets it back to null.
+ * Once Environments has been shown, the view stays mounted (hidden) after it
+ * closes, so installers, sign-ins and shells started there keep running.
  */
 type Section = NonNullable<ReturnType<typeof useWorkspace>['settings']>
 
@@ -22,6 +25,7 @@ const build = useBuildInfo()
 const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
   { id: 'agents', label: 'Agents', icon: Bot },
+  { id: 'environments', label: 'Environments', icon: Server },
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'appearance', label: 'Appearance', icon: SunMoon },
@@ -30,6 +34,11 @@ const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
 const open = computed(() => ws.settings !== null)
 /** Stays on the last section while the view fades out. */
 const section = ref<Section>(ws.settings ?? 'general')
+/** The other sections render while the view is open or fading out. */
+const rendered = ref(open.value)
+/** Environments, once shown, stays mounted for the life of the window (see above). */
+const envsMounted = ref(false)
+watch(() => ws.settings === 'environments', (on) => { if (on) envsMounted.value = true }, { immediate: true })
 
 const view = ref<HTMLElement | null>(null)
 const scroller = ref<HTMLElement | null>(null)
@@ -62,6 +71,7 @@ function setUnderlayInert(on: boolean) {
 watch(() => ws.settings, async (now, before) => {
   if (now) {
     section.value = now
+    rendered.value = true
     if (!before) {
       returnFocus = document.activeElement instanceof HTMLElement && document.activeElement !== document.body
         ? document.activeElement
@@ -117,9 +127,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <Transition name="settings">
+  <Transition name="settings" @after-leave="rendered = false">
     <section
-      v-if="open"
+      v-if="open || envsMounted"
+      v-show="open"
       ref="view"
       class="settings"
       :aria-labelledby="titleId"
@@ -151,13 +162,20 @@ onBeforeUnmount(() => {
 
       <div class="settings__main">
         <div ref="scroller" class="settings__scroll">
-          <div class="settings__col">
-            <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
-            <SettingsAgents v-show="section === 'agents'" :active="section === 'agents'" />
-            <SettingsTerminal v-if="section === 'terminal'" />
-            <SettingsVoice v-else-if="section === 'voice'" />
-            <SettingsAppearance v-else-if="section === 'appearance'" />
-            <SettingsGeneral v-else-if="section === 'general'" />
+          <div class="settings__col" :class="{ 'settings__col--wide': section === 'environments' }">
+            <template v-if="rendered">
+              <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
+              <SettingsAgents v-show="section === 'agents'" :active="open && section === 'agents'" />
+              <SettingsTerminal v-if="section === 'terminal'" />
+              <SettingsVoice v-else-if="section === 'voice'" />
+              <SettingsAppearance v-else-if="section === 'appearance'" />
+              <SettingsGeneral v-else-if="section === 'general'" />
+            </template>
+            <SettingsEnvironments
+              v-if="envsMounted"
+              v-show="section === 'environments'"
+              :active="open && section === 'environments'"
+            />
           </div>
         </div>
       </div>
@@ -259,6 +277,8 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   padding: var(--space-8) var(--space-8) var(--space-12);
 }
+/* Environments holds lists of instances, terminals and a desktop: it takes more of the canvas. */
+.settings__col--wide { max-width: calc(880px + var(--space-8) * 2); }
 
 /* ---- open / close: a short fade with a small settle ---- */
 .settings-enter-active,

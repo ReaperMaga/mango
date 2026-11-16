@@ -2,6 +2,7 @@
 import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, Gauge, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call } from '~/composables/useBackend'
+import { isEnvPath } from '~/utils/envPath'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, type AgentId, type Thread } from '~/types/chat'
@@ -292,7 +293,8 @@ const codeItems = computed<MenuItem[]>(() => [
     return {
       label: AGENTS[id].name,
       icon: () => h(AgentIcon, { agent: id }),
-      hint: info && !info.installed ? 'Not installed. See Settings > Agents.' : undefined,
+      // A remote project runs the CLI in its instance: whether it is installed here does not matter.
+      hint: info && !info.installed && !isEnvPath(ws.activeProjectPath) ? 'Not installed. See Settings > Agents.' : undefined,
       checked: currentAgent.value === id,
       onSelect: () => threads.chooseAgent(id),
     }

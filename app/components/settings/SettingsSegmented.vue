@@ -7,24 +7,28 @@ import type { Component } from 'vue'
  */
 defineProps<{
   modelValue: T
-  options: Array<{ value: T; label: string; icon?: Component }>
+  /** `disabled` options stay visible (with `title` saying why) but can't be picked. */
+  options: Array<{ value: T; label: string; icon?: Component; disabled?: boolean; title?: string }>
   /** id of the element that names the group */
   labelledby?: string
   label?: string
+  /** id of the element that describes the group (a hint under it) */
+  describedby?: string
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
 const name = useId()
 </script>
 
 <template>
-  <div class="seg" role="radiogroup" :aria-labelledby="labelledby" :aria-label="label">
-    <label v-for="o in options" :key="o.value" class="seg__opt">
+  <div class="seg" role="radiogroup" :aria-labelledby="labelledby" :aria-label="label" :aria-describedby="describedby">
+    <label v-for="o in options" :key="o.value" class="seg__opt" :title="o.title">
       <input
         class="seg__input"
         type="radio"
         :name="name"
         :value="o.value"
         :checked="modelValue === o.value"
+        :disabled="o.disabled"
         @change="emit('update:modelValue', o.value)"
       >
       <span class="seg__face">
@@ -70,7 +74,9 @@ const name = useId()
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .seg__face :deep(svg) { width: 14px; height: 14px; stroke-width: 1.75; flex: none; }
-.seg__input:hover + .seg__face { color: var(--fg); }
+.seg__input:hover:not(:disabled) + .seg__face { color: var(--fg); }
+.seg__input:disabled { cursor: default; }
+.seg__input:disabled + .seg__face { opacity: 0.55; }
 .seg__input:checked + .seg__face {
   color: var(--fg);
   background: var(--bg-raised);
