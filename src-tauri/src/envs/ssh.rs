@@ -106,7 +106,22 @@ pub fn argv(host: &EnvHost, mode: Mode, remote: &[String]) -> Result<Vec<String>
     Ok(a)
 }
 
-/// [`argv`] in [`Mode::Batch`] over a shared connection (see [`mux_args`]): for short
+/// The longest a command may take and still use the shared connection. Longer ones (push,
+/// fetch, setting up a share) get their own: the shared one gives up sooner on a network
+/// gap (see [`mux_args`]), and it would take every command on it down at once.
+pub const SHARED_MAX: Duration = Duration::from_secs(120);
+
+/// [`argv`] in [`Mode::Batch`] for a captured command that may take up to `timeout`: over
+/// the shared connection ([`shared_argv`]) when it is a quick one, otherwise its own.
+pub fn batch_argv(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<Vec<String>, String> {
+    if timeout <= SHARED_MAX {
+        shared_argv(host, remote)
+    } else {
+        argv(host, Mode::Batch, remote)
+    }
+}
+
+/// [`argv`] in [`Mode::Batch`] over a shared connection (see [`mux_args`]): for quick
 /// commands whose output is captured (git, file access, `incus` queries). After the first,
 /// each one skips the SSH handshake, which is most of its time on a distant server.
 /// Long-lived sessions (terminals, agents, tunnels) keep their own connections, so a
@@ -260,8 +275,9 @@ pub fn as_agent(cwd: Option<&str>, env: &[(String, String)], argv: &[String]) ->
 }
 
 /// [`as_agent`] without the login shell: no profile scripts run, and PATH is a fixed list
-/// (with `~/.local/bin`). For quick reads (git status, file listings) that run often and
-/// need nothing a profile sets up. Anything that may run user hooks keeps [`as_agent`].
+/// (with `~/.local/bin`). For quick reads (git status, file listings) that run often.
+/// Commands that run hooks keep [`as_agent`]; a read that finds a tool missing on this PATH
+/// (git or git-lfs installed where only the profile looks) is retried with it (`git::EnvAt`).
 pub fn as_agent_plain(cwd: Option<&str>, env: &[(String, String)], argv: &[String]) -> Vec<String> {
     as_agent_in(false, cwd, env, argv)
 }
@@ -295,9 +311,19 @@ pub fn command(argv: &[String]) -> Command {
 }
 
 /// Run `remote` on the master and wait (up to `timeout`). Ok(stdout) on exit 0,
-/// otherwise an error built from what the command printed.
+/// otherwise an error built from what the command printed. Quick commands go over the
+/// shared connection ([`batch_argv`]).
 pub fn run(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<String, String> {
-    let argv = shared_argv(host, remote)?;
+    run_argv(host, batch_argv(host, remote, timeout)?, timeout)
+}
+
+/// [`run`] over a connection of its own, for checking the connection itself: a shared one
+/// opened earlier would answer even after the server, its address or the key changed.
+pub fn run_alone(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<String, String> {
+    run_argv(host, argv(host, Mode::Batch, remote)?, timeout)
+}
+
+fn run_argv(host: &EnvHost, argv: Vec<String>, timeout: Duration) -> Result<String, String> {
     let mut cmd = command(&argv);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("Could not start ssh: {e}"))?;
@@ -601,6 +627,17 @@ mod tests {
         assert_ne!(mux_name(&a), mux_name(&ssh_args(&other, Mode::Batch)));
         assert_eq!(mux_name(&a), mux_name(&ssh_args(&host(), Mode::Batch)));
         assert_eq!(mux_name(&a).len(), 16);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_quick_commands_share_a_connection() {
+        let Ok(quick) = batch_argv(&host(), &["true".into()], SHARED_MAX) else { return }; // no ssh here
+        let slow = batch_argv(&host(), &["true".into()], SHARED_MAX + Duration::from_secs(1)).unwrap();
+        assert!(!slow.iter().any(|a| a.starts_with("ControlPath")));
+        if mux_dir().is_some() {
+            assert!(quick.iter().any(|a| a.starts_with("ControlPath")));
+        }
     }
 
     #[cfg(unix)]

@@ -420,12 +420,12 @@ pub async fn env_probe(app: AppHandle, host_id: String) -> Result<EnvProbe, Stri
         let host = get(&app, &host_id)?;
         if host.direct.is_some() {
             let remote = ["sh".to_string(), "-c".into(), DIRECT_PROBE.into()];
-            return Ok(direct_probe(ssh::run(&host, &remote, Duration::from_secs(30))));
+            return Ok(direct_probe(ssh::run_alone(&host, &remote, Duration::from_secs(30))));
         }
         if let Some(r) = &host.incus_remote {
             valid_remote(r)?;
         }
-        match ssh::run(&host, &probe_remote(&host), Duration::from_secs(60)) {
+        match ssh::run_alone(&host, &probe_remote(&host), Duration::from_secs(60)) {
             Ok(out) => Ok(evaluate(&out, host.incus_remote.as_deref().filter(|r| !r.is_empty()))),
             Err(e) => Ok(EnvProbe {
                 ok: false,

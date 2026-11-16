@@ -633,7 +633,8 @@ impl EnvAt {
     }
 
     /// [`EnvAt::run`] without the login shell (`ssh::as_agent_plain`): for reads and fixed
-    /// scripts that need nothing from the user's profile, and run often.
+    /// scripts that run often. When it finds a tool missing ([`profile_needed`]), it runs
+    /// again in the login shell, and so does everything after it in this environment.
     pub(crate) fn run_plain(
         &self,
         env: &[(String, String)],
@@ -642,7 +643,30 @@ impl EnvAt {
         cap: usize,
         timeout: Duration,
     ) -> Result<Output, String> {
-        self.exec(false, env, argv, stdin, cap, timeout)
+        if self.needs_profile() {
+            return self.exec(true, env, argv, stdin, cap, timeout);
+        }
+        let out = self.exec_raw(false, env, argv, stdin.clone(), cap, timeout)?;
+        if !profile_needed(&out) {
+            return Ok(out);
+        }
+        self.remember_needs_profile();
+        self.exec(true, env, argv, stdin, cap, timeout)
+    }
+
+    /// This environment's tools are found only through the login shell's PATH.
+    fn needs_profile(&self) -> bool {
+        login_only().lock().is_ok_and(|s| s.contains(&self.place()))
+    }
+
+    fn remember_needs_profile(&self) {
+        if let Ok(mut s) = login_only().lock() {
+            s.insert(self.place());
+        }
+    }
+
+    fn place(&self) -> String {
+        format!("{}\u{0}{}", self.host.id, self.instance)
     }
 
     fn exec(
@@ -654,7 +678,24 @@ impl EnvAt {
         cap: usize,
         timeout: Duration,
     ) -> Result<Output, String> {
-        let cmd = ssh::command(&ssh::shared_argv(&self.host, &self.remote(login, env, argv)?)?);
+        let out = self.exec_raw(login, env, argv, stdin, cap, timeout)?;
+        match self.git_missing(&out) {
+            Some(missing) => Err(missing),
+            None => Ok(out),
+        }
+    }
+
+    /// [`EnvAt::exec`] that leaves a missing git to the caller.
+    fn exec_raw(
+        &self,
+        login: bool,
+        env: &[(String, String)],
+        argv: &[String],
+        stdin: Option<Vec<u8>>,
+        cap: usize,
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        let cmd = ssh::command(&ssh::batch_argv(&self.host, &self.remote(login, env, argv)?, timeout)?);
         let out = run_process(cmd, stdin, cap, timeout, "ssh", "ssh was not found. Install the OpenSSH client.")?;
         if out.ok() {
             return Ok(out);
@@ -670,9 +711,6 @@ impl EnvAt {
         // `as_agent` could not enter the folder.
         if let Some(line) = stderr.lines().find(|l| l.starts_with("Mango: the folder ")) {
             return Err(format!("The folder {}", &line["Mango: the folder ".len()..]));
-        }
-        if let Some(missing) = self.git_missing(&out) {
-            return Err(missing);
         }
         Ok(out)
     }
@@ -694,6 +732,26 @@ impl EnvAt {
         argv.extend(args.iter().map(|a| a.to_string()));
         self.run_plain(&[], &argv, None, usize::MAX, LOCAL_TIMEOUT)
     }
+}
+
+/// A command that failed because something it runs isn't on the plain PATH: the shell's
+/// `command not found` (bash) or `not found` (dash), `env` not finding git, or git not
+/// finding a filter or helper.
+fn profile_needed(out: &Output) -> bool {
+    let stderr = lossy(&out.stderr);
+    !out.ok()
+        && (out.code == Some(127)
+            || stderr.contains(": command not found")
+            || stderr.contains(": not found")
+            || stderr.contains("'git': No such file")
+            // git's own words for a filter, textconv driver or helper it can't start.
+            || stderr.lines().any(|l| l.contains("cannot run ") && l.ends_with("No such file or directory")))
+}
+
+/// Environments (host, instance) whose tools only the login shell finds ([`EnvAt::run_plain`]).
+fn login_only() -> &'static Mutex<std::collections::HashSet<String>> {
+    static SET: OnceLock<Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(Default::default)
 }
 
 /// Work tree roots of remote folders, so an action costs one SSH connection instead of
@@ -756,7 +814,7 @@ impl Git<'_> {
     }
     /// For commands that only look: don't take the index lock, so polling
     /// never collides with the user's (or an agent's) own git. In an environment they
-    /// also skip the login shell: they run on every refresh and run no hooks.
+    /// also skip the login shell, as they run on every refresh (`EnvAt::run_plain`).
     fn read_only(mut self) -> Self {
         self.env.push(("GIT_OPTIONAL_LOCKS", "0"));
         self.login = false;
@@ -838,12 +896,19 @@ fn run_all(cmds: Vec<Git<'_>>) -> Result<Vec<Output>, String> {
         argv.extend(one);
         caps.push(cap);
     }
-    let out = if login {
-        e.run(&[], &argv, None, usize::MAX, timeout)?
-    } else {
-        e.run_plain(&[], &argv, None, usize::MAX, timeout)?
+    let batch = |login: bool| -> Result<Vec<Output>, String> {
+        let out = e.exec(login, &[], &argv, None, usize::MAX, timeout)?;
+        parse_batch(&out.stdout, &caps).ok_or_else(|| {
+            let detail = tidy_output(&lossy(&out.stderr));
+            format!("Could not read git's answer from {}.{}", e.instance, if detail.is_empty() { String::new() } else { format!("\n{detail}") })
+        })
     };
-    let outs = parse_batch(&out.stdout, &caps).ok_or_else(|| out.error("git"))?;
+    let mut outs = batch(login || e.needs_profile())?;
+    // git (or a tool it runs, like git-lfs) only on the login shell's PATH.
+    if !login && !e.needs_profile() && outs.iter().any(profile_needed) {
+        e.remember_needs_profile();
+        outs = batch(true)?;
+    }
     if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
         return Err(missing);
     }
@@ -853,7 +918,9 @@ fn run_all(cmds: Vec<Git<'_>>) -> Result<Vec<Output>, String> {
 /// `bash` script (in an environment's work tree) behind [`run_all`]. Its arguments are, per
 /// command, the number of words, the most stdout to send back, then the words. Each command
 /// prints a header (`MANGO-RUN <exit code> <stdout bytes> <stderr bytes>`), its stdout up
-/// to the cap, then its stderr. It all goes out in one write at the end: sshd sends small
+/// to the cap, then its stderr. Stdout is cut at the source (as a local capped read does),
+/// so a huge diff never lands in full on the instance's disk; the size in the header is
+/// then one past the cap. It all goes out in one write at the end: sshd sends small
 /// writes of a session without a terminal one round trip apart (Nagle), so piece by piece
 /// costs a round trip each.
 const BATCH: &str = r#"d=$(mktemp -d) || exit 1
@@ -861,14 +928,15 @@ trap 'rm -rf -- "$d"' EXIT
 while [ "$#" -gt 0 ]; do
   n=$1 cap=$2
   shift 2
-  "${@:1:$n}" >"$d/o" 2>"$d/e" </dev/null
-  c=$?
+  # One byte past the cap tells a cut-off answer apart; git stops once head has it.
+  "${@:1:$n}" 2>"$d/e" </dev/null | head -c "$((cap + 1))" >"$d/o"
+  c=${PIPESTATUS[0]}
   shift "$n"
   {
     printf 'MANGO-RUN %s %s %s\n' "$c" $(wc -c <"$d/o") $(wc -c <"$d/e")
     head -c "$cap" "$d/o"
     cat "$d/e"
-  } >>"$d/all"
+  } >>"$d/all" || exit 1
 done
 cat "$d/all""#;
 
@@ -1927,6 +1995,18 @@ pub(crate) fn init(at: &At) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn missing_tools_ask_for_the_login_shell() {
+        let out = |code: i32, err: &str| Output { code: Some(code), stdout: Vec::new(), stderr: err.into(), truncated: false };
+        assert!(profile_needed(&out(127, "")));
+        assert!(profile_needed(&out(127, "env: 'git': No such file or directory")));
+        assert!(profile_needed(&out(128, "git-lfs filter-process: git-lfs: command not found\nfatal: the remote end hung up")));
+        assert!(profile_needed(&out(1, "sh: 1: git-lfs: not found")));
+        assert!(profile_needed(&out(128, "error: cannot run mangofakefilter: No such file or directory\nerror: cannot fork to run external filter")));
+        assert!(!profile_needed(&out(128, "fatal: not a git repository")));
+        assert!(!profile_needed(&out(0, "")));
+    }
+
     /// The batch script, run by a local bash, and its output read back.
     #[cfg(unix)]
     #[test]
@@ -1937,6 +2017,8 @@ mod tests {
             (vec!["printf", "%s", "0123456789"], 4),
             (vec!["true"], 100),
             (vec!["printf", "\\000\\377 x"], 100),
+            // Endless output: the cap stops the command itself.
+            (vec!["yes"], 6),
         ];
         let mut cmd = Command::new("bash");
         cmd.args(["-c", BATCH, "mango"]);
@@ -1949,7 +2031,7 @@ mod tests {
         let mut noisy = b"welcome\n".to_vec();
         noisy.extend(&out.stdout);
         let got = parse_batch(&noisy, &caps).expect("parsed");
-        assert_eq!(got.len(), 5);
+        assert_eq!(got.len(), 6);
         assert_eq!((got[0].code, got[0].stdout.as_slice(), got[0].truncated), (Some(0), &b"a\nb"[..], false));
         assert_eq!(got[1].code, Some(3));
         assert_eq!(got[1].stdout, b"MANGO-RUN 9 9 9\n");
@@ -1957,6 +2039,7 @@ mod tests {
         assert_eq!((got[2].stdout.as_slice(), got[2].truncated), (&b"0123"[..], true));
         assert_eq!((got[3].code, got[3].stdout.len(), got[3].stderr.len()), (Some(0), 0, 0));
         assert_eq!(got[4].stdout, b"\0\xff x");
+        assert_eq!((got[5].stdout.as_slice(), got[5].truncated), (&b"y\ny\ny\n"[..], true));
         // A cut-off answer is not a result.
         assert!(parse_batch(&out.stdout[..out.stdout.len() - 1], &caps).is_none());
         assert!(parse_batch(b"", &caps).is_none());

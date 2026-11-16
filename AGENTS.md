@@ -136,9 +136,10 @@ scripts/try-agent.ts run an adapter against the real CLI
   commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
   repository is read from the remotes there); anything else that touches the local disk must skip them (`isEnvPath`).
 - Remote round trips are the cost to watch (a fresh SSH connection is ~1 s on a distant server). Short captured commands
-  share one background connection per host (`ssh::shared_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
+  share one background connection per host (`ssh::batch_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
   terminals, agents and tunnels keep their own. Git reads that would run one after another go in one call (`git::run_all`),
-  and reads skip the login shell (`EnvAt::run_plain`); anything that may run hooks keeps it. Measure with the ignored
+  and reads skip the login shell (`EnvAt::run_plain`, which falls back to it when a tool is missing); anything that may run
+  hooks keeps it. Long commands and the connection check (`ssh::run_alone`) use their own connection. Measure with the ignored
   `files::tests::remote_timing` test.
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
