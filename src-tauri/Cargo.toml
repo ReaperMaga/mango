@@ -7,7 +7,9 @@ rust-version = "1.90"
 
 [lib]
 name = "mango_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# Desktop only: the staticlib and cdylib in the Tauri template are for mobile, and on
+# desktop they only make cargo link the whole app two extra times per build.
+crate-type = ["rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
