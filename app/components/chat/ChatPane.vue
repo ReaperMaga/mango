@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MessageSquareText, Bug, GitPullRequestDraft } from 'lucide-vue-next'
+import { MessageSquareText, Bug, GitPullRequestDraft, CornerLeftUp, Square } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
 import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
@@ -11,6 +11,8 @@ const ws = useWorkspace()
 const threads = useThreads()
 const thread = computed(() => threads.byId(props.pane.threadId))
 const busy = computed(() => !!thread.value && ['running', 'queued', 'waiting'].includes(thread.value.status))
+/** A sub-agent's chat: filled by its parent's run, so it has no composer of its own. */
+const parent = computed(() => (thread.value?.parentId ? threads.byId(thread.value.parentId) : null))
 
 /* ---------- empty pane: draft settings live here until the first send ---------- */
 const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'], effort: null as string | null })
@@ -118,7 +120,18 @@ function onKey(e: KeyboardEvent) {
         </div>
       </div>
 
-      <div class="pane__composer">
+      <div v-if="thread.parentId" class="pane__composer">
+        <div class="pane__sub" role="note">
+          <p class="pane__sub-text">
+            {{ thread.agentType ? `${thread.agentType} sub-agent` : 'Sub-agent' }}, started by <button v-if="parent" type="button" class="pane__sub-parent" @click="threads.show(parent.id)">{{ parent.title }}</button><span v-else>a chat that was deleted</span>. It reports back to that chat, so there is nothing to write here.
+          </p>
+          <UiButton v-if="busy" size="sm" @click="threads.stop(thread.id)"><Square /> Stop</UiButton>
+          <UiButton v-if="parent" size="sm" @click="threads.show(parent.id)"><CornerLeftUp /> Open parent chat</UiButton>
+        </div>
+      </div>
+
+      <div v-else class="pane__composer">
+        <ChatTasks :thread="thread" />
         <ChatComposer
           ref="composer"
           v-model:text="text"
@@ -198,6 +211,30 @@ function onKey(e: KeyboardEvent) {
   margin: 0 auto;
   padding: 0 var(--space-6) var(--space-4);
 }
+
+.pane__sub {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+.pane__sub-text { flex: 1; min-width: 0; margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--fg-subtle); }
+.pane__sub-parent {
+  max-width: 100%;
+  font-weight: 560;
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+.pane__sub-parent:hover { text-decoration-color: currentColor; }
+.pane__sub-parent:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pane__sub :deep(svg) { width: 13px; height: 13px; }
 
 .pane__empty {
   flex: 1;

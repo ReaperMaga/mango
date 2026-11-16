@@ -133,14 +133,38 @@ onBeforeUnmount(onDragEnd)
 /** Status first when it says something; otherwise who the chat is with. */
 function subtitle(t: Thread) {
   const agent = t.simulated ? `${AGENTS[t.agent].name} · simulated` : AGENTS[t.agent].name
+  const live = threads.live[t.id]
+  const background = live?.tasks.filter(x => x.status === 'running').length ?? 0
+  const tasks = `${background} background task${background === 1 ? '' : 's'}`
   switch (displayStatus(t)) {
     case 'waiting': return 'Needs your approval'
-    case 'working': return t.status === 'queued' ? 'Starting…' : t.status === 'running' ? 'Working…' : `Working · ${agent}`
+    case 'working':
+      if (t.status === 'running' && background) return live?.idle ? `Waiting on ${tasks}` : `Working… · ${background} in background`
+      return t.status === 'queued' ? 'Starting…' : t.status === 'running' ? 'Working…' : `Working · ${agent}`
     case 'error': return 'Failed'
     case 'done': return `Settled · ${agent}`
     case 'archived': return `Archived · ${agent}`
     default: return agent
   }
+}
+
+/* ---------- sub-agent chats, folded under the chat that started them ---------- */
+function descendants(id: string): Thread[] {
+  const out: Thread[] = []
+  for (const c of threads.childrenOf(id)) out.push(c, ...descendants(c.id))
+  return out
+}
+/** The user's own choice per chat; otherwise open while a sub-agent works or one of them is on screen. */
+const subsChoice = reactive(new Map<string, boolean>())
+function subsOpen(t: Thread) {
+  const chosen = subsChoice.get(t.id)
+  if (chosen !== undefined) return chosen
+  return descendants(t.id).some(c => c.status === 'running' || c.status === 'queued' || visibleIds.value.has(c.id))
+}
+function subsLabel(t: Thread) {
+  const all = descendants(t.id)
+  const working = all.filter(c => c.status === 'running' || c.status === 'queued').length
+  return { count: `${all.length} sub-agent${all.length === 1 ? '' : 's'}`, working }
 }
 
 /* inline rename */
@@ -303,6 +327,14 @@ const agentsNeedingAttention = computed(() => {
                 </UiMenu>
               </div>
             </div>
+            <template v-if="threads.childrenOf(t.id).length">
+              <button type="button" class="sb__subs" :aria-expanded="subsOpen(t)" @click="subsChoice.set(t.id, !subsOpen(t))">
+                <ChevronRight class="sb__caret" :class="{ 'is-open': subsOpen(t) }" aria-hidden="true" />
+                <span>{{ subsLabel(t).count }}</span>
+                <span v-if="subsLabel(t).working" class="sb__subs-live">· {{ subsLabel(t).working }} working</span>
+              </button>
+              <AppSidebarSubagents v-if="subsOpen(t)" :parent-id="t.id" />
+            </template>
           </li>
           <li v-if="sec.id === 'active' && !sec.threads.length">
             <button type="button" class="sb__empty" @click="newChat()">
@@ -465,6 +497,24 @@ const agentsNeedingAttention = computed(() => {
 .sb__actions :deep(.icon-btn.is-active:hover) { background: var(--bg-hover); }
 
 .sb__thread.is-archived .sb__title { color: var(--fg-subtle); }
+
+/* The fold line over a chat's sub-agents, lined up with the chat's title. */
+.sb__subs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 24px;
+  padding: 0 8px 0 26px;
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  text-align: left;
+}
+.sb__subs:hover { color: var(--fg-muted); background: var(--bg-hover); }
+.sb__subs:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sb__subs .sb__caret { width: 12px; height: 12px; }
+.sb__subs-live { color: var(--ripe-running-fg); }
 .sb__rename {
   width: 100%;
   height: 20px;

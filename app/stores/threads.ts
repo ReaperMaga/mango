@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
-import type { AgentId, Attachment, Message, Part, Thread } from '~/types/chat'
+import type { AgentId, Attachment, BackgroundTask, Message, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
-import { interruptRun, respondApproval, runAgentTurn, steerRun } from '~/agents'
+import { interruptRun, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
@@ -18,6 +18,14 @@ const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 
 export interface Pane { id: string; threadId: string | null }
 
+/** What a running chat has going on besides its reply. Not saved: it dies with the run. */
+export interface LiveState {
+  /** Background commands and sub-agents of the run, finished ones included until it ends. */
+  tasks: BackgroundTask[]
+  /** The agent has answered and only waits on background tasks. */
+  idle: boolean
+}
+
 export const useThreads = defineStore('threads', {
   state: () => ({
     threads: [] as Thread[],
@@ -28,15 +36,31 @@ export const useThreads = defineStore('threads', {
     activePaneId: 'pane-a',
     /** Default agent for new chats. */
     defaultAgent: 'claude' as AgentId,
+    /** Per chat id, while its run has background work (see LiveState). */
+    live: {} as Record<string, LiveState>,
   }),
 
   getters: {
     byId: s => (id: string | null | undefined) => s.threads.find(t => t.id === id) ?? null,
-    /** A project's chats in the user's order (see byListOrder), without the archived ones. */
+    /**
+     * A project's chats in the user's order (see byListOrder), without the archived ones.
+     * Sub-agent chats are not in it: they sit under their parent (childrenOf).
+     */
     forProject: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && !t.archived).sort(byListOrder),
+      s.threads.filter(t => t.projectPath === path && !t.archived && !t.parentId).sort(byListOrder),
     archivedFor: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && t.archived).sort((a, b) => b.updatedAt - a.updatedAt),
+      s.threads.filter(t => t.projectPath === path && t.archived && !t.parentId).sort((a, b) => b.updatedAt - a.updatedAt),
+    /** The sub-agent chats a chat (or a sub-agent) started, oldest first. */
+    childrenOf: s => (id: string) =>
+      s.threads.filter(t => t.parentId === id).sort((a, b) => a.createdAt - b.createdAt),
+    /** The top-level chat a sub-agent chat belongs to, whose run fills it (a top-level chat is its own). */
+    rootOf(): (id: string) => Thread | null {
+      return (id) => {
+        let t = this.byId(id)
+        for (let hops = 0; t?.parentId && hops < 32; hops++) t = this.byId(t.parentId)
+        return t
+      }
+    },
     activePane: s => s.panes.find(p => p.id === s.activePaneId) ?? s.panes[0]!,
     activeThread(): Thread | null {
       return this.byId(this.activePane.threadId)
@@ -55,7 +79,7 @@ export const useThreads = defineStore('threads', {
       return path ? this.tabs.filter(id => this.projectOf(id) === path) : []
     },
     /** Threads that need the user: shown as a count in the titlebar. */
-    attentionCount: s => s.threads.filter(t => !t.archived && (t.status === 'waiting' || (t.status === 'done' && !t.seen))).length,
+    attentionCount: s => s.threads.filter(t => !t.archived && !t.parentId && (t.status === 'waiting' || (t.status === 'done' && !t.seen))).length,
   },
 
   actions: {
@@ -97,7 +121,7 @@ export const useThreads = defineStore('threads', {
     create(projectPath: string, agentArg?: AgentId, branch: string | null = null): Thread {
       const agent = agentArg ?? this.defaultAgent
       // Reuse an untouched empty chat instead of piling up "New chat" rows.
-      const blank = this.threads.find(x => x.projectPath === projectPath && x.messages.length === 0 && x.title === 'New chat' && !x.archived)
+      const blank = this.threads.find(x => x.projectPath === projectPath && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
       if (blank) {
         if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id; blank.effort = null }
         this.show(blank.id)
@@ -269,10 +293,16 @@ export const useThreads = defineStore('threads', {
       if (t && title.trim()) { t.title = title.trim(); this.persist() }
     },
 
+    /** Delete a chat, with the sub-agent chats under it. */
     remove(id: string) {
-      this.closeTab(id)
-      this.threads = this.threads.filter(t => t.id !== id)
-      for (const p of this.panes) if (p.threadId === id) p.threadId = null
+      const doomed = new Set([id])
+      for (let grew = true; grew;) {
+        grew = false
+        for (const t of this.threads) if (t.parentId && doomed.has(t.parentId) && !doomed.has(t.id)) { doomed.add(t.id); grew = true }
+      }
+      for (const x of doomed) this.closeTab(x)
+      this.threads = this.threads.filter(t => !doomed.has(t.id))
+      for (const p of this.panes) if (p.threadId && doomed.has(p.threadId)) p.threadId = null
       this.persist()
     },
 
@@ -316,7 +346,8 @@ export const useThreads = defineStore('threads', {
      */
     async send(id: string, text: string, attachments: Attachment[] = []) {
       const t = this.byId(id)
-      if (!t || (!text.trim() && !attachments.length)) return
+      // A sub-agent's chat is written by its parent's run only.
+      if (!t || t.parentId || (!text.trim() && !attachments.length)) return
       t.archived = false // writing in an archived chat brings it back
       const msg: Message = {
         id: uid('m'),
@@ -392,16 +423,84 @@ export const useThreads = defineStore('threads', {
     stop(id: string) {
       const t = this.byId(id)
       if (!t || (t.status !== 'running' && t.status !== 'queued' && t.status !== 'waiting')) return
+      // A sub-agent stops on its own; the run it belongs to goes on.
+      if (t.parentId) {
+        const root = this.rootOf(id)
+        if (root && t.toolId) stopTask(root.id, t.toolId)
+        return
+      }
       // Stop means stop: messages waiting for the next turn stay in the chat but are not sent.
       followUps.delete(id)
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
+      this._clearLive(id)
+      for (const c of this.childrenOf(id)) if (c.status === 'running') c.status = 'error'
       t.status = 'working'
       this.persist()
     },
 
     /* -------- low-level mutations used by the agent driver -------- */
+
+    /**
+     * A chat for a sub-agent that the run of `parentId` started: read-only, listed under its
+     * parent, opening with the task the parent agent wrote. Not shown until the user opens it.
+     */
+    _createSubagent(parentId: string, opts: { toolId: string; title: string; agentType?: string; prompt?: string }): Thread | null {
+      const parent = this.byId(parentId)
+      if (!parent) return null
+      const now = Date.now()
+      const t: Thread = {
+        id: uid('t'),
+        projectPath: parent.projectPath,
+        title: titleFrom(opts.title) || 'Sub-agent',
+        agent: parent.agent,
+        model: parent.model,
+        mode: parent.mode,
+        effort: null,
+        status: 'running',
+        messages: opts.prompt ? [{ id: uid('m'), role: 'user', parts: [{ type: 'text', text: opts.prompt }], createdAt: now, fromAgent: true }] : [],
+        createdAt: now,
+        updatedAt: now,
+        seen: true,
+        simulated: parent.simulated,
+        branch: parent.branch ?? null,
+        parentId,
+        toolId: opts.toolId,
+        ...(opts.agentType ? { agentType: opts.agentType } : {}),
+      }
+      this.threads.push(t)
+      this.persist()
+      return this.byId(t.id)
+    },
+
+    _liveFor(id: string): LiveState {
+      return (this.live[id] ??= { tasks: [], idle: false })
+    },
+    _taskStart(id: string, task: Omit<BackgroundTask, 'status' | 'startedAt'>) {
+      const live = this._liveFor(id)
+      if (live.tasks.some(x => x.id === task.id)) return
+      live.tasks.push({ ...task, status: 'running', startedAt: Date.now() })
+    },
+    _taskUpdate(id: string, taskId: string, patch: Partial<Pick<BackgroundTask, 'title' | 'activity'>>) {
+      const task = this.live[id]?.tasks.find(x => x.id === taskId)
+      if (task) Object.assign(task, patch)
+    },
+    _taskEnd(id: string, taskId: string, status: BackgroundTask['status'], summary?: string) {
+      const task = this.live[id]?.tasks.find(x => x.id === taskId)
+      if (!task || task.status !== 'running') return
+      task.status = status
+      task.endedAt = Date.now()
+      task.activity = undefined
+      if (summary) task.summary = summary
+    },
+    _setIdle(id: string, idle: boolean) {
+      if (idle || this.live[id]) this._liveFor(id).idle = idle
+    },
+    /** The run ended: its background work is over. */
+    _clearLive(id: string) {
+      delete this.live[id]
+    },
     _pushAgentMessage(id: string): Message | null {
       const t = this.byId(id)
       if (!t) return null
@@ -470,6 +569,8 @@ function normalizeLoaded(t: Thread): Thread {
   const mode = (['plan', 'ask', 'edits', 'auto'] as const).includes(t.mode) ? t.mode : 'ask'
   // Older builds also had an 'idle' status; it is Working now.
   const interrupted = ['running', 'queued', 'waiting', 'idle'].includes(t.status)
+  // A sub-agent cut off by closing the app did not finish.
+  const after: Thread['status'] = t.parentId ? 'error' : 'working'
   const messages = t.messages.map(m => ({
     ...m,
     ...(Array.isArray(m.attachments) ? { attachments: m.attachments.filter(a => a && typeof a.path === 'string') } : { attachments: undefined }),
@@ -479,7 +580,7 @@ function normalizeLoaded(t: Thread): Thread {
       return p
     }),
   }))
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? 'working' : t.status }
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status }
 }
 
 function titleFrom(text: string) {
