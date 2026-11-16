@@ -308,7 +308,7 @@ function rebase(row: Row) {
 }
 
 function commitView() {
-  ws.setSidebarView('changes')
+  ws.openTool('changes')
   close()
 }
 

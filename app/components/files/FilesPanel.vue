@@ -8,7 +8,7 @@ import { useGit } from '~/stores/git'
 import { parseFileTab } from '~/utils/fileTabs'
 
 /**
- * The Files view in the left sidebar: the active project's folders as a tree,
+ * The Files tool window on the right: the active project's folders as a tree,
  * read one folder at a time as it opens. A click previews a file in the main
  * pane, a double-click (or Enter) keeps its tab. Names carry the same git
  * status colours and letters as the Changes view.
@@ -182,7 +182,7 @@ function iconFor(entry: FsEntry, open: boolean) {
 </script>
 
 <template>
-  <!-- Shown inside the left sidebar (see AppSidebar), which owns width and resizing. -->
+  <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <section class="fp" aria-label="Files">
     <header class="fp__head">
       <h2 class="fp__title" :title="path ?? undefined">{{ ws.activeProject?.name ?? 'Files' }}</h2>

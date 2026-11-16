@@ -178,7 +178,7 @@ function reload() {
 }
 function revealInTree() {
   if (!tab.value) return
-  ws.setSidebarView('files')
+  ws.openTool('files')
   void files.reveal(tab.value.projectPath, tab.value.file)
 }
 

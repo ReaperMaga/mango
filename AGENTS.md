@@ -50,10 +50,10 @@ The dev port is **1420** (`nuxt.config.ts` and `src-tauri/tauri.conf.json` must 
 app/
   agents/            claude.ts, codex.ts: CLI protocol -> AgentEvents. index.ts: runs turns, bridges to Rust
   assets/css/        tokens.css (the only source of colour/type/space/radius/motion), base.css
-  components/        AppTitlebar, AppSidebar, AppWorkspace, ChatArea, CommandPalette
+  components/        AppTitlebar, AppSidebar (threads), AppToolStrip + AppToolPanel (right tool windows), AppWorkspace, ChatArea, CommandPalette
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
-    git/             GitPanel (sidebar Changes view), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
-    files/           FilesPanel (sidebar Files view), FilesEditorPane (Monaco editor tab)
+    git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
+    files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab)
     settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
