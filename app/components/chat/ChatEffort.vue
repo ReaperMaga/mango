@@ -4,7 +4,8 @@ import { effortLabel } from '~/types/chat'
 /**
  * Reasoning effort as a slider: one stop per level the model accepts, lowest on the
  * left. "Default" leaves it to the CLI; the slider then shows the CLI's own level
- * (when it says) in a muted tone, and moving it picks a level explicitly.
+ * (when it says), and moving it picks a level explicitly. Only a placeholder
+ * position (the CLI never said) is drawn in a muted tone.
  * The popover is teleported to <body> with fixed coordinates, like UiMenu.
  */
 const props = defineProps<{
@@ -28,6 +29,8 @@ const MARGIN = 8
 
 const last = computed(() => Math.max(1, props.efforts.length - 1))
 const isDefault = computed(() => !props.modelValue)
+/** Default with no level from the CLI: the thumb is only a placeholder. */
+const isUnknown = computed(() => isDefault.value && !props.efforts.includes(props.fallback ?? ''))
 /** Where the thumb sits: the chosen level, else the CLI's default, else the middle. */
 const index = computed(() => {
   const at = props.efforts.indexOf(props.modelValue ?? props.fallback ?? '')
@@ -120,7 +123,7 @@ onBeforeUnmount(() => {
           v-if="open"
           ref="pop"
           class="ef"
-          :class="{ 'is-default': isDefault }"
+          :class="{ 'is-unknown': isUnknown }"
           role="dialog"
           aria-label="Reasoning effort"
           :style="{ width: `${WIDTH}px`, left: `${pos.left}px`, bottom: `${pos.bottom}px`, '--f': fraction }"
@@ -197,11 +200,11 @@ onBeforeUnmount(() => {
   font-size: var(--text-sm);
   transform-origin: bottom left;
 }
-.ef.is-default { --fill: var(--fg-faint); }
+.ef.is-unknown { --fill: var(--fg-faint); }
 .ef__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
 .ef__title { font-weight: 560; color: var(--fg); }
 .ef__value { font-size: var(--text-xs); color: var(--fg-muted); }
-.ef:not(.is-default) .ef__value { color: var(--accent-ink); font-weight: 540; }
+.ef:not(.is-unknown) .ef__value { color: var(--accent-ink); font-weight: 540; }
 
 .ef__range {
   -webkit-appearance: none;

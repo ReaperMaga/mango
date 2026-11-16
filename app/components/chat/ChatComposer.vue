@@ -320,10 +320,10 @@ const modelItems = computed<MenuItem[]>(() => {
 const efforts = computed(() => models.efforts(props.agent, props.model))
 /** The level the CLI picks when none is chosen, when it says (both report it with their model lists). */
 const fallbackEffort = computed(() => models.find(props.agent, props.model)?.defaultEffort)
-/** How full the meter is: the chosen level, else the CLI's default (shown muted), else empty. */
+/** How full the meter is: the level the chat runs at (chosen, else the CLI's default), else empty. */
 const effortMeter = computed(() => {
   const level = props.effort ?? fallbackEffort.value
-  return { value: level ? efforts.value.indexOf(level) + 1 : 0, max: efforts.value.length, muted: !props.effort }
+  return { value: level ? efforts.value.indexOf(level) + 1 : 0, max: efforts.value.length }
 })
 /**
  * The level the chat runs at: the chosen one, else the CLI's default.
@@ -443,7 +443,7 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
             :title="effortTitle"
             @click="toggle"
           >
-            <UiLevel class="cp__effort" size="sm" :value="effortMeter.value" :max="effortMeter.max" :muted="effortMeter.muted" />
+            <UiLevel class="cp__effort" size="sm" :value="effortMeter.value" :max="effortMeter.max" />
             <span class="cp__chip-text cp__mode-text">{{ effortText }}</span>
             <ChevronDown />
           </button>
