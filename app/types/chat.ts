@@ -92,6 +92,26 @@ export interface BackgroundTask {
   endedAt?: number
 }
 
+/**
+ * A pull request or issue linked to a chat: one the agent created during it (`gh pr create`,
+ * a GitHub MCP tool), or one the user linked by hand. The details are read from GitHub when
+ * shown; `title` and `state` keep the last ones seen so the list reads well offline.
+ */
+export interface LinkedItem {
+  /** `host/owner/repo#number`, lower case: the same item however it was written. */
+  key: string
+  kind: 'pr' | 'issue'
+  url: string
+  host: string
+  owner: string
+  repo: string
+  number: number
+  title?: string
+  state?: 'open' | 'draft' | 'merged' | 'closed'
+  source: 'agent' | 'user'
+  linkedAt: number
+}
+
 export interface Thread {
   id: string
   projectPath: string
@@ -126,6 +146,8 @@ export interface Thread {
   toolId?: string
   /** Sub-agent chats: the kind of agent ("Explore", "general-purpose"). */
   agentType?: string
+  /** Pull requests and issues linked to this chat, oldest first. Sub-agent chats link to their top-level chat. */
+  links?: LinkedItem[]
 }
 
 export interface AgentModel {

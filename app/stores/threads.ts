@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { AgentId, Attachment, BackgroundTask, Message, Part, Thread } from '~/types/chat'
+import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
 import { interruptRun, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
@@ -8,6 +8,8 @@ import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { demoThreads } from '~/utils/demoThreads'
+import { createdBy } from '~/utils/githubLinks'
+import { useLinks } from '~/stores/links'
 
 const LS_KEY = 'mango.threads.v1'
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
@@ -440,6 +442,57 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
+    /**
+     * Link a pull request or issue to a chat (a sub-agent's link goes to its top-level chat).
+     * Linking one that is already there refreshes what is known about it. True when it is new.
+     */
+    link(id: string, link: LinkedItem): boolean {
+      const t = this.rootOf(id)
+      if (!t) return false
+      const links = (t.links ??= [])
+      const had = links.find(l => l.key === link.key)
+      if (had) Object.assign(had, { url: link.url, kind: link.kind, ...(link.title ? { title: link.title } : {}), ...(link.state ? { state: link.state } : {}) })
+      else links.push({ ...link })
+      this.persist()
+      return !had
+    },
+
+    unlink(id: string, key: string) {
+      const t = this.rootOf(id)
+      if (!t?.links) return
+      t.links = t.links.filter(l => l.key !== key)
+      if (!t.links.length) delete t.links
+      this.persist()
+    },
+
+    /** What GitHub said about an item, on every chat that links it. */
+    _updateLinks(key: string, patch: Partial<Pick<LinkedItem, 'title' | 'state' | 'url' | 'kind'>>) {
+      let changed = false
+      for (const t of this.threads) {
+        const l = t.links?.find(x => x.key === key)
+        if (!l) continue
+        for (const [k, v] of Object.entries(patch) as Array<[keyof typeof patch, string]>) {
+          if (v !== undefined && l[k] !== v) { (l as Record<string, unknown>)[k] = v; changed = true }
+        }
+      }
+      if (changed) this.persist()
+    },
+
+    /**
+     * A tool call finished: when it created a pull request or issue, link it to the chat. If the
+     * chat is the one in front of the user, the new item opens in the Pull requests tool window.
+     */
+    _linkCreated(id: string, part: Extract<Part, { type: 'tool' }>) {
+      const root = this.rootOf(id)
+      if (!root) return
+      for (const ref of createdBy(part)) {
+        const fresh = this.link(root.id, { ...ref, source: 'agent', linkedAt: Date.now() })
+        const links = useLinks()
+        void links.load(ref, root.projectPath, true)
+        if (fresh && this.activePane.threadId === root.id) links.show(ref.key)
+      }
+    },
+
     /* -------- low-level mutations used by the agent driver -------- */
 
     /**
@@ -580,7 +633,10 @@ function normalizeLoaded(t: Thread): Thread {
       return p
     }),
   }))
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status }
+  const links = Array.isArray(t.links)
+    ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+    : []
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined }
 }
 
 function titleFrom(text: string) {

@@ -2,11 +2,13 @@
 import { useWorkspace } from '~/stores/workspace'
 
 /**
- * The open tool window on the right of the chats: the project's files or
- * source control. Owns the width; the panel inside owns its own header.
+ * The open tool window on the right of the chats: the project's files, source
+ * control, or the chat's pull requests and issues. Owns the width; the panel
+ * inside owns its own header.
  */
 
 const ws = useWorkspace()
+const LABELS = { files: 'Files', changes: 'Changes', links: 'Pull requests' } as const
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
@@ -26,8 +28,9 @@ function endResize() {
 </script>
 
 <template>
-  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="ws.toolPanel === 'files' ? 'Files' : 'Changes'">
+  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
     <FilesPanel v-if="ws.toolPanel === 'files'" />
+    <LinksPanel v-else-if="ws.toolPanel === 'links'" />
     <GitPanel v-else />
     <div
       class="tp__resize"

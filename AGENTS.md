@@ -54,14 +54,16 @@ app/
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
+    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem
     settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, mockFiles.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
-  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes), git.ts, files.ts, updater.ts
+  composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
+  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
-  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts
+  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts,
+                     githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -70,6 +72,7 @@ src-tauri/src/
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
+  github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
@@ -105,7 +108,10 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.
 - Installing works the same way: `setup.rs` picks the vendor's own installer per OS and runs it in a PTY the
   user watches. The frontend only names a tool id; never build an install command line from webview input.
-- Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that.
+- Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that. A pull request's
+  description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
+- Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
+  trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State

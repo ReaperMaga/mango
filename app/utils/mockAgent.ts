@@ -1,13 +1,15 @@
 import type { Part } from '~/types/chat'
 import { approvalWaiters, stopFlags, type useThreads } from '~/stores/threads'
 import { simulatedTasks } from '~/agents'
+import { baseName } from '~/utils/paths'
 
 /**
  * Stand-in for a real Claude Code / Codex run. Streams a plausible sequence of
  * thinking, tool calls, a sub-agent with a chat of its own, an approval request
  * (in "ask" mode) and a reply, so the UI's states can be exercised without a CLI.
  * A prompt that mentions tests, a build or the background also starts a background
- * command, which the agent answers once it finishes.
+ * command, which the agent answers once it finishes; one that asks for a pull request or an
+ * issue opens one with `gh`, which links it to the chat.
  */
 type Store = ReturnType<typeof useThreads>
 type ToolPart = Extract<Part, { type: 'tool' }>
@@ -139,6 +141,23 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
     { kind: 'add', text: '      for (const p of this.panes) if (p.threadId === id) p.threadId = fallback' },
     { kind: 'ctx', text: '      this.persist()' },
   ]
+
+  // Asked for a pull request (or an issue): open one the way an agent does, with `gh`. The chat links it.
+  const wants = /\b(pr|pull request)\b/i.test(prompt) ? 'pr' : /\bissue\b/i.test(prompt) ? 'issue' : null
+  if (wants) {
+    if (stopped()) return
+    const repo = `you/${baseName(thread()?.projectPath ?? 'project')}`
+    const command = wants === 'pr'
+      ? 'gh pr create --title "fix(chat): keep the pane when its tab closes" --body-file .git/PR_BODY.md'
+      : 'gh issue create --title "Closing the last tab leaves a blank pane" --body-file .git/ISSUE_BODY.md'
+    const gh = store._pushPart(threadId, msg, { type: 'tool', id: `mock-gh-${Date.now().toString(36)}`, tool: 'bash', target: command, status: 'running' }) as ToolPart
+    await sleep(900)
+    gh.status = 'ok'
+    gh.output = wants === 'pr'
+      ? `Creating pull request for fix/pane-fallback into main in ${repo}\n\nhttps://github.com/${repo}/pull/42`
+      : `Creating issue in ${repo}\n\nhttps://github.com/${repo}/issues/57`
+    store._linkCreated(threadId, gh)
+  }
 
   const reply = store._pushPart(threadId, msg, { type: 'text', text: '' }) as Extract<Part, { type: 'text' }>
   const answer = [

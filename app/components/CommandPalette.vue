@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, MessageSquarePlus, Settings,
   Files, Moon, PanelBottom, PanelLeft, Search, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -81,6 +81,7 @@ const actions = computed<Item[]>(() => {
       { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: [mod, shift, 'T'], keywords: 'shell tab console', run: () => ws.newTerminal() },
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: [mod, 'Shift', 'E'], keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: [mod, 'Shift', 'G'], keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
+      { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: [mod, 'Shift', 'P'], keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: [mod, 'B'], keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: [mod, '\\'], keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
