@@ -396,6 +396,8 @@ export interface EnvShareLink {
   share: EnvShare
   /** `mango://join/…`, one line; also shown as a QR code. */
   url: string
+  /** What the owner may still need to do, e.g. open the port in a firewall (with a ufw command when ufw is active). */
+  note?: string | null
 }
 
 /** What a share link would add, before joining. */
