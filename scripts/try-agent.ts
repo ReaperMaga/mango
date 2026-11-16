@@ -2,13 +2,15 @@
  * Drive an agent adapter against the real CLI, outside the app.
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
- *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--interrupt-after ms] [--raw]
+ *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--interrupt-after ms]
+ *        [--steer "<text>" [--steer-after ms]] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
+ * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
  */
 import { spawn } from 'node:child_process'
@@ -87,6 +89,14 @@ const run = adapter.run({
     if (event.type === 'turn-end') setTimeout(() => process.exit(0), 1500)
   },
 })
+
+const steer = flag('steer')
+if (steer) {
+  setTimeout(async () => {
+    if (!run.steer) return console.log('-- steer: this adapter cannot steer')
+    console.log(`-- steer: ${await run.steer({ prompt: steer, images: [], readDirs: [] }) ? 'taken' : 'refused (would be the next turn)'}`)
+  }, Number(flag('steer-after')) || 3000)
+}
 
 const after = Number(flag('interrupt-after'))
 if (after) setTimeout(() => { console.log('-- interrupt'); run.interrupt() }, after)

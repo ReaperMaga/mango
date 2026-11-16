@@ -9,7 +9,8 @@ import { listAgentModels } from '~/agents'
  * then. Until a CLI has answered, the built-in list in AGENTS stands in.
  */
 
-const KEY = 'mango.models'
+/** Versioned: a list cached by an older build lacks fields (default efforts) and is fetched again. */
+const KEY = 'mango.models.v2'
 /** How long a list is trusted before the next look (opening the picker refreshes a stale one). */
 const FRESH_MS = 30 * 60 * 1000
 
@@ -17,6 +18,7 @@ interface Cached { lists: Partial<Record<AgentId, AgentModel[]>>; fetchedAt: Par
 
 function load(): Cached {
   try {
+    localStorage.removeItem('mango.models')
     const raw = JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}
     const lists: Cached['lists'] = {}
     for (const id of Object.keys(AGENTS) as AgentId[]) {

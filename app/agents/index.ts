@@ -1,4 +1,4 @@
-import type { AgentId, AgentModel, Attachment, Part, Thread } from '~/types/chat'
+import type { AgentId, AgentModel, Attachment, Message, Part, Thread } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
@@ -16,19 +16,30 @@ const adapters: Record<AgentId, () => Promise<AgentAdapter>> = {
   codex: () => import('~/agents/codex').then(m => m.codexAdapter),
 }
 
+/** A live run, and how to hand it a message mid-turn. */
+interface LiveRun { run: AgentRun; steer(text: string, attachments: Attachment[]): Promise<boolean> }
+
 /** Live runs by thread id (not persisted: a run dies with the app). */
-const runs = new Map<string, AgentRun>()
+const runs = new Map<string, LiveRun>()
 
 export const isRunning = (threadId: string) => runs.has(threadId)
 
 export function respondApproval(threadId: string, approvalId: string, allow: boolean) {
-  runs.get(threadId)?.respondApproval(approvalId, allow)
+  runs.get(threadId)?.run.respondApproval(approvalId, allow)
 }
 
 export function interruptRun(threadId: string): boolean {
-  const run = runs.get(threadId)
-  run?.interrupt()
-  return !!run
+  const live = runs.get(threadId)
+  live?.run.interrupt()
+  return !!live
+}
+
+/**
+ * Give the thread's running turn a message the user just sent (already in the chat).
+ * False when there is no run to take it, or the run cannot: the caller sends it as the next turn.
+ */
+export function steerRun(threadId: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
+  return runs.get(threadId)?.steer(text, attachments) ?? Promise.resolve(false)
 }
 
 /* ------------------------------------------------------------------ */
@@ -131,14 +142,26 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   }
   thread.simulated = false
 
-  const msg = store._pushAgentMessage(threadId)
-  if (!msg) return
+  const first = store._pushAgentMessage(threadId)
+  if (!first) return
   store._setStatus(threadId, 'running')
 
-  const find = <T extends Part['type']>(type: T, id: string) =>
-    msg.parts.find(p => p.type === type && 'id' in p && p.id === id) as Extract<Part, { type: T }> | undefined
+  /**
+   * The turn's agent messages. A message the user steers in mid-turn sits after the current one,
+   * and what the agent does from then on goes into a new one below it; rows started earlier
+   * (a command still running) keep updating where they are.
+   */
+  const msgs: Message[] = [first]
+  let msg = first
+  const find = <T extends Part['type']>(type: T, id: string) => {
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const part = msgs[i]!.parts.find(p => p.type === type && 'id' in p && p.id === id)
+      if (part) return part as Extract<Part, { type: T }>
+    }
+    return undefined
+  }
   const push = <P extends Part>(part: P) => store._pushPart(threadId, msg, part) as P
-  const pendingApprovals = () => msg.parts.some(p => p.type === 'approval' && p.state === 'pending')
+  const pendingApprovals = () => msgs.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
 
   let finish!: () => void
   const finished = new Promise<void>(resolve => (finish = resolve))
@@ -170,7 +193,10 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (!part) break
         part.seconds = Math.max(e.seconds ?? 0, part.text ? 1 : 0)
         // A thinking block with no visible text and no measurable time is noise.
-        if (!part.text && part.seconds < 1) msg.parts.splice(msg.parts.indexOf(part), 1)
+        if (!part.text && part.seconds < 1) {
+          const owner = msgs.find(m => m.parts.includes(part))
+          owner?.parts.splice(owner.parts.indexOf(part), 1)
+        }
         break
       }
       case 'tool-start':
@@ -200,8 +226,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       case 'approval': {
         const part: Part = { type: 'approval', id: e.id, title: e.title, command: e.command, reason: e.reason, state: 'pending' }
         // Sit right under the tool row the request is about, not after later rows.
-        const at = e.toolId ? msg.parts.findIndex(p => p.type === 'tool' && p.id === e.toolId) : -1
-        if (at >= 0) msg.parts.splice(at + 1, 0, part)
+        const owner = (e.toolId && msgs.find(m => m.parts.some(p => p.type === 'tool' && p.id === e.toolId))) || msg
+        const at = e.toolId ? owner.parts.findIndex(p => p.type === 'tool' && p.id === e.toolId) : -1
+        if (at >= 0) owner.parts.splice(at + 1, 0, part)
         else push(part)
         store._setStatus(threadId, 'waiting')
         break
@@ -213,7 +240,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         break
       }
       case 'turn-end': {
-        for (const p of msg.parts) {
+        for (const p of msgs.flatMap(m => m.parts)) {
           if (p.type === 'tool' && p.status === 'running') { p.status = 'error'; p.summary = e.status === 'stopped' ? 'stopped' : 'did not finish' }
           if (p.type === 'approval' && p.state === 'pending') p.state = 'cancelled'
           if (p.type === 'thinking' && p.seconds === 0) p.seconds = 1
@@ -225,7 +252,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         }
         if (e.status === 'stopped') push({ type: 'notice', level: 'info', text: 'Stopped.' })
         // An agent message with nothing in it (stopped before any output) would render as a gap.
-        if (!msg.parts.length) t.messages.splice(t.messages.indexOf(msg), 1)
+        for (const m of msgs) if (!m.parts.length && t.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
         runs.delete(threadId)
         // Answering never settles a chat: it stays Working until the user marks it settled.
         store._setStatus(threadId, e.status === 'error' ? 'error' : 'working', e.status)
@@ -251,7 +278,22 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       spawn: spawnFor(thread.agent, thread.projectPath),
       emit,
     })
-    runs.set(threadId, run)
+    runs.set(threadId, {
+      run,
+      async steer(text, files) {
+        if (!run.steer) return false
+        const input = files.length
+          ? await forAgent(text, files, path => call('attachment_read', { path }))
+          : { prompt: text, images: [], readDirs: [] }
+        if (runs.get(threadId)?.run !== run || !(await run.steer(input))) return false
+        // The steered message is the last one in the chat: what the agent does next goes below it.
+        if (runs.get(threadId)?.run === run) {
+          const next = store._pushAgentMessage(threadId)
+          if (next) { msgs.push(next); msg = next }
+        }
+        return true
+      },
+    })
   } catch (err) {
     emit({ type: 'turn-end', status: 'error', error: err instanceof Error ? err.message : String(err) })
   }

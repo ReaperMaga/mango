@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { AgentId, Attachment, Message, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
-import { interruptRun, respondApproval, runAgentTurn } from '~/agents'
+import { interruptRun, respondApproval, runAgentTurn, steerRun } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
@@ -28,7 +28,7 @@ export const useThreads = defineStore('threads', {
 
   getters: {
     byId: s => (id: string | null | undefined) => s.threads.find(t => t.id === id) ?? null,
-    /** A project's chats, newest first, without the archived ones. */
+    /** A project's chats in the user's order (see byListOrder), without the archived ones. */
     forProject: s => (path: string) =>
       s.threads.filter(t => t.projectPath === path && !t.archived).sort(byListOrder),
     archivedFor: s => (path: string) =>
@@ -227,7 +227,7 @@ export const useThreads = defineStore('threads', {
       const target = ids[ids.indexOf(id) + by]
       if (target) this.reorder(id, target, by < 0 ? 'before' : 'after')
     },
-    /** Forget the hand-made order of a project: newest activity first again. */
+    /** Forget the hand-made order of a project: newest first again. */
     resetOrder(projectPath: string) {
       for (const t of this.threads) if (t.projectPath === projectPath) delete t.order
       this.persist()
@@ -305,10 +305,14 @@ export const useThreads = defineStore('threads', {
       if (t) { t.mode = mode; this.persist() }
     },
 
-    /** Append a user message (text, attachments or both) and start the agent. */
+    /**
+     * Append a user message (text, attachments or both) and start the agent. While the agent
+     * is working the message steers it: the run reads it at its next step. When the run
+     * cannot take it, it waits and goes out as the next turn.
+     */
     async send(id: string, text: string, attachments: Attachment[] = []) {
       const t = this.byId(id)
-      if (!t || (!text.trim() && !attachments.length) || ['running', 'queued', 'waiting'].includes(t.status)) return
+      if (!t || (!text.trim() && !attachments.length)) return
       t.archived = false // writing in an archived chat brings it back
       const msg: Message = {
         id: uid('m'),
@@ -319,10 +323,34 @@ export const useThreads = defineStore('threads', {
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
       if (t.title === 'New chat') t.title = titleFrom(text.trim() || attachments[0]!.name)
-      t.status = 'queued'
       t.updatedAt = Date.now()
       this.persist()
+      if (isBusy(t)) {
+        if (await steerRun(t.id, text.trim(), attachments)) return
+        const waiting = followUps.get(t.id) ?? []
+        waiting.push({ text: text.trim(), attachments })
+        followUps.set(t.id, waiting)
+        // The turn may have ended while the steer was being tried: nothing else would send it then.
+        if (!isBusy(t)) await this._sendFollowUps(t.id)
+        return
+      }
+      t.status = 'queued'
+      this.persist()
       await runAgentTurn(this, t.id, text.trim(), attachments)
+      await this._sendFollowUps(t.id)
+    },
+
+    /** Messages written while the last turn ran that it could not take: one turn answers them all. */
+    async _sendFollowUps(id: string) {
+      for (;;) {
+        const t = this.byId(id)
+        const waiting = followUps.get(id)
+        if (!t || !waiting?.length || isBusy(t)) return
+        followUps.delete(id)
+        t.status = 'queued'
+        this.persist()
+        await runAgentTurn(this, id, waiting.map(w => w.text).filter(Boolean).join('\n\n'), waiting.flatMap(w => w.attachments))
+      }
     },
 
     /** Resolve an approval request inside a message. */
@@ -342,6 +370,8 @@ export const useThreads = defineStore('threads', {
     stop(id: string) {
       const t = this.byId(id)
       if (!t || (t.status !== 'running' && t.status !== 'queued' && t.status !== 'waiting')) return
+      // Stop means stop: messages waiting for the next turn stay in the chat but are not sent.
+      followUps.delete(id)
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
@@ -390,11 +420,12 @@ export const useThreads = defineStore('threads', {
 })
 
 /**
- * Sidebar order: chats the user placed by hand keep their place; chats without
- * a place (new ones) come first, newest activity on top.
+ * Sidebar order is the user's: chats placed by hand keep their place; chats without a
+ * place (new ones) come first, newest created on top. Activity never moves a chat, so
+ * the list holds still while agents answer.
  */
 function byListOrder(a: Thread, b: Thread) {
-  if (a.order === undefined && b.order === undefined) return b.updatedAt - a.updatedAt
+  if (a.order === undefined && b.order === undefined) return b.createdAt - a.createdAt
   if (a.order === undefined) return -1
   if (b.order === undefined) return 1
   return a.order - b.order
@@ -404,6 +435,8 @@ function byListOrder(a: Thread, b: Thread) {
 export const isBusy = (t: Thread) => t.status === 'running' || t.status === 'queued' || t.status === 'waiting'
 
 export const approvalWaiters = new Map<string, (allow: boolean) => void>()
+/** Per thread: messages sent while a turn ran that it could not take, sent together as the next turn. */
+const followUps = new Map<string, Array<{ text: string; attachments: Attachment[] }>>()
 export const stopFlags = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
