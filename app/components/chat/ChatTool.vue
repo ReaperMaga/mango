@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ChevronRight, FileText, FilePen, FilePlus, Search, SquareTerminal, Globe, CircleAlert, Wrench } from 'lucide-vue-next'
+import { ArrowUpRight, ChevronRight, FileText, FilePen, FilePlus, Search, SquareTerminal, Globe, CircleAlert, Wrench } from 'lucide-vue-next'
 import type { Part } from '~/types/chat'
 import { openImage } from '~/utils/imageViewer'
+import { useThreads } from '~/stores/threads'
 
 type ToolPart = Extract<Part, { type: 'tool' }>
 const props = defineProps<{ part: ToolPart }>()
@@ -19,10 +20,15 @@ const meta = {
 const m = computed(() => meta[props.part.tool])
 const expandable = computed(() => !!(props.part.output || props.part.diff?.length))
 const open = ref(props.part.status === 'error')
+
+/** A delegated task has a chat of its own: the sub-agent's. */
+const threads = useThreads()
+const child = computed(() => (props.part.childId ? threads.byId(props.part.childId) : null))
 </script>
 
 <template>
-  <div class="tool" :class="[`tool--${part.status}`, { 'is-open': open && expandable }]">
+  <div class="tool" :class="[`tool--${part.status}`, { 'is-open': open && expandable, 'has-child': child }]">
+    <div class="tool__line">
     <component
       :is="expandable ? 'button' : 'div'"
       :type="expandable ? 'button' : undefined"
@@ -40,6 +46,10 @@ const open = ref(props.part.status === 'error')
       <span v-if="part.summary" class="tool__sum tabular">{{ part.summary }}</span>
       <ChevronRight v-if="expandable" class="tool__caret" />
     </component>
+    <button v-if="child" type="button" class="tool__open" :title="`Open the sub-agent's chat: ${child.title}`" @click="threads.show(child.id)">
+      <span>Open</span><ArrowUpRight aria-hidden="true" />
+    </button>
+    </div>
 
     <ul v-if="part.images?.length" class="tool__images" aria-label="Images">
       <li v-for="(img, i) in part.images" :key="img.id">
@@ -63,6 +73,24 @@ const open = ref(props.part.status === 'error')
 
 <style scoped>
 .tool { font-size: var(--text-sm); }
+.tool__line { display: flex; align-items: center; gap: var(--space-1); }
+.tool__line > .tool__row { flex: 1; min-width: 0; }
+.tool__open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  padding: 0 6px 0 8px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: 540;
+  color: var(--accent-ink);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.tool__open:hover { background: var(--bg-hover); }
+.tool__open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.tool__open svg { width: 13px; height: 13px; stroke-width: 1.85; }
 .tool__row {
   display: flex;
   align-items: center;

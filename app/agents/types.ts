@@ -38,21 +38,53 @@ export interface ToolImage {
   path?: string
 }
 
+/** What a background task is: a shell command, a sub-agent, or something else the CLI runs on its own (a monitor). */
+export type TaskKind = 'command' | 'agent' | 'other'
+
+/**
+ * Content events carry `agent` when they belong to a sub-agent rather than the main
+ * conversation: the id of its `subagent-start` (the tool call that started it).
+ */
+interface Scoped { agent?: string }
+
 export type AgentEvent =
   /** The CLI's own session/thread id. Persisted on the thread and passed back as `sessionId` to resume. */
   | { type: 'session'; sessionId: string }
   /** Append to (or create) the text block `id`. */
-  | { type: 'text-delta'; id: string; text: string }
+  | ({ type: 'text-delta'; id: string; text: string } & Scoped)
   /** Authoritative full text of block `id` (replaces what deltas built). */
-  | { type: 'text'; id: string; text: string }
-  | { type: 'thinking-delta'; id: string; text: string }
-  | { type: 'thinking-end'; id: string; seconds?: number }
+  | ({ type: 'text'; id: string; text: string } & Scoped)
+  | ({ type: 'thinking-delta'; id: string; text: string } & Scoped)
+  | ({ type: 'thinking-end'; id: string; seconds?: number } & Scoped)
   /** `label` overrides the row's verb ("Delegated", "Listed"); needed for tool 'other'. */
-  | { type: 'tool-start'; id: string; tool: ToolKind; target: string; label?: string }
+  | ({ type: 'tool-start'; id: string; tool: ToolKind; target: string; label?: string } & Scoped)
   /** Any subset of fields; e.g. the target once the tool input finished streaming, or live output. */
   /** `images` are added to the row's images (never replace them). */
-  | { type: 'tool-update'; id: string; target?: string; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] }
-  | { type: 'tool-end'; id: string; status: 'ok' | 'error'; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] }
+  | ({ type: 'tool-update'; id: string; target?: string; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] } & Scoped)
+  | ({ type: 'tool-end'; id: string; status: 'ok' | 'error'; summary?: string; output?: string; diff?: DiffLine[]; images?: ToolImage[] } & Scoped)
+  /**
+   * A sub-agent started: the tool call `id` (already a tool row) handed `prompt` to another agent.
+   * Its own work arrives as content events with `agent: id`. `parent` is the sub-agent that
+   * started it, when sub-agents nest. `background`: the caller does not wait for it.
+   */
+  | { type: 'subagent-start'; id: string; parent?: string; title: string; agentType?: string; prompt?: string; background?: boolean }
+  | { type: 'subagent-end'; id: string; status: 'done' | 'error' | 'stopped' }
+  /**
+   * Work that runs on while the agent does other things: a command started in the background,
+   * a sub-agent nobody waits for. `toolId` is the tool row that started it. Stop one with
+   * `AgentRun.stopTask(id)`. A run with background tasks still running does not end.
+   */
+  | { type: 'task-start'; id: string; kind: TaskKind; title: string; toolId?: string }
+  /** `activity`: what it is doing now (the tool it last used, a progress line). */
+  | { type: 'task-update'; id: string; title?: string; activity?: string }
+  | { type: 'task-end'; id: string; status: 'done' | 'error' | 'stopped'; summary?: string }
+  /** The agent has answered, but background tasks still run: the run stays open for them. */
+  | { type: 'answered' }
+  /**
+   * The agent takes the conversation up again without a new user message (a background task
+   * finished and it reacts to that). What follows belongs in a new reply; `reason` says why.
+   */
+  | { type: 'resume'; reason: string }
   /** The agent needs a yes/no from the user. Answer with `AgentRun.respondApproval(id, allow)`. */
   /** `toolId` (optional) is the tool-start id this request is about, so the UI can show it next to that row. */
   | { type: 'approval'; id: string; title: string; command: string; reason: string; toolId?: string }
@@ -104,8 +136,15 @@ export interface AgentRun {
    * caller then sends it as the next turn instead. Optional: without it, every such message waits.
    */
   steer?(input: SteerInput): Promise<boolean>
-  /** Ask the agent to stop the turn. The adapter still emits `turn-end` (status 'stopped'). */
+  /** Ask the agent to stop the turn. The adapter still emits `turn-end` (status 'stopped'). Background tasks stop too. */
   interrupt(): void
+  /** Stop one background task or sub-agent: the id of its `task-start` or `subagent-start`. */
+  stopTask?(id: string): void
+  /**
+   * The end of a background command's output (plain text, a few KB at most), or null when the
+   * CLI cannot say. Read-only: no turn is run, no quota is spent.
+   */
+  taskOutput?(id: string): Promise<string | null>
 }
 
 /** One rolling usage limit of the signed-in plan, e.g. the 5-hour or the weekly window. */

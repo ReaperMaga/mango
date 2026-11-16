@@ -35,6 +35,8 @@ export type Part =
       diff?: DiffLine[]
       /** Images the tool produced (screenshots, images it read), kept in the attachment store. */
       images?: Attachment[]
+      /** The sub-agent this call started: its own chat (a child thread). */
+      childId?: string
     }
   | { type: 'approval'; id?: string; title?: string; command: string; reason: string; state: 'pending' | 'allowed' | 'denied' | 'cancelled' }
   /** A run-level problem shown inline (CLI missing, not signed in, crashed). */
@@ -68,6 +70,26 @@ export interface Message {
   elapsedMs?: number
   /** Agent messages: how the turn ended. */
   outcome?: 'done' | 'stopped' | 'error'
+  /** User messages in a sub-agent's chat: the task the parent agent wrote, not the person. */
+  fromAgent?: boolean
+}
+
+/**
+ * Something an agent run keeps going in the background (a command, a sub-agent nobody waits
+ * for). Lives only as long as the run: not saved.
+ */
+export interface BackgroundTask {
+  id: string
+  kind: 'command' | 'agent' | 'other'
+  title: string
+  /** The tool row that started it. */
+  toolId?: string
+  /** What it is doing now. */
+  activity?: string
+  status: 'running' | 'done' | 'error' | 'stopped'
+  summary?: string
+  startedAt: number
+  endedAt?: number
 }
 
 export interface Thread {
@@ -95,6 +117,15 @@ export interface Thread {
   sessionId?: string | null
   /** git branch or worktree the agent works on */
   branch?: string | null
+  /**
+   * Set on a sub-agent's chat: the chat (or sub-agent) that started it. Such a chat is read-only,
+   * filled by the parent's run, and listed under its parent instead of on its own.
+   */
+  parentId?: string | null
+  /** Sub-agent chats: the tool call in the parent that started it. */
+  toolId?: string
+  /** Sub-agent chats: the kind of agent ("Explore", "general-purpose"). */
+  agentType?: string
 }
 
 export interface AgentModel {

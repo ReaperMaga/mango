@@ -10,7 +10,8 @@ import { useThreads } from '~/stores/threads'
 const props = defineProps<{ message: Message; thread: Thread; last: boolean }>()
 const threads = useThreads()
 
-const live = computed(() => props.last && ['running', 'queued', 'waiting'].includes(props.thread.status))
+/** Still being written. Not while the run only waits on background tasks: this answer is complete. */
+const live = computed(() => props.last && ['running', 'queued', 'waiting'].includes(props.thread.status) && !threads.live[props.thread.id]?.idle)
 function viewAttachment(id: string) {
   const images = (props.message.attachments ?? []).filter(a => a.thumb)
   openImage(images, images.findIndex(a => a.id === id))
@@ -21,7 +22,8 @@ type Segment =
   | { kind: 'part'; key: string; part: Part; i: number }
   | { kind: 'steps'; key: string; steps: Step[]; end: number }
 
-const isStep = (p: Part): p is Step => p.type === 'thinking' || p.type === 'tool'
+/** A delegated task stays on its own row, so its link to the sub-agent's chat is never folded away. */
+const isStep = (p: Part): p is Step => p.type === 'thinking' || (p.type === 'tool' && !p.childId)
 
 /** Runs of two or more thinking/tool rows fold into one ChatSteps; everything else renders on its own. */
 const segments = computed<Segment[]>(() => {
@@ -50,6 +52,7 @@ const lastTextIndex = computed(() => {
 
 <template>
   <article v-if="message.role === 'user'" class="msg msg--user">
+    <p v-if="message.fromAgent" class="msg__from">Task from {{ AGENTS[thread.agent].name }}</p>
     <ul v-if="message.attachments?.length" class="msg__files" aria-label="Attachments">
       <li
         v-for="a in message.attachments"
@@ -163,6 +166,7 @@ ${a.path}`"
 .msg__file-meta { display: flex; flex-direction: column; min-width: 0; line-height: var(--leading-tight); }
 .msg__file-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--text-xs); font-weight: 540; color: var(--fg); }
 .msg__file-size { font-size: var(--text-2xs); color: var(--fg-subtle); }
+.msg__from { margin: 0 0 2px; font-size: var(--text-xs); color: var(--fg-faint); }
 .msg__user-text { margin: 0; white-space: pre-wrap; line-height: var(--leading-chat); overflow-wrap: anywhere; }
 .msg__text { margin: 6px 0 2px; }
 .msg__ran { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--fg-faint); }

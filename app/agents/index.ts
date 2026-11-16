@@ -42,6 +42,23 @@ export function steerRun(threadId: string, text: string, attachments: Attachment
   return runs.get(threadId)?.steer(text, attachments) ?? Promise.resolve(false)
 }
 
+/** How the simulated agent (browser preview) answers for its own background tasks. */
+export const simulatedTasks = new Map<string, { stop(id: string): void; output(id: string): Promise<string | null> }>()
+
+/** Stop one background task or sub-agent of the chat's run (the id of its task or of the call that started it). */
+export function stopTask(threadId: string, id: string) {
+  const run = runs.get(threadId)?.run
+  if (run) run.stopTask?.(id)
+  else simulatedTasks.get(threadId)?.stop(id)
+}
+
+/** The end of a background command's output, or null when there is none to read. */
+export function readTaskOutput(threadId: string, id: string): Promise<string | null> {
+  const run = runs.get(threadId)?.run
+  if (run) return run.taskOutput?.(id) ?? Promise.resolve(null)
+  return simulatedTasks.get(threadId)?.output(id) ?? Promise.resolve(null)
+}
+
 /* ------------------------------------------------------------------ */
 /* Process bridge: one set of global listeners, dispatched by process id */
 /* ------------------------------------------------------------------ */
@@ -150,6 +167,41 @@ async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }
 /* One turn                                                            */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Where a run writes: the chat's own agent messages, or a sub-agent's chat. A message the user
+ * steers in mid-turn sits after the current one, and what the agent does from then on goes into
+ * a new one below it; rows started earlier (a command still running) keep updating where they are.
+ */
+interface Target { threadId: string; msgs: Message[]; msg: Message; ended?: boolean }
+
+function findIn<T extends Part['type']>(target: Target, type: T, id: string) {
+  for (let i = target.msgs.length - 1; i >= 0; i--) {
+    const part = target.msgs[i]!.parts.find(p => p.type === type && 'id' in p && p.id === id)
+    if (part) return part as Extract<Part, { type: T }>
+  }
+  return undefined
+}
+
+/** A tool row by id, in the chat or any of its sub-agents' chats. */
+function findTool(targets: Iterable<Target>, id: string) {
+  for (const t of targets) {
+    const part = findIn(t, 'tool', id)
+    if (part) return part
+  }
+  return undefined
+}
+
+/** Close what a run left open in a chat: running rows fail, open approvals are cancelled. */
+function settleParts(msgs: Message[], status: 'done' | 'error' | 'stopped') {
+  for (const p of msgs.flatMap(m => m.parts)) {
+    if (p.type === 'tool' && p.status === 'running') { p.status = 'error'; p.summary = status === 'stopped' ? 'stopped' : 'did not finish' }
+    if (p.type === 'approval' && p.state === 'pending') p.state = 'cancelled'
+    if (p.type === 'thinking' && p.seconds === 0) p.seconds = 1
+  }
+}
+
+const TASK_END_SUMMARY = { done: 'finished', error: 'failed', stopped: 'stopped' } as const
+
 /** `attachments`: files sent with `text`, already in the attachment store. */
 export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
@@ -166,22 +218,26 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   if (!first) return
   store._setStatus(threadId, 'running')
 
-  /**
-   * The turn's agent messages. A message the user steers in mid-turn sits after the current one,
-   * and what the agent does from then on goes into a new one below it; rows started earlier
-   * (a command still running) keep updating where they are.
-   */
-  const msgs: Message[] = [first]
-  let msg = first
-  const find = <T extends Part['type']>(type: T, id: string) => {
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const part = msgs[i]!.parts.find(p => p.type === type && 'id' in p && p.id === id)
-      if (part) return part as Extract<Part, { type: T }>
+  const main: Target = { threadId, msgs: [first], msg: first }
+  /** Sub-agents' chats, by the id of the tool call that started each. */
+  const subs = new Map<string, Target>()
+  const targetFor = (agent: string | undefined) => (agent ? subs.get(agent) : main)
+  const push = <P extends Part>(target: Target, part: P) => store._pushPart(target.threadId, target.msg, part) as P
+  const pendingApprovals = () => main.msgs.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
+
+  /** End a sub-agent's chat: how it went shows as its status and on its last message. */
+  const endSub = (target: Target, status: 'done' | 'error' | 'stopped') => {
+    if (target.ended) return
+    target.ended = true
+    settleParts(target.msgs, status)
+    if (status === 'stopped') push(target, { type: 'notice', level: 'info', text: 'Stopped.' })
+    for (const m of target.msgs) {
+      const t = store.byId(target.threadId)
+      if (!m.parts.length && t?.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
     }
-    return undefined
+    // A finished sub-agent has nothing pending: it is settled, unlike a chat, which only the user settles.
+    store._setStatus(target.threadId, status === 'error' ? 'error' : 'done', status)
   }
-  const push = <P extends Part>(part: P) => store._pushPart(threadId, msg, part) as P
-  const pendingApprovals = () => msgs.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
 
   let finish!: () => void
   const finished = new Promise<void>(resolve => (finish = resolve))
@@ -194,36 +250,46 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         t.sessionId = e.sessionId
         break
       case 'text-delta': {
-        const part = find('text', e.id) ?? push({ type: 'text', id: e.id, text: '' })
+        const to = targetFor(e.agent)
+        if (!to) break
+        const part = findIn(to, 'text', e.id) ?? push(to, { type: 'text', id: e.id, text: '' })
         part.text += e.text
         break
       }
       case 'text': {
-        const part = find('text', e.id) ?? push({ type: 'text', id: e.id, text: '' })
+        const to = targetFor(e.agent)
+        if (!to) break
+        const part = findIn(to, 'text', e.id) ?? push(to, { type: 'text', id: e.id, text: '' })
         part.text = e.text
         break
       }
       case 'thinking-delta': {
-        const part = find('thinking', e.id) ?? push({ type: 'thinking', id: e.id, text: '', seconds: 0 })
+        const to = targetFor(e.agent)
+        if (!to) break
+        const part = findIn(to, 'thinking', e.id) ?? push(to, { type: 'thinking', id: e.id, text: '', seconds: 0 })
         part.text += e.text
         break
       }
       case 'thinking-end': {
-        const part = find('thinking', e.id)
-        if (!part) break
+        const to = targetFor(e.agent)
+        const part = to && findIn(to, 'thinking', e.id)
+        if (!to || !part) break
         part.seconds = Math.max(e.seconds ?? 0, part.text ? 1 : 0)
         // A thinking block with no visible text and no measurable time is noise.
         if (!part.text && part.seconds < 1) {
-          const owner = msgs.find(m => m.parts.includes(part))
+          const owner = to.msgs.find(m => m.parts.includes(part))
           owner?.parts.splice(owner.parts.indexOf(part), 1)
         }
         break
       }
-      case 'tool-start':
-        if (!find('tool', e.id)) push({ type: 'tool', id: e.id, tool: e.tool, label: e.label, target: e.target, status: 'running' })
+      case 'tool-start': {
+        const to = targetFor(e.agent)
+        if (to && !findIn(to, 'tool', e.id)) push(to, { type: 'tool', id: e.id, tool: e.tool, label: e.label, target: e.target, status: 'running' })
         break
+      }
       case 'tool-update': {
-        const part = find('tool', e.id)
+        const to = targetFor(e.agent)
+        const part = to && findIn(to, 'tool', e.id)
         if (!part) break
         if (e.target !== undefined) part.target = e.target
         if (e.summary !== undefined) part.summary = e.summary
@@ -233,7 +299,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         break
       }
       case 'tool-end': {
-        const part = find('tool', e.id)
+        const to = targetFor(e.agent)
+        const part = to && findIn(to, 'tool', e.id)
         if (!part) break
         part.status = e.status
         if (e.summary !== undefined) part.summary = e.summary
@@ -243,43 +310,91 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         store.persist()
         break
       }
+      case 'subagent-start': {
+        if (subs.has(e.id)) break
+        const parent = targetFor(e.parent) ?? main
+        const child = store._createSubagent(parent.threadId, { toolId: e.id, title: e.title, agentType: e.agentType, prompt: e.prompt })
+        const first = child && store._pushAgentMessage(child.id)
+        if (!child || !first) break
+        subs.set(e.id, { threadId: child.id, msgs: [first], msg: first })
+        // The parent's "Delegated" row opens the sub-agent's chat.
+        const row = findIn(parent, 'tool', e.id)
+        if (row) row.childId = child.id
+        break
+      }
+      case 'subagent-end': {
+        const sub = subs.get(e.id)
+        if (sub) endSub(sub, e.status)
+        break
+      }
+      case 'task-start':
+        store._taskStart(threadId, { id: e.id, kind: e.kind, title: e.title, ...(e.toolId ? { toolId: e.toolId } : {}) })
+        break
+      case 'task-update':
+        store._taskUpdate(threadId, e.id, { ...(e.title ? { title: e.title } : {}), ...(e.activity ? { activity: e.activity } : {}) })
+        break
+      case 'task-end': {
+        store._taskEnd(threadId, e.id, e.status, e.summary)
+        // The row that started it said "in background"; now it says how that went.
+        const toolId = store.live[threadId]?.tasks.find(x => x.id === e.id)?.toolId
+        const row = toolId ? findTool([main, ...subs.values()], toolId) : undefined
+        if (row && row.status === 'ok') row.summary = TASK_END_SUMMARY[e.status]
+        if (row && e.status === 'error') row.status = 'error'
+        break
+      }
+      case 'answered':
+        store._setIdle(threadId, true)
+        break
+      case 'resume': {
+        // The agent picks up again by itself: a reply of its own, saying what it reacts to.
+        store._setIdle(threadId, false)
+        const next = store._pushAgentMessage(threadId)
+        if (!next) break
+        main.msgs.push(next)
+        main.msg = next
+        push(main, { type: 'notice', level: 'info', text: e.reason })
+        break
+      }
       case 'approval': {
         const part: Part = { type: 'approval', id: e.id, title: e.title, command: e.command, reason: e.reason, state: 'pending' }
         // Sit right under the tool row the request is about, not after later rows.
-        const owner = (e.toolId && msgs.find(m => m.parts.some(p => p.type === 'tool' && p.id === e.toolId))) || msg
+        const owner = (e.toolId && main.msgs.find(m => m.parts.some(p => p.type === 'tool' && p.id === e.toolId))) || main.msg
         const at = e.toolId ? owner.parts.findIndex(p => p.type === 'tool' && p.id === e.toolId) : -1
         if (at >= 0) owner.parts.splice(at + 1, 0, part)
-        else push(part)
+        else push(main, part)
         store._setStatus(threadId, 'waiting')
         break
       }
       case 'approval-cancelled': {
-        const part = find('approval', e.id)
+        const part = findIn(main, 'approval', e.id)
         if (part?.state === 'pending') part.state = 'cancelled'
         if (!pendingApprovals() && t.status === 'waiting') store._setStatus(threadId, 'running')
         break
       }
       case 'turn-end': {
-        for (const p of msgs.flatMap(m => m.parts)) {
-          if (p.type === 'tool' && p.status === 'running') { p.status = 'error'; p.summary = e.status === 'stopped' ? 'stopped' : 'did not finish' }
-          if (p.type === 'approval' && p.state === 'pending') p.state = 'cancelled'
-          if (p.type === 'thinking' && p.seconds === 0) p.seconds = 1
-        }
+        settleParts(main.msgs, e.status)
+        // Sub-agents end with the run that started them.
+        for (const sub of subs.values()) endSub(sub, e.status === 'error' ? 'error' : 'stopped')
         if (e.status === 'error') {
-          push({ type: 'notice', level: 'error', text: e.error || 'The agent stopped unexpectedly.' })
+          push(main, { type: 'notice', level: 'error', text: e.error || 'The agent stopped unexpectedly.' })
           // A conversation the CLI can no longer resume would fail forever: start fresh next time.
           if (/no longer has this conversation|could not be resumed/i.test(e.error ?? '')) t.sessionId = null
         }
-        if (e.status === 'stopped') push({ type: 'notice', level: 'info', text: 'Stopped.' })
+        if (e.status === 'stopped') push(main, { type: 'notice', level: 'info', text: 'Stopped.' })
         // An agent message with nothing in it (stopped before any output) would render as a gap.
-        for (const m of msgs) if (!m.parts.length && t.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
+        for (const m of main.msgs) if (!m.parts.length && t.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
         runs.delete(threadId)
+        store._clearLive(threadId)
         // Answering never settles a chat: it stays Working until the user marks it settled.
         store._setStatus(threadId, e.status === 'error' ? 'error' : 'working', e.status)
         finish()
         break
       }
     }
+    // New output from the main conversation means it is no longer only waiting on background work.
+    if ((e.type === 'text-delta' || e.type === 'tool-start') && !e.agent && store.live[threadId]?.idle) store._setIdle(threadId, false)
+    const to = 'agent' in e && e.agent ? subs.get(e.agent) : undefined
+    if (to) store._touch(to.threadId)
     store._touch(threadId)
   }
 
@@ -308,8 +423,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (runs.get(threadId)?.run !== run || !(await run.steer(input))) return false
         // The steered message is the last one in the chat: what the agent does next goes below it.
         if (runs.get(threadId)?.run === run) {
+          store._setIdle(threadId, false)
           const next = store._pushAgentMessage(threadId)
-          if (next) { msgs.push(next); msg = next }
+          if (next) { main.msgs.push(next); main.msg = next }
         }
         return true
       },

@@ -54,9 +54,9 @@ Adding a backend command takes four things:
 
 ## Agent adapters
 
-An adapter (`app/agents/claude.ts`, `app/agents/codex.ts`) turns one CLI's protocol into a stream of `AgentEvent`s (`app/agents/types.ts`): session ids, text and thinking deltas, tool starts and updates, diffs, approval requests, and exactly one `turn-end` per run.
+An adapter (`app/agents/claude.ts`, `app/agents/codex.ts`) turns one CLI's protocol into a stream of `AgentEvent`s (`app/agents/types.ts`): session ids, text and thinking deltas, tool starts and updates, diffs, approval requests, sub-agents (`subagent-start`/`subagent-end`, with their own content events tagged `agent`), background tasks (`task-start`/`task-update`/`task-end`), and exactly one `turn-end` per run.
 
-- **Claude Code** runs as `claude` with `--output-format stream-json --input-format stream-json`, permission prompts over stdio, `--permission-mode` from the chat's mode, and `--resume` with the stored session id.
+- **Claude Code** runs as `claude` with `--output-format stream-json --input-format stream-json`, permission prompts over stdio, `--permission-mode` from the chat's mode, and `--resume` with the stored session id. Its `initialize` request asks for `forwardSubagentText`, so sub-agents' messages (tagged `parent_tool_use_id`) arrive whole. While background tasks run, the run stays open after `result`: Claude Code answers a finished task with a turn of its own, which the adapter reports as `resume`.
 - **Codex** runs as `codex app-server` (JSON-RPC over stdio), one process per turn: `initialize`, `thread/start` or `thread/resume`, `turn/start`, then the `item/*` notifications until `turn/completed`. The permission mode becomes Codex's approval policy and sandbox.
 
 The Rust side (`agent_proc.rs`) knows nothing about these protocols: it starts the CLI (only known agent binaries), forwards stdout and stderr line by line as events, and writes to stdin. `app/agents/index.ts` picks the adapter for a chat, bridges it to Rust, and turns the events into message parts on the thread.

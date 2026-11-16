@@ -1,5 +1,5 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
 
 /**
  * Claude Code adapter.
@@ -13,6 +13,15 @@ import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTranspor
  *           {"type":"control_request","request":{"subtype":"interrupt"}}
  *   stdout  system/init, stream_event (partial deltas), assistant, user (tool results),
  *           control_request (can_use_tool), result
+ *
+ * Sub-agents (the Agent tool): their messages come with `parent_tool_use_id` set to the call
+ * that started them (text and thinking too, since `initialize` asks for `forwardSubagentText`).
+ * They are emitted with `agent` set, and the app gives each sub-agent a chat of its own.
+ *
+ * Background tasks (a command with `run_in_background`, a command that outlived its timeout, a
+ * sub-agent nobody waits for) are reported as system/task_started, task_updated, task_progress
+ * and task_notification. Claude Code answers each finished task by itself, with a turn of its
+ * own, so the run stays open after `result` until no background task is left.
  *
  * Permission modes: plan → plan, ask → default, edits → acceptEdits,
  * auto → bypassPermissions. With `--permission-prompt-tool stdio` the CLI asks
@@ -132,6 +141,45 @@ function resultImages(content: unknown): ToolImage[] {
 
 const clip = (s: string) => (s.length > MAX_OUTPUT ? `${s.slice(0, MAX_OUTPUT)}\n… output truncated` : s)
 
+const isAgentTool = (name: string | undefined) => name === 'Agent' || name === 'Task'
+
+/**
+ * A sub-agent's report, from the structured result: its own words, without the frame Claude Code
+ * wraps around them for the model (the hand-back note, the tools-used tag, the usage block).
+ */
+function agentReport(extra: any): string | undefined {
+  const content: any[] = Array.isArray(extra?.content) ? extra.content : []
+  const text = content
+    .map(c => (c?.type === 'text' && typeof c.text === 'string' ? c.text : ''))
+    .join('\n')
+    .replace(/<tools-used-before-summary>[\s\S]*?<\/tools-used-before-summary>\s*/g, '')
+    .trim()
+  return text || undefined
+}
+
+/** Claude Code's task types → what Mango shows. */
+function taskKind(type: unknown): TaskKind {
+  const t = String(type ?? '')
+  if (/bash|shell/.test(t)) return 'command'
+  if (/agent|teammate/.test(t)) return 'agent'
+  return 'other'
+}
+
+/** A task's end state (`task_notification` status, or `task_updated` patch status), null while it runs. */
+function taskEnd(status: unknown): 'done' | 'error' | 'stopped' | null {
+  switch (status) {
+    case 'completed': return 'done'
+    case 'failed': return 'error'
+    case 'killed':
+    case 'stopped':
+    case 'cancelled': return 'stopped'
+    default: return null
+  }
+}
+
+/** How long the run waits for Claude Code to answer a background task that finished after it answered. */
+const RESUME_GRACE_MS = 5000
+
 /** Claude Code's structured patch (Edit/Write results) → diff lines with real context. */
 function patchDiff(patch: unknown): DiffLine[] | undefined {
   if (!Array.isArray(patch) || !patch.length) return undefined
@@ -217,37 +265,108 @@ function run(options: AgentRunOptions): AgentRun {
   let messageId = ''
   const blocks = new Map<number, { kind: 'text' | 'thinking' | 'tool'; id: string; json: string; name: string; started: number }>()
   const streamedMessages = new Set<string>()
-  const tools = new Map<string, { name: string; shape: ToolShape }>()
+  /** Every tool call, the main conversation's and the sub-agents' (`scope`: the sub-agent it belongs to). */
+  const tools = new Map<string, { name: string; shape: ToolShape; scope?: string }>()
   const pendingApprovals = new Map<string, { input: any }>()
+
+  /** Sub-agents by the id of the Agent call that started them. */
+  const subagents = new Map<string, { ended: boolean; background: boolean; taskId?: string }>()
+  /** Claude Code's tasks by task id. `shown`: reported as a background task. */
+  const tasks = new Map<string, { toolId?: string; kind: TaskKind; title: string; shown: boolean; ended: boolean; endedAt?: number }>()
+  const runningTasks = () => [...tasks.values()].filter(t => t.shown && !t.ended).length
+
+  /**
+   * After `result` the run may stay open for background tasks: `idle` until Claude Code starts
+   * another turn by itself (`resume`, with the finished tasks as the reason) or the user steers.
+   */
+  let idle = false
+  let finishedWhileIdle: string[] = []
+  /** When the newest model request started: a task that ends after it may still get an answer. */
+  let requestStartedAt = 0
+  let settleTimer: ReturnType<typeof setTimeout> | undefined
+
+  /** Control requests this adapter sent and waits on (`get_task_output`). */
+  const requests = new Map<string, (response: any) => void>()
 
   const end = (status: 'done' | 'error' | 'stopped', error?: string) => {
     if (ended) return
     ended = true
     clearTimeout(killTimer)
+    clearTimeout(settleTimer)
     for (const id of pendingApprovals.keys()) emit({ type: 'approval-cancelled', id })
     pendingApprovals.clear()
+    for (const resolve of requests.values()) resolve(null)
+    requests.clear()
     emit({ type: 'turn-end', status, error })
     transport?.closeStdin().catch(() => {})
   }
 
   const send = (obj: unknown) => transport?.write(JSON.stringify(obj)).catch(() => {})
 
-  const startTool = (id: string, name: string, input: any) => {
+  const scoped = (scope: string | undefined) => (scope ? { agent: scope } : {})
+
+  /** Nothing is left running: end now, or give Claude Code a moment to answer a task that just finished. */
+  const settle = () => {
+    clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => { if (idle && !runningTasks()) end('done') }, RESUME_GRACE_MS)
+  }
+
+  /** Claude Code started a turn: after `result`, that is it answering a finished background task. */
+  const onTurnActivity = () => {
+    requestStartedAt = Date.now()
+    if (!idle) return
+    idle = false
+    clearTimeout(settleTimer)
+    const reason = finishedWhileIdle.join('\n') || 'A background task finished.'
+    finishedWhileIdle = []
+    emit({ type: 'resume', reason })
+  }
+
+  const startTool = (id: string, name: string, input: any, scope?: string) => {
+    if (isAgentTool(name) && input && !subagents.has(id)) {
+      // Known before the tool row: the row's own events may come first, but the sub-agent's chat needs its prompt.
+      const background = input.run_in_background === true
+      subagents.set(id, { ended: false, background })
+    }
     const shape = describeTool(name, input, cwd)
     const before = tools.get(id)
     const known = !!before
     // The full `assistant` message repeats what the stream already delivered.
     if (before && JSON.stringify(before.shape) === JSON.stringify(shape)) return
-    tools.set(id, { name, shape })
-    if (!known) emit({ type: 'tool-start', id, tool: shape.tool, label: shape.label, target: shape.target })
+    tools.set(id, { name, shape, scope })
+    if (!known) emit({ type: 'tool-start', id, tool: shape.tool, label: shape.label, target: shape.target, ...scoped(scope) })
     if (known || shape.summary || shape.diff?.length) {
-      emit({ type: 'tool-update', id, target: shape.target, summary: shape.summary, diff: shape.diff?.length ? shape.diff : undefined })
+      emit({ type: 'tool-update', id, target: shape.target, summary: shape.summary, diff: shape.diff?.length ? shape.diff : undefined, ...scoped(scope) })
     }
+    if (isAgentTool(name) && input) startSubagent(id, input, scope)
+  }
+
+  const announced = new Set<string>()
+  function startSubagent(id: string, input: any, scope?: string) {
+    if (announced.has(id)) return
+    announced.add(id)
+    emit({
+      type: 'subagent-start',
+      id,
+      ...(scope ? { parent: scope } : {}),
+      title: String(input.description || input.subagent_type || 'Sub-agent'),
+      agentType: typeof input.subagent_type === 'string' ? input.subagent_type : undefined,
+      prompt: typeof input.prompt === 'string' ? input.prompt : undefined,
+      background: subagents.get(id)?.background,
+    })
+  }
+
+  function endSubagent(id: string, status: 'done' | 'error' | 'stopped') {
+    const sub = subagents.get(id)
+    if (!sub || sub.ended || !announced.has(id)) return
+    sub.ended = true
+    emit({ type: 'subagent-end', id, status })
   }
 
   function onStreamEvent(e: any) {
     switch (e.type) {
       case 'message_start':
+        onTurnActivity()
         messageId = e.message?.id ?? `m${++seq}`
         streamedMessages.add(messageId)
         blocks.clear()
@@ -294,6 +413,7 @@ function run(options: AgentRunOptions): AgentRun {
   function onAssistant(m: any) {
     const msg = m.message ?? {}
     const streamed = streamedMessages.has(msg.id)
+    if (!streamed) onTurnActivity()
     const content: any[] = Array.isArray(msg.content) ? msg.content : []
     content.forEach((b, i) => {
       if (b.type === 'tool_use') startTool(b.id, b.name, b.input)
@@ -302,9 +422,31 @@ function run(options: AgentRunOptions): AgentRun {
     if (msg.error || m.error) lastStderr = String(msg.error ?? m.error)
   }
 
+  /** A message of a sub-agent: what it says and thinks, and its tool calls and their results. Never partial. */
+  function onSubagentMessage(m: any, scope: string) {
+    if (m.type === 'user') return onToolResults(m)
+    if (m.type !== 'assistant') return
+    const msg = m.message ?? {}
+    const content: any[] = Array.isArray(msg.content) ? msg.content : []
+    content.forEach((b, i) => {
+      // Each line carries its own uuid; the message id repeats across the blocks of one message.
+      const id = `${scope}:${m.uuid ?? msg.id ?? ++seq}:${i}`
+      if (b.type === 'tool_use') startTool(b.id, b.name, b.input, scope)
+      else if (b.type === 'text' && b.text) emit({ type: 'text', id, text: b.text, agent: scope })
+      else if (b.type === 'thinking' && b.thinking) {
+        emit({ type: 'thinking-delta', id, text: b.thinking, agent: scope })
+        emit({ type: 'thinking-end', id, agent: scope })
+      }
+    })
+  }
+
   /** Tool results come back as a user message. */
   function onUser(m: any) {
     if (m.isReplay) { readMessages++; return }
+    onToolResults(m)
+  }
+
+  function onToolResults(m: any) {
     const content: any[] = Array.isArray(m.message?.content) ? m.message.content : []
     for (const b of content) {
       if (b.type !== 'tool_result') continue
@@ -316,16 +458,121 @@ function run(options: AgentRunOptions): AgentRun {
       let summary = t?.shape.summary
       let output: string | undefined
       if (t?.shape.tool === 'bash' || isError) output = clip(text)
+      else if (isAgentTool(t?.name)) output = clip(agentReport(extra) ?? text) || undefined
       else if (t?.shape.tool === 'search' || t?.shape.tool === 'other' || t?.shape.tool === 'web') output = text ? clip(text) : undefined
       const images = resultImages(b.content)
       if (isError) summary = 'failed'
+      else if (t?.shape.tool === 'bash' && /running in background with ID/i.test(text)) summary = 'in background'
       else if (t?.shape.tool === 'read' && images.length) summary = images.length === 1 ? 'image' : `${images.length} images`
       else if (t?.shape.tool === 'read') {
         const n = typeof extra?.file?.numLines === 'number' ? extra.file.numLines : (text ? text.split('\n').length : 0)
         summary = n ? `${n} lines` : undefined
       } else if (diff && t?.shape.tool === 'edit') summary = counts(diff)
       else if (diff && t?.shape.tool === 'write') summary = `+${diff.filter(l => l.kind === 'add').length}`
-      emit({ type: 'tool-end', id: b.tool_use_id, status: isError ? 'error' : 'ok', summary, output, diff, ...(images.length ? { images } : {}) })
+      const sub = subagents.get(b.tool_use_id)
+      if (sub && !isError && (sub.background || extra?.status === 'async_launched')) summary = 'in background'
+      emit({ type: 'tool-end', id: b.tool_use_id, status: isError ? 'error' : 'ok', summary, output, diff, ...(images.length ? { images } : {}), ...scoped(t?.scope) })
+      // A sub-agent that was waited for is done when its result is in; one in the background reports later.
+      if (sub && (isError || !(sub.background || extra?.status === 'async_launched'))) {
+        endSubagent(b.tool_use_id, isError ? (interrupted ? 'stopped' : 'error') : 'done')
+      }
+    }
+  }
+
+  /* ---------- background tasks ---------- */
+
+  function showTask(id: string) {
+    const task = tasks.get(id)
+    if (ended || !task || task.shown || task.ended) return
+    task.shown = true
+    emit({ type: 'task-start', id, kind: task.kind, title: task.title, ...(task.toolId ? { toolId: task.toolId } : {}) })
+  }
+
+  function finishTask(id: string, status: 'done' | 'error' | 'stopped', summary?: string) {
+    const task = tasks.get(id)
+    if (ended || !task || task.ended) return
+    task.ended = true
+    task.endedAt = Date.now()
+    if (task.toolId) {
+      const sub = subagents.get(task.toolId)
+      if (sub?.background) endSubagent(task.toolId, status)
+    }
+    if (!task.shown) return
+    emit({ type: 'task-end', id, status, ...(summary ? { summary } : {}) })
+    if (!idle) return
+    const what = task.kind === 'agent' ? 'Sub-agent' : task.kind === 'command' ? 'Background command' : 'Background task'
+    const how = status === 'done' ? 'finished' : status === 'error' ? 'failed' : 'was stopped'
+    finishedWhileIdle.push(`${what} ${how}: ${task.title}`)
+    if (!runningTasks()) settle()
+  }
+
+  function onSystem(m: any) {
+    switch (m.subtype) {
+      case 'init':
+        if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        onTurnActivity()
+        break
+      case 'task_started': {
+        const id = typeof m.task_id === 'string' ? m.task_id : ''
+        // Ambient tasks are Claude Code's own housekeeping, not something the agent started.
+        if (!id || m.ambient || tasks.get(id)?.shown) break
+        const toolId = typeof m.tool_use_id === 'string' ? m.tool_use_id : undefined
+        tasks.set(id, { toolId, kind: taskKind(m.task_type), title: String(m.description || 'Background task'), shown: false, ended: false })
+        const sub = toolId ? subagents.get(toolId) : undefined
+        if (sub) { sub.taskId = id; if (m.is_backgrounded) sub.background = true }
+        if (m.is_backgrounded) showTask(id)
+        break
+      }
+      case 'task_updated': {
+        const id = typeof m.task_id === 'string' ? m.task_id : ''
+        const task = tasks.get(id)
+        const patch = m.patch ?? {}
+        if (!task) break
+        if (typeof patch.description === 'string' && patch.description && patch.description !== task.title) {
+          task.title = patch.description
+          if (task.shown && !task.ended) emit({ type: 'task-update', id, title: task.title })
+        }
+        if (patch.is_backgrounded === true) {
+          // A command that outlived its timeout, or a sub-agent sent to the background.
+          const sub = task.toolId ? subagents.get(task.toolId) : undefined
+          if (sub) sub.background = true
+          showTask(id)
+        }
+        // The notification right behind this says how it ended; this covers a task that never sends one.
+        const done = taskEnd(patch.status)
+        if (done) setTimeout(() => finishTask(id, done, typeof patch.error === 'string' ? patch.error : undefined), 500)
+        break
+      }
+      case 'task_progress': {
+        const task = tasks.get(m.task_id)
+        if (!task?.shown || task.ended) break
+        const activity = typeof m.summary === 'string' && m.summary ? m.summary : typeof m.last_tool_name === 'string' ? `Using ${m.last_tool_name}` : undefined
+        if (activity) emit({ type: 'task-update', id: m.task_id, activity })
+        break
+      }
+      case 'task_notification': {
+        const id = typeof m.task_id === 'string' ? m.task_id : ''
+        const done = taskEnd(m.status) ?? 'done'
+        if (tasks.has(id)) finishTask(id, done, typeof m.summary === 'string' ? m.summary : undefined)
+        else if (typeof m.tool_use_id === 'string') endSubagent(m.tool_use_id, done)
+        break
+      }
+      case 'background_tasks_changed': {
+        // The full list of what runs in the background. It can come just before the task's own
+        // task_started (which names the tool call), so a task known only from here shows a moment later.
+        for (const t of Array.isArray(m.tasks) ? m.tasks : []) {
+          const id = typeof t?.task_id === 'string' ? t.task_id : ''
+          if (!id) continue
+          if (tasks.has(id)) { showTask(id); continue }
+          const kind = taskKind(t.task_type)
+          const title = String(t.description || 'Background task')
+          setTimeout(() => {
+            if (!tasks.has(id)) tasks.set(id, { kind, title, shown: false, ended: false })
+            showTask(id)
+          }, 300)
+        }
+        break
+      }
     }
   }
 
@@ -345,16 +592,37 @@ function run(options: AgentRunOptions): AgentRun {
     send({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `Unsupported control request: ${req.subtype}` } })
   }
 
+  /** Ask Claude Code something outside the conversation; resolves with its answer, or null. */
+  function controlRequest(request: Record<string, unknown>, timeoutMs = 5000): Promise<any> {
+    if (ended || !transport) return Promise.resolve(null)
+    const id = `mango-${request.subtype}-${++seq}`
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { requests.delete(id); resolve(null) }, timeoutMs)
+      requests.set(id, (response) => { clearTimeout(timer); resolve(response) })
+      send({ type: 'control_request', request_id: id, request })
+    })
+  }
+
+  const stopTaskById = (taskId: string) =>
+    send({ type: 'control_request', request_id: `mango-stop-${++seq}`, request: { subtype: 'stop_task', task_id: taskId } })
+
   function onLine(line: string) {
     if (ended) return
     let m: any
     try { m = JSON.parse(line) } catch { return }
-    // Sub-agent internals (messages whose parent is a Task tool call) stay folded into that tool's row.
-    if (m.parent_tool_use_id) return
+    if (m.type === 'control_response') {
+      const id = m.response?.request_id
+      const resolve = requests.get(id)
+      if (resolve) { requests.delete(id); resolve(m.response?.subtype === 'success' ? (m.response.response ?? {}) : null) }
+      return
+    }
+    // Sub-agent internals: whole messages whose parent is the Agent call that started the sub-agent.
+    if (m.parent_tool_use_id) {
+      if (announced.has(m.parent_tool_use_id)) onSubagentMessage(m, m.parent_tool_use_id)
+      return
+    }
     switch (m.type) {
-      case 'system':
-        if (m.subtype === 'init' && m.session_id) emit({ type: 'session', sessionId: m.session_id })
-        break
+      case 'system': onSystem(m); break
       case 'stream_event': onStreamEvent(m.event ?? {}); break
       case 'assistant': onAssistant(m); break
       case 'user': onUser(m); break
@@ -367,6 +635,15 @@ function run(options: AgentRunOptions): AgentRun {
         else if (m.is_error || (m.subtype && m.subtype !== 'success')) {
           const raw = typeof m.result === 'string' && m.result ? m.result : Array.isArray(m.errors) ? m.errors.join('\n') : String(m.subtype ?? '')
           end('error', friendlyError(raw))
+        } else if (runningTasks()) {
+          // Background work goes on, and Claude Code will answer it: stay open.
+          idle = true
+          emit({ type: 'answered' })
+        } else if ([...tasks.values()].some(t => t.shown && (t.endedAt ?? 0) >= requestStartedAt)) {
+          // A task finished while this answer was being written: Claude Code may take it up next.
+          idle = true
+          finishedWhileIdle = []
+          settle()
         } else end('done')
         break
       }
@@ -395,11 +672,15 @@ function run(options: AgentRunOptions): AgentRun {
     onExit: (code) => {
       if (ended) return
       if (interrupted) end('stopped')
+      else if (idle && code === 0) end('done')
       else end('error', friendlyError(lastStderr || `Claude Code exited with code ${code ?? 'unknown'} before finishing.`))
     },
   }).then((t) => {
     transport = t
     if (ended) { t.kill().catch(() => {}); return }
+    // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
+    // the option ignores it (and the answer is not waited for).
+    send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
     // A slash command is not echoed back when the CLI reads it: counting it would wait forever.
     if (!isSlash(options.prompt)) sentMessages++
     send({ type: 'user', message: { role: 'user', content: userContent(options) } })
@@ -415,6 +696,8 @@ function run(options: AgentRunOptions): AgentRun {
       if (ended || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
       // A command runs as a turn of its own, not in the middle of this one.
       if (isSlash(input.prompt)) return false
+      // Waiting on background tasks: the message starts the next turn, which the caller already shows as one.
+      if (idle) { idle = false; finishedWhileIdle = []; clearTimeout(settleTimer) }
       sentMessages++
       await send({ type: 'user', message: { role: 'user', content: userContent(input) } })
       return true
@@ -440,12 +723,32 @@ function run(options: AgentRunOptions): AgentRun {
       for (const [id] of pendingApprovals) {
         send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: { behavior: 'deny', message: 'The user stopped the run.' } } })
       }
+      // Stop means everything: the commands and sub-agents left running in the background too.
+      for (const [id, task] of tasks) if (task.shown && !task.ended) stopTaskById(id)
+      if (idle) {
+        // No turn to interrupt: the run was only waiting on those tasks.
+        end('stopped')
+        const t = transport
+        setTimeout(() => t?.kill().catch(() => {}), 5000)
+        return
+      }
       send({ type: 'control_request', request_id: `interrupt-${Date.now()}`, request: { subtype: 'interrupt' } })
       // If the CLI does not wind down by itself, stop it.
       killTimer = setTimeout(() => {
         transport?.kill().catch(() => {})
         end('stopped')
       }, 4000)
+    },
+    stopTask(id) {
+      if (ended) return
+      const taskId = tasks.has(id) ? id : subagents.get(id)?.taskId
+      if (taskId) stopTaskById(taskId)
+    },
+    async taskOutput(id) {
+      const r = await controlRequest({ subtype: 'get_task_output', task_id: id })
+      if (!r) return null
+      const text = [r.output, r.content, r.text, r.tail].find(v => typeof v === 'string')
+      return typeof text === 'string' ? text : null
     },
   }
 }

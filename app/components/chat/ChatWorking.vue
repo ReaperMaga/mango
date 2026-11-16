@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { AGENTS, type Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
+import { useThreads } from '~/stores/threads'
 
 /**
  * The live "the agent is at work" row under the conversation: what it is
@@ -10,11 +11,18 @@ import { formatDuration } from '~/utils/time'
 const props = defineProps<{ thread: Thread }>()
 
 const agent = computed(() => AGENTS[props.thread.agent].name)
+const threads = useThreads()
+/** Answered already, and only background tasks keep the run open (they are listed above the composer). */
+const waitingOn = computed(() => {
+  const live = threads.live[props.thread.id]
+  return live?.idle ? live.tasks.filter(t => t.status === 'running').length : 0
+})
 
 const activity = computed(() => {
   const t = props.thread
   if (t.status === 'queued') return `Starting ${agent.value}`
   if (t.status === 'waiting') return 'Waiting for your approval'
+  if (waitingOn.value) return `Waiting for ${waitingOn.value} background task${waitingOn.value === 1 ? '' : 's'}`
   const last = t.messages[t.messages.length - 1]
   const part = last?.role === 'agent' ? last.parts[last.parts.length - 1] : undefined
   if (!part) return `${agent.value} is starting up`
