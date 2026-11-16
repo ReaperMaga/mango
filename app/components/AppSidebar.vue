@@ -320,11 +320,20 @@ const agentsNeedingAttention = computed(() => {
                   @keydown.esc.prevent="renaming = null"
                   @blur="commitRename"
                 >
-                <span v-else class="sb__title">{{ t.title }}</span>
+                <span v-else class="sb__titleline">
+                  <component
+                    :is="linkMarks.get(t.id)!.icon"
+                    v-if="linkMarks.has(t.id)"
+                    class="sb__link-icon"
+                    :class="`is-${linkMarks.get(t.id)!.tone}`"
+                    aria-hidden="true"
+                  />
+                  <span class="sb__title">{{ t.title }}</span>
+                </span>
                 <span class="sb__subline">
                   <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
                   <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
-                    <component :is="m.icon" aria-hidden="true" />#{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
+                    #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
                     <span class="sr-only">, {{ m.label }}</span>
                   </span>
                 </span>
@@ -512,11 +521,14 @@ const agentsNeedingAttention = computed(() => {
   line-height: 1.35;
   color: var(--fg-subtle);
 }
-.sb__link svg { width: 11px; height: 11px; stroke-width: 2; color: var(--fg-faint); }
-.sb__link.is-running svg { color: var(--ripe-running); }
-.sb__link.is-queued svg { color: var(--ripe-queued); }
-.sb__link.is-done svg { color: var(--ripe-done); }
-.sb__link.is-error svg { color: var(--ripe-error); }
+/* A linked chat leads its title with the pull request's icon, in its state's mark grade. */
+.sb__titleline { display: flex; align-items: center; gap: 5px; min-width: 0; width: 100%; }
+.sb__titleline .sb__title { min-width: 0; }
+.sb__link-icon { flex: none; width: 13px; height: 13px; stroke-width: 1.9; color: var(--fg-faint); }
+.sb__link-icon.is-running { color: var(--ripe-running); }
+.sb__link-icon.is-queued { color: var(--ripe-queued); }
+.sb__link-icon.is-done { color: var(--ripe-done); }
+.sb__link-icon.is-error { color: var(--ripe-error); }
 .sb__link-more { margin-left: 2px; color: var(--fg-faint); }
 .sb__thread.is-current .sb__link { color: var(--fg-muted); }
 .sb__sub { font-size: var(--text-xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.35; }
