@@ -12,9 +12,12 @@ import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { resultLines, units, vcsTerms } from '~/utils/vcs'
+import { isEnvPath } from '~/utils/envPath'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
+/** A remote project's every read is a few SSH connections: look less often. */
+const REMOTE_POLL_MS = 15000
 
 const ws = useWorkspace()
 const git = useGit()
@@ -53,7 +56,8 @@ onMounted(() => {
   window.addEventListener('focus', refresh)
   document.addEventListener('visibilitychange', onVisible)
   poll = setInterval(() => {
-    if (!path.value || document.visibilityState !== 'visible' || Date.now() - lastPoll < terms.value.pollMs - 100) return
+    const every = isEnvPath(path.value) ? Math.max(terms.value.pollMs, REMOTE_POLL_MS) : terms.value.pollMs
+    if (!path.value || document.visibilityState !== 'visible' || Date.now() - lastPoll < every - 100) return
     lastPoll = Date.now()
     git.poll(path.value)
   }, TICK_MS)

@@ -96,6 +96,36 @@ pub struct EnvRemote {
     pub instance: String,
 }
 
+/// A folder inside an instance, from a remote project's path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvFolder {
+    pub host_id: String,
+    pub instance: String,
+    /// Absolute, checked by [`valid_instance_dir`].
+    pub dir: String,
+}
+
+/// Where remote projects live in the frontend: `env://<hostId>/<instance>/<absolute folder>`
+/// (`app/utils/envPath.ts`). `None` for any other path (a folder on this computer);
+/// an error when it is a remote path whose parts don't pass validation.
+pub fn parse_env_path(path: &str) -> Option<Result<EnvFolder, String>> {
+    let rest = path.trim().strip_prefix("env://")?;
+    Some((|| {
+        let bad = || format!("\"{path}\" is not a remote project path.");
+        let (host_id, rest) = rest.split_once('/').ok_or_else(bad)?;
+        let (instance, dir) = match rest.find('/') {
+            Some(at) => (&rest[..at], &rest[at..]),
+            None => (rest, "/"),
+        };
+        if host_id.is_empty() || host_id.len() > 64 || !all_chars(host_id, |c| c.is_ascii_alphanumeric() || c == '-') {
+            return Err(bad());
+        }
+        valid_instance(instance)?;
+        valid_instance_dir(dir)?;
+        Ok(EnvFolder { host_id: host_id.into(), instance: instance.into(), dir: dir.into() })
+    })())
+}
+
 /// Refuse an owner-only action on a joined environment.
 pub fn owner_only(host: &EnvHost, what: &str) -> Result<(), String> {
     match &host.direct {
@@ -260,6 +290,18 @@ mod tests {
         assert!(valid_remote("a:b").is_err());
         assert!(valid_env_key("CLAUDE_CODE_X"));
         assert!(!valid_env_key("A=B"));
+    }
+
+    #[test]
+    fn env_paths() {
+        assert_eq!(parse_env_path("/home/me/shop"), None);
+        assert_eq!(parse_env_path(r"C:\Users\me\shop"), None);
+        let f = parse_env_path("env://6f1c-22/dev/home/agent/work/my shop").unwrap().unwrap();
+        assert_eq!(f, EnvFolder { host_id: "6f1c-22".into(), instance: "dev".into(), dir: "/home/agent/work/my shop".into() });
+        assert_eq!(parse_env_path("env://h/dev").unwrap().unwrap().dir, "/");
+        for bad in ["env://", "env://h", "env:///dev/x", "env://h/1dev/x", "env://h/dev/a/../b", "env://h;x/dev/a", "env://h/dev/a\nb"] {
+            assert!(parse_env_path(bad).unwrap().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

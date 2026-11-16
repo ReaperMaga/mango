@@ -24,8 +24,9 @@ type Unlisten = () => void
  * Commands that read or change this computer's disk (or run in a local folder). A remote
  * project's path (`env://…`, see utils/envPath.ts) is not a folder here: they refuse it
  * before it reaches the backend. Callers check `isEnvPath` first; this is the safety net.
+ * The `git_*` commands are not among them: the backend runs git inside the environment.
  */
-const LOCAL_ONLY = /^(git_|fs_|gh_)|^(open_project|forget_project|pty_spawn)$/
+const LOCAL_ONLY = /^(fs_|gh_)|^(open_project|forget_project|pty_spawn)$/
 
 function refuseRemote(cmd: string, args: unknown): Error | null {
   if (!LOCAL_ONLY.test(cmd) || !args || typeof args !== 'object') return null

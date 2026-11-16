@@ -3,8 +3,8 @@ import { SquareTerminal } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 
 /**
- * What a tool window shows for a remote project (a folder inside an environment): the Files,
- * Changes and Pull requests views read this computer's disk, which holds nothing of it.
+ * What a tool window shows for a remote project (a folder inside an environment): the Files
+ * and Pull requests views read this computer's disk, which holds nothing of it.
  * Says so calmly and offers the way in that works: a terminal in the instance.
  */
 const props = defineProps<{ title: string }>()
