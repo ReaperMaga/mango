@@ -54,7 +54,7 @@ app/
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
-    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem
+    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
     settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance)
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
@@ -65,7 +65,7 @@ app/
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies)
+                     chatImages.ts (pictures in agent replies), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -74,7 +74,7 @@ src-tauri/src/
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
-  github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in)
+  github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects

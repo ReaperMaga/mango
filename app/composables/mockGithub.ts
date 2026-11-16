@@ -1,4 +1,4 @@
-import type { GhCheck, GhItem, GhMergeMethod } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhJobStep, GhMergeMethod, GhRunState } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -53,15 +53,139 @@ const HEAD = 'd013dd471daf6f6672ea035294ab4f01282f9c38'
 function mockChecks(key: string, owner: string, repo: string, number: number, done: boolean): GhCheck[] {
   const since = done ? Infinity : Date.now() - (firstRead.get(key) ?? Date.now())
   const run = `https://github.com/${owner}/${repo}/actions/runs/4386139`
-  const job = (name: string, after: number, fails = false, required = false): GhCheck => ({
-    name, workflow: 'CI', required, description: null, url: `${run}/job/${name.length}`,
-    state: since < after ? 'pending' : fails ? 'failure' : 'success',
-  })
+  const job = (name: string, after: number, fails = false, required = false): GhCheck => {
+    const url = `${run}/job/${name.length}`
+    jobs.set(url, { name, after, fails, key, done })
+    return {
+      name, workflow: 'CI', required, description: null, url,
+      state: since < after ? 'pending' : fails ? 'failure' : 'success',
+    }
+  }
   return [
     job('Frontend', 8_000, false, true),
     job('Backend (Linux)', 18_000),
     job('Backend (Windows)', 30_000, number !== 42),
   ]
+}
+
+/** The jobs `mockChecks` made up, by link, so `gh_job` tells the same story. */
+const jobs = new Map<string, { name: string; after: number; fails: boolean; key: string; done: boolean }>()
+
+const ESC = '\x1b'
+const red = (s: string) => `${ESC}[31m${s}${ESC}[0m`
+const green = (s: string) => `${ESC}[32m${s}${ESC}[0m`
+const cargo = (verb: string, rest: string) => `${ESC}[1m${ESC}[32m${verb.padStart(12)}${ESC}[0m ${rest}`
+const cmd = (s: string) => `${ESC}[36;1m${s}${ESC}[0m`
+
+/** A job's steps and what each prints (its share of the job's time, then its lines). */
+function mockSteps(name: string, fails: boolean): { name: string; share: number; lines: string[] }[] {
+  const frontend = name === 'Frontend'
+  const linux = frontend || name.includes('Linux')
+  const run = frontend ? 'pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json' : 'cargo test --locked'
+  const passed = Array.from({ length: 36 }, (_, i) => `test suite::case_${String(i + 1).padStart(2, '0')} ... ok`)
+  const result = frontend
+    ? ['', '> mango@0.1.8 typecheck', '> vue-tsc --noEmit', '', `${green('✓')} 214 files checked`]
+    : [
+        cargo('Compiling', `mango v0.1.8 (${linux ? '/home/runner/work/mango/mango/src-tauri' : 'D:\\a\\mango\\mango\\src-tauri'})`),
+        cargo('Finished', '`test` profile [unoptimized + debuginfo] target(s) in 2m 41s'),
+        cargo('Running', 'unittests src/lib.rs'),
+        '',
+        'running 126 tests',
+        ...passed.slice(0, fails ? 12 : 36),
+        ...(fails
+          ? [
+              `test pty::tests::spawns_the_default_shell ... ${red('FAILED')}`,
+              '',
+              'failures:',
+              '',
+              '---- pty::tests::spawns_the_default_shell stdout ----',
+              "thread 'pty::tests::spawns_the_default_shell' panicked at src\\pty.rs:412:9:",
+              'assertion `left == right` failed: the shell did not echo',
+              '  left: ""',
+              ' right: "hello"',
+              '',
+              `test result: ${red('FAILED')}. 125 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.81s`,
+              '',
+              '##[error]Process completed with exit code 101.',
+            ]
+          : ['', `test result: ${green('ok')}. 126 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.94s`]),
+      ]
+  return [
+    { name: 'Set up job', share: 0.08, lines: [
+      "Current runner version: '2.338.2'",
+      '##[group]Operating System',
+      linux ? 'Ubuntu' : 'Microsoft Windows Server 2025',
+      linux ? '24.04.3' : '10.0.26100',
+      '##[endgroup]',
+      '##[group]GITHUB_TOKEN Permissions',
+      'Contents: read',
+      'Metadata: read',
+      '##[endgroup]',
+      'Secret source: Actions',
+      'Prepare workflow directory',
+      'Prepare all required actions',
+      "Download action repository 'actions/checkout@v5' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)",
+      `Complete job name: ${name}`,
+    ] },
+    { name: 'Run actions/checkout@v5', share: 0.07, lines: [
+      '##[group]Run actions/checkout@v5',
+      'with:',
+      '  repository: you/mango',
+      '  fetch-depth: 1',
+      '##[endgroup]',
+      'Syncing repository: you/mango',
+      '##[group]Fetching the repository',
+      '[command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +d013dd47:refs/remotes/pull/42/merge',
+      ' * [new ref]         d013dd47 -> pull/42/merge',
+      '##[endgroup]',
+      '[command]/usr/bin/git log -1 --format=%H',
+      'd013dd471daf6f6672ea035294ab4f01282f9c38',
+    ] },
+    { name: frontend ? 'Install dependencies' : 'Set up Rust', share: 0.25, lines: frontend
+      ? ['##[group]Run pnpm install --frozen-lockfile', cmd('pnpm install --frozen-lockfile'), '##[endgroup]',
+          'Lockfile is up to date, resolution step is skipped', 'Packages: +812',
+          'Progress: resolved 812, reused 812, downloaded 0, added 812, done',
+          '##[warning]Node.js 20 actions are deprecated. Update actions/setup-node to v5.']
+      : ['##[group]Run dtolnay/rust-toolchain@stable', 'with:', '  toolchain: stable', '##[endgroup]',
+          '[command]rustup toolchain install stable --profile minimal', 'info: syncing channel updates', 'stable unchanged - rustc 1.93.0'] },
+    { name: frontend ? 'Typecheck' : 'Test', share: 0.5, lines: [`##[group]Run ${run}`, cmd(run), '##[endgroup]', ...result] },
+    { name: 'Post Run actions/checkout@v5', share: 0.05, lines: ['Post job cleanup.', '[command]/usr/bin/git version', 'git version 2.53.0'] },
+    { name: 'Complete job', share: 0.05, lines: ['Cleaning up orphan processes'] },
+  ]
+}
+
+/** `gh_job` for the browser preview: the job's steps finish one after another, then its log shows. */
+export function mockGhJob(url: string): GhJob {
+  const known = jobs.get(url)
+  if (!known) throw new Error('That check is not a GitHub Actions job, so Mango cannot show its log. Open it on GitHub instead.')
+  const { name, after, fails, key, done } = known
+  const start = done ? Date.now() - after - 60_000 : (firstRead.get(key) ?? Date.now())
+  const elapsed = Date.now() - start
+  const plan = mockSteps(name, fails)
+  const iso = (ms: number) => new Date(start + ms).toISOString()
+  const failing = fails ? 3 : -1
+  let at = 0
+  const steps: GhJobStep[] = plan.map((p, i) => {
+    const from = at
+    const to = (at += p.share * after)
+    // After a failed step the rest is skipped, except clean-up.
+    const skipped = failing >= 0 && i > failing && i < plan.length - 2
+    const state: GhRunState = elapsed < from ? 'queued' : elapsed < to ? 'pending'
+      : skipped ? 'skipped' : i === failing ? 'failure' : 'success'
+    return {
+      number: i + 1, name: p.name, state,
+      startedAt: elapsed >= from ? iso(from) : null, completedAt: elapsed >= to ? iso(to) : null,
+      lines: [], omitted: 0,
+    }
+  })
+  const finished = elapsed >= after
+  if (finished) plan.forEach((p, i) => { if (steps[i]!.state !== 'skipped') steps[i]!.lines = p.lines })
+  return {
+    id: name.length, name, workflow: 'CI', url,
+    state: finished ? (fails ? 'failure' : 'success') : 'pending',
+    startedAt: iso(0), completedAt: finished ? iso(after) : null,
+    steps, logReady: finished, logError: null, logTruncated: false,
+  }
 }
 
 export function mockGhMerge(path: string, reference: string, _method: GhMergeMethod, headSha: string) {
