@@ -366,17 +366,17 @@
       },
       "ripe-done": {
         "role": "secondary",
-        "displayName": "Ripe Gold",
-        "canonical": "oklch(0.89 0.15 92)",
+        "displayName": "Ripe Lime",
+        "canonical": "oklch(0.84 0.19 130)",
         "tonalRamp": [
-          "oklch(0.15 0.037 92)",
-          "oklch(0.26 0.084 92)",
-          "oklch(0.38 0.121 92)",
-          "oklch(0.50 0.143 92)",
-          "oklch(0.62 0.150 92)",
-          "oklch(0.74 0.143 92)",
-          "oklch(0.85 0.123 92)",
-          "oklch(0.95 0.095 92)"
+          "oklch(0.15 0.037 130)",
+          "oklch(0.26 0.084 130)",
+          "oklch(0.38 0.121 130)",
+          "oklch(0.50 0.143 130)",
+          "oklch(0.62 0.150 130)",
+          "oklch(0.74 0.143 130)",
+          "oklch(0.85 0.123 130)",
+          "oklch(0.95 0.095 130)"
         ]
       },
       "ripe-error": {
@@ -441,17 +441,17 @@
       },
       "ripe-done-fg": {
         "role": "secondary",
-        "displayName": "Ripe Gold, text grade",
-        "canonical": "oklch(0.89 0.15 92)",
+        "displayName": "Ripe Lime, text grade",
+        "canonical": "oklch(0.86 0.18 130)",
         "tonalRamp": [
-          "oklch(0.15 0.037 92)",
-          "oklch(0.26 0.084 92)",
-          "oklch(0.38 0.121 92)",
-          "oklch(0.50 0.143 92)",
-          "oklch(0.62 0.150 92)",
-          "oklch(0.74 0.143 92)",
-          "oklch(0.85 0.123 92)",
-          "oklch(0.95 0.095 92)"
+          "oklch(0.15 0.037 130)",
+          "oklch(0.26 0.084 130)",
+          "oklch(0.38 0.121 130)",
+          "oklch(0.50 0.143 130)",
+          "oklch(0.62 0.150 130)",
+          "oklch(0.74 0.143 130)",
+          "oklch(0.85 0.123 130)",
+          "oklch(0.95 0.095 130)"
         ]
       },
       "ripe-error-fg": {
@@ -936,17 +936,17 @@
       },
       "ripe-done-light": {
         "role": "secondary",
-        "displayName": "Ripe Gold (light theme)",
-        "canonical": "oklch(0.70 0.16 88)",
+        "displayName": "Ripe Lime (light theme)",
+        "canonical": "oklch(0.70 0.19 132)",
         "tonalRamp": [
-          "oklch(0.15 0.040 88)",
-          "oklch(0.26 0.090 88)",
-          "oklch(0.38 0.129 88)",
-          "oklch(0.50 0.152 88)",
-          "oklch(0.62 0.160 88)",
-          "oklch(0.74 0.152 88)",
-          "oklch(0.85 0.131 88)",
-          "oklch(0.95 0.101 88)"
+          "oklch(0.15 0.040 132)",
+          "oklch(0.26 0.090 132)",
+          "oklch(0.38 0.129 132)",
+          "oklch(0.50 0.152 132)",
+          "oklch(0.62 0.160 132)",
+          "oklch(0.74 0.152 132)",
+          "oklch(0.85 0.131 132)",
+          "oklch(0.95 0.101 132)"
         ]
       },
       "ripe-error-light": {
@@ -1011,17 +1011,17 @@
       },
       "ripe-done-fg-light": {
         "role": "secondary",
-        "displayName": "Ripe Gold, text grade (light theme)",
-        "canonical": "oklch(0.50 0.11 85)",
+        "displayName": "Ripe Lime, text grade (light theme)",
+        "canonical": "oklch(0.50 0.14 135)",
         "tonalRamp": [
-          "oklch(0.15 0.028 85)",
-          "oklch(0.26 0.062 85)",
-          "oklch(0.38 0.088 85)",
-          "oklch(0.50 0.105 85)",
-          "oklch(0.62 0.110 85)",
-          "oklch(0.74 0.105 85)",
-          "oklch(0.85 0.090 85)",
-          "oklch(0.95 0.069 85)"
+          "oklch(0.15 0.028 135)",
+          "oklch(0.26 0.062 135)",
+          "oklch(0.38 0.088 135)",
+          "oklch(0.50 0.105 135)",
+          "oklch(0.62 0.110 135)",
+          "oklch(0.74 0.105 135)",
+          "oklch(0.85 0.090 135)",
+          "oklch(0.95 0.069 135)"
         ]
       },
       "ripe-error-fg-light": {
@@ -1477,7 +1477,7 @@
   ],
   "narrative": {
     "northStar": "The Orchard at Dusk",
-    "overview": "Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.\n\nThe density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a \"Thinking…\" label, a streaming caret, a spinner.\n\nThe light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.\n\nA colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, and Graphite (neutral grey grounds with the mango accent kept). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.",
+    "overview": "Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe lime, bruise red) carries thread status. Nothing else is coloured.\n\nThe density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a \"Thinking…\" label, a streaming caret, a spinner.\n\nThe light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.\n\nA colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, and Graphite (neutral grey grounds with the mango accent kept). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.",
     "keyCharacteristics": [
       "Leaf-shade grounds (hue 160, chroma about 0.01, in the default Mango scheme) in four lightness steps, plus an inset well darker than all of them.",
       "One accent family per scheme (ripe mango by default), split by job: a fill with its own ink, and a separate ink for accent-coloured text and icons.",

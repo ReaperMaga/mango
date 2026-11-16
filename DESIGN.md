@@ -28,12 +28,12 @@ colors:
   ripe-queued: "oklch(0.70 0.11 150)"
   ripe-running: "oklch(0.77 0.17 52)"
   ripe-waiting: "oklch(0.72 0.15 28)"
-  ripe-done: "oklch(0.89 0.15 92)"
+  ripe-done: "oklch(0.84 0.19 130)"
   ripe-error: "oklch(0.66 0.19 22)"
   ripe-queued-fg: "oklch(0.78 0.11 150)"
   ripe-running-fg: "oklch(0.82 0.15 62)"
   ripe-waiting-fg: "oklch(0.78 0.14 28)"
-  ripe-done-fg: "oklch(0.89 0.15 92)"
+  ripe-done-fg: "oklch(0.86 0.18 130)"
   ripe-error-fg: "oklch(0.74 0.16 22)"
   diff-add-bg: "oklch(0.70 0.11 150 / 0.12)"
   diff-add-fg: "oklch(0.78 0.12 150)"
@@ -67,12 +67,12 @@ colors:
   ripe-queued-light: "oklch(0.58 0.12 150)"
   ripe-running-light: "oklch(0.68 0.18 50)"
   ripe-waiting-light: "oklch(0.62 0.17 28)"
-  ripe-done-light: "oklch(0.70 0.16 88)"
+  ripe-done-light: "oklch(0.70 0.19 132)"
   ripe-error-light: "oklch(0.56 0.20 25)"
   ripe-queued-fg-light: "oklch(0.46 0.12 150)"
   ripe-running-fg-light: "oklch(0.52 0.14 50)"
   ripe-waiting-fg-light: "oklch(0.52 0.17 28)"
-  ripe-done-fg-light: "oklch(0.50 0.11 85)"
+  ripe-done-fg-light: "oklch(0.50 0.14 135)"
   ripe-error-fg-light: "oklch(0.50 0.19 25)"
   diff-add-bg-light: "oklch(0.70 0.12 150 / 0.14)"
   diff-add-fg-light: "oklch(0.45 0.12 150)"
@@ -282,7 +282,7 @@ components:
 
 **Creative North Star: "The Orchard at Dusk"**
 
-Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe gold, bruise red) carries thread status. Nothing else is coloured.
+Mango is a desktop workbench for running several coding-agent threads at once, and its whole visual system is built around one idea: a thread is fruit on a branch, and you can see how ripe it is from across the room. In the default Mango scheme the ground is leaf shade, a green-black so low in chroma it reads as dark neutral until it sits next to a true grey. Against it, a single warm family (ripe mango flesh) carries action and identity, and a short ripening scale (bare stem, unripe leaf green, ripening orange, blush coral, ripe lime, bruise red) carries thread status. Nothing else is coloured.
 
 The density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for most chrome, rows of 28 to 44px, a 40px custom titlebar. Surfaces are told apart by small steps of lightness and hairlines one step lighter than the ground; shadows are kept for layers that actually float. Motion is short and decelerating (120ms state changes, 220ms for panels and dialogs), and the only thing that moves on its own is work in progress: the half-filled fruit whose level breathes, a "Thinking…" label, a streaming caret, a spinner.
 
@@ -317,7 +317,7 @@ The ripening scale. Each status has a mark grade (the fruit, small dots, tinted 
 - **Unripe Leaf Green** (`ripe-queued`, `ripe-queued-fg`): queued. Also the small "available" dot beside an installed agent and the icon of an approval that was allowed.
 - **Ripening Mango** (`ripe-running`, `ripe-running-fg`): working. A touch redder than the accent so a running thread and a button are not the same orange.
 - **Blush Coral** (`ripe-waiting`, `ripe-waiting-fg`): needs you. The pending approval card takes a 55% border and a 7% wash of it.
-- **Ripe Gold** (`ripe-done`, `ripe-done-fg`): done.
+- **Ripe Lime** (`ripe-done`, `ripe-done-fg`): done.
 - **Bruise Red** (`ripe-error`, `ripe-error-fg`): failed, and destructive or invalid states in controls (danger button, field error, error banners at a 10 to 12% wash).
 - **Diff green and red** (`diff-add-*`, `diff-del-*`): the leaf and bruise hues again, as a 12% row wash with text-grade ink, for added and removed lines.
 
@@ -431,7 +431,7 @@ The signature. A fruit-shaped mark, 12px by default (11px in tabs, 9px in the ti
 - **Queued:** hollow, Unripe Leaf Green.
 - **Working:** half filled, Ripening Mango, and the fill level breathes between roughly a third and two thirds on a 1.8s loop.
 - **Needs you:** full, Blush Coral.
-- **Done:** full, Ripe Gold.
+- **Done:** full, Ripe Lime.
 - **Failed:** full, Bruise Red, leaf dimmed.
 - **Unseen:** a done or needs-you result the user has not looked at gets a 1.5px halo ring in the status colour, 3px outside the fruit, at 45% opacity. The row's title goes to primary ink at 560 at the same time.
 
