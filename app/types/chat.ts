@@ -107,6 +107,22 @@ export interface AgentModel {
   defaultEffort?: string
 }
 
+/**
+ * A slash command the composer offers. Most come from the agent's CLI (built-ins, the user's
+ * own commands and skills) and are sent as the message text, `/name args`; the adapter or the
+ * CLI acts on them. `mango` ones are handled by the app itself (`/clear`).
+ */
+export interface AgentCommand {
+  /** Without the slash: "compact", "gsap-skills:gsap-core" */
+  name: string
+  description?: string
+  /** What goes after the name, e.g. "[instructions]"; empty when it takes nothing. */
+  argumentHint?: string
+  /** Other names that run the same command. */
+  aliases?: string[]
+  mango?: boolean
+}
+
 /** Names for the effort levels the CLIs use. Unknown ones show as they are. */
 export const EFFORT_LABELS: Record<string, string> = {
   none: 'None',

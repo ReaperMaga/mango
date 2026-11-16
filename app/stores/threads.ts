@@ -11,6 +11,10 @@ import { demoThreads } from '~/utils/demoThreads'
 
 const LS_KEY = 'mango.threads.v1'
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+/** A message that is a slash command (`/compact`, `/review …`): it runs as a turn of its own. */
+const isCommand = (text: string) => /^\/[\w.:-]+(\s|$)/.test(text.trim())
+/** Mango's own `/clear`: handled here, never sent to the agent. */
+const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 
 export interface Pane { id: string; threadId: string | null }
 
@@ -322,11 +326,12 @@ export const useThreads = defineStore('threads', {
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat') t.title = titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text)) t.title = titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist()
       if (isBusy(t)) {
-        if (await steerRun(t.id, text.trim(), attachments)) return
+        // A command waits for the turn to end and then runs on its own; anything else steers.
+        if (!isCommand(text) && await steerRun(t.id, text.trim(), attachments)) return
         const waiting = followUps.get(t.id) ?? []
         waiting.push({ text: text.trim(), attachments })
         followUps.set(t.id, waiting)
@@ -334,10 +339,25 @@ export const useThreads = defineStore('threads', {
         if (!isBusy(t)) await this._sendFollowUps(t.id)
         return
       }
+      await this._runTurn(t.id, text.trim(), attachments)
+      await this._sendFollowUps(t.id)
+    },
+
+    /** One turn for a message already in the chat, or Mango's own `/clear`. */
+    async _runTurn(id: string, text: string, attachments: Attachment[]) {
+      const t = this.byId(id)
+      if (!t) return
+      if (isClear(text) && !attachments.length) {
+        // The CLI's conversation is left behind; the next message starts a fresh one.
+        t.sessionId = null
+        const m = this._pushAgentMessage(id)
+        if (m) this._pushPart(id, m, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
+        this.persist()
+        return
+      }
       t.status = 'queued'
       this.persist()
-      await runAgentTurn(this, t.id, text.trim(), attachments)
-      await this._sendFollowUps(t.id)
+      await runAgentTurn(this, id, text, attachments)
     },
 
     /** Messages written while the last turn ran that it could not take: one turn answers them all. */
@@ -346,10 +366,12 @@ export const useThreads = defineStore('threads', {
         const t = this.byId(id)
         const waiting = followUps.get(id)
         if (!t || !waiting?.length || isBusy(t)) return
-        followUps.delete(id)
-        t.status = 'queued'
-        this.persist()
-        await runAgentTurn(this, id, waiting.map(w => w.text).filter(Boolean).join('\n\n'), waiting.flatMap(w => w.attachments))
+        // A command goes out on its own; plain messages written in a row go out together.
+        let n = 1
+        if (!isCommand(waiting[0]!.text)) while (n < waiting.length && !isCommand(waiting[n]!.text)) n++
+        const batch = waiting.splice(0, n)
+        if (!waiting.length) followUps.delete(id)
+        await this._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
       }
     },
 

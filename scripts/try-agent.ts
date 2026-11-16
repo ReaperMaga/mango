@@ -6,11 +6,13 @@
  *        [--steer "<text>" [--steer-after ms]] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
+ *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
  * --usage prints the plan's usage limits (5-hour, weekly, …), also without a turn.
+ * --commands prints the slash commands the composer offers for <cwd>, also without a turn.
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
@@ -20,7 +22,7 @@ import { readFileSync } from 'node:fs'
 import { basename, dirname, extname, resolve } from 'node:path'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
-if (!agentId || !cwd || (!prompt && !process.argv.includes('--models') && !process.argv.includes('--usage'))) {
+if (!agentId || !cwd || (!prompt && !['--models', '--usage', '--commands'].some(f => process.argv.includes(f)))) {
   console.error('usage: node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [flags]')
   process.exit(2)
 }
@@ -64,6 +66,11 @@ const spawnCli = async (args: string[], handlers: any, env?: Record<string, stri
 if (prompt === '--models' || has('models')) {
   const models = await adapter.listModels(spawnCli)
   for (const m of models) console.log(JSON.stringify(m))
+  process.exit(0)
+}
+
+if (prompt === '--commands' || has('commands')) {
+  for (const c of await adapter.listCommands(spawnCli, resolve(cwd))) console.log(JSON.stringify(c))
   process.exit(0)
 }
 

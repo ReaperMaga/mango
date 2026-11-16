@@ -1,4 +1,4 @@
-import type { AgentId, AgentModel, Attachment, Message, Part, Thread } from '~/types/chat'
+import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, Thread } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
@@ -92,6 +92,16 @@ export async function listAgentModels(agent: AgentId, cwd: string): Promise<Agen
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
   return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
+}
+
+/**
+ * The slash commands the agent's CLI offers in the project at `cwd` (no turn is run).
+ * Null in the browser preview, which has no CLI, and when the adapter has no list.
+ */
+export async function listAgentCommands(agent: AgentId, cwd: string): Promise<AgentCommand[] | null> {
+  if (!isTauri()) return null
+  const adapter = await adapters[agent]()
+  return adapter.listCommands ? adapter.listCommands(spawnFor(agent, cwd), cwd) : null
 }
 
 /**
