@@ -25,8 +25,6 @@ use serde::{Deserialize, Serialize};
 /// The account the agents run as inside every instance (created by the `base` component).
 pub const AGENT_USER: &str = "agent";
 pub const AGENT_HOME: &str = "/home/agent";
-/// Where projects live inside an instance unless the user picks another folder.
-pub const WORK_DIR: &str = "/home/agent/work";
 
 /// A master server: where Mango SSHes to run `incus`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

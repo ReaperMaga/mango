@@ -11,7 +11,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use super::{ssh, valid_master_path, valid_remote, valid_ssh_dest, valid_tag, EnvHost, EnvTailscale};
+use super::{ssh, valid_master_path, valid_remote, valid_ssh_dest, valid_tag, EnvHost};
 
 const FILE: &str = "environments.json";
 
@@ -190,6 +190,7 @@ pub async fn env_probe(app: AppHandle, host_id: String) -> Result<EnvProbe, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::envs::EnvTailscale;
 
     fn base() -> EnvHost {
         EnvHost {
