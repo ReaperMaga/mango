@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, Minus, PanelBottom, PanelLeft, Search, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
 import { hasUnreadResult } from '~/types/chat'
+import { isEnvPath } from '~/utils/envPath'
+import { useEnvironments } from '~/stores/environments'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -13,11 +15,15 @@ const mod = ref('Ctrl')
 const native = ref(false)
 onMounted(() => { mod.value = modLabel(); native.value = isTauri() })
 
+/** The active project when it is a folder inside a remote environment. */
+const remote = computed(() => remotePlace(ws.activeProjectPath))
+
 const projectItems = computed<MenuItem[]>(() => [
   ...ws.openProjects.map(p => ({
     label: p.name,
-    hint: p.branch ? p.branch : undefined,
-    icon: Folder,
+    // A remote project says where it runs instead of a branch.
+    hint: remotePlace(p.path)?.where ?? (p.branch ? p.branch : undefined),
+    icon: isEnvPath(p.path) ? Server : Folder,
     checked: p.path === ws.activeProjectPath,
     onSelect: () => ws.setActiveProject(p.path),
   })),
@@ -39,6 +45,9 @@ function jumpToAttention() {
 }
 
 const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'light')
+
+const envs = useEnvironments()
+const toggleEnvironments = () => (envs.viewOpen ? envs.closeView() : envs.openView())
 </script>
 
 <template>
@@ -65,7 +74,15 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         </template>
       </UiMenu>
 
-      <GitBranchPopup v-if="ws.activeProject?.isGit" :path="ws.activeProjectPath">
+      <span
+        v-if="remote"
+        class="tb__remote"
+        :title="`Remote environment: instance ${remote.instance} on ${remote.host}, folder ${remote.dir}`"
+      >
+        <Server aria-hidden="true" />
+        <span class="tb__remote-where">{{ remote.where }}</span>
+      </span>
+      <GitBranchPopup v-else-if="ws.activeProject?.isGit" :path="ws.activeProjectPath">
         <template #default="{ toggle, open }">
           <button
             type="button"
@@ -106,6 +123,9 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <span class="tabular">{{ attention.length }}</span>
       </button>
 
+      <UiIconButton label="Environments" :active="envs.viewOpen" size="sm" @click="toggleEnvironments">
+        <Server />
+      </UiIconButton>
       <UiIconButton label="Usage limits" :shortcut="`${mod}+Shift+U`" :active="ws.dialog === 'usage'" size="sm" @click="ws.openUsage()">
         <Gauge />
       </UiIconButton>
@@ -169,6 +189,19 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__left > :deep(.menu) { flex: none; }
 .tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
+
+.tb__remote {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+}
+.tb__remote svg { width: 13px; height: 13px; flex: none; stroke-width: 1.85; }
+.tb__remote-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .tb__branch {
   display: inline-flex;

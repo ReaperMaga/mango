@@ -3,6 +3,7 @@ import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvLoginTool, EnvProbe,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { useWorkspace } from '~/stores/workspace'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
@@ -16,6 +17,32 @@ export const ENV_IMAGES = [
 
 /** Where projects go inside an instance unless the user picks another folder. */
 export const ENV_WORK_DIR = '/home/agent/work'
+
+/**
+ * The one-click components, for choosing them before an instance exists (the create dialog).
+ * Once an instance runs, `env_components` is the source of truth for names, versions and requirements.
+ */
+export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; description: string; requires: EnvComponentId[] }> = [
+  // Same order and requirements as the backend's recipes (src-tauri/src/envs/recipes.rs).
+  { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [] },
+  { id: 'node', name: 'Node.js', description: 'The current LTS release, with npm.', requires: ['base'] },
+  { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
+  { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
+  { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
+  { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can open from Mango.', requires: ['base'] },
+  { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
+]
+
+/** What the Environments view shows: a server, or one instance on it. */
+export interface EnvSelection { hostId: string; instance: string | null }
+
+/** Dialogs the Environments view owns. */
+export type EnvDialog =
+  | { kind: 'host'; id: string } // id '' adds a server
+  | { kind: 'create'; hostId: string }
+
+/** Something to do once an instance page shows (e.g. a next step chosen after creating it). */
+export type EnvIntent = 'login-claude' | 'open-project'
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
@@ -42,6 +69,14 @@ export const useEnvironments = defineStore('environments', {
     /** Instances with an action in flight, and which. */
     busy: {} as Record<string, EnvInstanceAction | null>,
     desktops: {} as Record<string, EnvDesktop>,
+
+    /* ---- UI ---- */
+    /** The Environments view covers the workspace (like Settings). */
+    viewOpen: false,
+    selected: null as EnvSelection | null,
+    dialog: null as EnvDialog | null,
+    /** Per instance (see `instanceKey`): picked up by its page when it shows. */
+    intents: {} as Record<string, EnvIntent>,
   }),
 
   getters: {
@@ -50,6 +85,21 @@ export const useEnvironments = defineStore('environments', {
   },
 
   actions: {
+    /** Show the Environments view (closes Settings, which sits in the same place). */
+    openView(selection?: EnvSelection) {
+      const ws = useWorkspace()
+      ws.settings = null
+      if (selection) this.selected = selection
+      this.viewOpen = true
+    },
+    closeView() {
+      this.viewOpen = false
+      this.dialog = null
+    },
+    select(hostId: string, instance: string | null = null) {
+      this.selected = { hostId, instance }
+    },
+
     async load() {
       try {
         this.hosts = await call('env_hosts')
@@ -73,6 +123,7 @@ export const useEnvironments = defineStore('environments', {
       delete this.probes[id]
       delete this.instances[id]
       delete this.errors[id]
+      if (this.selected?.hostId === id) this.selected = this.hosts[0] ? { hostId: this.hosts[0].id, instance: null } : null
     },
 
     async probe(hostId: string) {

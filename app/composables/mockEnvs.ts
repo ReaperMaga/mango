@@ -33,10 +33,10 @@ const WORK_DIR = `${AGENT_HOME}/work`
 
 /** What can be installed, in install order. */
 const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version'> & { latest: string }> = [
-  { id: 'base', name: 'Agent user and tools', description: 'The agent user, git, curl and build tools.', requires: [], latest: '2026.11' },
+  { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [], latest: '2026.11' },
   { id: 'node', name: 'Node.js', description: 'The current LTS, with npm.', requires: ['base'], latest: 'v24.11.1' },
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'], latest: '2.4.1' },
-  { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base', 'node'], latest: '0.98.0' },
+  { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'], latest: '0.98.0' },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'], latest: '2.83.1' },
   { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can view in Mango.', requires: ['base'], latest: 'xfce 4.20' },
   { id: 'tailscale', name: 'Tailscale', description: "Joins the server's tailnet.", requires: ['base'], latest: '1.90.6' },

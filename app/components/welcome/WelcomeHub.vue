@@ -1,12 +1,13 @@
 <script setup lang="ts">
-import { Download, FolderOpen, FolderPlus, GitBranch, GitFork, Settings, X } from 'lucide-vue-next'
+import { Download, FolderOpen, FolderPlus, GitBranch, GitFork, Server, Settings, X } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
+import { useEnvironments } from '~/stores/environments'
 import type { ProjectInfo } from '~/types/ipc'
 
 /**
- * Project hub: shown when no project is open. Three ways in (open, new,
- * clone), then the recent list. Arrow keys walk every row; Enter opens;
+ * Project hub: shown when no project is open. Four ways in (open, new,
+ * clone, a remote environment), then the recent list. Arrow keys walk every row; Enter opens;
  * Delete forgets the focused recent project.
  */
 const ws = useWorkspace()
@@ -49,6 +50,14 @@ const actions: Action[] = [
     icon: GitFork,
     keys: [],
     run: () => { ws.dialog = 'clone' },
+  },
+  {
+    id: 'environments',
+    title: 'Remote environment',
+    description: 'Work in a container or VM on your own server.',
+    icon: Server,
+    keys: [],
+    run: () => useEnvironments().openView(),
   },
 ]
 
@@ -95,6 +104,8 @@ async function forget(p: ProjectInfo) {
 /* ---------- formatting ---------- */
 
 const tildify = (path: string) => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~')
+/** The folder to show: a remote project's is inside its instance (where it is shows as a chip). */
+const shownPath = (path: string) => remotePlace(path)?.dir ?? tildify(path)
 
 const now = ref(Date.now())
 let tick: ReturnType<typeof setInterval> | undefined
@@ -224,17 +235,20 @@ onBeforeUnmount(() => {
               data-row
               :data-path="p.path"
               :aria-busy="opening === p.path || undefined"
-              :aria-label="`Open ${p.name}, ${tildify(p.path)}${p.branch ? `, branch ${p.branch}` : ''}, opened ${ago(p.lastOpened)}`"
+              :aria-label="`Open ${p.name}, ${remotePlace(p.path) ? `in ${remotePlace(p.path)!.where}, ` : ''}${shownPath(p.path)}${p.branch ? `, branch ${p.branch}` : ''}, opened ${ago(p.lastOpened)}`"
               @click="open(p)"
             >
               <span class="recent__text">
                 <span class="recent__line">
                   <span class="recent__name">{{ p.name }}</span>
-                  <span v-if="p.isGit && p.branch" class="chip" :title="`Branch ${p.branch}`">
+                  <span v-if="remotePlace(p.path)" class="chip chip--remote" :title="`Remote environment: instance ${remotePlace(p.path)!.instance} on ${remotePlace(p.path)!.host}`">
+                    <Server aria-hidden="true" />{{ remotePlace(p.path)!.where }}
+                  </span>
+                  <span v-else-if="p.isGit && p.branch" class="chip" :title="`Branch ${p.branch}`">
                     <GitBranch aria-hidden="true" />{{ p.branch }}
                   </span>
                 </span>
-                <span class="recent__path" :title="p.path">{{ tildify(p.path) }}</span>
+                <span class="recent__path" :title="shownPath(p.path)">{{ shownPath(p.path) }}</span>
               </span>
               <span class="recent__time tabular">{{ ago(p.lastOpened) }}</span>
             </button>
@@ -460,6 +474,8 @@ ul { list-style: none; margin: 0; padding: 0; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* An instance and server name, not code. */
+.chip--remote { font-family: var(--font-ui); }
 .chip :deep(svg) { width: 11px; height: 11px; stroke-width: 2; flex: none; color: var(--fg-subtle); }
 
 .recent__forget {
