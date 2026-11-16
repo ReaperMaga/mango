@@ -106,6 +106,118 @@ pub fn argv(host: &EnvHost, mode: Mode, remote: &[String]) -> Result<Vec<String>
     Ok(a)
 }
 
+/// The longest a command may take and still use the shared connection. Longer ones (push,
+/// fetch, setting up a share) get their own: the shared one gives up sooner on a network
+/// gap (see [`mux_args`]), and it would take every command on it down at once.
+pub const SHARED_MAX: Duration = Duration::from_secs(120);
+
+/// [`argv`] in [`Mode::Batch`] for a captured command that may take up to `timeout`: over
+/// the shared connection ([`shared_argv`]) when it is a quick one, otherwise its own.
+pub fn batch_argv(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<Vec<String>, String> {
+    if timeout <= SHARED_MAX {
+        shared_argv(host, remote)
+    } else {
+        argv(host, Mode::Batch, remote)
+    }
+}
+
+/// [`argv`] in [`Mode::Batch`] over a shared connection (see [`mux_args`]): for quick
+/// commands whose output is captured (git, file access, `incus` queries). After the first,
+/// each one skips the SSH handshake, which is most of its time on a distant server.
+/// Long-lived sessions (terminals, agents, tunnels) keep their own connections, so a
+/// stalled shared one never takes them down.
+pub fn shared_argv(host: &EnvHost, remote: &[String]) -> Result<Vec<String>, String> {
+    let mut a = vec![ssh_bin()?.to_string_lossy().into_owned()];
+    let args = ssh_args(host, Mode::Batch);
+    // ssh takes the first value given for an option, so these go before `ssh_args`'s own.
+    a.extend(mux_args(&args));
+    a.extend(args);
+    a.push(line(remote));
+    Ok(a)
+}
+
+/// How long a shared connection stays open after its last command.
+const MUX_PERSIST: &str = "ControlPersist=120";
+
+/// SSH connection sharing for a connection made with `args` (from [`ssh_args`]): the first
+/// command opens a master connection in the background, later ones run through its socket.
+/// The socket name is a hash of the whole connection (destination, port, key, host key pin),
+/// so a changed host never reuses an old connection. Empty where it can't work: Windows'
+/// OpenSSH has no connection sharing, and without a private, short socket folder.
+fn mux_args(args: &[String]) -> Vec<String> {
+    let Some(dir) = mux_dir() else { return Vec::new() };
+    let path = dir.join(mux_name(args));
+    let path = path.to_string_lossy();
+    // ssh expands `%` tokens in the path, and splits unquoted values at spaces.
+    let path = path.replace('%', "%%");
+    [
+        "-o".to_string(),
+        "ControlMaster=auto".into(),
+        "-o".into(),
+        format!("ControlPath=\"{path}\""),
+        "-o".into(),
+        MUX_PERSIST.into(),
+        // The master outlives the command that opened it: notice a dropped network within
+        // about 15 s, or every command sent through it would wait for the dead connection.
+        "-o".into(),
+        "ServerAliveInterval=5".into(),
+        "-o".into(),
+        "ServerAliveCountMax=3".into(),
+    ]
+    .to_vec()
+}
+
+fn mux_name(args: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(args.join("\0").as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The folder for shared-connection sockets, made once: private to this user (0700), and short
+/// enough for a Unix socket path (ssh also adds a temporary suffix while it sets one up).
+#[cfg(unix)]
+fn mux_dir() -> Option<&'static std::path::Path> {
+    use std::sync::OnceLock;
+    static DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+    DIR.get_or_init(|| {
+        let mut bases: Vec<PathBuf> = Vec::new();
+        if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+            bases.push(PathBuf::from(run));
+        }
+        if let Some(home) = std::env::var_os("HOME").filter(|v| !v.is_empty()) {
+            bases.push(PathBuf::from(home).join(".ssh"));
+        }
+        bases.into_iter().find_map(|base| private_dir(&base.join("mango-mux")))
+    })
+    .as_deref()
+}
+
+#[cfg(not(unix))]
+fn mux_dir() -> Option<&'static std::path::Path> {
+    None
+}
+
+/// `dir`, created 0700 if missing, when it is a real folder (not a link) that only its owner
+/// can enter, that owner is us (we can write in it), and a socket path in it fits. A folder
+/// others can write to would let them plant a socket that receives our commands.
+#[cfg(unix)]
+fn private_dir(dir: &std::path::Path) -> Option<PathBuf> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    // 16 hex digits of name, plus ssh's `.` and 16 random characters while it binds; sun_path is 104 on macOS.
+    if dir.as_os_str().len() + 1 + 16 + 17 >= 104 || !dir.parent()?.is_dir() {
+        return None;
+    }
+    let _ = std::fs::DirBuilder::new().mode(0o700).create(dir);
+    let meta = std::fs::symlink_metadata(dir).ok()?;
+    if !meta.is_dir() || meta.permissions().mode() & 0o077 != 0 {
+        return None;
+    }
+    let probe = dir.join(format!(".probe-{}", std::process::id()));
+    std::fs::File::create(&probe).ok()?;
+    let _ = std::fs::remove_file(&probe);
+    Some(dir.to_path_buf())
+}
+
 /// `remote:instance`, or just `instance` on the master's default remote.
 pub fn target(host: &EnvHost, instance: &str) -> String {
     match host.incus_remote.as_deref().filter(|r| !r.is_empty()) {
@@ -159,15 +271,30 @@ pub fn in_instance(host: &EnvHost, instance: &str, mode: Mode, inner: &[String])
 /// Instance-side argv running `argv` as the agent user, from `cwd` (home when `None`),
 /// in a login shell so `~/.local/bin` and friends are on PATH. `env` must be validated.
 pub fn as_agent(cwd: Option<&str>, env: &[(String, String)], argv: &[String]) -> Vec<String> {
+    as_agent_in(true, cwd, env, argv)
+}
+
+/// [`as_agent`] without the login shell: no profile scripts run, and PATH is a fixed list
+/// (with `~/.local/bin`). For quick reads (git status, file listings) that run often.
+/// Commands that run hooks keep [`as_agent`]; a read that finds a tool missing on this PATH
+/// (git or git-lfs installed where only the profile looks) is retried with it (`git::EnvAt`).
+pub fn as_agent_plain(cwd: Option<&str>, env: &[(String, String)], argv: &[String]) -> Vec<String> {
+    as_agent_in(false, cwd, env, argv)
+}
+
+/// The fixed PATH of [`as_agent_plain`].
+const PLAIN_PATH: &str = "$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+
+fn as_agent_in(login: bool, cwd: Option<&str>, env: &[(String, String)], argv: &[String]) -> Vec<String> {
     let mut a: Vec<String> = vec!["runuser", "-u", AGENT_USER, "--", "env"].into_iter().map(String::from).collect();
     a.push(format!("HOME={AGENT_HOME}"));
     a.extend([format!("USER={AGENT_USER}"), format!("LOGNAME={AGENT_USER}"), "SHELL=/bin/bash".into()]);
     a.extend(env.iter().map(|(k, v)| format!("{k}={v}")));
+    let enter = r#"cd -- "$1" || { echo "Mango: the folder $1 does not exist in this environment." >&2; exit 1; }; shift; exec "$@""#;
     a.extend([
         "bash".into(),
-        "-lc".into(),
-        r#"cd -- "$1" || { echo "Mango: the folder $1 does not exist in this environment." >&2; exit 1; }; shift; exec "$@""#
-            .into(),
+        if login { "-lc".into() } else { "-c".into() },
+        if login { enter.into() } else { format!("PATH=\"{PLAIN_PATH}\"; export PATH; {enter}") },
         "mango".into(),
         cwd.unwrap_or(AGENT_HOME).to_string(),
     ]);
@@ -184,9 +311,19 @@ pub fn command(argv: &[String]) -> Command {
 }
 
 /// Run `remote` on the master and wait (up to `timeout`). Ok(stdout) on exit 0,
-/// otherwise an error built from what the command printed.
+/// otherwise an error built from what the command printed. Quick commands go over the
+/// shared connection ([`batch_argv`]).
 pub fn run(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<String, String> {
-    let argv = argv(host, Mode::Batch, remote)?;
+    run_argv(host, batch_argv(host, remote, timeout)?, timeout)
+}
+
+/// [`run`] over a connection of its own, for checking the connection itself: a shared one
+/// opened earlier would answer even after the server, its address or the key changed.
+pub fn run_alone(host: &EnvHost, remote: &[String], timeout: Duration) -> Result<String, String> {
+    run_argv(host, argv(host, Mode::Batch, remote)?, timeout)
+}
+
+fn run_argv(host: &EnvHost, argv: Vec<String>, timeout: Duration) -> Result<String, String> {
     let mut cmd = command(&argv);
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = cmd.spawn().map_err(|e| format!("Could not start ssh: {e}"))?;
@@ -469,5 +606,69 @@ mod tests {
         assert!(l.starts_with("incus exec os1:dev -T -- runuser -u agent -- env HOME=/home/agent"), "{l}");
         assert!(l.contains("'K=v w'"), "{l}");
         assert!(l.ends_with("mango '/home/agent/work/my app' claude -p"), "{l}");
+    }
+
+    #[test]
+    fn plain_agent_skips_the_login_shell() {
+        let login = as_agent(Some("/w"), &[], &["git".into(), "status".into()]);
+        let plain = as_agent_plain(Some("/w"), &[], &["git".into(), "status".into()]);
+        assert!(login.contains(&"-lc".to_string()));
+        assert!(plain.contains(&"-c".to_string()) && !plain.contains(&"-lc".to_string()));
+        let script = plain.iter().find(|a| a.starts_with("PATH=")).expect("fixed PATH");
+        assert!(script.contains("$HOME/.local/bin:") && script.contains("cd -- \"$1\""), "{script}");
+        assert!(plain.ends_with(&["mango".into(), "/w".into(), "git".into(), "status".into()]));
+    }
+
+    #[test]
+    fn shared_connections_are_keyed_by_the_whole_connection() {
+        let a = ssh_args(&host(), Mode::Batch);
+        let mut other = host();
+        other.identity_file = Some("/k/other".into());
+        assert_ne!(mux_name(&a), mux_name(&ssh_args(&other, Mode::Batch)));
+        assert_eq!(mux_name(&a), mux_name(&ssh_args(&host(), Mode::Batch)));
+        assert_eq!(mux_name(&a).len(), 16);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_quick_commands_share_a_connection() {
+        let Ok(quick) = batch_argv(&host(), &["true".into()], SHARED_MAX) else { return }; // no ssh here
+        let slow = batch_argv(&host(), &["true".into()], SHARED_MAX + Duration::from_secs(1)).unwrap();
+        assert!(!slow.iter().any(|a| a.starts_with("ControlPath")));
+        if mux_dir().is_some() {
+            assert!(quick.iter().any(|a| a.starts_with("ControlPath")));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_argv_puts_its_options_first() {
+        let Ok(a) = shared_argv(&host(), &["true".into()]) else { return }; // no ssh here
+        assert_eq!(a.last().unwrap(), "true");
+        assert_eq!(a[a.len() - 2], "me@lab");
+        if mux_dir().is_some() {
+            assert_eq!(a[2], "ControlMaster=auto");
+            let alive = a.iter().position(|o| o.starts_with("ServerAliveInterval=")).unwrap();
+            assert_eq!(a[alive], "ServerAliveInterval=5");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn socket_folder_must_be_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("mango-mux-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let dir = base.join("m");
+        assert_eq!(private_dir(&dir), Some(dir.clone()));
+        assert_eq!(std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777, 0o700);
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(private_dir(&dir), None);
+        let link = base.join("l");
+        std::os::unix::fs::symlink(&base, &link).unwrap();
+        assert_eq!(private_dir(&link), None);
+        assert_eq!(private_dir(&base.join("x".repeat(120))), None);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
