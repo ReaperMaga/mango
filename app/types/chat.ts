@@ -163,7 +163,7 @@ export interface AgentModel {
 /**
  * A slash command the composer offers. Most come from the agent's CLI (built-ins, the user's
  * own commands and skills) and are sent as the message text, `/name args`; the adapter or the
- * CLI acts on them. `mango` ones are handled by the app itself (`/clear`).
+ * CLI acts on them. `mango` ones are handled by the app itself (`/clear`, `/create-pr`).
  */
 export interface AgentCommand {
   /** Without the slash: "compact", "gsap-skills:gsap-core" */
