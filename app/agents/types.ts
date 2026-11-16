@@ -108,6 +108,28 @@ export interface AgentRun {
   interrupt(): void
 }
 
+/** One rolling usage limit of the signed-in plan, e.g. the 5-hour or the weekly window. */
+export interface UsageWindow {
+  /** Stable per agent: 'five-hour', 'weekly', 'weekly:<model>', or 'window:<minutes>'. */
+  id: string
+  /** "5-hour", "Weekly", "Weekly · Opus" */
+  label: string
+  /** 0 to 100, how much of the window's allowance is used. */
+  percent: number
+  /** Unix ms when the window starts over; null when the CLI does not say. */
+  resetsAt: number | null
+}
+
+/** The plan limits an agent CLI reports for the signed-in account. */
+export interface AgentUsage {
+  /** e.g. "Max", "Plus"; null when unknown. */
+  plan: string | null
+  /** Shortest window first. Empty when the account has no plan limits (an API key, for one). */
+  windows: UsageWindow[]
+  /** Something to say instead of, or under, the windows ("Billed per token: no plan limits"). */
+  note?: string
+}
+
 /**
  * Adapters must stay runnable outside the app (see scripts/try-agent.ts):
  * import only types from '~/...', and touch no Vue, Pinia or Tauri API.
@@ -121,4 +143,9 @@ export interface AgentAdapter {
    * without running a turn (no quota is spent). Rejects when the CLI can't answer.
    */
   listModels?(spawn: SpawnFn): Promise<AgentModel[]>
+  /**
+   * The plan's usage limits (5-hour, weekly, …) as the CLI reports them, without running a
+   * turn (no quota is spent). Rejects when the CLI can't answer (missing, signed out, too old).
+   */
+  readUsage?(spawn: SpawnFn): Promise<AgentUsage>
 }

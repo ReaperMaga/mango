@@ -1,5 +1,5 @@
 import type { AgentId, AgentModel, Attachment, Message, Part, Thread } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
@@ -92,6 +92,16 @@ export async function listAgentModels(agent: AgentId, cwd: string): Promise<Agen
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
   return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
+}
+
+/**
+ * The plan's usage limits as the agent's CLI reports them (no turn is run; the CLI starts
+ * in the home folder). Rejects with a readable message when the CLI cannot answer.
+ */
+export async function readAgentUsage(agent: AgentId): Promise<AgentUsage> {
+  const adapter = await adapters[agent]()
+  if (!adapter.readUsage) throw new Error(`${agent} cannot report its usage.`)
+  return adapter.readUsage(spawnFor(agent, ''))
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Download, FlaskConical, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, MessageSquarePlus, Settings,
   Files, Moon, PanelBottom, PanelLeft, Search, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -92,6 +92,7 @@ const actions = computed<Item[]>(() => {
   items.push(up.update
     ? { id: 'update', group: 'Actions', label: `Update to ${up.update.version} and restart`, icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
     : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('general'); up.check(true) } })
+  items.push({ id: 'usage', group: 'Actions', label: 'Usage limits', detail: '5-hour and weekly', icon: Gauge, keys: [mod, shift, 'U'], keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
   items.push({ id: 'setup', group: 'Actions', label: 'Get started', detail: 'Install and sign in to agents', icon: Download, keywords: 'setup install onboarding first run claude code codex git cli agents download sign in login', run: () => ws.openSetup() })
   items.push({ id: 'settings', group: 'Actions', label: 'Open settings', icon: Settings, keys: [mod, ','], keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
   items.push({

@@ -90,8 +90,8 @@ export const useWorkspace = defineStore('workspace', {
       settings: null as null | SettingsSection,
 
       paletteOpen: false,
-      /** which dialog is open: a project dialog, or "Get started" (setup) */
-      dialog: null as null | 'new' | 'clone' | 'setup',
+      /** which dialog is open: a project dialog, "Get started" (setup) or the usage limits */
+      dialog: null as null | 'new' | 'clone' | 'setup' | 'usage',
       /**
        * The "Get started" dialog was shown and closed. Unset in prefs from older
        * builds, which already ran: only a first run starts out false.
@@ -252,6 +252,10 @@ export const useWorkspace = defineStore('workspace', {
     },
     openSettings(section: SettingsSection = 'general') {
       this.settings = section
+      this.paletteOpen = false
+    },
+    openUsage() {
+      this.dialog = 'usage'
       this.paletteOpen = false
     },
     openSetup() {

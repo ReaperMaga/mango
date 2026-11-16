@@ -116,6 +116,13 @@ pub async fn agent_spawn(
     let bin = crate::bin::find(name)
         .ok_or_else(|| format!("{name} was not found. Install it, then check Settings > Agents."))?;
 
+    // No folder: questions that need no project (usage limits) run in the home folder.
+    let cwd = if cwd.trim().is_empty() {
+        dirs::home_dir().ok_or("Could not find the home folder to start the agent in.")?
+    } else {
+        std::path::PathBuf::from(cwd)
+    };
+
     let mut cmd = Command::new(&bin);
     crate::bin::hide_console(&mut cmd);
     cmd.args(&args)

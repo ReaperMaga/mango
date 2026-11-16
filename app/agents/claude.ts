@@ -1,5 +1,5 @@
 import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, PermissionMode, SpawnFn, SteerInput, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
 
 /**
  * Claude Code adapter.
@@ -519,5 +519,92 @@ function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
   })
 }
 
-export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels }
+/** "max" → "Max", "team_premium" → "Team premium". */
+const planName = (raw: unknown): string | null =>
+  typeof raw === 'string' && raw ? raw.charAt(0).toUpperCase() + raw.slice(1).replace(/_/g, ' ') : null
+
+const resetTime = (raw: unknown): number | null => {
+  const t = typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+  return Number.isFinite(t) ? t : null
+}
+
+const clampPercent = (n: unknown): number | null =>
+  typeof n === 'number' && Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : null
+
+/** The `rate_limits` of a `get_usage` answer → windows, 5-hour first. */
+export function claudeUsageWindows(limits: any): UsageWindow[] {
+  const out: UsageWindow[] = []
+  const add = (id: string, label: string, percent: unknown, resets: unknown) => {
+    const p = clampPercent(percent)
+    if (p !== null && !out.some(w => w.id === id)) out.push({ id, label, percent: p, resetsAt: resetTime(resets) })
+  }
+  // Newer CLIs list every limit that applies to the plan, with per-model weekly limits named.
+  if (Array.isArray(limits?.limits)) {
+    for (const l of limits.limits) {
+      const model = l?.scope?.model?.display_name
+      if (l?.kind === 'session') add('five-hour', '5-hour', l.percent, l.resets_at)
+      else if (l?.kind === 'weekly_all') add('weekly', 'Weekly', l.percent, l.resets_at)
+      else if (l?.group === 'weekly' && typeof model === 'string' && model) add(`weekly:${model.toLowerCase()}`, `Weekly · ${model}`, l.percent, l.resets_at)
+    }
+  }
+  // The fixed fields every version sends; they fill in whatever the list did not cover.
+  const fixed: Array<[string, string, string]> = [
+    ['five_hour', 'five-hour', '5-hour'],
+    ['seven_day', 'weekly', 'Weekly'],
+    ['seven_day_opus', 'weekly:opus', 'Weekly · Opus'],
+    ['seven_day_sonnet', 'weekly:sonnet', 'Weekly · Sonnet'],
+  ]
+  for (const [key, id, label] of fixed) {
+    const w = limits?.[key]
+    if (w) add(id, label, w.utilization, w.resets_at)
+  }
+  const rank = (w: UsageWindow) => (w.id === 'five-hour' ? 0 : w.id === 'weekly' ? 1 : 2)
+  return out.sort((a, b) => rank(a) - rank(b))
+}
+
+/**
+ * The plan's usage limits: the `get_usage` control request answers with what `/usage`
+ * shows (the 5-hour session, the week, per-model weekly limits). No prompt is sent.
+ */
+function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    const finish = (usage: AgentUsage | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (usage) resolve(usage)
+      else reject(new Error(why ?? 'Claude Code did not report its usage.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Claude Code took too long to report its usage.'), 30_000)
+    spawn(['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'], {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-usage') return
+        if (m.response.subtype !== 'success') {
+          const unsupported = m.response.error_code === 'unsupported_request' || /unsupported/i.test(String(m.response.error ?? ''))
+          return finish(null, unsupported ? 'This version of Claude Code cannot report usage. Update it to see its limits.' : String(m.response.error || 'Claude Code did not report its usage.'))
+        }
+        const r = m.response.response ?? {}
+        const plan = planName(r.subscription_type)
+        const windows = r.rate_limits_available === false ? [] : claudeUsageWindows(r.rate_limits)
+        finish({
+          plan,
+          windows,
+          note: windows.length ? undefined : plan ? 'Claude Code reported no limits for this plan.' : 'No plan limits: Claude Code is not signed in with a Claude subscription (an API key is billed per token).',
+        })
+      },
+      onExit: () => finish(null, 'Claude Code exited before reporting its usage.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-usage', request: { subtype: 'get_usage' } })).catch(() => {})
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
+export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage }
 export default claudeAdapter

@@ -5,10 +5,12 @@
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--interrupt-after ms]
  *        [--steer "<text>" [--steer-after ms]] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
+ *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
+ * --usage prints the plan's usage limits (5-hour, weekly, …), also without a turn.
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
@@ -18,7 +20,7 @@ import { readFileSync } from 'node:fs'
 import { basename, dirname, extname, resolve } from 'node:path'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
-if (!agentId || !cwd || (!prompt && !process.argv.includes('--models'))) {
+if (!agentId || !cwd || (!prompt && !process.argv.includes('--models') && !process.argv.includes('--usage'))) {
   console.error('usage: node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [flags]')
   process.exit(2)
 }
@@ -62,6 +64,11 @@ const spawnCli = async (args: string[], handlers: any, env?: Record<string, stri
 if (prompt === '--models' || has('models')) {
   const models = await adapter.listModels(spawnCli)
   for (const m of models) console.log(JSON.stringify(m))
+  process.exit(0)
+}
+
+if (prompt === '--usage' || has('usage')) {
+  console.log(JSON.stringify(await adapter.readUsage(spawnCli), null, 2))
   process.exit(0)
 }
 
