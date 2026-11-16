@@ -13,7 +13,6 @@ import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeTh
 import { baseName } from '~/utils/paths'
 import { openImage } from '~/utils/imageViewer'
 import type { MenuItem } from '~/types/ui'
-import AgentIcon from '~/components/ui/AgentIcon.vue'
 import ChatCommandMenu, { type CommandMatch } from '~/components/chat/ChatCommandMenu.vue'
 
 /**
@@ -35,7 +34,6 @@ const props = withDefaults(defineProps<{
 const emit = defineEmits<{
   send: [text: string, attachments: Attachment[]]
   stop: []
-  'update:agent': [agent: AgentId]
   'update:model': [model: string]
   'update:effort': [effort: string | null]
   'update:mode': [mode: Thread['mode']]
@@ -379,19 +377,6 @@ onMounted(() => {
 })
 defineExpose({ focus: () => ta.value?.focus() })
 
-const agentInfo = (id: AgentId) => ws.agents.find(a => a.id === id)
-
-const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[]).map(id => {
-  const info = agentInfo(id)
-  return {
-    label: AGENTS[id].name,
-    icon: () => h(AgentIcon, { agent: id }),
-    hint: info && !info.installed ? 'Not installed. See Settings > Agents.' : undefined,
-    checked: props.agent === id,
-    onSelect: () => emit('update:agent', id),
-  }
-}))
-
 /* ---------- model and effort: the lists come from the CLI itself (stores/models.ts) ---------- */
 
 const models = useModels()
@@ -527,15 +512,6 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
       @pick="i => pickCommand(i, true)"
     />
     <div class="cp__bar">
-      <UiMenu :items="agentItems" placement="top-start" :width="280" label="Agent">
-        <template #default="{ toggle, open }">
-          <button type="button" class="cp__chip cp__chip--agent" :class="{ 'is-open': open }" @click="toggle">
-            <UiAgentIcon :agent="agent" class="cp__agent-icon" />
-            <span class="cp__chip-text">{{ AGENTS[agent].name }}</span>
-            <ChevronDown />
-          </button>
-        </template>
-      </UiMenu>
       <UiMenu :items="modelItems" placement="top-start" :width="270" label="Model">
         <template #default="{ toggle, open }">
           <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="() => { toggle(); refreshModels() }">
@@ -759,10 +735,9 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
 }
 .cp__chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .cp__bar :deep(.menu), .cp__bar :deep(.ef-anchor) { flex: 0 1 auto; }
-.cp__bar :deep(.menu:first-child) { flex-shrink: 0; }
 .cp__chip { min-width: 0; max-width: 100%; }
 .cp__chip svg { flex: none; }
-/* Narrow panes (split view at small window sizes): keep agent and model, drop the rest to icons. */
+/* Narrow panes (split view at small window sizes): keep the model, drop the rest to icons. */
 @container (max-width: 400px) {
   .cp__mode-text { display: none; }
   .cp__bar :deep(.icon-btn:not(.cp__keep)) { display: none; }
@@ -770,16 +745,8 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
 }
 .cp__chip:hover, .cp__chip.is-open { background: var(--bg-hover); color: var(--fg); }
 .cp__chip svg { width: 12px; height: 12px; stroke-width: 2; opacity: 0.7; }
-.cp__chip--agent { color: var(--fg-muted); }
 .cp__effort { margin-right: 1px; }
 .cp__chip--mode-auto svg:first-child { color: var(--accent-ink); opacity: 1; }
-/* A logo, not a glyph: full strength, a touch larger than the chip's chevrons. */
-.cp__chip .cp__agent-icon { width: 13px; height: 13px; opacity: 1; }
-.cp__chip .cp__agent-icon.agent-icon--codex { color: var(--fg); }
-/* Centre the logo on the capitals, not on Inter's line box, whose descender
-   room sits the text ~1.5px high. The agent chip never shrinks, so nothing
-   needs clipping, and trimming would cut ascenders if it did. */
-.cp__chip--agent .cp__chip-text { overflow: visible; text-box: trim-both cap alphabetic; }
 
 .cp__voice {
   display: flex;
