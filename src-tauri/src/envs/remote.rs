@@ -508,6 +508,8 @@ fn serve(listener: TcpListener, shared: Arc<Shared>, dialer: Dialer, port: u16) 
             .name("desktop-conn".into())
             .spawn(move || handle(client, &shared, &dialer, port));
     }
+    // Close the port before saying so: a connection in between would still be accepted by the kernel.
+    drop(listener);
     shared.serving.store(false, Ordering::SeqCst);
 }
 
