@@ -10,6 +10,7 @@ import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
+import { createPrPrompt } from '~/utils/createPr'
 
 const LS_KEY = 'mango.threads.v1'
 const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
@@ -369,7 +370,7 @@ export const useThreads = defineStore('threads', {
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat' && !isClear(text)) t.title = titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist()
       if (isBusy(t)) {
@@ -386,7 +387,7 @@ export const useThreads = defineStore('threads', {
       await this._sendFollowUps(t.id)
     },
 
-    /** One turn for a message already in the chat, or Mango's own `/clear`. */
+    /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
     async _runTurn(id: string, text: string, attachments: Attachment[]) {
       const t = this.byId(id)
       if (!t) return
@@ -400,7 +401,8 @@ export const useThreads = defineStore('threads', {
       }
       t.status = 'queued'
       this.persist()
-      await runAgentTurn(this, id, text, attachments)
+      // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
+      await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
     },
 
     /** Messages written while the last turn ran that it could not take: one turn answers them all. */

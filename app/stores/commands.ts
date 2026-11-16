@@ -19,6 +19,7 @@ const MAX_CACHED = 24
 /** Handled by Mango for every agent (`threads.send`). */
 export const MANGO_COMMANDS: AgentCommand[] = [
   { name: 'clear', description: 'Start a new conversation in this chat. The agent forgets the messages above.', mango: true },
+  { name: 'create-pr', description: 'Commit, check, push and open a GitHub pull request for this branch', argumentHint: '[notes, e.g. draft]', mango: true },
 ]
 
 /** Stand-ins until the CLI has answered. */
