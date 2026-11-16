@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GhItem } from '~/types/ipc'
+import type { GhItem, GhMergeMethod } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
@@ -15,12 +15,19 @@ import { linkFromItem } from '~/utils/githubLinks'
 export interface LinkDetail {
   item: GhItem | null
   loading: boolean
+  /** The read in progress is a background one (keeping checks current), not one the user asked for. */
+  quiet: boolean
   error: string | null
   fetchedAt: number
+  /** When the description shown was read: its picture links lapse, see STALE_MS. */
+  bodyAt: number
 }
 
 /** The picture links in a description are signed for a few minutes only: read it again before they lapse. */
 const STALE_MS = 4 * 60_000
+
+/** The latest read started per link key: an older read that finishes later is dropped. */
+const reads = new Map<string, number>()
 
 const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e))
 
@@ -33,19 +40,49 @@ export const useLinks = defineStore('links', {
   }),
 
   actions: {
-    /** Read an item from GitHub, unless what we have is recent (or `force`). */
-    async load(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, force = false) {
+    /**
+     * Read an item from GitHub, unless what we have is recent (or `force`). A `quiet` read keeps
+     * the description already shown while its pictures are still good: GitHub signs picture links
+     * afresh on every read, and swapping them in would reload every picture each time.
+     */
+    async load(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, force = false, quiet = false) {
       const had = this.details[link.key]
-      if (had?.loading) return
-      if (!force && had?.item && !had.error && Date.now() - had.fetchedAt < STALE_MS) return
-      this.details[link.key] = { item: had?.item ?? null, loading: true, error: null, fetchedAt: had?.fetchedAt ?? 0 }
+      // A read the user asked for goes ahead even while another runs; the newest one wins.
+      if (had?.loading && (quiet || !force)) return
+      if (!force && had?.item && !had.error && Date.now() - had.bodyAt < STALE_MS) return
+      const mine = (reads.get(link.key) ?? 0) + 1
+      reads.set(link.key, mine)
+      const keep = { item: had?.item ?? null, fetchedAt: had?.fetchedAt ?? 0, bodyAt: had?.bodyAt ?? 0 }
+      this.details[link.key] = { ...keep, loading: true, quiet, error: null }
       try {
-        const item = await call('gh_item', { path: projectPath, reference: link.url })
-        this.details[link.key] = { item, loading: false, error: null, fetchedAt: Date.now() }
+        const read = await call('gh_item', { path: projectPath, reference: link.url })
+        if (reads.get(link.key) !== mine) return
+        const now = Date.now()
+        const old = this.details[link.key]?.item
+        const keepBody = quiet && old?.url === read.url && now - keep.bodyAt < STALE_MS
+        const item = keepBody ? { ...read, bodyHtml: old!.bodyHtml } : read
+        this.details[link.key] = { item, loading: false, quiet: false, error: null, fetchedAt: now, bodyAt: keepBody ? keep.bodyAt : now }
         useThreads()._updateLinks(link.key, { title: item.title, state: item.state, url: item.url, kind: item.kind })
       } catch (e) {
-        this.details[link.key] = { item: had?.item ?? null, loading: false, error: message(e), fetchedAt: had?.fetchedAt ?? 0 }
+        if (reads.get(link.key) !== mine) return
+        this.details[link.key] = { ...keep, loading: false, quiet: false, error: message(e) }
       }
+    },
+
+    /**
+     * Merge a pull request on GitHub as it was last read (GitHub refuses if its branch moved since),
+     * then read it again. Rejects with a message to show.
+     */
+    async merge(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, method: GhMergeMethod) {
+      const headSha = this.details[link.key]?.item?.headSha
+      if (!headSha) throw new Error('Read the pull request again before merging it.')
+      try {
+        await call('gh_merge', { path: projectPath, reference: link.url, method, headSha })
+      } catch (e) {
+        void this.load(link, projectPath, true, true)
+        throw new Error(message(e))
+      }
+      await this.load(link, projectPath, true)
     },
 
     /**
@@ -63,7 +100,7 @@ export const useLinks = defineStore('links', {
         throw new Error(message(e))
       }
       const link = linkFromItem(item, 'user')
-      this.details[link.key] = { item, loading: false, error: null, fetchedAt: Date.now() }
+      this.details[link.key] = { item, loading: false, quiet: false, error: null, fetchedAt: Date.now(), bodyAt: Date.now() }
       threads.link(chat.id, link)
       this.focused = link.key
       return link
