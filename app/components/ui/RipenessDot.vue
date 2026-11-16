@@ -5,7 +5,7 @@ import type { ThreadStatus } from '~/types/chat'
  * Mango's signature status mark: a small fruit whose colour and fill show how
  * ripe a thread is. archived and queued are hollow (grey, then unripe leaf green), running is
  * half-filled mango whose level breathes, waiting is full blush (needs you),
- * done is full gold, error is red.
+ * done is full lime, error is red.
  */
 type DotStatus = ThreadStatus | 'archived'
 const props = withDefaults(defineProps<{ status: DotStatus; size?: number; unseen?: boolean }>(), { size: 12, unseen: false })
