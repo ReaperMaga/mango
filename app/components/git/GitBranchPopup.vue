@@ -48,7 +48,7 @@ const messageLines = computed(() => resultLines(message.value?.text ?? ''))
 type Row = { key: string; kind: 'local'; b: GitLocalBranch } | { key: string; kind: 'remote'; b: GitRemoteBranch }
 
 /** The list, or a small form in its place. `target` is the branch the form acts on. */
-const view = ref<'list' | 'new' | 'rename' | 'delete'>('list')
+const view = ref<'list' | 'new' | 'rename' | 'delete' | 'clear'>('list')
 const target = ref<Row | null>(null)
 const nameInput = ref('')
 const nameField = ref<HTMLInputElement | null>(null)
@@ -101,8 +101,8 @@ type TreeNode =
   | { kind: 'folder'; key: string; name: string; depth: number; open: boolean }
   | { kind: 'branch'; key: string; label: string; depth: number; row: Row }
 
-/** Folded sections and folders, by key. Searching unfolds everything. */
-const folded = ref(new Set<string>())
+/** Folded sections and folders, by key. Searching unfolds everything. The sections start folded. */
+const folded = ref(new Set<string>(['local', 'remote']))
 function toggleFold(key: string) {
   const next = new Set(folded.value)
   next.has(key) ? next.delete(key) : next.add(key)
@@ -378,6 +378,55 @@ async function remove(force: boolean) {
   }
 }
 
+/* ---------- clearing local branches (git only) ---------- */
+
+/** Long-lived branches that clearing never touches, besides the current one. */
+const KEPT = new Set(['main', 'master', 'develop', 'trunk'])
+const clearable = computed(() => (list.value?.local ?? []).filter(b => !b.isCurrent && !KEPT.has(b.name)).map(b => b.name))
+const clearKept = computed(() => (list.value?.local ?? []).filter(b => b.isCurrent || KEPT.has(b.name)).map(b => b.name))
+/** Branches the last clear skipped because they hold unmerged commits: deleting them needs one more confirmation. */
+const clearUnmerged = ref<string[]>([])
+
+async function startClear() {
+  closeSub()
+  view.value = 'clear'
+  clearUnmerged.value = []
+  message.value = null
+  // Focus lands on Cancel, so Enter alone never deletes.
+  await nextTick()
+  pop.value?.querySelector<HTMLElement>('[data-cancel]')?.focus()
+}
+async function clearLocal(force: boolean) {
+  const names = force ? clearUnmerged.value : clearable.value
+  if (busy.value || !names.length) return
+  const deleted: string[] = []
+  const unmergedNames: string[] = []
+  const failed: string[] = []
+  await run('clear', async () => {
+    for (const name of names) {
+      try {
+        await call('git_branch_delete', { path: p(), branch: name, force })
+        deleted.push(name)
+      } catch (e) {
+        if (!force && /not fully merged/i.test(reason(e))) unmergedNames.push(name)
+        else failed.push(`${name}: ${reason(e)}`)
+      }
+    }
+  })
+  clearUnmerged.value = unmergedNames
+  const branches = (n: number) => `${n} ${n === 1 ? 'branch' : 'branches'}`
+  const done = deleted.length ? `Deleted ${branches(deleted.length)}. ` : ''
+  if (unmergedNames.length) {
+    const has = unmergedNames.length === 1 ? 'has' : 'have'
+    message.value = { error: true, text: `${done}${branches(unmergedNames.length)} ${has} commits not merged anywhere else.\n${unmergedNames.join('\n')}` }
+  } else if (failed.length) {
+    message.value = { error: true, text: `${done}${branches(failed.length)} could not be deleted.\n${failed.join('\n')}` }
+  } else {
+    await backToList()
+    message.value = { error: false, text: `Deleted ${branches(deleted.length)}.` }
+  }
+}
+
 /* ---------- keyboard ---------- */
 
 function activate(key: string) {
@@ -484,22 +533,34 @@ defineExpose({ show, close })
               <div v-if="actions.length && nodes.length" class="bp__sep" role="separator" />
 
               <template v-for="n in nodes" :key="n.key">
-                <button
-                  v-if="n.kind === 'section' || n.kind === 'folder'"
-                  type="button"
-                  class="bp__item bp__item--fold"
-                  :class="{ 'is-active': active === n.key, 'bp__item--section': n.kind === 'section' }"
-                  :style="n.kind === 'folder' ? { '--depth': n.depth } : undefined"
-                  :aria-expanded="n.open"
-                  :data-key="n.key"
-                  @mousemove="active = n.key"
-                  @click="closeSub(); toggleFold(n.key)"
-                >
-                  <component :is="n.open ? ChevronDown : ChevronRight" class="bp__caret" />
-                  <Folder v-if="n.kind === 'folder'" class="bp__folder" />
-                  <span class="bp__label" :class="{ 'bp__label--mono': n.kind === 'folder' }">{{ n.name }}</span>
-                  <span v-if="n.kind === 'section'" class="bp__count tabular">{{ n.count }}</span>
-                </button>
+                <div v-if="n.kind === 'section' || n.kind === 'folder'" class="bp__fold-row" :class="{ 'is-active': active === n.key }">
+                  <button
+                    type="button"
+                    class="bp__item bp__item--fold"
+                    :class="{ 'is-active': active === n.key, 'bp__item--section': n.kind === 'section' }"
+                    :style="n.kind === 'folder' ? { '--depth': n.depth } : undefined"
+                    :aria-expanded="n.open"
+                    :data-key="n.key"
+                    @mousemove="active = n.key"
+                    @click="closeSub(); toggleFold(n.key)"
+                  >
+                    <component :is="n.open ? ChevronDown : ChevronRight" class="bp__caret" />
+                    <Folder v-if="n.kind === 'folder'" class="bp__folder" />
+                    <span class="bp__label" :class="{ 'bp__label--mono': n.kind === 'folder' }">{{ n.name }}</span>
+                    <span v-if="n.kind === 'section'" class="bp__count tabular">{{ n.count }}</span>
+                  </button>
+                  <UiIconButton
+                    v-if="n.key === 'local' && terms.remotes && clearable.length"
+                    size="sm"
+                    class="bp__row-btn"
+                    label="Delete local branches…"
+                    :disabled="!!busy"
+                    @mousemove="active = n.key"
+                    @click="startClear"
+                  >
+                    <Trash2 />
+                  </UiIconButton>
+                </div>
                 <button
                   v-else
                   type="button"
@@ -563,6 +624,35 @@ defineExpose({ show, close })
             <div class="bp__form-actions">
               <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? 'Delete anyway' : 'Delete' }}</UiButton>
               <UiButton size="sm" variant="ghost" @click="backToList">Cancel</UiButton>
+            </div>
+          </div>
+
+          <div v-else-if="view === 'clear'" class="bp__form">
+            <template v-if="clearUnmerged.length">
+              <p class="bp__form-title">Delete {{ clearUnmerged.length === 1 ? 'it' : 'them' }} anyway?</p>
+              <p class="bp__hint">Their unmerged commits are lost for good.</p>
+            </template>
+            <template v-else>
+              <p class="bp__form-title">Delete {{ clearable.length }} local {{ clearable.length === 1 ? 'branch' : 'branches' }}?</p>
+              <ul class="bp__names">
+                <li v-for="name in clearable" :key="name" class="bp__mono">{{ name }}</li>
+              </ul>
+              <p class="bp__hint">
+                Remote branches stay. Branches with unmerged commits are skipped and listed.
+                <template v-if="clearKept.length">Kept: <span class="bp__mono">{{ clearKept.join(', ') }}</span>.</template>
+              </p>
+            </template>
+            <div class="bp__form-actions">
+              <UiButton
+                size="sm"
+                variant="danger"
+                :loading="busy === 'clear'"
+                :disabled="!(clearUnmerged.length || clearable.length)"
+                @click="clearLocal(clearUnmerged.length > 0)"
+              >
+                {{ clearUnmerged.length ? `Delete ${clearUnmerged.length} anyway` : `Delete ${clearable.length}` }}
+              </UiButton>
+              <UiButton size="sm" variant="ghost" data-cancel @click="backToList">{{ clearUnmerged.length ? 'Keep them' : 'Cancel' }}</UiButton>
             </div>
           </div>
 
@@ -713,6 +803,11 @@ defineExpose({ show, close })
 .bp__label--mono, .bp__mono { font-family: var(--font-mono); font-size: var(--text-xs); }
 .bp__n { flex: none; padding: 0 5px; border-radius: var(--radius-pill); background: var(--bg-active); font-size: var(--text-2xs); color: var(--fg); }
 
+.bp__fold-row { position: relative; display: flex; align-items: center; }
+.bp__fold-row .bp__row-btn { position: absolute; right: 4px; opacity: 0; }
+.bp__fold-row:hover .bp__row-btn, .bp__fold-row.is-active .bp__row-btn, .bp__row-btn:focus-visible { opacity: 1; }
+.bp__fold-row:has(.bp__row-btn) .bp__item--fold { padding-right: 32px; }
+.bp__fold-row .bp__row-btn:hover:not(:disabled) { color: var(--ripe-error-fg); }
 .bp__item--fold { min-height: 28px; color: var(--fg-muted); }
 .bp__item--section { font-weight: 560; }
 .bp__caret { width: 13px; height: 13px; flex: none; stroke-width: 2; color: var(--fg-faint); }
@@ -762,6 +857,18 @@ defineExpose({ show, close })
 }
 .bp__input:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
 .bp__hint { margin: 0; font-size: var(--text-xs); color: var(--fg-subtle); }
+.bp__names {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  max-height: 160px;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--fg-muted);
+}
+.bp__names li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }
 .bp__form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
 
 .bp__msg {
