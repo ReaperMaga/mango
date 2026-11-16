@@ -176,6 +176,13 @@ export interface FsListing {
   truncated: boolean
 }
 
+export interface FileBytes {
+  /** The whole file, base64. */
+  data: string
+  size: number
+  modifiedMs: number
+}
+
 export interface FileContent {
   /** The file as text; null when it is binary or too large to open. */
   text: string | null
@@ -336,6 +343,8 @@ export interface Commands {
   /** One folder of a project (`dir` "" for the top). */
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]
+  /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
+  fs_read_bytes: [{ root: string; file: string }, FileBytes]
   /**
    * Overwrite an existing file (never creates one). With `expectedModifiedMs`, a file that
    * changed on disk since then is left alone and `saved` is false; null writes regardless.

@@ -274,7 +274,7 @@ function onListKey(e: KeyboardEvent) {
 </script>
 
 <template>
-  <!-- Shown inside the left sidebar (see AppSidebar), which owns width and resizing. -->
+  <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <section class="gp" aria-label="Changes">
     <header class="gp__head">
       <h2 class="gp__title">Changes</h2>

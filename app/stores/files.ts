@@ -4,6 +4,7 @@ import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { disposeEditorModel, editorModel } from '~/utils/editorModels'
+import { imageKind, imageMime } from '~/utils/imageFiles'
 
 /**
  * The Files view and the editor tabs it opens. The tree is read one folder at
@@ -51,6 +52,10 @@ export interface OpenFile {
   conflict: boolean
   /** A close was asked for while dirty: the pane asks to save first. */
   closing: boolean
+  /** A picture (PNG, JPEG, …) as a data URL, read instead of text; null for everything else. */
+  image: string | null
+  /** An SVG shows as a picture or as its source. */
+  view: 'preview' | 'code'
 }
 
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
@@ -172,6 +177,7 @@ export const useFiles = defineStore('files', {
         this.open[id] = {
           projectPath, file, loading: true, error: null, binary: false, tooLarge: false, size: 0, bom: false,
           disk: null, modifiedMs: 0, version: 0, dirty: false, saving: false, saveError: null, conflict: false, closing: false,
+          image: null, view: 'preview',
         }
         void this.read(id)
       }
@@ -197,6 +203,15 @@ export const useFiles = defineStore('files', {
       if (!f) return
       f.loading = true
       try {
+        if (imageKind(f.file) === 'raster') {
+          const b = await call('fs_read_bytes', { root: f.projectPath, file: f.file })
+          Object.assign(f, {
+            error: null, binary: false, tooLarge: false, size: b.size, bom: false, disk: null,
+            image: `data:${imageMime(f.file)};base64,${b.data}`, modifiedMs: b.modifiedMs, dirty: false, conflict: false, saveError: null,
+          })
+          f.version++
+          return
+        }
         const c = await call('fs_read_file', { root: f.projectPath, file: f.file })
         Object.assign(f, {
           error: null, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom,
@@ -213,7 +228,18 @@ export const useFiles = defineStore('files', {
     /** Has the file changed on disk? Reload a clean one; flag a dirty one. */
     async recheck(tabId: string) {
       const f = this.open[tabId]
-      if (!f || f.loading || f.saving || f.disk === null && !f.error) return
+      if (!f || f.loading || f.saving || f.disk === null && !f.image && !f.error) return
+      if (imageKind(f.file) === 'raster') {
+        try {
+          const b = await call('fs_read_bytes', { root: f.projectPath, file: f.file })
+          if (b.modifiedMs === f.modifiedMs && !f.error) return
+          Object.assign(f, { error: null, size: b.size, modifiedMs: b.modifiedMs, image: `data:${imageMime(f.file)};base64,${b.data}` })
+          f.version++
+        } catch (e) {
+          f.error = reason(e)
+        }
+        return
+      }
       try {
         const c = await call('fs_read_file', { root: f.projectPath, file: f.file })
         if (c.modifiedMs === f.modifiedMs && !f.error) return
@@ -285,6 +311,12 @@ export const useFiles = defineStore('files', {
       disposeEditorModel(tabId)
       const p = parseFileTab(tabId)
       if (p && this.preview[p.projectPath] === tabId) this.preview[p.projectPath] = null
+    },
+
+    /** Show an SVG as a picture or as its source. */
+    setView(tabId: string, view: 'preview' | 'code') {
+      const f = this.open[tabId]
+      if (f) f.view = view
     },
 
     /** The pane's "save before closing?" bar. */

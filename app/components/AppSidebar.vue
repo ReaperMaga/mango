@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, Files, GitBranch, MessagesSquare, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronRight, CircleCheck, CircleDot, MessageSquarePlus, MoreHorizontal, Plus, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
-import { useGit, refreshGit } from '~/stores/git'
 import type { MenuItem } from '~/types/ui'
 
 const ws = useWorkspace()
@@ -15,19 +14,7 @@ const now = useNow()
 const mod = ref('Ctrl')
 onMounted(() => (mod.value = modLabel()))
 
-/* ---------- views: threads | changes ---------- */
-const git = useGit()
-/** Number of changed files in the active project, shown on the Changes tab. */
-const changeCount = computed(() => git.status(ws.activeProjectPath)?.files.length ?? 0)
-// Keep that number honest without the Changes view being open.
-watch(() => ws.activeProjectPath, (path) => { if (path) refreshGit(path).catch(() => {}) }, { immediate: true })
-function onWindowFocus() { if (ws.activeProjectPath) refreshGit(ws.activeProjectPath).catch(() => {}) }
-onMounted(() => window.addEventListener('focus', onWindowFocus))
-onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
-
-/** Source control and the file tree need more room than a thread list. */
-const width = computed(() => (ws.sidebarView === 'threads' ? ws.sidebarWidth : Math.max(ws.sidebarWidth, 320)))
-const viewLabel = computed(() => ({ threads: 'Threads', files: 'Files', changes: 'Changes' })[ws.sidebarView])
+const width = computed(() => ws.sidebarWidth)
 
 /**
  * The sidebar lists the chats of the project chosen in the titlebar, grouped by
@@ -219,51 +206,7 @@ const agentsNeedingAttention = computed(() => {
 </script>
 
 <template>
-  <aside class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" :aria-label="viewLabel">
-    <div class="sb__views" role="tablist" aria-label="Sidebar view">
-      <button
-        type="button"
-        class="sb__view"
-        :class="{ 'is-active': ws.sidebarView === 'threads' }"
-        role="tab"
-        :aria-selected="ws.sidebarView === 'threads'"
-        aria-label="Threads"
-        title="Threads"
-        @click="ws.setSidebarView('threads')"
-      >
-        <MessagesSquare />
-      </button>
-      <button
-        type="button"
-        class="sb__view"
-        :class="{ 'is-active': ws.sidebarView === 'files' }"
-        role="tab"
-        :aria-selected="ws.sidebarView === 'files'"
-        aria-label="Files"
-        :title="`Files (${mod}+Shift+E)`"
-        @click="ws.setSidebarView('files')"
-      >
-        <Files />
-      </button>
-      <button
-        type="button"
-        class="sb__view"
-        :class="{ 'is-active': ws.sidebarView === 'changes' }"
-        role="tab"
-        :aria-selected="ws.sidebarView === 'changes'"
-        :aria-label="changeCount ? `Changes, ${changeCount} changed file${changeCount === 1 ? '' : 's'}` : 'Changes'"
-        :title="`Changes (${mod}+Shift+G)`"
-        @click="ws.setSidebarView('changes')"
-      >
-        <GitBranch />
-        <span v-if="changeCount" class="sb__view-count tabular" aria-hidden="true">{{ changeCount > 99 ? '99+' : changeCount }}</span>
-      </button>
-    </div>
-
-    <GitPanel v-if="ws.sidebarView === 'changes'" />
-    <FilesPanel v-else-if="ws.sidebarView === 'files'" />
-
-    <template v-else>
+  <aside class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" aria-label="Threads">
     <div class="sb__top">
       <button type="button" class="sb__new" @click="newChat()">
         <MessageSquarePlus />
@@ -369,7 +312,6 @@ const agentsNeedingAttention = computed(() => {
         </ul>
       </section>
     </nav>
-    </template>
 
     <footer class="sb__foot">
       <button type="button" class="sb__settings" :title="`Settings (${mod}+,)`" @click="ws.openSettings()">
@@ -388,7 +330,7 @@ const agentsNeedingAttention = computed(() => {
       @pointermove="onResize"
       @pointerup="endResize"
       @pointercancel="endResize"
-      @dblclick="ws.setSidebarWidth(ws.sidebarView === 'threads' ? 264 : 320); ws.persist()"
+      @dblclick="ws.setSidebarWidth(264); ws.persist()"
     />
   </aside>
 </template>
@@ -402,44 +344,7 @@ const agentsNeedingAttention = computed(() => {
   min-height: 0;
   background: var(--bg-app);
 }
-.sb__views {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  height: 32px;
-  padding: 0 var(--space-2) 0 var(--space-3);
-}
-.sb__view {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 30px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.sb__view svg { width: 17px; height: 17px; stroke-width: 1.75; }
-.sb__view:hover { background: var(--bg-hover); color: var(--fg-muted); }
-.sb__view.is-active { background: var(--bg-active); color: var(--fg); }
-.sb__view-count {
-  position: absolute;
-  top: 1px;
-  right: 0;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: 9.5px;
-  font-weight: 650;
-  line-height: 14px;
-  text-align: center;
-}
-
-.sb__top { padding: var(--space-1) var(--space-2) var(--space-2) var(--space-3); }
+.sb__top { padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
 .sb__new {
   display: flex;
   align-items: center;

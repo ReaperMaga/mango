@@ -1,4 +1,4 @@
-import type { FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
@@ -25,7 +25,7 @@ const SEED: Record<string, string | null> = {
   'app/utils/paths.ts': "/** Last segment of a path, either separator. */\nexport const baseName = (p: string) => p.replace(/[\\\\/]+$/, '').split(/[\\\\/]/).pop() || p\n",
   'app/assets/css/tokens.css': ':root {\n  --font-ui: \'Inter Variable\', ui-sans-serif, system-ui, sans-serif;\n  --font-mono: \'JetBrains Mono Variable\', ui-monospace, monospace;\n  --radius-sm: 6px;\n}\n',
   'app/components/AppWorkspace.vue': '<template>\n  <div class="workspace">\n    <AppSidebar />\n    <ChatArea />\n  </div>\n</template>\n\n<style scoped>\n.workspace { display: flex; flex: 1; min-height: 0; }\n</style>\n',
-  'public/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#f5a524"/></svg>\n',
+  'public/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n  <rect width="64" height="64" rx="14" fill="#f5a524"/>\n  <path d="M18 46V20l14 16 14-16v26" fill="none" stroke="#1d1a14" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>\n  <circle cx="48" cy="16" r="5" fill="#7fb24a"/>\n</svg>\n',
   'public/changes-panel.png': null,
   'scripts/try-agent.ts': "// Drive an agent adapter against the real CLI, outside the app.\nconst [agent, cwd, prompt] = process.argv.slice(2)\nconsole.log({ agent, cwd, prompt })\n",
   'src-tauri/Cargo.toml': '[package]\nname = "mango"\nversion = "0.1.1"\nedition = "2021"\n\n[dependencies]\ntauri = { version = "2", features = [] }\nserde = { version = "1", features = ["derive"] }\n',
@@ -83,6 +83,43 @@ function readFile(root: string, file: string): FileContent {
   return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs }
 }
 
+/** A picture for a binary image in the seed tree, drawn once per file. */
+const pictures = new Map<string, string>()
+function picture(file: string): string {
+  let data = pictures.get(file)
+  if (!data) {
+    const c = document.createElement('canvas')
+    c.width = 640
+    c.height = 400
+    const g = c.getContext('2d')!
+    const sky = g.createLinearGradient(0, 0, 0, 400)
+    sky.addColorStop(0, '#2b3a2f')
+    sky.addColorStop(1, '#f5a524')
+    g.fillStyle = sky
+    g.fillRect(0, 0, 640, 400)
+    g.fillStyle = '#f7c948'
+    g.beginPath(); g.arc(470, 150, 64, 0, Math.PI * 2); g.fill()
+    g.fillStyle = '#1d2a21'
+    g.beginPath(); g.moveTo(0, 400); g.lineTo(180, 230); g.lineTo(330, 330); g.lineTo(460, 250); g.lineTo(640, 400); g.fill()
+    data = c.toDataURL('image/png').split(',')[1]!
+    pictures.set(file, data)
+  }
+  return data
+}
+
+function readBytes(root: string, file: string): FileBytes {
+  const f = filesOf(root).get(clean(file))
+  if (!f) throw new Error(`${file} no longer exists`)
+  if (f.text !== null) {
+    const bytes = new TextEncoder().encode(f.text)
+    let bin = ''
+    for (const b of bytes) bin += String.fromCharCode(b)
+    return { data: btoa(bin), size: bytes.length, modifiedMs: f.modifiedMs }
+  }
+  const data = picture(file)
+  return { data, size: Math.floor(data.length * 3 / 4), modifiedMs: f.modifiedMs }
+}
+
 function writeFile(root: string, file: string, text: string, expected: number | null): WriteResult {
   const f = filesOf(root).get(clean(file))
   if (!f) throw new Error(`Could not save ${file}: it no longer exists`)
@@ -97,6 +134,7 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
   switch (cmd) {
     case 'fs_list_dir': return listDir(args.root, args.dir)
     case 'fs_read_file': return readFile(args.root, args.file)
+    case 'fs_read_bytes': return readBytes(args.root, args.file)
     case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
   }
   throw new Error(`mock: unknown command ${cmd}`)
