@@ -609,12 +609,18 @@ impl At {
 
 impl EnvAt {
     /// The command line for the master (or a joined environment) running `argv` here.
-    fn remote(&self, env: &[(String, String)], argv: &[String]) -> Result<Vec<String>, String> {
-        ssh::in_instance(&self.host, &self.instance, Mode::Batch, &ssh::as_agent(Some(&self.dir), env, argv))
+    fn remote(&self, login: bool, env: &[(String, String)], argv: &[String]) -> Result<Vec<String>, String> {
+        let inner = if login {
+            ssh::as_agent(Some(&self.dir), env, argv)
+        } else {
+            ssh::as_agent_plain(Some(&self.dir), env, argv)
+        };
+        ssh::in_instance(&self.host, &self.instance, Mode::Batch, &inner)
     }
 
-    /// Run `argv` as the agent user in this folder. A connection or environment problem
-    /// is an error; anything else is the command's own result, as for a local process.
+    /// Run `argv` as the agent user in this folder, in a login shell (git hooks and
+    /// credential helpers may need what the profile sets up). A connection or environment
+    /// problem is an error; anything else is the command's own result, as for a local process.
     pub(crate) fn run(
         &self,
         env: &[(String, String)],
@@ -623,7 +629,32 @@ impl EnvAt {
         cap: usize,
         timeout: Duration,
     ) -> Result<Output, String> {
-        let cmd = ssh::command(&ssh::argv(&self.host, Mode::Batch, &self.remote(env, argv)?)?);
+        self.exec(true, env, argv, stdin, cap, timeout)
+    }
+
+    /// [`EnvAt::run`] without the login shell (`ssh::as_agent_plain`): for reads and fixed
+    /// scripts that need nothing from the user's profile, and run often.
+    pub(crate) fn run_plain(
+        &self,
+        env: &[(String, String)],
+        argv: &[String],
+        stdin: Option<Vec<u8>>,
+        cap: usize,
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        self.exec(false, env, argv, stdin, cap, timeout)
+    }
+
+    fn exec(
+        &self,
+        login: bool,
+        env: &[(String, String)],
+        argv: &[String],
+        stdin: Option<Vec<u8>>,
+        cap: usize,
+        timeout: Duration,
+    ) -> Result<Output, String> {
+        let cmd = ssh::command(&ssh::shared_argv(&self.host, &self.remote(login, env, argv)?)?);
         let out = run_process(cmd, stdin, cap, timeout, "ssh", "ssh was not found. Install the OpenSSH client.")?;
         if out.ok() {
             return Ok(out);
@@ -640,20 +671,28 @@ impl EnvAt {
         if let Some(line) = stderr.lines().find(|l| l.starts_with("Mango: the folder ")) {
             return Err(format!("The folder {}", &line["Mango: the folder ".len()..]));
         }
-        if out.code == Some(127) && (stderr.contains("git: command not found") || stderr.contains("git: not found")) {
-            return Err(format!(
-                "git is not installed in {}. Install it there (for example `sudo apt install git` in its terminal), then try again.",
-                self.instance
-            ));
+        if let Some(missing) = self.git_missing(&out) {
+            return Err(missing);
         }
         Ok(out)
+    }
+
+    /// The message for a command that failed because git isn't installed here.
+    fn git_missing(&self, out: &Output) -> Option<String> {
+        let stderr = lossy(&out.stderr);
+        (out.code == Some(127) && (stderr.contains("git: command not found") || stderr.contains("git: not found") || stderr.contains("'git': No such file"))).then(|| {
+            format!(
+                "git is not installed in {}. Install it there (for example `sudo apt install git` in its terminal), then try again.",
+                self.instance
+            )
+        })
     }
 
     /// Run a fixed `sh` script in this folder; `args` are its `$1`, `$2`, ….
     fn sh(&self, script: &str, args: &[&str]) -> Result<Output, String> {
         let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
         argv.extend(args.iter().map(|a| a.to_string()));
-        self.run(&[], &argv, None, usize::MAX, LOCAL_TIMEOUT)
+        self.run_plain(&[], &argv, None, usize::MAX, LOCAL_TIMEOUT)
     }
 }
 
@@ -680,6 +719,8 @@ struct Git<'a> {
     stdin: Option<Vec<u8>>,
     cap: usize,
     timeout: Duration,
+    /// In an environment, start git from a login shell (see `EnvAt::run`). Off for reads.
+    login: bool,
 }
 
 /// A git invocation in `at` that can never wait for a terminal.
@@ -696,6 +737,7 @@ fn git(at: &At) -> Git<'_> {
         stdin: None,
         cap: usize::MAX,
         timeout: LOCAL_TIMEOUT,
+        login: true,
     }
 }
 
@@ -713,9 +755,11 @@ impl Git<'_> {
         self
     }
     /// For commands that only look: don't take the index lock, so polling
-    /// never collides with the user's (or an agent's) own git.
+    /// never collides with the user's (or an agent's) own git. In an environment they
+    /// also skip the login shell: they run on every refresh and run no hooks.
     fn read_only(mut self) -> Self {
         self.env.push(("GIT_OPTIONAL_LOCKS", "0"));
+        self.login = false;
         self
     }
     fn slow(mut self) -> Self {
@@ -752,7 +796,11 @@ impl Git<'_> {
                 let env: Vec<(String, String)> = self.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
                 let mut argv = vec!["git".to_string()];
                 argv.extend(self.args);
-                e.run(&env, &argv, self.stdin, self.cap, self.timeout)
+                if self.login {
+                    e.run(&env, &argv, self.stdin, self.cap, self.timeout)
+                } else {
+                    e.run_plain(&env, &argv, self.stdin, self.cap, self.timeout)
+                }
             }
         }
     }
@@ -766,6 +814,88 @@ impl Git<'_> {
             Err(out.error(what))
         }
     }
+}
+
+/// Run `cmds` (all in the same place, none with stdin) and return each one's output, in
+/// order; a failing command doesn't stop the ones after it. In an environment they go
+/// together, one after another, in a single SSH call ([`BATCH`]) instead of one each.
+fn run_all(cmds: Vec<Git<'_>>) -> Result<Vec<Output>, String> {
+    let Some(At::Env(e)) = cmds.first().map(|c| c.at) else {
+        return cmds.into_iter().map(Git::run).collect();
+    };
+    let login = cmds.iter().any(|c| c.login);
+    let timeout = cmds.iter().map(|c| c.timeout).max().unwrap_or(LOCAL_TIMEOUT);
+    let mut argv: Vec<String> = ["bash", "-c", BATCH, "mango"].map(String::from).to_vec();
+    let mut caps = Vec::new();
+    for c in &cmds {
+        debug_assert!(c.stdin.is_none() && matches!(c.at, At::Env(o) if o.dir == e.dir));
+        let mut one: Vec<String> = vec!["env".into()];
+        one.extend(c.env.iter().map(|(k, v)| format!("{k}={v}")));
+        one.push("git".into());
+        one.extend(c.args.iter().cloned());
+        let cap = c.cap.min(1 << 40);
+        argv.extend([one.len().to_string(), cap.to_string()]);
+        argv.extend(one);
+        caps.push(cap);
+    }
+    let out = if login {
+        e.run(&[], &argv, None, usize::MAX, timeout)?
+    } else {
+        e.run_plain(&[], &argv, None, usize::MAX, timeout)?
+    };
+    let outs = parse_batch(&out.stdout, &caps).ok_or_else(|| out.error("git"))?;
+    if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
+        return Err(missing);
+    }
+    Ok(outs)
+}
+
+/// `bash` script (in an environment's work tree) behind [`run_all`]. Its arguments are, per
+/// command, the number of words, the most stdout to send back, then the words. Each command
+/// prints a header (`MANGO-RUN <exit code> <stdout bytes> <stderr bytes>`), its stdout up
+/// to the cap, then its stderr. It all goes out in one write at the end: sshd sends small
+/// writes of a session without a terminal one round trip apart (Nagle), so piece by piece
+/// costs a round trip each.
+const BATCH: &str = r#"d=$(mktemp -d) || exit 1
+trap 'rm -rf -- "$d"' EXIT
+while [ "$#" -gt 0 ]; do
+  n=$1 cap=$2
+  shift 2
+  "${@:1:$n}" >"$d/o" 2>"$d/e" </dev/null
+  c=$?
+  shift "$n"
+  {
+    printf 'MANGO-RUN %s %s %s\n' "$c" $(wc -c <"$d/o") $(wc -c <"$d/e")
+    head -c "$cap" "$d/o"
+    cat "$d/e"
+  } >>"$d/all"
+done
+cat "$d/all""#;
+
+/// The outputs [`BATCH`] printed, one per cap; `None` when they aren't all there.
+fn parse_batch(stdout: &[u8], caps: &[usize]) -> Option<Vec<Output>> {
+    const HEAD: &[u8] = b"MANGO-RUN ";
+    // A login shell's profile may print something first.
+    let mut at = stdout.windows(HEAD.len()).position(|w| w == HEAD)?;
+    let mut outs = Vec::with_capacity(caps.len());
+    for &cap in caps {
+        let rest = stdout.get(at..)?.strip_prefix(HEAD)?;
+        let nl = rest.iter().position(|b| *b == b'\n')?;
+        let mut fields = std::str::from_utf8(&rest[..nl]).ok()?.split_whitespace();
+        let code: i32 = fields.next()?.parse().ok()?;
+        let out_len: usize = fields.next()?.parse().ok()?;
+        let err_len: usize = fields.next()?.parse().ok()?;
+        let kept = out_len.min(cap);
+        let body = rest.get(nl + 1..nl + 1 + kept + err_len)?;
+        outs.push(Output {
+            code: Some(code),
+            stdout: body[..kept].to_vec(),
+            stderr: body[kept..].to_vec(),
+            truncated: out_len > cap,
+        });
+        at += HEAD.len() + nl + 1 + kept + err_len;
+    }
+    Some(outs)
 }
 
 pub(crate) async fn blocking<T, F>(f: F) -> Result<T, String>
@@ -796,10 +926,15 @@ pub(crate) fn existing_dir(path: &str) -> Result<PathBuf, String> {
 /// The work tree containing `dir` and the short hash of its HEAD (when it
 /// has a commit). `None` when `dir` is not inside a work tree.
 fn locate(dir: &At) -> Result<Option<(String, Option<String>)>, String> {
-    let out = git(dir)
-        .read_only()
-        .args(["rev-parse", "--show-toplevel", "--short", "HEAD"])
-        .run()?;
+    located(&locate_cmd(dir).run()?)
+}
+
+fn locate_cmd(dir: &At) -> Git<'_> {
+    git(dir).read_only().args(["rev-parse", "--show-toplevel", "--short", "HEAD"])
+}
+
+/// What [`locate_cmd`] found.
+fn located(out: &Output) -> Result<Option<(String, Option<String>)>, String> {
     let text = out.text();
     let mut lines = text.lines();
     let Some(root) = lines.next().filter(|l| !l.is_empty()) else {
@@ -835,21 +970,20 @@ fn require_root(at: &At) -> Result<At, String> {
 }
 
 fn read_status(dir: &At, untracked: bool) -> Result<ParsedStatus, String> {
-    let out = git(dir)
+    let out = status_cmd(dir, untracked).run_ok("git status")?;
+    Ok(parse_status(&out.stdout))
+}
+
+fn status_cmd(dir: &At, untracked: bool) -> Git<'_> {
+    git(dir)
         .read_only()
         .args(["status", "--porcelain=v2", "--branch", "-z"])
         // Every untracked file, not just its folder: each one is a row with a diff.
         .arg(if untracked { "--untracked-files=all" } else { "--untracked-files=no" })
-        .run_ok("git status")?;
-    Ok(parse_status(&out.stdout))
 }
 
-fn has_head(root: &At) -> Result<bool, String> {
-    Ok(git(root)
-        .read_only()
-        .args(["rev-parse", "-q", "--verify", "HEAD^{commit}"])
-        .run()?
-        .ok())
+fn has_head_cmd(root: &At) -> Git<'_> {
+    git(root).read_only().args(["rev-parse", "-q", "--verify", "HEAD^{commit}"])
 }
 
 /// Which of `paths` (relative to `dir`, forward slashes) git ignores. Empty
@@ -881,12 +1015,18 @@ pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
 
 pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
     at.check()?;
-    let found = locate(at)?;
+    // Both at once: one round trip to an environment. Outside a work tree status just fails.
+    let [where_, status]: [Output; 2] =
+        run_all(vec![locate_cmd(at), status_cmd(at, true)])?.try_into().map_err(|_| "git gave no answer")?;
+    let found = located(&where_)?;
     remember_root(at, found.as_ref().map(|(root, _)| root.as_str()));
     let Some((root, head)) = found else {
         return Ok(GitStatus::default());
     };
-    let parsed = read_status(at, true)?;
+    if !status.ok() {
+        return Err(status.error("git status"));
+    }
+    let parsed = parse_status(&status.stdout);
     Ok(GitStatus {
         vcs: Vcs::Git,
         repository: None,
@@ -912,54 +1052,60 @@ pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
 pub(crate) fn diff_of(at: &At, file: &str, staged: bool) -> Result<String, String> {
     let root = require_root(at)?;
     let file = clean_rel(file)?;
-    let diff = |paths: &[&str]| -> Result<String, String> {
-        let mut cmd = git(&root)
-            .read_only()
-            .cap(DIFF_CAP)
-            .args(["diff", "--no-color", "--no-ext-diff", "-M"]);
-        if staged {
-            cmd = cmd.arg("--cached");
-        }
-        let out = cmd.arg("--").args(paths).run()?;
+    let diff_cmd = |paths: &[&str]| {
+        let cmd = git(&root).read_only().cap(DIFF_CAP).args(["diff", "--no-color", "--no-ext-diff", "-M"]);
+        let cmd = if staged { cmd.arg("--cached") } else { cmd };
+        cmd.arg("--").args(paths.iter().copied())
+    };
+    let diff_text = |out: Output| -> Result<String, String> {
         // A capped diff ends git with a broken pipe; that is still a result.
         if !out.ok() && !out.truncated {
             return Err(out.error("git diff"));
         }
         Ok(finish_diff(out.stdout, out.truncated))
     };
+    let diff = |paths: &[&str]| diff_text(diff_cmd(paths).run()?);
+    let tracked_cmd = || git(&root).read_only().args(["ls-files", "-z", "--"]).arg(file);
 
-    let text = diff(&[file])?;
-    if staged {
-        // A staged rename limited to its new path looks like a brand-new
-        // file; ask for both sides so only the real edits show.
-        if is_new_file_diff(&text) {
-            let renames = git(&root)
-                .read_only()
-                .args(["diff", "--cached", "-M", "--name-status", "-z", "--diff-filter=R"])
-                .run()?;
-            if let Some(old) = renames.ok().then(|| rename_source(&renames.stdout, file)).flatten() {
-                return diff(&[old.as_str(), file]);
-            }
+    if !staged {
+        // Whether the file is tracked only matters when there's no diff, but asking right
+        // away saves a second round trip to an environment.
+        let [out, tracked]: [Output; 2] =
+            run_all(vec![diff_cmd(&[file]), tracked_cmd()])?.try_into().map_err(|_| "git gave no answer")?;
+        let text = diff_text(out)?;
+        if !text.is_empty() {
+            return Ok(text);
         }
-        return Ok(text);
+        // Nothing against the index: either unchanged or not tracked at all.
+        if !tracked.ok() {
+            return Err(tracked.error("git ls-files"));
+        }
+        if !tracked.stdout.is_empty() {
+            return Ok(String::new());
+        }
+        return untracked_diff(&root, file);
     }
-    if !text.is_empty() {
-        return Ok(text);
+    let text = diff(&[file])?;
+    // A staged rename limited to its new path looks like a brand-new
+    // file; ask for both sides so only the real edits show.
+    if is_new_file_diff(&text) {
+        let renames = git(&root)
+            .read_only()
+            .args(["diff", "--cached", "-M", "--name-status", "-z", "--diff-filter=R"])
+            .run()?;
+        if let Some(old) = renames.ok().then(|| rename_source(&renames.stdout, file)).flatten() {
+            return diff(&[old.as_str(), file]);
+        }
     }
+    Ok(text)
+}
 
-    // Nothing against the index: either unchanged or not tracked at all.
-    let tracked = git(&root)
-        .read_only()
-        .args(["ls-files", "-z", "--"])
-        .arg(file)
-        .run_ok("git ls-files")?;
-    if !tracked.stdout.is_empty() {
+/// An untracked file as an added one.
+fn untracked_diff(root: &At, file: &str) -> Result<String, String> {
+    if !matches!(entry(root, file), Ok(Entry::File)) {
         return Ok(String::new());
     }
-    if !matches!(entry(&root, file), Ok(Entry::File)) {
-        return Ok(String::new());
-    }
-    let out = git(&root)
+    let out = git(root)
         .read_only()
         .cap(DIFF_CAP)
         .args(["diff", "--no-color", "--no-ext-diff", "--no-index", "--", "/dev/null"])
@@ -1533,29 +1679,34 @@ pub(crate) fn push(at: &At) -> Result<String, String> {
 
 pub(crate) fn log(at: &At, limit: u32) -> Result<Vec<GitCommit>, String> {
     let root = require_root(at)?;
-    if !has_head(&root)? {
-        return Ok(Vec::new());
-    }
-    let out = git(&root)
+    let log = git(&root)
         .read_only()
         .args(["log", "--no-show-signature", "--no-color"])
         .arg(format!("--max-count={}", limit.clamp(1, 500)))
-        .arg("--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ct%x1e")
-        .run_ok("git log")?;
+        .arg("--pretty=format:%H%x1f%h%x1f%s%x1f%an%x1f%ct%x1e");
+    // Together: one round trip to an environment. On an unborn branch the log just fails.
+    let [head, out]: [Output; 2] = run_all(vec![has_head_cmd(&root), log])?.try_into().map_err(|_| "git gave no answer")?;
+    if !head.ok() {
+        return Ok(Vec::new());
+    }
+    if !out.ok() {
+        return Err(out.error("git log"));
+    }
     Ok(parse_log(&out.text()))
 }
 
 pub(crate) fn branches(at: &At) -> Result<GitBranches, String> {
     let root = require_root(at)?;
-    let head = git(&root)
-        .read_only()
-        .args(["symbolic-ref", "-q", "--short", "HEAD"])
-        .run()?;
+    let [head, out]: [Output; 2] = run_all(vec![
+        git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]),
+        git(&root).read_only().args(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"]),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
     let current = Some(head.line()).filter(|b| head.ok() && !b.is_empty());
-    let out = git(&root)
-        .read_only()
-        .args(["for-each-ref", "--format=%(refname:lstrip=2)", "refs/heads"])
-        .run_ok("git for-each-ref")?;
+    if !out.ok() {
+        return Err(out.error("git for-each-ref"));
+    }
     let mut local: Vec<String> =
         out.text().lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
     // A branch with no commits yet has no ref, but it is still where you are.
@@ -1775,6 +1926,41 @@ pub(crate) fn init(at: &At) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The batch script, run by a local bash, and its output read back.
+    #[cfg(unix)]
+    #[test]
+    fn batch_script_round_trip() {
+        let cmds: Vec<(Vec<&str>, usize)> = vec![
+            (vec!["printf", "a\\nb"], 100),
+            (vec!["sh", "-c", "printf 'MANGO-RUN 9 9 9\\n'; echo oops >&2; exit 3"], 100),
+            (vec!["printf", "%s", "0123456789"], 4),
+            (vec!["true"], 100),
+            (vec!["printf", "\\000\\377 x"], 100),
+        ];
+        let mut cmd = Command::new("bash");
+        cmd.args(["-c", BATCH, "mango"]);
+        for (argv, cap) in &cmds {
+            cmd.args([argv.len().to_string(), cap.to_string()]).args(argv);
+        }
+        let out = cmd.output().unwrap();
+        let caps: Vec<usize> = cmds.iter().map(|c| c.1).collect();
+        // Something a profile printed first is skipped.
+        let mut noisy = b"welcome\n".to_vec();
+        noisy.extend(&out.stdout);
+        let got = parse_batch(&noisy, &caps).expect("parsed");
+        assert_eq!(got.len(), 5);
+        assert_eq!((got[0].code, got[0].stdout.as_slice(), got[0].truncated), (Some(0), &b"a\nb"[..], false));
+        assert_eq!(got[1].code, Some(3));
+        assert_eq!(got[1].stdout, b"MANGO-RUN 9 9 9\n");
+        assert_eq!(got[1].stderr, b"oops\n");
+        assert_eq!((got[2].stdout.as_slice(), got[2].truncated), (&b"0123"[..], true));
+        assert_eq!((got[3].code, got[3].stdout.len(), got[3].stderr.len()), (Some(0), 0, 0));
+        assert_eq!(got[4].stdout, b"\0\xff x");
+        // A cut-off answer is not a result.
+        assert!(parse_batch(&out.stdout[..out.stdout.len() - 1], &caps).is_none());
+        assert!(parse_batch(b"", &caps).is_none());
+    }
 
     /// Branch operations against a real repository with a real remote.
     #[test]
@@ -2117,8 +2303,11 @@ mod tests {
         let env: Vec<(String, String)> = cmd.env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         let mut argv = vec!["git".to_string()];
         argv.extend(cmd.args.iter().cloned());
-        let line = ssh::line(&e.remote(&env, &argv).unwrap());
+        let line = ssh::line(&e.remote(cmd.login, &env, &argv).unwrap());
         assert!(line.starts_with("incus exec dev -T -- runuser -u agent -- env HOME=/home/agent"), "{line}");
+        // A read skips the login shell; anything else keeps it (hooks, credential helpers).
+        assert!(!cmd.login && line.contains(" bash -c ") && !line.contains(" -lc "), "{line}");
+        assert!(git(&root).args(["commit"]).login);
         for part in ["GIT_TERMINAL_PROMPT=0", "GIT_LITERAL_PATHSPECS=1", "GIT_OPTIONAL_LOCKS=0", "mango /home/agent/work git --no-pager"] {
             assert!(line.contains(part), "{part}: {line}");
         }

@@ -337,7 +337,7 @@ printf 'saved %s\n' "$m"
     fn run(env: &EnvAt, script: &str, args: &[&str], stdin: Option<Vec<u8>>, cap: usize) -> Result<Output, String> {
         let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
         argv.extend(args.iter().map(|a| a.to_string()));
-        env.run(&[], &argv, stdin, cap, LOCAL_TIMEOUT)
+        env.run_plain(&[], &argv, stdin, cap, LOCAL_TIMEOUT)
     }
 
     /// The script's own output, after [`MARK`].
