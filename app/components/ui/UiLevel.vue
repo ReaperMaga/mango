@@ -1,14 +1,13 @@
 <script setup lang="ts">
 /**
  * A segmented level meter: `max` segments, the first `value` filled. Used for the
- * reasoning effort, where each segment is one level. `muted` fills in a quieter
- * tone, for a level that only applies by default.
+ * reasoning effort, where each segment is one level.
  */
-withDefaults(defineProps<{ value: number; max: number; size?: 'sm' | 'md'; muted?: boolean }>(), { size: 'md', muted: false })
+withDefaults(defineProps<{ value: number; max: number; size?: 'sm' | 'md' }>(), { size: 'md' })
 </script>
 
 <template>
-  <span class="lvl" :class="[`lvl--${size}`, { 'is-muted': muted }]" aria-hidden="true">
+  <span class="lvl" :class="`lvl--${size}`" aria-hidden="true">
     <span v-for="i in max" :key="i" class="lvl__seg" :class="{ 'is-on': i <= value }" />
   </span>
 </template>
@@ -32,7 +31,6 @@ withDefaults(defineProps<{ value: number; max: number; size?: 'sm' | 'md'; muted
 .lvl--sm .lvl__seg:nth-child(5) { height: 12px; }
 .lvl--sm .lvl__seg:nth-child(n + 6) { height: 12px; }
 .lvl__seg.is-on { background: var(--accent); }
-.lvl.is-muted .lvl__seg.is-on { background: var(--fg-faint); }
 
 @media (prefers-reduced-motion: reduce) {
   .lvl__seg { transition: none; }
