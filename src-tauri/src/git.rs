@@ -1267,6 +1267,15 @@ fn remotes(root: &At) -> Result<Vec<String>, String> {
     Ok(out.text().lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
 }
 
+/// `git remote -v` in `at` (URLs with `insteadOf` applied), for finding which GitHub repository
+/// a project belongs to. `Ok(None)` when git refused, for example outside a repository; a
+/// connection or environment problem is an error.
+pub(crate) fn remote_list(at: &At) -> Result<Option<String>, String> {
+    at.check()?;
+    let out = git(at).read_only().args(["remote", "-v"]).run()?;
+    Ok(out.ok().then(|| out.text()))
+}
+
 const NO_REMOTE: &str =
     "This repository has no remote yet. Add one first:\n  git remote add origin <url>";
 
