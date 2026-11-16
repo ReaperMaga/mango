@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { withBase } from 'vitepress'
+
 /**
  * A drawn (HTML) picture of the Mango window for the home page: sidebar of
  * chats by status, a chat waiting on an approval, and the docked terminal.
@@ -30,7 +32,7 @@ const level: Record<Ripe, number> = { running: 6, working: 6, waiting: 0, error:
     <!-- titlebar -->
     <div class="tb">
       <div class="tb__left">
-        <svg class="tb__mark" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" class="m-bg" /><path class="m-fg" d="M18 44V21.5h4.6l9.4 13 9.4-13H46V44h-5.4V30.4L32 42.2l-8.6-11.8V44Z" /></svg>
+        <img class="tb__mark" :src="withBase('/icon.svg')" alt="" width="17" height="17" />
         <span class="tb__project">mango <i class="chev" /></span>
         <span class="tb__branch mono">
           <svg viewBox="0 0 24 24" class="ic"><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="8" r="2" /><path d="M6 7v10M18 10c0 5-8 3-11.5 7.5" /></svg>
@@ -216,8 +218,6 @@ const level: Record<Ripe, number> = { running: 6, working: 6, waiting: 0, error:
 .tb__left, .tb__right { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .tb__right { justify-content: flex-end; align-self: stretch; gap: 0; }
 .tb__mark { width: 17px; height: 17px; flex: none; }
-.m-bg { fill: var(--accent); }
-.m-fg { fill: var(--accent-fg); }
 .tb__project { font-weight: 600; white-space: nowrap; }
 .tb__branch { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--fg-subtle); }
 .tb__search {

@@ -28,10 +28,7 @@ onMounted(() => {
 
 <template>
   <section class="hero">
-    <svg class="hero__mark" viewBox="0 0 64 64" aria-hidden="true">
-      <rect width="64" height="64" rx="15" class="hero__mark-bg" />
-      <path class="hero__mark-m" d="M18 44V21.5h4.6l9.4 13 9.4-13H46V44h-5.4V30.4L32 42.2l-8.6-11.8V44Z" />
-    </svg>
+    <img class="hero__mark" :src="withBase('/icon.svg')" alt="" width="72" height="72" />
 
     <h1 class="hero__title">A workbench for coding agents</h1>
     <p class="hero__lede">
@@ -89,9 +86,7 @@ onMounted(() => {
   .hero { padding-top: 40px; }
 }
 
-.hero__mark { width: 64px; height: 64px; margin-bottom: 28px; }
-.hero__mark-bg { fill: var(--vp-c-brand-3); }
-.hero__mark-m { fill: var(--vp-button-brand-text); }
+.hero__mark { display: block; width: 72px; height: 72px; margin-bottom: 24px; }
 
 .hero__title {
   margin: 0;
