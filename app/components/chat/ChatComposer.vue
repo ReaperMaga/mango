@@ -322,7 +322,19 @@ const effortMeter = computed(() => {
   const level = props.effort ?? fallbackEffort.value
   return { value: level ? efforts.value.indexOf(level) + 1 : 0, max: efforts.value.length, muted: !props.effort }
 })
-const effortText = computed(() => (props.effort ? effortLabel(props.effort) : 'Effort'))
+/**
+ * The level the chat runs at: the chosen one, else the CLI's default when it says.
+ * Claude Code does not report its default (it depends on the model and the user's settings), so that reads "Default".
+ */
+const effortText = computed(() => {
+  const level = props.effort ?? fallbackEffort.value
+  return level ? effortLabel(level) : 'Default'
+})
+const effortTitle = computed(() => {
+  if (props.effort) return `Effort: ${effortText.value}`
+  const usual = `${AGENTS[props.agent].name}'s default`
+  return fallbackEffort.value ? `Effort: ${effortText.value} (${usual})` : `Effort: ${usual}`
+})
 
 const modes = {
   plan: { label: 'Plan', hint: 'Read-only: explores and proposes a plan', icon: MapIcon },
@@ -422,7 +434,7 @@ const ph = computed(() => props.placeholder ?? `Ask ${AGENTS[props.agent].name} 
             type="button"
             class="cp__chip"
             :class="{ 'is-open': open, 'is-default': !effort }"
-            :title="`Effort: ${effort ? effortLabel(effort) : 'default'}`"
+            :title="effortTitle"
             @click="toggle"
           >
             <UiLevel class="cp__effort" size="sm" :value="effortMeter.value" :max="effortMeter.max" :muted="effortMeter.muted" />
