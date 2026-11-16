@@ -12,6 +12,7 @@ const checkSeq = new Map<string, number>()
 
 <script setup lang="ts">
 import type { AuthStatus } from '~/types/ipc'
+import type { AgentsTab } from '~/stores/workspace'
 import { AGENTS, type AgentId } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
@@ -20,6 +21,8 @@ import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 import SettingsAgentRow from './SettingsAgentRow.vue'
+import SettingsSubscription from './SettingsSubscription.vue'
+import SettingsUsage from './SettingsUsage.vue'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 
 /** `active`: this section is the one on screen (it stays mounted while Settings is open). */
@@ -96,14 +99,41 @@ const defaultProblem = computed(() => {
   if (status && !status.loggedIn) return `${name} isn't signed in yet. Sign in above before starting a chat with it.`
   return ''
 })
+
+/** The heading follows the tab. */
+const HEADINGS: Record<AgentsTab, { title: string; description: string }> = {
+  agents: {
+    title: 'Agents',
+    description: 'Mango runs the agent command-line tools installed on this computer. You sign in with each tool\'s own sign-in, so your credentials stay with it.',
+  },
+  subscription: {
+    title: 'Subscription',
+    description: 'The plan each agent is signed in with, as the agent itself reports it. Billing and renewal are managed with the vendor.',
+  },
+  usage: {
+    title: 'Usage',
+    description: 'How much of each plan\'s allowance is used, and when each limit resets. Checking spends none of it.',
+  },
+}
+const heading = computed(() => HEADINGS[ws.agentsTab])
 </script>
 
 <template>
   <SettingsSection
-    title="Agents"
-    description="Mango runs the agent command-line tools installed on this computer. You sign in with each tool's own sign-in, so your credentials stay with it."
+    :title="heading.title"
+    :description="heading.description"
   >
-    <ul class="agents" aria-label="Agents">
+    <SettingsSegmented
+      v-model="ws.agentsTab"
+      class="tabs"
+      label="Agent settings"
+      :options="[{ value: 'agents', label: 'Agents' }, { value: 'subscription', label: 'Subscription' }, { value: 'usage', label: 'Usage & resets' }]"
+    />
+
+    <SettingsSubscription v-if="ws.agentsTab === 'subscription'" :ids="ids" :auth="auth" :info-of="infoOf" />
+    <SettingsUsage v-else-if="ws.agentsTab === 'usage'" />
+
+    <ul v-show="ws.agentsTab === 'agents'" class="agents" aria-label="Agents">
       <SettingsAgentRow
         v-for="id in ids"
         :key="id"
@@ -115,7 +145,7 @@ const defaultProblem = computed(() => {
       />
     </ul>
 
-    <SettingsRow v-if="ids.length > 1" label="Default agent for new chats">
+    <SettingsRow v-if="ws.agentsTab === 'agents' && ids.length > 1" label="Default agent for new chats">
       <template #hint>
         <span v-if="defaultProblem" class="warn" role="status">{{ defaultProblem }}</span>
         <template v-else>You can still pick another agent in any chat.</template>
@@ -130,11 +160,12 @@ const defaultProblem = computed(() => {
       </template>
     </SettingsRow>
 
-    <p class="later">Mango can learn more agents over time. When it does, they appear in this list.</p>
+    <p v-if="ws.agentsTab === 'agents'" class="later">Mango can learn more agents over time. When it does, they appear in this list.</p>
   </SettingsSection>
 </template>
 
 <style scoped>
+.tabs { margin-bottom: var(--space-4); }
 .agents {
   margin: 0 0 var(--space-3);
   padding: 0;

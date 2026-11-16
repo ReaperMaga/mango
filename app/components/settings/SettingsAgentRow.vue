@@ -50,16 +50,12 @@ const view = computed<View>(() => {
   return status.value.loggedIn ? 'in' : 'out'
 })
 
-const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-
-/** "you@example.com · Max plan · claude.ai", or "with ChatGPT" when no account is reported. */
+/** "you@example.com · claude.ai", or "with ChatGPT" when no account is reported. */
 const account = computed(() => {
   const s = status.value
   if (!s?.loggedIn) return ''
-  const plan = s.plan ? `${cap(s.plan)} plan` : null
-  if (s.account) return [s.account, plan, s.method].filter(Boolean).join(' · ')
-  const parts = [s.method ? `with ${s.method}` : null, plan].filter(Boolean)
-  if (parts.length) return parts.join(' · ')
+  if (s.account) return [s.account, s.method].filter(Boolean).join(' · ')
+  if (s.method) return `with ${s.method}`
   return s.detail && !/^(logged|signed) in\.?$/i.test(s.detail) ? s.detail : ''
 })
 

@@ -26,7 +26,8 @@ export interface TerminalTab {
 /** The tool windows that open on the right: the project's files, source control, and the chat's pull requests and issues. */
 export type ToolView = 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
-export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
+export type AgentsTab = 'agents' | 'subscription' | 'usage'
+export type SettingsSection ='agents' | 'terminal' | 'voice' | 'appearance' | 'general'
 
 const LS_KEY = 'mango.workspace.v1'
 
@@ -95,6 +96,8 @@ export const useWorkspace = defineStore('workspace', {
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
+      /** which tab of Settings > Agents shows; not persisted */
+      agentsTab: 'agents' as AgentsTab,
 
       paletteOpen: false,
       /** which dialog is open: a project dialog, "Get started" (setup) or the usage limits */
@@ -273,8 +276,9 @@ export const useWorkspace = defineStore('workspace', {
     toggleFiles(force?: boolean) {
       this.toggleTool('files', force)
     },
-    openSettings(section: SettingsSection = 'general') {
+    openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section
+      if (tab) this.agentsTab = tab
       this.paletteOpen = false
     },
     openUsage() {
