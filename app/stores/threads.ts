@@ -6,7 +6,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
-import { isFileTab, parseFileTab } from '~/utils/fileTabs'
+import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { demoThreads } from '~/utils/demoThreads'
 
 const LS_KEY = 'mango.threads.v1'
@@ -38,6 +38,18 @@ export const useThreads = defineStore('threads', {
       return this.byId(this.activePane.threadId)
     },
     isSplit: s => s.panes.length > 1,
+    /** The project a tab belongs to: a chat's own, or the one named in a diff or file tab's id. */
+    projectOf(): (id: string | null | undefined) => string | null {
+      return id => tabProject(id) ?? this.byId(id)?.projectPath ?? null
+    },
+    /**
+     * The active project's tabs, in order. `tabs` holds every project's tabs; only these
+     * are on screen, so only these may be put in a pane (closing a tab, split, Ctrl+1–9).
+     */
+    visibleTabs(): string[] {
+      const path = useWorkspace().activeProjectPath
+      return path ? this.tabs.filter(id => this.projectOf(id) === path) : []
+    },
     /** Threads that need the user: shown as a count in the titlebar. */
     attentionCount: s => s.threads.filter(t => !t.archived && (t.status === 'waiting' || (t.status === 'done' && !t.seen))).length,
   },
@@ -133,11 +145,17 @@ export const useThreads = defineStore('threads', {
         useFiles().askClose(id)
         return
       }
+      const project = this.projectOf(id)
       this.tabs.splice(i, 1)
       const diff = parseDiffTab(id)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
       if (isFileTab(id)) useFiles().forget(id)
-      const fallback = this.tabs[Math.min(i, this.tabs.length - 1)] ?? null
+      // The neighbouring tab of the same project takes its place. Another project's chat
+      // would show in the pane with no tab and no sidebar row, and a message sent there
+      // would run in that other project's folder.
+      const siblings = this.tabs.filter(x => this.projectOf(x) === project)
+      const before = this.tabs.slice(0, i).filter(x => this.projectOf(x) === project).length
+      const fallback = siblings[Math.min(before, siblings.length - 1)] ?? null
       for (const p of this.panes) if (p.threadId === id) p.threadId = this.panes.some(o => o.threadId === fallback) ? null : fallback
       if (this.panes.length > 1) {
         const empty = this.panes.find(p => p.threadId === null)
@@ -166,14 +184,14 @@ export const useThreads = defineStore('threads', {
       if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
     },
 
-    /** Open a second pane to the right; shows `threadId` or the next tab. */
+    /** Open a second pane to the right; shows `threadId` or the active project's next tab. */
     split(threadId?: string) {
       if (this.panes.length > 1) {
         if (threadId) this.show(threadId, this.panes[1]!.id)
         return
       }
       const current = this.activePane.threadId
-      const next = threadId ?? this.tabs.find(id => id !== current) ?? null
+      const next = threadId ?? this.visibleTabs.find(id => id !== current) ?? null
       this.panes.push({ id: 'pane-b', threadId: next })
       this.activePaneId = 'pane-b'
       this.persist()
