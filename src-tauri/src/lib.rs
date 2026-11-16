@@ -123,6 +123,7 @@ pub fn run() {
             envs::remote::env_shell,
             envs::remote::env_login,
             envs::remote::env_prepare_dir,
+            envs::remote::env_list_dir,
             envs::remote::env_desktop_open,
             envs::remote::env_desktop_close,
             envs::shares::env_shares,

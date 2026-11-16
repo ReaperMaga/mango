@@ -12,6 +12,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -147,12 +149,17 @@ pub fn valid_clone_url(s: &str) -> Result<(), String> {
     }
 }
 
-/// `bash -c` script, `$1` = folder, `$2` = URL or empty. Always exits 0 and reports on
-/// stdout with a `MANGO-DIR:` or `MANGO-ERR:` line, so a failure inside the instance is
+/// `bash -c` script, `$1` = folder, `$2` = URL or empty, `$3` = `1` to `git init` the folder
+/// (without a URL, and only when it has no `.git` yet, files or not, like `git init` itself).
+/// Always exits 0 and reports on stdout with a `MANGO-DIR:` or `MANGO-ERR:` line, so a failure inside the instance is
 /// never mistaken for an SSH problem (git's own "Permission denied (publickey)" included).
-const PREPARE_SCRIPT: &str = r#"dir=$1; url=$2
+const PREPARE_SCRIPT: &str = r#"dir=$1; url=$2; init=$3
 if [ -z "$url" ]; then
   out=$(mkdir -p -- "$dir" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
+  if [ "$init" = 1 ] && [ ! -e "$dir/.git" ]; then
+    command -v git >/dev/null 2>&1 || { echo MANGO-ERR:nogit; exit 0; }
+    out=$(cd -- "$dir" && git init --quiet 2>&1) || { printf 'MANGO-ERR:init\n%s\n' "$out"; exit 0; }
+  fi
 else
   if [ -e "$dir" ] && { [ ! -d "$dir" ] || [ -n "$(ls -A -- "$dir" 2>/dev/null)" ]; }; then
     echo MANGO-ERR:notempty; exit 0
@@ -166,12 +173,23 @@ else
 fi
 cd -- "$dir" 2>/dev/null && printf 'MANGO-DIR:%s\n' "$(pwd)""#;
 
-fn prepare_line(host: &EnvHost, instance: &str, dir: &str, url: Option<&str>) -> Result<Vec<String>, String> {
-    let inner = ssh::as_agent(
-        None,
-        &[],
-        &["bash".into(), "-c".into(), PREPARE_SCRIPT.into(), "mango-prepare".into(), dir.into(), url.unwrap_or("").into()],
-    );
+fn prepare_line(
+    host: &EnvHost,
+    instance: &str,
+    dir: &str,
+    url: Option<&str>,
+    git_init: bool,
+) -> Result<Vec<String>, String> {
+    let argv: Vec<String> = vec![
+        "bash".into(),
+        "-c".into(),
+        PREPARE_SCRIPT.into(),
+        "mango-prepare".into(),
+        dir.into(),
+        url.unwrap_or("").into(),
+        if git_init { "1" } else { "" }.into(),
+    ];
+    let inner = ssh::as_agent(None, &[], &argv);
     ssh::in_instance(host, instance, Mode::Batch, &inner)
 }
 
@@ -188,6 +206,7 @@ fn parse_prepare(out: &str, dir: &str, url: Option<&str>) -> Result<String, Stri
         return Err(match kind.split_whitespace().next().unwrap_or("") {
             "notempty" => format!("{dir} already exists and is not empty, so Mango won't clone into it. Pick a new or empty folder."),
             "nogit" => "git is not installed in this environment. Install the base component first.".into(),
+            "init" => with_tail(format!("Could not start a git repository in {dir}.")),
             "mkdir" => with_tail(format!(
                 "Could not create {dir} in the environment. The agent user can only write inside its home ({}) and folders it owns.",
                 super::AGENT_HOME
@@ -242,6 +261,7 @@ pub async fn env_prepare_dir(
     instance: String,
     dir: String,
     clone_url: Option<String>,
+    git_init: Option<bool>,
 ) -> Result<String, String> {
     valid_instance(&instance)?;
     let dir = clean_dir(Some(dir))?.ok_or("Pick a folder inside the environment.")?;
@@ -249,12 +269,152 @@ pub async fn env_prepare_dir(
     if let Some(u) = &url {
         valid_clone_url(u)?;
     }
+    // A clone is already a repository: `gitInit` only applies to a plain folder.
+    let git_init = url.is_none() && git_init.unwrap_or(false);
     blocking(move || {
         let host = hosts::get(&app, &host_id)?;
-        let line = prepare_line(&host, &instance, &dir, url.as_deref())?;
+        let line = prepare_line(&host, &instance, &dir, url.as_deref(), git_init)?;
         let timeout = Duration::from_secs(if url.is_some() { 600 } else { 30 });
         let out = ssh::run(&host, &line, timeout)?;
         parse_prepare(&out, &dir, url.as_deref())
+    })
+    .await
+}
+
+/* ---------- folder browser ---------- */
+
+/// Most sub-folders [`env_list_dir`] returns.
+const LIST_LIMIT: usize = 500;
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvDirEntry {
+    pub name: String,
+    pub path: String,
+    pub is_git: bool,
+}
+
+#[derive(Serialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvDirListing {
+    pub dir: String,
+    pub parent: Option<String>,
+    pub entries: Vec<EnvDirEntry>,
+    pub truncated: bool,
+}
+
+/// `/a//b/./c` -> `/a/b/c`; `/` stays `/`. Expects an absolute path without `..`.
+fn normalize_dir(p: &str) -> String {
+    let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty() && *s != ".").collect();
+    format!("/{}", parts.join("/"))
+}
+
+/// A folder to list, from the webview: `~` (or empty) and `~/…` are the agent's home.
+fn resolve_list_dir(dir: &str) -> Result<String, String> {
+    let home = super::AGENT_HOME;
+    let abs = if dir.is_empty() || dir == "~" {
+        home.to_string()
+    } else if let Some(rest) = dir.strip_prefix("~/") {
+        format!("{home}/{rest}")
+    } else {
+        dir.to_string()
+    };
+    valid_instance_dir(&abs)?;
+    Ok(normalize_dir(&abs))
+}
+
+fn parent_dir(dir: &str) -> Option<String> {
+    match dir.rsplit_once('/') {
+        _ if dir == "/" => None,
+        Some(("", _)) => Some("/".into()),
+        Some((p, _)) => Some(p.to_string()),
+        None => None,
+    }
+}
+
+/// `bash -c` script, `$1` = absolute folder. Reports `MANGO-ERR:<kind>`, or one
+/// `MANGO-LIST:<base64>` line whose payload is NUL-terminated records: `D<folder>`, then
+/// `G<name>` (has `.git`) / `F<name>` per non-hidden sub-folder in byte order (symlinks to
+/// folders included), and `+` when more than the limit exist. Names never pass through
+/// the shell as code, and base64 keeps newlines and odd bytes intact.
+const LIST_SCRIPT: &str = r#"export LC_ALL=C
+shopt -s nullglob
+d=$1
+if [ ! -e "$d" ]; then echo MANGO-ERR:missing; exit 0; fi
+if [ ! -d "$d" ]; then echo MANGO-ERR:notdir; exit 0; fi
+{ cd -- "$d" 2>/dev/null && [ -r . ]; } || { echo MANGO-ERR:denied; exit 0; }
+command -v base64 >/dev/null 2>&1 || { echo MANGO-ERR:nobase64; exit 0; }
+list() {
+  printf 'D%s\0' "$PWD"
+  n=0
+  for e in *; do
+    [ -d "$e" ] || continue
+    if [ "$n" -ge 500 ]; then printf '+\0'; break; fi
+    n=$((n + 1))
+    if [ -e "$e/.git" ]; then printf 'G%s\0' "$e"; else printf 'F%s\0' "$e"; fi
+  done
+}
+printf 'MANGO-LIST:%s\n' "$(list | base64 | tr -d '\n')""#;
+
+fn list_line(host: &EnvHost, instance: &str, dir: &str) -> Result<Vec<String>, String> {
+    let argv: Vec<String> =
+        vec!["bash".into(), "-c".into(), LIST_SCRIPT.into(), "mango-list".into(), dir.into()];
+    ssh::in_instance(host, instance, Mode::Batch, &ssh::as_agent(None, &[], &argv))
+}
+
+/// Turn [`LIST_SCRIPT`]'s report for `dir` into a listing or a message a person can act on.
+fn parse_listing(out: &str, dir: &str) -> Result<EnvDirListing, String> {
+    let lines: Vec<&str> = out.lines().map(str::trim_end).collect();
+    if let Some(kind) = lines.iter().find_map(|l| l.strip_prefix("MANGO-ERR:")) {
+        return Err(match kind {
+            "missing" => format!("{dir} does not exist in the environment (or the agent user can't reach it)."),
+            "notdir" => format!("{dir} is a file, not a folder."),
+            "denied" => format!("The agent user is not allowed to open {dir}."),
+            "nobase64" => "base64 is not installed in this environment. Install the base component first.".into(),
+            _ => format!("Could not list {dir} in the environment."),
+        });
+    }
+    let unreadable = || {
+        let tail: Vec<&str> = lines.iter().copied().filter(|l| !l.trim().is_empty()).collect();
+        format!("Could not list {dir} in the environment.\n{}", tail[tail.len().saturating_sub(4)..].join("\n"))
+            .trim_end()
+            .to_string()
+    };
+    let payload = lines.iter().rev().find_map(|l| l.strip_prefix("MANGO-LIST:")).ok_or_else(unreadable)?;
+    let bytes = STANDARD.decode(payload.trim()).map_err(|_| unreadable())?;
+
+    let mut listed = dir.to_string();
+    let mut names: Vec<(String, bool)> = Vec::new();
+    let mut truncated = false;
+    for rec in bytes.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let text = String::from_utf8_lossy(&rec[1..]).into_owned();
+        match rec[0] {
+            b'D' if text.starts_with('/') && !text.split('/').any(|p| p == "..") => listed = normalize_dir(&text),
+            b'G' | b'F' if !text.is_empty() && !text.contains('/') => names.push((text, rec[0] == b'G')),
+            b'+' => truncated = true,
+            _ => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    if names.len() > LIST_LIMIT {
+        names.truncate(LIST_LIMIT);
+        truncated = true;
+    }
+    let base = if listed == "/" { String::new() } else { listed.clone() };
+    let entries =
+        names.into_iter().map(|(name, is_git)| EnvDirEntry { path: format!("{base}/{name}"), name, is_git }).collect();
+    Ok(EnvDirListing { parent: parent_dir(&listed), dir: listed, entries, truncated })
+}
+
+#[tauri::command]
+pub async fn env_list_dir(app: AppHandle, host_id: String, instance: String, dir: String) -> Result<EnvDirListing, String> {
+    valid_instance(&instance)?;
+    let dir = resolve_list_dir(&dir)?;
+    blocking(move || {
+        let host = hosts::get(&app, &host_id)?;
+        let out = ssh::run(&host, &list_line(&host, &instance, &dir)?, Duration::from_secs(30))?;
+        parse_listing(&out, &dir)
     })
     .await
 }
@@ -679,11 +839,14 @@ mod tests {
 
     #[test]
     fn prepare_line_passes_dir_and_url_as_arguments() {
-        let l = ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git")).unwrap());
+        let l =
+            ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git"), false).unwrap());
         assert!(l.starts_with("incus exec dev -T -- runuser -u agent"), "{l}");
-        assert!(l.ends_with("mango-prepare '/home/agent/work/a b' git@github.com:o/r.git"), "{l}");
-        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None).unwrap());
-        assert!(l.ends_with("mango-prepare /w ''"), "{l}");
+        assert!(l.ends_with("mango-prepare '/home/agent/work/a b' git@github.com:o/r.git ''"), "{l}");
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, false).unwrap());
+        assert!(l.ends_with("mango-prepare /w '' ''"), "{l}");
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, true).unwrap());
+        assert!(l.ends_with("mango-prepare /w '' 1"), "{l}");
     }
 
     #[test]
@@ -709,6 +872,170 @@ mod tests {
             .unwrap_err();
         assert!(e.starts_with("Could not create /srv/x") && e.contains("Permission denied"), "{e}");
         assert!(parse_prepare("", d, None).is_err());
+        let e = parse_prepare("MANGO-ERR:nogit\n", d, None).unwrap_err();
+        assert!(e.contains("base component"), "{e}");
+        let e = parse_prepare("MANGO-ERR:init\nfatal: cannot mkdir .git: Permission denied\n", d, None).unwrap_err();
+        assert!(e.starts_with("Could not start a git repository in /home/agent/work/app"), "{e}");
+        assert!(e.contains("cannot mkdir .git"), "{e}");
+    }
+
+    #[test]
+    fn list_dirs_resolve() {
+        assert_eq!(resolve_list_dir("~").unwrap(), "/home/agent");
+        assert_eq!(resolve_list_dir("").unwrap(), "/home/agent");
+        assert_eq!(resolve_list_dir("~/").unwrap(), "/home/agent");
+        assert_eq!(resolve_list_dir("~/work/my app/").unwrap(), "/home/agent/work/my app");
+        assert_eq!(resolve_list_dir("/").unwrap(), "/");
+        assert_eq!(resolve_list_dir("//srv//./x/").unwrap(), "/srv/x");
+        for bad in ["work", "~other", "~/../etc", "/a/../b", "/a\nb", "~root/x"] {
+            assert!(resolve_list_dir(bad).is_err(), "{bad:?}");
+        }
+        assert_eq!(parent_dir("/"), None);
+        assert_eq!(parent_dir("/home"), Some("/".into()));
+        assert_eq!(parent_dir("/home/agent"), Some("/home".into()));
+    }
+
+    #[test]
+    fn list_line_passes_dir_as_argument() {
+        let l = ssh::line(&list_line(&host(), "dev", "/home/agent/a b").unwrap());
+        assert!(l.starts_with("incus exec dev -T -- runuser -u agent"), "{l}");
+        assert!(l.ends_with("mango-list '/home/agent/a b'"), "{l}");
+        assert!(l.is_ascii(), "keep scripts ASCII: they cross Windows argv conversion");
+    }
+
+    fn encoded(records: &[&[u8]]) -> String {
+        let mut b = Vec::new();
+        for r in records {
+            b.extend_from_slice(r);
+            b.push(0);
+        }
+        STANDARD.encode(b)
+    }
+
+    #[test]
+    fn listings() {
+        let payload = encoded(&[
+            b"D/home/agent/work",
+            b"Gzeta",
+            "Fünï".as_bytes(),
+            b"Fa b",
+            b"Fline\nbreak",
+            b"F$(id)",
+            b"F-x",
+            b"Fbad/name",
+            b"F\xff\xfe",
+            b"Grepo",
+        ]);
+        let out = format!("Welcome to the box\nMANGO-LIST:{payload}\n");
+        let l = parse_listing(&out, "/home/agent/work").unwrap();
+        assert_eq!(l.dir, "/home/agent/work");
+        assert_eq!(l.parent.as_deref(), Some("/home/agent"));
+        assert!(!l.truncated);
+        let names: Vec<&str> = l.entries.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["$(id)", "-x", "a b", "line\nbreak", "repo", "zeta", "ünï", "\u{fffd}\u{fffd}"]);
+        let repo = &l.entries[4];
+        assert_eq!((repo.path.as_str(), repo.is_git), ("/home/agent/work/repo", true));
+        assert_eq!(l.entries[2].path, "/home/agent/work/a b");
+        assert!(!l.entries[2].is_git);
+
+        // The root: no parent, no double slash.
+        let l = parse_listing(&format!("MANGO-LIST:{}\n", encoded(&[b"D/", b"Fsrv"])), "/").unwrap();
+        assert_eq!((l.dir.as_str(), l.parent.as_deref()), ("/", None));
+        assert_eq!(l.entries[0].path, "/srv");
+
+        // An empty folder.
+        let l = parse_listing(&format!("MANGO-LIST:{}\n", encoded(&[b"D/home/agent"])), "/home/agent").unwrap();
+        assert!(l.entries.is_empty() && !l.truncated);
+    }
+
+    #[test]
+    fn listing_truncation() {
+        let names: Vec<Vec<u8>> = (0..LIST_LIMIT).map(|i| format!("F{i:04}").into_bytes()).collect();
+        let mut recs: Vec<&[u8]> = vec![b"D/w"];
+        recs.extend(names.iter().map(|n| n.as_slice()));
+        recs.push(b"+");
+        let l = parse_listing(&format!("MANGO-LIST:{}\n", encoded(&recs)), "/w").unwrap();
+        assert_eq!(l.entries.len(), LIST_LIMIT);
+        assert!(l.truncated);
+
+        // More than the limit without the marker is still capped.
+        let more: Vec<Vec<u8>> = (0..LIST_LIMIT + 20).map(|i| format!("F{i:04}").into_bytes()).collect();
+        let mut recs: Vec<&[u8]> = vec![b"D/w"];
+        recs.extend(more.iter().map(|n| n.as_slice()));
+        let l = parse_listing(&format!("MANGO-LIST:{}\n", encoded(&recs)), "/w").unwrap();
+        assert_eq!(l.entries.len(), LIST_LIMIT);
+        assert!(l.truncated);
+        assert_eq!(l.entries.last().unwrap().name, format!("{:04}", LIST_LIMIT - 1));
+    }
+
+    #[test]
+    fn listing_errors() {
+        let d = "/home/agent/nope";
+        assert!(parse_listing("MANGO-ERR:missing\n", d).unwrap_err().starts_with("/home/agent/nope does not exist"));
+        assert!(parse_listing("MANGO-ERR:notdir\n", d).unwrap_err().contains("not a folder"));
+        assert!(parse_listing("MANGO-ERR:denied\n", d).unwrap_err().contains("not allowed to open /home/agent/nope"));
+        assert!(parse_listing("MANGO-ERR:nobase64\n", d).unwrap_err().contains("base component"));
+        let e = parse_listing("bash: something odd\n", d).unwrap_err();
+        assert!(e.starts_with("Could not list /home/agent/nope") && e.contains("something odd"), "{e}");
+        assert!(parse_listing("MANGO-LIST:%%%\n", d).is_err());
+        assert!(parse_listing("", d).is_err());
+    }
+
+    /// A shell that can run the scripts here (not WSL's bash.exe launcher).
+    fn real_bash() -> Option<std::path::PathBuf> {
+        crate::bin::find("bash").filter(|p| {
+            let s = p.to_string_lossy().to_lowercase();
+            !s.contains("system32") && !s.contains("windowsapps")
+        })
+    }
+
+    #[test]
+    fn scripts_parse() {
+        use std::io::Write;
+        let Some(bash) = real_bash() else { return eprintln!("no bash found; skipping") };
+        for (name, script) in [("prepare", PREPARE_SCRIPT), ("list", LIST_SCRIPT)] {
+            // Through stdin: MSYS/Cygwin shells re-parse a Windows command line with their own quoting rules.
+            let mut child = std::process::Command::new(&bash)
+                .arg("-n")
+                .stdin(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("run bash");
+            child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+
+    /// Runs [`LIST_SCRIPT`] against a scratch folder with the local bash (Git Bash on Windows).
+    #[test]
+    fn list_script_runs() {
+        use std::io::Write;
+        let Some(bash) = real_bash() else { return eprintln!("no bash found; skipping") };
+        let root = std::env::temp_dir().join(format!("mango-list-{}-{}", std::process::id(), crate::envs::now_ms()));
+        for d in ["a b", "ünï", "-x", ".hidden", "$(id)", "repo/.git", "plain"] {
+            std::fs::create_dir_all(root.join(d)).unwrap();
+        }
+        std::fs::write(root.join("file.txt"), "x").unwrap();
+        let mut child = std::process::Command::new(&bash)
+            .args(["-s", "--"])
+            .arg(&root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("run bash");
+        child.stdin.take().unwrap().write_all(LIST_SCRIPT.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let l = parse_listing(&stdout, "/x").unwrap_or_else(|e| panic!("{e}\n{}", String::from_utf8_lossy(&out.stderr)));
+        let names: Vec<(&str, bool)> = l.entries.iter().map(|e| (e.name.as_str(), e.is_git)).collect();
+        assert_eq!(
+            names,
+            [("$(id)", false), ("-x", false), ("a b", false), ("plain", false), ("repo", true), ("ünï", false)]
+        );
+        assert!(!l.truncated);
     }
 
     #[test]
