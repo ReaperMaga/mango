@@ -92,6 +92,7 @@ The **...** button on a row opens:
 - **Open to the side**: show it in the second pane of a split.
 - **Move up** / **Move down**.
 - **Working** / **Archived**: set the status by hand.
+- **Remove worktree…**: for a chat in its own worktree (see below).
 - **Delete chat**.
 
 An archived chat has an **Unarchive** button on its row. Sending a message in an archived chat also brings it back.
@@ -101,6 +102,18 @@ An archived chat has an **Unarchive** button on its row. Sending a message in an
 Every chat you open becomes a tab above the chat area. <kbd>Ctrl</kbd> <kbd>1</kbd>…<kbd>9</kbd> switch to a tab, <kbd>Ctrl</kbd> <kbd>W</kbd> or a middle click closes one, and <kbd>Ctrl</kbd> <kbd>N</kbd> or the **+** starts a new chat. Closing a tab does not delete the chat; it stays in the sidebar.
 
 <kbd>Ctrl</kbd> <kbd>\\</kbd> (or the split button at the right of the tab bar) splits the chat area into two panes; press it again to close the split. Drag the divider to resize the panes; double-click it to make them equal. Diffs from the [Changes](./changes) view open as tabs in the same area, so you can read a diff next to the chat that made it.
+
+## Worktrees: chats that work in parallel
+
+Several chats in one project normally share the project folder, so two agents editing at the same time can step on each other. A chat can instead get its own **git worktree**: a separate folder on its own branch, made beside the repository (`<repo>.worktrees/<branch>`). Its agent works only there, and your project folder is left alone.
+
+Start one with <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd>, the folder button next to the **+** of the Working section, or **New chat in a worktree…** in the command palette. Give the branch a name (one is suggested) and pick the branch it starts from; a name that already exists checks that branch out instead. Worktrees that are already there are listed too, and **New chat here** starts another chat in one.
+
+What you look at follows the chat in front of you: the titlebar shows that chat's worktree and branch, and the [Changes](./changes) and Files tool windows, the branch popup and new terminals work in its folder. With two panes split, the active pane decides. The worktree button in the titlebar lists the project folder and every worktree, with their branches and chats; pick one to go to its latest chat. Worktree chats show their branch on their sidebar row and a small mark on their tab.
+
+**Remove worktree…** in a chat's menu deletes the worktree's folder. The branch and its commits stay, so you can merge it or open a pull request from it. If the worktree has uncommitted changes Mango says so, and removing it anyway is a separate second step. Chats that worked there carry on in the project folder.
+
+Worktrees need git; Unity Version Control projects don't have them.
 
 ## Drafts
 
@@ -112,4 +125,4 @@ Chat history, tabs and preferences are stored in the app's local storage on your
 
 ## Not there yet
 
-Attaching files and images to a message is not available yet (the paperclip in the message box is disabled). Neither are multiple-choice questions from agents, "always allow" approval rules, or per-chat git worktrees.
+Attaching files and images to a message is not available yet (the paperclip in the message box is disabled). Neither are multiple-choice questions from agents, or "always allow" approval rules.
