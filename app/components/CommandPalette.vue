@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, MessageSquarePlus, Settings,
-  Files, Moon, PanelBottom, PanelLeft, Search, SquareTerminal, Sun,
+  Files, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
+import { useEnvironments } from '~/stores/environments'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import type { ThreadStatus } from '~/types/chat'
 
@@ -74,6 +75,7 @@ const actions = computed<Item[]>(() => {
     { id: 'open-folder', group: 'Actions', label: 'Open folder…', icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
     { id: 'new-project', group: 'Actions', label: 'New project…', icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
     { id: 'clone', group: 'Actions', label: 'Clone repository…', icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
+    { id: 'environments', group: 'Actions', label: 'Environments', detail: 'Remote containers and VMs', icon: Server, keywords: 'remote environment server ssh incus container vm instance cloud machine', run: () => useEnvironments().openView() },
   )
   if (inWorkspace) {
     items.push(
@@ -135,14 +137,16 @@ const projectItems = computed<Item[]>(() =>
   ws.recent.map((p, i) => {
     const isOpen = ws.openProjects.some(o => o.path === p.path)
     const current = p.path === ws.activeProjectPath
+    // A remote project: where it runs, then its folder inside the instance.
+    const remote = remotePlace(p.path)
     return {
       id: `project:${p.path}`,
       group: 'Projects' as const,
       label: p.name,
-      detail: tildify(p.path),
-      icon: Folder,
+      detail: remote ? `${remote.where} · ${remote.dir}` : tildify(p.path),
+      icon: remote ? Server : Folder,
       badge: current ? 'Current' : isOpen ? 'Open' : undefined,
-      keywords: `${p.path} ${p.branch ?? ''}`,
+      keywords: remote ? `${remote.where} ${remote.dir} remote environment` : `${p.path} ${p.branch ?? ''}`,
       rank: i,
       run: async () => {
         if (isOpen) ws.setActiveProject(p.path)

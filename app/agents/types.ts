@@ -104,7 +104,14 @@ export interface AgentImage {
 }
 
 export interface AgentRunOptions {
+  /** The project folder; inside the instance when `remote`. */
   cwd: string
+  /**
+   * The CLI runs in a remote environment (an Incus instance reached over SSH), not on this
+   * computer: nothing on this computer's disk (attachment paths, `readDirs`) can be read
+   * from there, so images go inline and no folder outside `cwd` is granted.
+   */
+  remote?: boolean
   /**
    * The user's message. Other attached files are already named in it by path (they live in
    * `readDirs`); it may be empty when only images were sent.

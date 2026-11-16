@@ -4,6 +4,8 @@ import type { PermissionMode } from '~/agents/types'
 import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
 import { shortVersion } from '~/utils/agentCli'
+import { envPath, isEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
+import { useEnvironments } from '~/stores/environments'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -45,6 +47,54 @@ function loadPrefs() {
   } catch {
     return {}
   }
+}
+
+/**
+ * Remote projects (folders inside an environment, `env://…`). The backend's recent list only
+ * holds folders on this computer, so these are kept here, most recent first.
+ */
+const ENV_KEY = 'mango.envProjects.v1'
+const MAX_ENV_PROJECTS = 30
+
+/** A remote project's name when none is given: its folder, or the instance for `/`. */
+export const envProjectName = (loc: EnvLocation) => (loc.dir === '/' ? loc.instance : baseName(loc.dir))
+
+const envInfo = (loc: EnvLocation, name: string, lastOpened: number): ProjectInfo =>
+  ({ path: envPath(loc), name, isGit: false, vcs: null, branch: null, lastOpened })
+
+/** Tolerates anything an older or newer build wrote: entries that don't parse are dropped. */
+function loadEnvProjects(): ProjectInfo[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(ENV_KEY) || '[]')
+    if (!Array.isArray(raw)) return []
+    const out: ProjectInfo[] = []
+    for (const p of raw) {
+      const loc = parseEnvPath(typeof p?.path === 'string' ? p.path : null)
+      if (!loc || out.some(o => o.path === envPath(loc))) continue
+      const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : envProjectName(loc)
+      out.push(envInfo(loc, name, Number.isFinite(p.lastOpened) ? p.lastOpened : 0))
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function saveEnvProjects(list: ProjectInfo[]) {
+  try {
+    localStorage.setItem(ENV_KEY, JSON.stringify(list.slice(0, MAX_ENV_PROJECTS)))
+  } catch { /* storage unavailable: remote projects just aren't remembered */ }
+}
+
+/** The backend's recent folders and the remote projects, most recent first. */
+const mergeRecent = (local: ProjectInfo[]) =>
+  [...local.filter(p => !isEnvPath(p.path)), ...loadEnvProjects()].sort((a, b) => b.lastOpened - a.lastOpened)
+
+/** Server names label remote projects: read the saved servers once one is around. */
+function loadHostsFor(projects: ProjectInfo[]) {
+  if (!projects.some(p => isEnvPath(p.path))) return
+  const envs = useEnvironments()
+  if (!envs.loaded) envs.load().catch(() => {})
 }
 
 const toolView = (v: unknown): ToolView | null => (v === 'files' || v === 'changes' || v === 'links' ? v : null)
@@ -151,7 +201,7 @@ export const useWorkspace = defineStore('workspace', {
         call('recent_projects').catch(() => [] as ProjectInfo[]),
         call('detect_agents').catch(() => [] as AgentInfo[]),
       ])
-      this.recent = recent
+      this.recent = mergeRecent(recent)
       this.loadTerminalProfiles()
       this.agents = agents.map(a => ({ ...a, version: shortVersion(a.version) }))
       // Reopen the projects that were open last time.
@@ -160,10 +210,11 @@ export const useWorkspace = defineStore('workspace', {
       // Built fresh so running init twice (hot reload) cannot list a project twice.
       const reopened: ProjectInfo[] = []
       for (const path of new Set(paths)) {
-        const info = recent.find(r => r.path === path)
+        const info = this.recent.find(r => r.path === path)
         if (info) reopened.push(info)
       }
       this.openProjects = reopened
+      loadHostsFor(this.recent)
       this.activeProjectPath = this.openProjects.find(p => p.path === prefs.activeProjectPath)?.path
         ?? this.openProjects[0]?.path ?? null
       // First run: offer to install what is missing. Written now, so quitting
@@ -175,7 +226,7 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     async refreshRecent() {
-      this.recent = await call('recent_projects').catch(() => this.recent)
+      this.recent = mergeRecent(await call('recent_projects').catch(() => this.recent))
     },
 
     /** Add a project (already validated by the backend) to the window and focus it. */
@@ -185,13 +236,34 @@ export const useWorkspace = defineStore('workspace', {
       else this.openProjects[i] = info
       this.activeProjectPath = info.path
       this.recent = [info, ...this.recent.filter(r => r.path !== info.path)]
+      if (isEnvPath(info.path)) saveEnvProjects([info, ...loadEnvProjects().filter(r => r.path !== info.path)])
       this.dialog = null
       this.persist()
     },
 
+    /** Open a folder on this computer, or a remote project by its `env://` path. */
     async openProject(path: string) {
+      const loc = parseEnvPath(path)
+      if (loc) return this._openEnv(loc)
       const info = await call('open_project', { path })
       this.adopt(info)
+      return info
+    },
+
+    /**
+     * Open (or switch to) a folder inside a remote environment as a project. Nothing on this
+     * computer's disk is involved: chats run their agent in the instance, terminals open a shell there.
+     * `name` defaults to the folder's name (the instance's for `/`), or the name it was opened with before.
+     */
+    async openEnvProject(loc: EnvLocation, name?: string): Promise<void> {
+      this._openEnv(loc, name)
+    },
+
+    _openEnv(loc: EnvLocation, name?: string): ProjectInfo {
+      const known = this.recent.find(r => r.path === envPath(loc))
+      const info = envInfo(loc, name?.trim() || known?.name || envProjectName(loc), Date.now())
+      this.adopt(info)
+      loadHostsFor([info])
       return info
     },
 
@@ -202,7 +274,8 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     async forgetProject(path: string) {
-      await call('forget_project', { path }).catch(() => {})
+      if (isEnvPath(path)) saveEnvProjects(loadEnvProjects().filter(r => r.path !== path))
+      else await call('forget_project', { path }).catch(() => {})
       this.recent = this.recent.filter(r => r.path !== path)
     },
 
@@ -326,10 +399,12 @@ export const useWorkspace = defineStore('workspace', {
     newTerminal(cwd?: string | null, profileId?: string | null) {
       const id = `term-${++tabSeq}`
       const dir = cwd ?? this.activeProjectPath
-      const profile = this.terminalProfiles.find(p => p.id === profileId) ?? this.defaultTerminalProfile
+      // In a remote project the terminal is a shell inside the instance (TerminalView starts it with `env_shell`).
+      const remote = parseEnvPath(dir)
+      const profile = remote ? null : this.terminalProfiles.find(p => p.id === profileId) ?? this.defaultTerminalProfile
       this.terminalTabs.push({
         id,
-        title: dir ? baseName(dir) : 'shell',
+        title: remote ? remote.instance : dir ? baseName(dir) : 'shell',
         cwd: dir,
         ptyId: null,
         exited: false,

@@ -245,15 +245,19 @@ interface OpenApproval { rpcId: string | number; respond(allow: boolean): Json }
 /**
  * The prompt as turn input: the text, then each attached image by path (`localImage`; Codex
  * reads the file itself). The sandbox can read the whole disk, so `readDirs` needs no grant.
+ * A `remote` Codex (in a remote environment) cannot see this computer's disk: images go inline.
  */
-function turnInput(options: SteerInput): Json[] {
+function turnInput(options: SteerInput, remote = false): Json[] {
   const input: Json[] = []
   if (options.prompt.trim() || !options.images?.length) input.push({ type: 'text', text: options.prompt, text_elements: [] })
-  for (const img of options.images ?? []) input.push({ type: 'localImage', path: img.path })
+  for (const img of options.images ?? []) {
+    input.push(remote ? { type: 'image', url: `data:${img.mime};base64,${img.data}` } : { type: 'localImage', path: img.path })
+  }
   return input
 }
 function run(options: AgentRunOptions): AgentRun {
   const { cwd, model } = options
+  const remote = !!options.remote
   const policy = POLICIES[options.mode] ?? POLICIES.ask
 
   let transport: AgentTransport | null = null
@@ -741,14 +745,14 @@ function run(options: AgentRunOptions): AgentRun {
       const target = slash!.args ? { type: 'custom', instructions: slash!.args } : { type: 'uncommittedChanges' }
       return request('review/start', { threadId, target, delivery: 'inline' }, 60_000)
     }
-    let input = turnInput(options)
-    if (builtin === 'init') input = turnInput({ ...options, prompt: INIT_PROMPT })
+    let input = turnInput(options, remote)
+    if (builtin === 'init') input = turnInput({ ...options, prompt: INIT_PROMPT }, remote)
     else if (slash) {
       // A skill goes the way Codex's own UI sends it: "$name …" plus a skill item naming its file.
       const skill = await readSkills((m, p) => request(m, p, 10_000), cwd).then(list => list.find(s => s.name === slash.name), () => undefined)
       if (skill) {
         const text = `$${skill.name}${slash.args ? ` ${slash.args}` : ''}`
-        input = [...turnInput({ ...options, prompt: text }), { type: 'skill', name: skill.name, path: skill.path }]
+        input = [...turnInput({ ...options, prompt: text }, remote), { type: 'skill', name: skill.name, path: skill.path }]
       }
     }
     return request('turn/start', {
@@ -863,7 +867,7 @@ function run(options: AgentRunOptions): AgentRun {
       // A command runs as a turn of its own; a review or a compaction takes no messages.
       if (parseSlash(input.prompt) || builtin === 'review' || builtin === 'compact') return false
       try {
-        await request('turn/steer', { threadId, input: turnInput(input), expectedTurnId: turnId }, 15_000)
+        await request('turn/steer', { threadId, input: turnInput(input, remote), expectedTurnId: turnId }, 15_000)
         return !stopRequested
       }
       catch {

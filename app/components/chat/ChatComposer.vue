@@ -11,6 +11,7 @@ import { AGENTS, effortLabel, type AgentId, type Attachment, type Thread } from 
 import { call, isTauri, pickFiles } from '~/composables/useBackend'
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeThumb, pastedName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
+import { isEnvPath } from '~/utils/envPath'
 import { openImage } from '~/utils/imageViewer'
 import type { MenuItem } from '~/types/ui'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
@@ -386,7 +387,8 @@ const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[])
   return {
     label: AGENTS[id].name,
     icon: () => h(AgentIcon, { agent: id }),
-    hint: info && !info.installed ? 'Not installed. See Settings > Agents.' : undefined,
+    // A remote project runs the CLI in its instance: whether it is installed here does not matter.
+    hint: info && !info.installed && !isEnvPath(ws.activeProjectPath) ? 'Not installed. See Settings > Agents.' : undefined,
     checked: props.agent === id,
     onSelect: () => emit('update:agent', id),
   }

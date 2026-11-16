@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
+import { isEnvPath } from '~/utils/envPath'
 
 /**
  * The open tool window on the right of the chats: the project's files, source
@@ -10,6 +11,7 @@ import { useWorkspace } from '~/stores/workspace'
 const ws = useWorkspace()
 const LABELS = { files: 'Files', changes: 'Changes', links: 'Pull requests' } as const
 const root = ref<HTMLElement | null>(null)
+const remote = computed(() => isEnvPath(ws.activeProjectPath))
 
 let dragging = false
 function startResize(e: PointerEvent) {
@@ -29,7 +31,9 @@ function endResize() {
 
 <template>
   <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
-    <FilesPanel v-if="ws.toolPanel === 'files'" />
+    <!-- A remote project has nothing on this computer's disk for these views to read. -->
+    <AppToolRemote v-if="remote" :title="LABELS[ws.toolPanel ?? 'files']" />
+    <FilesPanel v-else-if="ws.toolPanel === 'files'" />
     <LinksPanel v-else-if="ws.toolPanel === 'links'" />
     <GitPanel v-else />
     <div
