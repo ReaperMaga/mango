@@ -405,7 +405,15 @@ export const useWorkspace = defineStore('workspace', {
     /* ---------- terminal ---------- */
     toggleTerminal(force?: boolean) {
       this.terminalOpen = force ?? !this.terminalOpen
-      if (this.terminalOpen && this.terminalTabs.length === 0) this.newTerminal()
+      if (this.terminalOpen) {
+        // A remote project's terminal is a shell in its environment: show one (open it when there is none yet).
+        const path = this.activeProjectPath
+        if (isEnvPath(path)) {
+          const tab = this.terminalTabs.find(t => t.cwd === path && !t.exited)
+          if (tab) this.activeTerminalId = tab.id
+          else this.newTerminal()
+        } else if (this.terminalTabs.length === 0) this.newTerminal()
+      }
       this.persist()
     },
     setTerminalHeight(fraction: number) {
@@ -428,9 +436,15 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
     /** `profileId` picks a shell for this one terminal; omitted, the default shell is used. */
+    /**
+     * Open a terminal tab. `cwd` defaults to the active project: for a remote project that is a shell in its
+     * environment. Picking a local shell (`profileId`) always runs on this computer, in the home folder when the
+     * project is remote.
+     */
     newTerminal(cwd?: string | null, profileId?: string | null) {
       const id = `term-${++tabSeq}`
-      const dir = cwd ?? this.activeProjectPath
+      let dir = cwd ?? this.activeProjectPath
+      if (profileId && isEnvPath(dir)) dir = null
       // In a remote project the terminal is a shell inside the instance (TerminalView starts it with `env_shell`).
       const remote = parseEnvPath(dir)
       const profile = remote ? null : this.terminalProfiles.find(p => p.id === profileId) ?? this.defaultTerminalProfile
