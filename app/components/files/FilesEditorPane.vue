@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type * as Monaco from 'monaco-editor'
-import { CircleAlert, FileWarning, FolderTree, Save, X } from 'lucide-vue-next'
+import { CircleAlert, Code, Eye, FileWarning, FolderTree, Save, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { closeFileTab, useFiles } from '~/stores/files'
@@ -9,9 +9,12 @@ import { editorModel, setEditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
 import { modLabel } from '~/composables/useShortcuts'
+import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
 
 /**
- * A project file open in the main pane, edited with Monaco. Each tab keeps
+ * A project file open in the main pane, edited with Monaco. Pictures open in
+ * the image viewer instead; an SVG shows as a picture with its source (in
+ * Monaco) one switch away, and the picture follows unsaved edits. Each tab keeps
  * its own model (edits, undo, scroll) while it is open; the store holds what
  * is on disk and decides when a save would overwrite someone else's change.
  */
@@ -26,6 +29,30 @@ const tab = computed(() => parseFileTab(props.tabId))
 const file = computed(() => files.file(props.tabId))
 /** The file can be shown as text. */
 const editable = computed(() => !!file.value && !file.value.error && !file.value.binary && !file.value.tooLarge && file.value.disk !== null)
+const kind = computed(() => (tab.value ? imageKind(tab.value.file) : null))
+/** An SVG showing as a picture rather than as code. */
+const svgPreview = computed(() => kind.value === 'svg' && editable.value && file.value?.view !== 'code')
+
+/** The SVG as the editor has it (unsaved edits included), for the picture. */
+const svgText = ref('')
+let svgTimer: ReturnType<typeof setTimeout> | undefined
+function readSvg() {
+  clearTimeout(svgTimer)
+  if (kind.value !== 'svg') return
+  const entry = editorModel(props.tabId)
+  svgText.value = entry && !entry.model.isDisposed() ? entry.model.getValue() : file.value?.disk ?? ''
+}
+watch(() => [props.tabId, file.value?.version, file.value?.view] as const, readSvg, { immediate: true })
+onBeforeUnmount(() => clearTimeout(svgTimer))
+
+/** What the image viewer shows, if anything. */
+const picture = computed(() => {
+  const f = file.value
+  if (!f || f.error) return null
+  if (kind.value === 'raster' && f.image) return { src: f.image, vector: false, intrinsic: null }
+  if (svgPreview.value) return { src: svgUrl(svgText.value), vector: true, intrinsic: svgSize(svgText.value) }
+  return null
+})
 
 const host = ref<HTMLElement | null>(null)
 let monaco: MonacoApi | null = null
@@ -78,7 +105,9 @@ function show() {
     const entry = editorModel(props.tabId)
     if (entry?.viewState) editor.restoreViewState(entry.viewState)
     syncDirty()
-    if (props.active) editor.focus()
+    readSvg()
+    // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
+    if (props.active && !svgPreview.value) editor.focus()
   }
 }
 
@@ -113,7 +142,10 @@ async function setUp() {
       stickyScroll: { enabled: true },
     })
     monaco.editor.remeasureFonts()
-    contentSub = editor.onDidChangeModelContent(syncDirty)
+    contentSub = editor.onDidChangeModelContent(() => {
+      syncDirty()
+      if (kind.value === 'svg') { clearTimeout(svgTimer); svgTimer = setTimeout(readSvg, 120) }
+    })
     editor.onDidFocusEditorText(() => threads.focusPane(props.paneId))
     show()
   } catch (e) {
@@ -136,7 +168,12 @@ watch(() => [props.tabId, editable.value, file.value?.version] as const, () => {
   else show()
 })
 
-watch(() => props.active, (active) => { if (active && editor && shownTab) editor.focus() })
+watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value) editor.focus() })
+
+function setView(view: 'preview' | 'code') {
+  files.setView(props.tabId, view)
+  if (view === 'code') nextTick(() => editor?.focus())
+}
 
 onBeforeUnmount(() => {
   if (editor && shownTab) {
@@ -204,7 +241,15 @@ const state = computed(() => {
       <span v-if="tab.dir" class="fe__dir selectable"><bdi>{{ tab.dir }}</bdi></span>
       <span v-if="state" class="fe__state" :class="{ 'is-dirty': f?.dirty && !f?.saving }">{{ state }}</span>
       <span class="fe__spacer" />
-      <UiButton size="sm" :disabled="!f?.dirty || f?.saving" :title="`Save (${mod}+S)`" @click="save"><Save />Save</UiButton>
+      <div v-if="kind === 'svg' && editable" class="fe__view" role="radiogroup" aria-label="Show the SVG as">
+        <button type="button" role="radio" :aria-checked="svgPreview" :class="{ 'is-on': svgPreview }" @click="setView('preview')">
+          <Eye />Preview
+        </button>
+        <button type="button" role="radio" :aria-checked="!svgPreview" :class="{ 'is-on': !svgPreview }" @click="setView('code')">
+          <Code />Code
+        </button>
+      </div>
+      <UiButton v-if="kind !== 'raster'" size="sm" :disabled="!f?.dirty || f?.saving" :title="`Save (${mod}+S)`" @click="save"><Save />Save</UiButton>
       <UiIconButton size="sm" label="Show in Files" @click="revealInTree"><FolderTree /></UiIconButton>
       <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
@@ -229,8 +274,16 @@ const state = computed(() => {
     </div>
 
     <div class="fe__body">
-      <div v-show="editable && !failed" ref="host" class="fe__editor" />
-      <div v-if="failed" class="fe__note" role="alert">
+      <div v-show="editable && !failed && !svgPreview" ref="host" class="fe__editor" />
+      <FilesImageView
+        v-if="picture && tab"
+        :src="picture.src"
+        :name="tab.name"
+        :size="f?.size ?? 0"
+        :vector="picture.vector"
+        :intrinsic="picture.intrinsic"
+      />
+      <div v-else-if="failed" class="fe__note" role="alert">
         <p class="fe__note-title">The editor could not start</p>
         <p class="fe__note-sub selectable">{{ failed }}</p>
       </div>
@@ -300,6 +353,30 @@ const state = computed(() => {
 .fe__state { flex: none; font-size: var(--text-xs); font-weight: 560; color: var(--fg-subtle); white-space: nowrap; }
 .fe__state.is-dirty { color: var(--accent-ink); }
 .fe__spacer { flex: 1; }
+/* Picture or source, for an SVG: the same switch as the diff layout's. */
+.fe__view {
+  flex: none;
+  display: inline-flex;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.fe__view button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  font-weight: 540;
+  color: var(--fg-subtle);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.fe__view button svg { width: 13px; height: 13px; stroke-width: 1.85; }
+.fe__view button:hover { color: var(--fg-muted); }
+.fe__view button.is-on { background: var(--bg-active); color: var(--fg); }
 .fe.is-split .fe__dir { display: none; }
 
 .fe__bar {

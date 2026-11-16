@@ -1,5 +1,5 @@
-//! The Files view: list a project's folders, read a file into the editor and
-//! write it back. Every path is relative to the project and must stay inside
+//! The Files view: list a project's folders, read a file into the editor (or
+//! an image into the image viewer) and write it back. Every path is relative to the project and must stay inside
 //! it, symlinks included, so the webview can never reach the rest of the disk.
 
 use std::fs;
@@ -12,6 +12,8 @@ use crate::git::{self, blocking, clean_rel, existing_dir, Vcs};
 
 /// Larger files are not opened in the editor.
 const MAX_OPEN: u64 = 5 * 1024 * 1024;
+/// Larger images are not shown in the image viewer.
+const MAX_IMAGE: u64 = 25 * 1024 * 1024;
 /// A folder with more entries than this is listed only up to here.
 const MAX_ENTRIES: usize = 5000;
 /// How much of a file is looked at to decide whether it is binary.
@@ -48,6 +50,16 @@ pub struct FileContent {
     /// The file started with a UTF-8 byte order mark (not part of `text`).
     pub bom: bool,
     /// Last modification, ms since the epoch: hand it back on save.
+    pub modified_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBytes {
+    /// The whole file, base64.
+    pub data: String,
+    pub size: u64,
+    /// Last modification, ms since the epoch.
     pub modified_ms: u64,
 }
 
@@ -163,6 +175,26 @@ pub(crate) fn read_file(root: &str, file: &str) -> Result<FileContent, String> {
     Ok(FileContent { binary: text.is_none(), text, too_large: false, size, bom, modified_ms })
 }
 
+/// The raw bytes of a file, for the image viewer. Refuses files over [`MAX_IMAGE`].
+pub(crate) fn read_bytes(root: &str, file: &str) -> Result<FileBytes, String> {
+    use base64::Engine as _;
+    let (_, target) = resolve(root, file)?;
+    let meta = fs::metadata(&target).map_err(|e| format!("Could not read {file}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{file} is not a file"));
+    }
+    let size = meta.len();
+    if size > MAX_IMAGE {
+        return Err(format!("{file} is {} MB; images up to {} MB are shown here", size / (1024 * 1024), MAX_IMAGE / (1024 * 1024)));
+    }
+    let bytes = fs::read(&target).map_err(|e| format!("Could not read {file}: {e}"))?;
+    Ok(FileBytes {
+        data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+        size,
+        modified_ms: modified_ms(&meta),
+    })
+}
+
 /// Write `text` over an existing file. With `expected_modified_ms`, refuse
 /// (`saved: false`) when the file changed on disk since it was read: an
 /// agent may have edited it in the meantime.
@@ -205,6 +237,11 @@ pub async fn fs_list_dir(root: String, dir: String) -> Result<FsListing, String>
 #[tauri::command]
 pub async fn fs_read_file(root: String, file: String) -> Result<FileContent, String> {
     blocking(move || read_file(&root, &file)).await
+}
+
+#[tauri::command]
+pub async fn fs_read_bytes(root: String, file: String) -> Result<FileBytes, String> {
+    blocking(move || read_bytes(&root, &file)).await
 }
 
 #[tauri::command]
@@ -308,6 +345,22 @@ mod tests {
 
         // Writing never creates files.
         assert!(write_file(&root, "new.txt", "x", false, None).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reads_bytes_inside_the_project_only() {
+        use base64::Engine as _;
+        let dir = scratch();
+        let png = [0x89u8, b'P', b'N', b'G', 0, 1, 2, 255];
+        fs::write(dir.join("logo.png"), png).unwrap();
+        let root = path_of(&dir);
+        let got = read_bytes(&root, "logo.png").unwrap();
+        assert_eq!(got.size, png.len() as u64);
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(got.data).unwrap(), png);
+        assert!(read_bytes(&root, "../logo.png").is_err());
+        assert!(read_bytes(&root, "missing.png").is_err());
+        assert!(read_bytes(&root, "").is_err());
         fs::remove_dir_all(&dir).ok();
     }
 

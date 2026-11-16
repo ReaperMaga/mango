@@ -81,6 +81,7 @@ pub fn run() {
             vcs::git_branch_delete,
             files::fs_list_dir,
             files::fs_read_file,
+            files::fs_read_bytes,
             files::fs_write_file,
             updater::update_check,
             updater::update_install,
