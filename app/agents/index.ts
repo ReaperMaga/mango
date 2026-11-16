@@ -307,6 +307,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
         if (e.images?.length) void keepToolImages(store, part, e.images)
+        // `gh pr create` and the like: the new pull request or issue belongs to this chat.
+        store._linkCreated(to.threadId, part)
         store.persist()
         break
       }

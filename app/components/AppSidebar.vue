@@ -6,6 +6,7 @@ import { AGENTS, displayStatus, hasUnreadResult, type Thread } from '~/types/cha
 import { isBusy } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
+import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
 
 const ws = useWorkspace()
@@ -131,6 +132,28 @@ function onDragEnd() {
 onBeforeUnmount(onDragEnd)
 
 /** Status first when it says something; otherwise who the chat is with. */
+/**
+ * The pull request (or, without one, the issue) a chat is linked to, for the mark on its row:
+ * the newest one, plus how many others there are.
+ */
+function linkMark(t: Thread) {
+  const links = t.links
+  if (!links?.length) return null
+  const main = [...links].reverse().find(l => l.kind === 'pr') ?? links[links.length - 1]!
+  const state = stateOf(main.kind, main.state)
+  const others = links.length - 1
+  const what = `${main.kind === 'pr' ? 'Pull request' : 'Issue'} #${main.number}${main.state ? `, ${state.word.toLowerCase()}` : ''}`
+  return {
+    number: main.number,
+    icon: state.icon,
+    tone: state.tone,
+    others,
+    label: `${what}${main.title ? `: ${main.title}` : ''}${others ? ` (and ${others} more)` : ''}`,
+  }
+}
+
+const linkMarks = computed(() => new Map(threads.threads.filter(t => t.links?.length).map(t => [t.id, linkMark(t)!])))
+
 function subtitle(t: Thread) {
   const agent = t.simulated ? `${AGENTS[t.agent].name} · simulated` : AGENTS[t.agent].name
   const live = threads.live[t.id]
@@ -297,8 +320,23 @@ const agentsNeedingAttention = computed(() => {
                   @keydown.esc.prevent="renaming = null"
                   @blur="commitRename"
                 >
-                <span v-else class="sb__title">{{ t.title }}</span>
-                <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
+                <span v-else class="sb__titleline">
+                  <component
+                    :is="linkMarks.get(t.id)!.icon"
+                    v-if="linkMarks.has(t.id)"
+                    class="sb__link-icon"
+                    :class="`is-${linkMarks.get(t.id)!.tone}`"
+                    aria-hidden="true"
+                  />
+                  <span class="sb__title">{{ t.title }}</span>
+                </span>
+                <span class="sb__subline">
+                  <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
+                  <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
+                    #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
+                    <span class="sr-only">, {{ m.label }}</span>
+                  </span>
+                </span>
               </div>
               <span class="sb__time tabular">{{ shortAgo(t.updatedAt, now) }}</span>
               <div class="sb__actions" @click.stop @dblclick.stop>
@@ -470,6 +508,29 @@ const agentsNeedingAttention = computed(() => {
 }
 .sb__thread.is-current .sb__title, .sb__thread.is-unseen .sb__title { color: var(--fg); }
 .sb__thread.is-unseen .sb__title { font-weight: 560; word-spacing: 0.05em; }
+.sb__subline { display: flex; align-items: center; gap: var(--space-2); min-width: 0; width: 100%; }
+.sb__subline .sb__sub { flex: 0 1 auto; min-width: 0; }
+/* The pull request the chat is linked to: its state as the icon's colour, the number in quiet ink. */
+.sb__link {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  color: var(--fg-subtle);
+}
+/* A linked chat leads its title with the pull request's icon, in its state's mark grade. */
+.sb__titleline { display: flex; align-items: center; gap: 5px; min-width: 0; width: 100%; }
+.sb__titleline .sb__title { min-width: 0; }
+.sb__link-icon { flex: none; width: 13px; height: 13px; stroke-width: 1.9; color: var(--fg-faint); }
+.sb__link-icon.is-running { color: var(--ripe-running); }
+.sb__link-icon.is-queued { color: var(--ripe-queued); }
+.sb__link-icon.is-done { color: var(--ripe-done); }
+.sb__link-icon.is-error { color: var(--ripe-error); }
+.sb__link-more { margin-left: 2px; color: var(--fg-faint); }
+.sb__thread.is-current .sb__link { color: var(--fg-muted); }
 .sb__sub { font-size: var(--text-xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.35; }
 .sb__sub--waiting { color: var(--ripe-waiting-fg); }
 .sb__sub--working { color: var(--fg-subtle); }

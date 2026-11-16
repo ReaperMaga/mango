@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ArrowUpRight, ChevronRight, FileText, FilePen, FilePlus, Search, SquareTerminal, Globe, CircleAlert, Wrench } from 'lucide-vue-next'
+import { ArrowUpRight, ChevronRight, CircleDot, GitPullRequest, FileText, FilePen, FilePlus, Search, SquareTerminal, Globe, CircleAlert, Wrench } from 'lucide-vue-next'
 import type { Part } from '~/types/chat'
 import { openImage } from '~/utils/imageViewer'
 import { useThreads } from '~/stores/threads'
+import { useLinks } from '~/stores/links'
+import { createdBy, type ItemRef } from '~/utils/githubLinks'
 
 type ToolPart = Extract<Part, { type: 'tool' }>
 const props = defineProps<{ part: ToolPart }>()
@@ -24,6 +26,16 @@ const open = ref(props.part.status === 'error')
 /** A delegated task has a chat of its own: the sub-agent's. */
 const threads = useThreads()
 const child = computed(() => (props.part.childId ? threads.byId(props.part.childId) : null))
+
+/** A pull request or issue this call opened: linked to the chat, shown in the Pull requests tool window. */
+const created = computed(() => createdBy(props.part))
+const links = useLinks()
+function showCreated(item: ItemRef) {
+  // Chats from before linking existed get the link now. The pane was focused on mousedown.
+  const chat = threads.activeThread
+  if (chat) threads.link(chat.id, { ...item, source: 'agent', linkedAt: Date.now() })
+  links.show(item.key)
+}
 </script>
 
 <template>
@@ -46,6 +58,17 @@ const child = computed(() => (props.part.childId ? threads.byId(props.part.child
       <span v-if="part.summary" class="tool__sum tabular">{{ part.summary }}</span>
       <ChevronRight v-if="expandable" class="tool__caret" />
     </component>
+    <button
+      v-for="it in created"
+      :key="it.key"
+      type="button"
+      class="tool__open"
+      :title="`Show ${it.kind === 'pr' ? 'pull request' : 'issue'} #${it.number} beside the chat`"
+      @click="showCreated(it)"
+    >
+      <GitPullRequest v-if="it.kind === 'pr'" aria-hidden="true" /><CircleDot v-else aria-hidden="true" />
+      <span class="tabular">#{{ it.number }}</span>
+    </button>
     <button v-if="child" type="button" class="tool__open" :title="`Open the sub-agent's chat: ${child.title}`" @click="threads.show(child.id)">
       <span>Open</span><ArrowUpRight aria-hidden="true" />
     </button>

@@ -23,8 +23,8 @@ export interface TerminalTab {
   shell: string | null
 }
 
-/** The tool windows that open on the right: the project's files and source control. */
-export type ToolView = 'files' | 'changes'
+/** The tool windows that open on the right: the project's files, source control, and the chat's pull requests and issues. */
+export type ToolView = 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
 
@@ -47,7 +47,7 @@ function loadPrefs() {
   }
 }
 
-const toolView = (v: unknown): ToolView | null => (v === 'files' || v === 'changes' ? v : null)
+const toolView = (v: unknown): ToolView | null => (v === 'files' || v === 'changes' || v === 'links' ? v : null)
 
 let tabSeq = 0
 
@@ -264,6 +264,10 @@ export const useWorkspace = defineStore('workspace', {
     /** Show source control on the right; again to close it. */
     toggleGit(force?: boolean) {
       this.toggleTool('changes', force)
+    },
+    /** Show the chat's pull requests and issues on the right; again to close it. */
+    toggleLinks(force?: boolean) {
+      this.toggleTool('links', force)
     },
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {

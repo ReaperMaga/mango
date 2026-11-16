@@ -5,6 +5,7 @@ mod auth;
 mod bin;
 mod files;
 mod git;
+mod github;
 mod plastic;
 mod projects;
 mod pty;
@@ -79,6 +80,7 @@ pub fn run() {
             vcs::git_rebase,
             vcs::git_branch_rename,
             vcs::git_branch_delete,
+            github::gh_item,
             files::fs_list_dir,
             files::fs_read_file,
             files::fs_read_bytes,

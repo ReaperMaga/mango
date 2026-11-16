@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Files, GitBranch } from 'lucide-vue-next'
+import { Files, GitBranch, GitPullRequest } from 'lucide-vue-next'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
+import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 
 /**
@@ -23,9 +24,17 @@ function onWindowFocus() { if (ws.activeProjectPath) refreshGit(ws.activeProject
 onMounted(() => window.addEventListener('focus', onWindowFocus))
 onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
 
+/** Pull requests and issues linked to the chat in the active pane (or the chat a sub-agent belongs to). */
+const threads = useThreads()
+const linkCount = computed(() => {
+  const id = threads.activePane.threadId
+  return (id && threads.byId(id) ? threads.rootOf(id)?.links?.length : 0) ?? 0
+})
+
 const tools = computed(() => [
-  { id: 'files' as ToolView, label: 'Files', icon: Files, keys: `${mod.value}+Shift+E`, count: 0 },
-  { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: `${mod.value}+Shift+G`, count: changeCount.value },
+  { id: 'files' as ToolView, label: 'Files', icon: Files, keys: `${mod.value}+Shift+E`, count: 0, counts: '' },
+  { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: `${mod.value}+Shift+G`, count: changeCount.value, counts: 'changed file' },
+  { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: `${mod.value}+Shift+P`, count: linkCount.value, counts: 'linked item' },
 ])
 </script>
 
@@ -38,7 +47,7 @@ const tools = computed(() => [
       class="ts__btn"
       :class="{ 'is-active': ws.toolPanel === t.id }"
       :aria-pressed="ws.toolPanel === t.id"
-      :aria-label="t.count ? `${t.label}, ${t.count} changed file${t.count === 1 ? '' : 's'}` : t.label"
+      :aria-label="t.count ? `${t.label}, ${t.count} ${t.counts}${t.count === 1 ? '' : 's'}` : t.label"
       :title="`${t.label} (${t.keys})`"
       @click="ws.toggleTool(t.id)"
     >

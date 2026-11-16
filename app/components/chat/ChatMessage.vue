@@ -6,6 +6,7 @@ import { formatSize } from '~/utils/attachments'
 import { openImage } from '~/utils/imageViewer'
 import { AGENTS } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
+import { createdBy } from '~/utils/githubLinks'
 
 const props = defineProps<{ message: Message; thread: Thread; last: boolean }>()
 const threads = useThreads()
@@ -22,8 +23,12 @@ type Segment =
   | { kind: 'part'; key: string; part: Part; i: number }
   | { kind: 'steps'; key: string; steps: Step[]; end: number }
 
-/** A delegated task stays on its own row, so its link to the sub-agent's chat is never folded away. */
-const isStep = (p: Part): p is Step => p.type === 'thinking' || (p.type === 'tool' && !p.childId)
+/**
+ * A delegated task stays on its own row, so its link to the sub-agent's chat is never folded away;
+ * so does a call that opened a pull request or issue, with its link to the Pull requests tool window.
+ */
+const isStep = (p: Part): p is Step =>
+  p.type === 'thinking' || (p.type === 'tool' && !p.childId && !createdBy(p).length)
 
 /** Runs of two or more thinking/tool rows fold into one ChatSteps; everything else renders on its own. */
 const segments = computed<Segment[]>(() => {

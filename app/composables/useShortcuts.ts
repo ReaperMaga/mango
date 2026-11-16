@@ -23,7 +23,7 @@ export async function openFolderFlow() {
  *   Mod+W  close tab            Mod+1..9 switch tab     Mod+Shift+T  new terminal
  *   Mod+Shift+G  changes panel  Mod+,  settings
  *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
- *   Mod+Shift+U  usage limits
+ *   Mod+Shift+U  usage limits   Mod+Shift+P  pull requests panel
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -56,6 +56,7 @@ export function useShortcuts() {
     if (k === '\\') { e.preventDefault(); threads.isSplit ? threads.closePane(threads.activePaneId) : threads.split(); return }
     if (k === 'g' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleGit(); return }
     if (k === 'e' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleFiles(); return }
+    if (k === 'p' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleLinks(); return }
     if (k === 's' && !e.shiftKey) {
       // Never the browser's "save page"; only a file tab has something to save.
       e.preventDefault()

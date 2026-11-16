@@ -37,6 +37,7 @@ fn extra_dirs() -> Vec<PathBuf> {
             .unwrap_or_else(|| PathBuf::from(r"C:\Program Files"));
         dirs.push(program_files.join(r"Git\cmd"));
         dirs.push(program_files.join("nodejs"));
+        dirs.push(program_files.join("GitHub CLI"));
     }
     #[cfg(unix)]
     for abs in ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"] {

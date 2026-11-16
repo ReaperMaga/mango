@@ -17,6 +17,7 @@ Built with Rust + [Tauri 2](https://tauri.app) and [Nuxt 4](https://nuxt.com) (S
 - **Slash commands:** type `/` at the start of a message to list the commands of the chat's agent, filtered as you type (arrows to move, Tab to complete, Enter to run or complete, Esc to close). Claude Code's list comes from the CLI itself, so it includes its built-ins that work outside the terminal UI (`/compact`, `/context`, `/code-review`, …) and your own commands and skills. For Codex, Mango runs `/review` (the uncommitted changes, or your instructions), `/compact` and `/init` through the Codex app-server, and lists your Codex skills. `/clear` is Mango's own for both: the chat starts a new conversation and the agent forgets the messages above. A command sent while the agent works waits and runs as a turn of its own.
 - **Files (tool window on the right):** the project's folders as a tree, with git status and ignored files dimmed. A click previews a file in a tab beside the chats (the next click replaces it); a double-click or an edit keeps the tab. Files open in a Monaco editor: save with `Ctrl/⌘ S`, and Mango asks before closing a tab with unsaved edits. If a file changes on disk while you edit it (an agent, the terminal), saving stops and asks whether to discard your edits or overwrite the file. Pictures (PNG, JPEG, GIF, WebP, AVIF, BMP, ICO) open in an image viewer that fits them to the pane and zooms (buttons, `Ctrl` + wheel, `+` / `-` / `0`); SVG files open as a picture with a Preview / Code switch, and the preview follows unsaved edits. Other binary files and text files over 5 MB are not opened.
 - **Changes (tool window on the right):** git status, diffs in the main pane (side by side or one column), stage / unstage / discard, commit, fetch / pull / push, branches, history.
+- **Pull requests (tool window on the right):** the pull requests and issues linked to the chat in front of you. When the agent opens one in a chat (`gh pr create`, `gh issue create`, or a GitHub MCP tool), Mango links it to that chat and opens it beside the chats: state, title, author, branches, changes, checks and review, labels, and the description as GitHub renders it, pictures included. The tool row that created it gets a `#42` button that shows it again, and the chat's row in the sidebar leads its title with the pull request's icon, coloured by its state, and shows its number (`+1` when more are linked). Link others by hand with a link, `owner/repo#12` or `#12` (looked up in the project's GitHub repository). Details are read through the [GitHub CLI](https://cli.github.com) (`gh`), signed in with `gh auth login`; Mango never sees a token. Descriptions are sanitised before they are shown.
 - **Unity Version Control (Plastic SCM):** a folder inside a Unity VCS workspace (it has a `.plastic` folder) uses the same Changes view, diffs and branch popup, driven by your own `cm` client. Pending changes, diffs, checkin, undo, update, changeset history, and branches (`/main/...`: switch, create, rename, delete) all work. Unity VCS has no staging area: what you stage is what the next checkin takes (nothing staged takes everything), and Mango remembers that choice while it runs. There is no fetch, push, amend, merge or rebase for Unity VCS in Mango. Sign in with the Unity Version Control app or Unity Hub; Mango never handles credentials.
 - **Terminal:** a real PTY docked at the bottom, with tabs. Mango finds the shells on your machine (login shell and `/etc/shells` on Linux/macOS; PowerShell, Command Prompt, Git Bash, MSYS2/Cygwin, Nushell and WSL distributions on Windows); pick one per terminal from the arrow next to the +, and set the default, font size and cursor in Settings > Terminal.
 - **Attachments:** paste a screenshot or copied files into the message box, pick files with the paperclip, or drop them on a chat. Mango keeps a copy in its app data folder; Claude Code gets images inline and other files by path (with read access to that folder), Codex gets images by path. Up to 10 per message, 25 MB each; large images are shrunk to fit the model's limits.
@@ -80,6 +81,7 @@ node scripts/try-agent.ts claude /path/to/project "say hi" --mode ask
 | `Ctrl/⌘ B` | Toggle sidebar |
 | `Ctrl/⌘ Shift E` | Show or hide the Files tool window |
 | `Ctrl/⌘ Shift G` | Show or hide the Changes tool window |
+| `Ctrl/⌘ Shift P` | Show or hide the Pull requests tool window |
 | `Ctrl/⌘ S` | Save the file in the active tab |
 | `Ctrl/⌘ ,` | Settings |
 | `Ctrl/⌘ Shift U` | Usage limits |
@@ -96,7 +98,7 @@ app/                  Nuxt frontend
   assets/css/         design tokens (tokens.css) and base styles
   components/         titlebar, sidebar, chat, terminal, git, files, settings, welcome hub, dialogs, palette
   composables/        useBackend (typed IPC + browser mock), useShortcuts
-  stores/             workspace (projects, layout), threads (chats, panes), git, files (tree, open files), voice
+  stores/             workspace (projects, layout), threads (chats, panes, linked pull requests), git, files (tree, open files), links (pull request details), voice
   types/ipc.ts        the frontend <-> Rust contract
 src-tauri/src/        Rust backend
   agent_proc.rs       starts agent CLIs, bridges their stdio as events
@@ -105,6 +107,7 @@ src-tauri/src/        Rust backend
   vcs.rs              the source-control commands: picks git or Unity VCS per folder
   git.rs              git for the changes panel
   files.rs            the Files view: list folders, read and save files inside the project
+  github.rs           pull requests and issues linked to chats, read through the GitHub CLI
   plastic.rs          Unity Version Control (`cm`) for the same commands
   pty.rs              terminals
   projects.rs         projects, clone, recents

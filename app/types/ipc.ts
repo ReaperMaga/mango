@@ -155,6 +155,47 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/* ---------- pull requests and issues (linked to chats, read through the GitHub CLI) ---------- */
+
+export interface GhLabel {
+  name: string
+  /** Hex without `#`, as GitHub stores it. */
+  color: string
+}
+
+export type GhState = 'open' | 'draft' | 'merged' | 'closed'
+
+/** One pull request or issue as `gh_item` reads it. */
+export interface GhItem {
+  kind: 'pr' | 'issue'
+  url: string
+  host: string
+  owner: string
+  repo: string
+  number: number
+  title: string
+  state: GhState
+  /** Closed issues: "completed", "not_planned" or "duplicate". */
+  stateReason: string | null
+  author: { login: string; avatarUrl: string | null } | null
+  /** ISO timestamps. */
+  createdAt: string
+  updatedAt: string
+  /** The description as GitHub renders it. Untrusted: sanitise before showing (`utils/safeHtml.ts`). */
+  bodyHtml: string
+  labels: GhLabel[]
+  comments: number
+  /* Pull requests only; null for issues. */
+  headRef: string | null
+  baseRef: string | null
+  additions: number | null
+  deletions: number | null
+  changedFiles: number | null
+  reviewDecision: 'approved' | 'changes_requested' | 'review_required' | null
+  /** The latest commit's checks. */
+  checks: 'success' | 'failure' | 'pending' | null
+}
+
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
  * refuses anything that leads outside it.
@@ -341,6 +382,12 @@ export interface Commands {
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
 
   /** One folder of a project (`dir` "" for the top). */
+  /**
+   * A pull request or issue, by link, `owner/repo#12`, or number (`#12`: in the GitHub repository of
+   * the project at `path`). Needs the GitHub CLI, signed in; the error says what to do when it is not.
+   */
+  gh_item: [{ path: string; reference: string }, GhItem]
+
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]
   /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
