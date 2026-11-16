@@ -615,7 +615,7 @@ impl EnvAt {
 
     /// Run `argv` as the agent user in this folder. A connection or environment problem
     /// is an error; anything else is the command's own result, as for a local process.
-    fn run(
+    pub(crate) fn run(
         &self,
         env: &[(String, String)],
         argv: &[String],
@@ -1265,6 +1265,15 @@ pub(crate) fn commit(at: &At, message: &str, amend: bool) -> Result<String, Stri
 fn remotes(root: &At) -> Result<Vec<String>, String> {
     let out = git(root).read_only().arg("remote").run_ok("git remote")?;
     Ok(out.text().lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+}
+
+/// `git remote -v` in `at` (URLs with `insteadOf` applied), for finding which GitHub repository
+/// a project belongs to. `Ok(None)` when git refused, for example outside a repository; a
+/// connection or environment problem is an error.
+pub(crate) fn remote_list(at: &At) -> Result<Option<String>, String> {
+    at.check()?;
+    let out = git(at).read_only().args(["remote", "-v"]).run()?;
+    Ok(out.ok().then(|| out.text()))
 }
 
 const NO_REMOTE: &str =

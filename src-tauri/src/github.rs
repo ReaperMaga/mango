@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
+use tauri::AppHandle;
 
-use crate::git::{blocking, run_process, Output};
+use crate::git::{blocking, run_process, At, Output};
 
 const TIMEOUT: Duration = Duration::from_secs(45);
 /// A pull request with a long description and many images is still far below this.
@@ -233,21 +234,26 @@ fn run(cmd: Command, target: Option<&Target>) -> Result<Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("The GitHub CLI answered with something unexpected: {e}"))
 }
 
-/// The GitHub repository the project folder belongs to (its git remote, as `gh` picks it).
-fn project_repo(path: &str) -> Result<(String, String, String), String> {
+const NO_REPO: &str = "Could not tell which GitHub repository this project belongs to; paste the full link instead.";
+
+/// The GitHub repository the project belongs to: for a folder on this computer as `gh` picks it,
+/// for a remote project from the git remotes inside its environment.
+fn project_repo(app: &AppHandle, path: &str) -> Result<(String, String, String), String> {
+    if let Some(env) = crate::vcs::env_at(app, path) {
+        return env_repo(&At::Env(Box::new(env?)));
+    }
+    local_repo(path)
+}
+
+/// `gh repo view` in the folder: it knows `gh repo set-default` and SSH host aliases.
+fn local_repo(path: &str) -> Result<(String, String, String), String> {
     let dir = PathBuf::from(path.trim());
     if path.trim().is_empty() || !dir.is_dir() {
         return Err("Open a project first, or paste the full link.".into());
     }
     let mut cmd = gh(Some(&dir));
     cmd.args(["repo", "view", "--json", "owner,name,url"]);
-    let v = run(cmd, None).map_err(|e| {
-        if e == SIGNED_OUT || e == MISSING {
-            e
-        } else {
-            format!("Could not tell which GitHub repository this project belongs to; paste the full link instead. ({e})")
-        }
-    })?;
+    let v = run(cmd, None).map_err(|e| if e == SIGNED_OUT || e == MISSING { e } else { format!("{NO_REPO} ({e})") })?;
     let owner = v["owner"]["login"].as_str().unwrap_or_default().to_string();
     let name = v["name"].as_str().unwrap_or_default().to_string();
     let host = v["url"]
@@ -257,9 +263,81 @@ fn project_repo(path: &str) -> Result<(String, String, String), String> {
         .unwrap_or("github.com")
         .to_ascii_lowercase();
     if !is_name(&owner) || !is_name(&name) || !is_host(&host) {
-        return Err("Could not tell which GitHub repository this project belongs to; paste the full link instead.".into());
+        return Err(NO_REPO.into());
     }
     Ok((host, owner, name))
+}
+
+/// A remote project: `gh` runs on this computer (the user's own sign-in) and has no folder to
+/// look in, so the repository comes from the git remotes inside the environment.
+fn env_repo(at: &At) -> Result<(String, String, String), String> {
+    let Some(list) = crate::git::remote_list(at)? else {
+        return Err(format!("{NO_REPO} (The project folder is not a git repository.)"));
+    };
+    choose_remote(&parse_remotes(&list)).ok_or_else(|| {
+        format!("{NO_REPO} (None of the project's git remotes points at a GitHub repository.)")
+    })
+}
+
+/// `git remote -v` as (name, url) pairs, fetch URLs only.
+fn parse_remotes(list: &str) -> Vec<(String, String)> {
+    list.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let (name, url, kind) = (parts.next()?, parts.next()?, parts.next());
+            (kind.is_none() || kind == Some("(fetch)")).then(|| (name.to_string(), url.to_string()))
+        })
+        .collect()
+}
+
+/// The (host, owner, repo) a git remote URL names: `https://host/owner/repo(.git)`,
+/// `ssh://[user@]host[:port]/owner/repo`, `git://…` or scp-like `[user@]host:owner/repo`.
+fn repo_from_url(url: &str) -> Option<(String, String, String)> {
+    let url = url.trim();
+    let (authority, path) = match url.split_once("://") {
+        Some((scheme, rest)) => {
+            if !matches!(scheme.to_ascii_lowercase().as_str(), "https" | "http" | "ssh" | "git" | "git+ssh" | "ssh+git") {
+                return None;
+            }
+            rest.split_once('/')?
+        }
+        None => {
+            // scp-like: a colon before any slash (otherwise it is a local path).
+            let (authority, path) = url.split_once(':')?;
+            if authority.contains('/') || authority.contains('\\') {
+                return None;
+            }
+            (authority, path)
+        }
+    };
+    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if url.contains("://") { host.split(':').next()? } else { host };
+    let host = host.to_ascii_lowercase();
+    let host = host.strip_prefix("www.").unwrap_or(&host);
+    // GitHub's SSH over port 443.
+    let host = if host == "ssh.github.com" { "github.com" } else { host };
+    let path = path.trim_start_matches('/').trim_end_matches('/');
+    let path = path.strip_suffix(".git").unwrap_or(path);
+    let (owner, repo) = path.split_once('/')?;
+    // A host without a dot is an SSH alias (`Host work` in ~/.ssh/config) only the environment knows.
+    if !host.contains('.') || !is_host(host) || !is_name(owner) || !is_name(repo) {
+        return None;
+    }
+    Some((host.to_string(), owner.to_string(), repo.to_string()))
+}
+
+/// The remote whose repository the project belongs to, chosen as `gh` does: `upstream`, then
+/// `github`, then `origin`, then the first. Remotes on GitHub itself come before any others.
+fn choose_remote(remotes: &[(String, String)]) -> Option<(String, String, String)> {
+    let parsed: Vec<(&str, (String, String, String))> =
+        remotes.iter().filter_map(|(name, url)| Some((name.as_str(), repo_from_url(url)?))).collect();
+    let on_github = |h: &str| h == "github.com" || h.ends_with(".ghe.com");
+    let rank = |name: &str| ["upstream", "github", "origin"].iter().position(|n| *n == name).unwrap_or(3);
+    parsed
+        .iter()
+        .enumerate()
+        .min_by_key(|(i, (name, (host, _, _)))| (!on_github(host), rank(name), *i))
+        .map(|(_, (_, repo))| repo.clone())
 }
 
 const QUERY: &str = r#"query($owner: String!, $name: String!, $number: Int!) {
@@ -453,18 +531,19 @@ fn item_from_json(v: &Value, target: &Target) -> Result<GhItem, String> {
     })
 }
 
-fn target_of(path: &str, reference: &str) -> Result<Target, String> {
+/// The pull request or issue `reference` names; a bare number is in the project's repository (`repo`).
+fn target_of(reference: &str, repo: impl FnOnce() -> Result<(String, String, String), String>) -> Result<Target, String> {
     Ok(match parse_reference(reference)? {
         Reference::Full(t) => t,
         Reference::Number(number) => {
-            let (host, owner, repo) = project_repo(path)?;
+            let (host, owner, repo) = repo()?;
             Target { host, owner, repo, number }
         }
     })
 }
 
-fn item(path: &str, reference: &str) -> Result<GhItem, String> {
-    fetch(&target_of(path, reference)?)
+fn item(reference: &str, repo: impl FnOnce() -> Result<(String, String, String), String>) -> Result<GhItem, String> {
+    fetch(&target_of(reference, repo)?)
 }
 
 fn is_sha(s: &str) -> bool {
@@ -492,14 +571,14 @@ fn merge_error(out: &Output, target: &Target) -> String {
     gh_error(out, Some(target))
 }
 
-fn merge(path: &str, reference: &str, method: &str, head_sha: &str) -> Result<(), String> {
+fn merge(reference: &str, method: &str, head_sha: &str, repo: impl FnOnce() -> Result<(String, String, String), String>) -> Result<(), String> {
     if !matches!(method, "merge" | "squash" | "rebase") {
         return Err(format!("\"{method}\" is not a merge method."));
     }
     if !is_sha(head_sha) {
         return Err("Read the pull request again before merging it.".into());
     }
-    let target = target_of(path, reference)?;
+    let target = target_of(reference, repo)?;
     let mut cmd = gh(None);
     cmd.args(["api", "--method", "PUT"]);
     if target.host != "github.com" {
@@ -521,15 +600,21 @@ fn merge(path: &str, reference: &str, method: &str, head_sha: &str) -> Result<()
 /// Merge a pull request on GitHub with `method` ("merge", "squash" or "rebase"), only while its
 /// branch still points at `head_sha`. The local checkout is not touched.
 #[tauri::command]
-pub async fn gh_merge(path: String, reference: String, method: String, head_sha: String) -> Result<(), String> {
-    blocking(move || merge(&path, &reference, &method, &head_sha)).await
+pub async fn gh_merge(
+    app: AppHandle,
+    path: String,
+    reference: String,
+    method: String,
+    head_sha: String,
+) -> Result<(), String> {
+    blocking(move || merge(&reference, &method, &head_sha, || project_repo(&app, &path))).await
 }
 
 /// A pull request or issue by link, `owner/repo#12`, or number (`#12`, in the repository of the
-/// project at `path`).
+/// project at `path`, which may be a remote project).
 #[tauri::command]
-pub async fn gh_item(path: String, reference: String) -> Result<GhItem, String> {
-    blocking(move || item(&path, &reference)).await
+pub async fn gh_item(app: AppHandle, path: String, reference: String) -> Result<GhItem, String> {
+    blocking(move || item(&reference, || project_repo(&app, &path))).await
 }
 
 // ---------------------------------------------------------------------------
@@ -836,6 +921,90 @@ mod tests {
         Reference::Full(Target { host: host.into(), owner: owner.into(), repo: repo.into(), number })
     }
 
+    fn repo(host: &str, owner: &str, name: &str) -> Option<(String, String, String)> {
+        Some((host.into(), owner.into(), name.into()))
+    }
+
+    #[test]
+    fn reads_repositories_from_remote_urls() {
+        let mango = repo("github.com", "acme", "mango");
+        for url in [
+            "https://github.com/acme/mango.git",
+            "https://github.com/acme/mango",
+            "https://github.com/acme/mango/",
+            "http://www.github.com/acme/mango",
+            "https://user:token@github.com/acme/mango.git",
+            "git@github.com:acme/mango.git",
+            "git@github.com:acme/mango",
+            "github.com:acme/mango.git",
+            "ssh://git@github.com/acme/mango.git",
+            "ssh://git@ssh.github.com:443/acme/mango.git",
+            "git+ssh://git@github.com/acme/mango",
+            "git://github.com/acme/mango.git",
+            "  HTTPS://GitHub.com/acme/mango.git\n",
+        ] {
+            assert_eq!(repo_from_url(url), mango, "{url}");
+        }
+        assert_eq!(repo_from_url("git@git.corp.example:team/app.git"), repo("git.corp.example", "team", "app"));
+        assert_eq!(repo_from_url("https://ghe.example.com:8443/team/app"), repo("ghe.example.com", "team", "app"));
+        assert_eq!(repo_from_url("https://acme.ghe.com/team/app.js.git"), repo("acme.ghe.com", "team", "app.js"));
+        for url in [
+            "",
+            "/srv/git/mango.git",
+            "../mango",
+            "C:\\repos\\mango",
+            "C:/repos/mango",
+            "file:///srv/git/acme/mango.git",
+            "work:acme/mango.git", // an SSH alias only the environment knows
+            "https://github.com/acme",
+            "https://github.com/acme/mango/extra",
+            "https://github.com/acme/../mango",
+            "git@github.com:acme/mango;rm -rf.git",
+            "https://-evil.com/acme/mango",
+            "git@github.com:/",
+        ] {
+            assert_eq!(repo_from_url(url), None, "{url}");
+        }
+    }
+
+    #[test]
+    fn parses_git_remote_v() {
+        let list = "origin\tgit@github.com:me/mango.git (fetch)\norigin\tgit@github.com:me/mango.git (push)\n\
+                    upstream\thttps://github.com/acme/mango (fetch)\nupstream\tno_push (push)\n\n";
+        assert_eq!(
+            parse_remotes(list),
+            vec![
+                ("origin".to_string(), "git@github.com:me/mango.git".to_string()),
+                ("upstream".to_string(), "https://github.com/acme/mango".to_string()),
+            ]
+        );
+        assert!(parse_remotes("").is_empty());
+    }
+
+    #[test]
+    fn chooses_the_remote_gh_would() {
+        let r = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            pairs.iter().map(|(n, u)| (n.to_string(), u.to_string())).collect()
+        };
+        let fork = "git@github.com:me/mango.git";
+        let main = "https://github.com/acme/mango.git";
+        assert_eq!(choose_remote(&r(&[("origin", fork), ("upstream", main)])), repo("github.com", "acme", "mango"));
+        assert_eq!(choose_remote(&r(&[("origin", fork), ("github", main)])), repo("github.com", "acme", "mango"));
+        assert_eq!(choose_remote(&r(&[("mine", main), ("origin", fork)])), repo("github.com", "me", "mango"));
+        assert_eq!(choose_remote(&r(&[("b", fork), ("a", main)])), repo("github.com", "me", "mango"));
+        assert_eq!(choose_remote(&r(&[("only", main)])), repo("github.com", "acme", "mango"));
+        // GitHub itself before another host, even under a lower-ranked name.
+        let gitlab = "git@gitlab.com:acme/mango.git";
+        assert_eq!(choose_remote(&r(&[("origin", gitlab), ("mirror", fork)])), repo("github.com", "me", "mango"));
+        // A remote that names no repository is passed over.
+        assert_eq!(choose_remote(&r(&[("upstream", "/srv/git/mango.git"), ("origin", fork)])), repo("github.com", "me", "mango"));
+        // Only a GitHub Enterprise server: it is used.
+        let ghe = "git@git.corp.example:team/app.git";
+        assert_eq!(choose_remote(&r(&[("origin", ghe)])), repo("git.corp.example", "team", "app"));
+        assert_eq!(choose_remote(&r(&[("origin", "../elsewhere")])), None);
+        assert_eq!(choose_remote(&[]), None);
+    }
+
     #[test]
     fn parses_references() {
         assert_eq!(parse_reference("12"), Ok(Reference::Number(12)));
@@ -946,9 +1115,9 @@ mod tests {
     #[test]
     fn refuses_bad_merge_requests_before_asking_github() {
         let sha = "d013dd471daf6f6672ea035294ab4f01282f9c38";
-        assert!(merge("", "https://github.com/o/r/pull/5", "fast-forward", sha).unwrap_err().contains("not a merge method"));
-        assert!(merge("", "https://github.com/o/r/pull/5", "squash", "HEAD").unwrap_err().contains("again"));
-        assert!(merge("", "nonsense", "squash", sha).is_err());
+        assert!(merge("https://github.com/o/r/pull/5", "fast-forward", sha, || local_repo("")).unwrap_err().contains("not a merge method"));
+        assert!(merge("https://github.com/o/r/pull/5", "squash", "HEAD", || local_repo("")).unwrap_err().contains("again"));
+        assert!(merge("nonsense", "squash", sha, || local_repo("")).is_err());
     }
 
     #[test]
@@ -1110,10 +1279,10 @@ mod tests {
     #[ignore]
     fn real_gh() {
         let here = env!("CARGO_MANIFEST_DIR");
-        let by_number = item(here, "#19").expect("gh reads #19");
+        let by_number = item("#19", || local_repo(here)).expect("gh reads #19");
         assert_eq!(by_number.kind, "pr");
         assert!(!by_number.title.is_empty() && !by_number.body_html.is_empty());
-        let by_url = item("", &by_number.url).expect("gh reads the same pull request by its link");
+        let by_url = item(&by_number.url, || local_repo("")).expect("gh reads the same pull request by its link");
         assert_eq!(by_url.number, 19);
     }
 }

@@ -4,6 +4,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useUsage } from '~/stores/usage'
+import { useGit } from '~/stores/git'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
@@ -31,6 +32,17 @@ onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
 
 /** The active project when it is a folder inside a remote environment. */
 const remote = computed(() => remotePlace(ws.activeProjectPath))
+
+/* A folder on this computer brings its branch when it opens; a remote one's comes from git in the
+   environment: read it when the project becomes active and when the window comes back. */
+const git = useGit()
+function readRemoteBranch() {
+  const path = ws.activeProjectPath
+  if (isEnvPath(path) && document.visibilityState === 'visible') git.poll(path!)
+}
+watch(() => ws.activeProjectPath, readRemoteBranch, { immediate: true })
+onMounted(() => window.addEventListener('focus', readRemoteBranch))
+onBeforeUnmount(() => window.removeEventListener('focus', readRemoteBranch))
 
 /* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
 const envs = useEnvironments()
@@ -105,19 +117,21 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         </template>
       </UiMenu>
 
-      <!-- Where a remote project runs, in place of a branch; the Environment tool window has the rest. -->
+      <!-- A remote project: where it runs. Next to a branch it is just the server mark (the place is in
+           its tooltip and the Environment tool window); a folder without git shows the place itself. -->
       <button
         v-if="remote"
         type="button"
         class="tb__remote"
-        :class="{ 'is-open': ws.toolPanel === 'env' }"
+        :class="{ 'is-open': ws.toolPanel === 'env', 'is-compact': ws.activeProject?.isGit }"
         :title="`Remote environment: ${remote.where}, folder ${remote.dir}`"
+        :aria-label="`Remote environment: ${remote.where}`"
         @click="ws.toggleEnv()"
       >
         <Server aria-hidden="true" />
-        <span class="tb__remote-where">{{ remote.where }}</span>
+        <span v-if="!ws.activeProject?.isGit" class="tb__remote-where">{{ remote.where }}</span>
       </button>
-      <GitBranchPopup v-else-if="ws.activeProject?.isGit" :path="ws.activeProjectPath">
+      <GitBranchPopup v-if="ws.activeProject?.isGit" :path="ws.activeProjectPath">
         <template #default="{ toggle, open }">
           <button
             type="button"
@@ -245,6 +259,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 }
 .tb__remote:hover, .tb__remote.is-open { background: var(--bg-hover); color: var(--fg); }
 .tb__remote svg { width: 13px; height: 13px; flex: none; stroke-width: 1.85; }
+.tb__remote.is-compact { padding: 0 5px; }
 .tb__remote-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .tb__branch {
