@@ -30,9 +30,9 @@ fn clean_dir(dir: Option<String>) -> Result<Option<String>, String> {
 }
 
 /// Master-side argv: an interactive login shell as the agent user, in `cwd`.
-fn shell_line(host: &EnvHost, instance: &str, cwd: Option<&str>) -> Vec<String> {
+fn shell_line(host: &EnvHost, instance: &str, cwd: Option<&str>) -> Result<Vec<String>, String> {
     let inner = ssh::as_agent(cwd, &[], &["bash".into(), "-l".into()]);
-    ssh::incus_exec(host, instance, Mode::Tty, &inner)
+    ssh::in_instance(host, instance, Mode::Tty, &inner)
 }
 
 #[tauri::command]
@@ -51,7 +51,7 @@ pub async fn env_shell(
         let app = app.clone();
         blocking(move || hosts::get(&app, &host_id)).await?
     };
-    let argv = ssh::argv(&host, Mode::Tty, &shell_line(&host, &instance, cwd.as_deref()))?;
+    let argv = ssh::argv(&host, Mode::Tty, &shell_line(&host, &instance, cwd.as_deref())?)?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }
 
@@ -72,7 +72,7 @@ fn login_line(host: &EnvHost, instance: &str, tool: &str) -> Result<Vec<String>,
         "codex" => as_agent(need("codex", "Codex") + "exec codex login --device-auth"),
         // Then let git use gh's sign-in for https remotes (cloning private repositories).
         "gh" => as_agent(need("gh", "The GitHub CLI") + "gh auth login && exec gh auth setup-git"),
-        // Root (incus exec runs as root, no sudo needed): it joins the whole instance to the tailnet.
+        // Root (incus exec runs as root; sudo in a joined environment): it joins the whole instance to the tailnet.
         "tailscale" => {
             let mut script = need("tailscale", "Tailscale") + "exec tailscale up --ssh";
             let tags = host.tailscale.as_ref().map(|t| t.tags.clone()).unwrap_or_default();
@@ -86,7 +86,7 @@ fn login_line(host: &EnvHost, instance: &str, tool: &str) -> Result<Vec<String>,
         }
         other => return Err(format!("Mango can't sign in to \"{other}\" in an environment.")),
     };
-    Ok(ssh::incus_exec(host, instance, Mode::Tty, &inner))
+    ssh::in_instance(host, instance, Mode::Tty, &inner)
 }
 
 #[tauri::command]
@@ -166,13 +166,13 @@ else
 fi
 cd -- "$dir" 2>/dev/null && printf 'MANGO-DIR:%s\n' "$(pwd)""#;
 
-fn prepare_line(host: &EnvHost, instance: &str, dir: &str, url: Option<&str>) -> Vec<String> {
+fn prepare_line(host: &EnvHost, instance: &str, dir: &str, url: Option<&str>) -> Result<Vec<String>, String> {
     let inner = ssh::as_agent(
         None,
         &[],
         &["bash".into(), "-c".into(), PREPARE_SCRIPT.into(), "mango-prepare".into(), dir.into(), url.unwrap_or("").into()],
     );
-    ssh::incus_exec(host, instance, Mode::Batch, &inner)
+    ssh::in_instance(host, instance, Mode::Batch, &inner)
 }
 
 /// Turn [`PREPARE_SCRIPT`]'s report into the folder or a message a person can act on.
@@ -251,7 +251,7 @@ pub async fn env_prepare_dir(
     }
     blocking(move || {
         let host = hosts::get(&app, &host_id)?;
-        let line = prepare_line(&host, &instance, &dir, url.as_deref());
+        let line = prepare_line(&host, &instance, &dir, url.as_deref())?;
         let timeout = Duration::from_secs(if url.is_some() { 600 } else { 30 });
         let out = ssh::run(&host, &line, timeout)?;
         parse_prepare(&out, &dir, url.as_deref())
@@ -263,7 +263,7 @@ pub async fn env_prepare_dir(
  * The instance runs `mango-novnc.service`: websockify serving noVNC on 127.0.0.1:6080 inside the
  * instance (installed by the `desktop` component; `socat` comes with `base`). Mango listens on a
  * random local port and carries every accepted connection over its own
- * `ssh … incus exec T -T -- socat - TCP:127.0.0.1:6080`.
+ * `ssh … incus exec T -T -- socat - TCP:127.0.0.1:6080` (`sudo -n -- socat …` in a joined environment).
  */
 
 /// Where websockify listens inside the instance.
@@ -470,7 +470,7 @@ fn handle(mut client: TcpStream, shared: &Shared, dialer: &Dialer, port: u16) {
 /// Connections through `ssh … incus exec T -T -- socat - TCP:127.0.0.1:6080`.
 fn ssh_dialer(host: &EnvHost, instance: &str) -> Result<Dialer, String> {
     let inner = ["socat", "-", NOVNC_ADDR].map(String::from);
-    let argv = ssh::argv(host, Mode::Batch, &ssh::incus_exec(host, instance, Mode::Batch, &inner))?;
+    let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, &inner)?)?;
     Ok(Arc::new(move || {
         let mut cmd = ssh::command(&argv);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -502,9 +502,9 @@ fn desktop_status(out: &str, instance: &str) -> Result<(), String> {
     }
 }
 
-fn desktop_check_line(host: &EnvHost, instance: &str) -> Vec<String> {
+fn desktop_check_line(host: &EnvHost, instance: &str) -> Result<Vec<String>, String> {
     let script = "command -v socat >/dev/null 2>&1 || { echo no-socat; exit 0; }; systemctl is-active mango-novnc.service 2>/dev/null; exit 0";
-    ssh::incus_exec(host, instance, Mode::Batch, &["sh".into(), "-c".into(), script.into()])
+    ssh::in_instance(host, instance, Mode::Batch, &["sh".into(), "-c".into(), script.into()])
 }
 
 #[derive(Default)]
@@ -548,7 +548,7 @@ pub async fn env_desktop_open(
         let (host_id, instance) = (host_id.clone(), instance.clone());
         blocking(move || {
             let host = hosts::get(&app, &host_id)?;
-            let out = ssh::run(&host, &desktop_check_line(&host, &instance), Duration::from_secs(30))?;
+            let out = ssh::run(&host, &desktop_check_line(&host, &instance)?, Duration::from_secs(30))?;
             desktop_status(&out, &instance)?;
             Ok(host)
         })
@@ -616,7 +616,7 @@ mod tests {
     #[test]
     fn shell_and_login_lines() {
         let h = host();
-        let l = ssh::line(&shell_line(&h, "dev", Some("/home/agent/work/my app")));
+        let l = ssh::line(&shell_line(&h, "dev", Some("/home/agent/work/my app")).unwrap());
         assert!(l.starts_with("incus exec dev -t -- runuser -u agent -- env HOME=/home/agent"), "{l}");
         assert!(l.ends_with("mango '/home/agent/work/my app' bash -l"), "{l}");
 
@@ -679,10 +679,10 @@ mod tests {
 
     #[test]
     fn prepare_line_passes_dir_and_url_as_arguments() {
-        let l = ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git")));
+        let l = ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git")).unwrap());
         assert!(l.starts_with("incus exec dev -T -- runuser -u agent"), "{l}");
         assert!(l.ends_with("mango-prepare '/home/agent/work/a b' git@github.com:o/r.git"), "{l}");
-        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None));
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None).unwrap());
         assert!(l.ends_with("mango-prepare /w ''"), "{l}");
     }
 
@@ -718,7 +718,7 @@ mod tests {
         assert!(desktop_status("inactive\n", "dev").unwrap_err().starts_with("Install the Desktop component first"));
         assert!(desktop_status("", "dev").unwrap_err().starts_with("Install the Desktop component first"));
         assert!(desktop_status("activating", "dev").unwrap_err().contains("still starting"));
-        let l = ssh::line(&desktop_check_line(&host(), "dev"));
+        let l = ssh::line(&desktop_check_line(&host(), "dev").unwrap());
         assert!(l.starts_with("incus exec dev -T -- sh -c ") && l.contains("mango-novnc.service"), "{l}");
     }
 

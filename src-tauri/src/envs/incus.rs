@@ -63,7 +63,7 @@ fn status_of(s: &str) -> &'static str {
 }
 
 /// `true` for 100.64.0.0/10, the range Tailscale hands out.
-fn is_tailnet(ip: &str) -> bool {
+pub(crate) fn is_tailnet(ip: &str) -> bool {
     let mut it = ip.split('.').map(|p| p.parse::<u8>());
     matches!((it.next(), it.next()), (Some(Ok(100)), Some(Ok(b))) if (64..=127).contains(&b))
 }
@@ -198,10 +198,79 @@ pub(crate) fn parse_instances(json: &str) -> Result<Vec<EnvInstance>, String> {
     Ok(list.iter().filter_map(parse_instance).collect())
 }
 
+/* ---------- a joined environment: its one instance, described from inside ---------- */
+
+/// What a joined environment says about itself (POSIX sh, as its agent user).
+const DIRECT_FACTS: &str = r#"kv() { printf '%s=%s
+' "$1" "$(printf '%s' "$2" | tr '
+
+	' '   ')"; }
+PRETTY_NAME= NAME=
+[ -r /etc/os-release ] && . /etc/os-release
+kv image "${PRETTY_NAME:-$NAME}"
+kv container "$(systemd-detect-virt --container 2>/dev/null)"
+kv vm "$(systemd-detect-virt --vm 2>/dev/null)"
+kv ips "$(hostname -I 2>/dev/null)"
+kv ts "$(tailscale ip -4 2>/dev/null | head -n 1)"
+kv cpus "$(nproc 2>/dev/null)"
+kv mem "$(awk '/^MemTotal:/ { print $2 }' /proc/meminfo 2>/dev/null)"
+exit 0
+"#;
+
+/// `8GiB`-style text for a memory size in KiB (as /proc/meminfo has it).
+fn memory_text(kib: u64) -> String {
+    let gib = kib as f64 / (1024.0 * 1024.0);
+    if gib >= 1.0 {
+        format!("{}GiB", gib.round() as u64)
+    } else {
+        format!("{}MiB", (kib / 1024).max(1))
+    }
+}
+
+/// The joined environment as an instance: from [`DIRECT_FACTS`]' output, or `unknown` when
+/// it did not answer (the probe says why).
+pub(crate) fn direct_instance(name: &str, out: Option<&str>) -> EnvInstance {
+    let facts: std::collections::HashMap<&str, &str> = out
+        .unwrap_or("")
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.trim(), v.trim()))
+        .filter(|(_, v)| !v.is_empty())
+        .collect();
+    let detected = |k: &str| facts.get(k).is_some_and(|v| *v != "none");
+    let kind = if !detected("container") && detected("vm") { "vm" } else { "container" };
+    let tailscale_ip = facts.get("ts").filter(|ip| is_tailnet(ip)).map(|s| s.to_string());
+    let ipv4 = facts
+        .get("ips")
+        .map(|ips| {
+            ips.split_whitespace()
+                .filter(|ip| ip.contains('.') && !ip.starts_with("127.") && !is_tailnet(ip))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default();
+    EnvInstance {
+        name: name.to_string(),
+        kind: kind.into(),
+        status: if out.is_some() { "running" } else { "unknown" }.into(),
+        image: facts.get("image").map(|s| s.to_string()),
+        ipv4,
+        tailscale_ip,
+        cpus: facts.get("cpus").and_then(|n| n.parse().ok()),
+        memory: facts.get("mem").and_then(|n| n.parse().ok()).map(memory_text),
+        created_at: 0,
+    }
+}
+
 #[tauri::command]
 pub async fn env_instances(app: AppHandle, host_id: String) -> Result<Vec<EnvInstance>, String> {
     super::blocking(move || {
         let host = hosts::get(&app, &host_id)?;
+        if let Some(d) = &host.direct {
+            let remote = ["sh".to_string(), "-c".into(), DIRECT_FACTS.into()];
+            let out = ssh::run(&host, &remote, Duration::from_secs(20)).ok();
+            return Ok(vec![direct_instance(&d.instance, out.as_deref())]);
+        }
         let mut remote = vec!["incus".to_string(), "list".into()];
         remote.extend(ssh::remote_prefix(&host));
         remote.extend(["--format".into(), "json".into()]);
@@ -287,6 +356,7 @@ pub async fn env_instance_action(app: AppHandle, host_id: String, instance: Stri
             return Err(format!("\"{action}\" is not something Mango can do to an instance."));
         }
         let host = hosts::get(&app, &host_id)?;
+        super::owner_only(&host, "start, stop or delete this environment")?;
         act(&host, &instance, &action)
     })
     .await
@@ -406,6 +476,7 @@ pub async fn env_create(
     rows: u16,
 ) -> Result<String, String> {
     let host = hosts::get(&app, &input.host_id)?;
+    super::owner_only(&host, "create environments there: this one was shared with you")?;
     let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
     let plan = create_plan(&host, &input, now_ms)?;
     let argv = ssh::argv(&host, ssh::Mode::Tty, &create_remote(&host, input.name.trim(), &plan))?;
@@ -632,6 +703,49 @@ mod tests {
         assert_eq!(vm_image("images:ubuntu/24.04/cloud"), "images:ubuntu/24.04/cloud");
         assert_eq!(vm_image("images:ubuntu/24.04/amd64"), "images:ubuntu/24.04/amd64");
         assert_eq!(vm_image("ubuntu:24.04"), "ubuntu:24.04");
+    }
+
+    #[test]
+    fn joined_environment_instance() {
+        let out = "image=Ubuntu 24.04.1 LTS
+container=lxc
+vm=none
+ips=10.42.0.15 100.101.7.8 fd42::15 
+ts=100.101.7.8
+cpus=4
+mem=8131452
+";
+        let i = direct_instance("dev", Some(out));
+        assert_eq!((i.name.as_str(), i.kind.as_str(), i.status.as_str()), ("dev", "container", "running"));
+        assert_eq!(i.ipv4, ["10.42.0.15"]);
+        assert_eq!(i.tailscale_ip.as_deref(), Some("100.101.7.8"));
+        assert_eq!(i.cpus, Some(4));
+        assert_eq!(i.memory.as_deref(), Some("8GiB"));
+        assert_eq!(i.image.as_deref(), Some("Ubuntu 24.04.1 LTS"));
+        let vm = direct_instance("dev", Some("container=none
+vm=kvm
+mem=524288
+"));
+        assert_eq!(vm.kind, "vm");
+        assert_eq!(vm.memory.as_deref(), Some("512MiB"));
+        let gone = direct_instance("dev", None);
+        assert_eq!(gone.status, "unknown");
+        assert!(gone.ipv4.is_empty() && gone.cpus.is_none());
+    }
+
+    #[test]
+    fn owner_only_actions() {
+        let mut h = host();
+        assert!(crate::envs::owner_only(&h, "start, stop or delete this environment").is_ok());
+        h.direct = Some(crate::envs::EnvDirect {
+            instance: "dev".into(),
+            host_key: String::new(),
+            shared_from: "forge/dev".into(),
+            share_id: "s".into(),
+            expires_at: None,
+        });
+        let e = crate::envs::owner_only(&h, "start, stop or delete this environment").unwrap_err();
+        assert_eq!(e, "Only the owner can start, stop or delete this environment.");
     }
 
     #[test]

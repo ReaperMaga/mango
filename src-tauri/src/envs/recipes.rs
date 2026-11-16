@@ -10,6 +10,10 @@
 //! (the `/dev/net/tun` device, the Tailscale auth key) and then runs
 //! `incus exec T -t -- bash -c SCRIPT` with the instance-side script below.
 //!
+//! A joined environment (`EnvHost::direct`) has no master: the instance-side
+//! script runs through `sudo -n` there (`ssh::in_instance`), with no master-side
+//! preparation (no `/dev/net/tun` device, no auth key file).
+//!
 //! The desktop is a contract with `remote.rs`: `mango-vnc.service` (Xvnc :1 on
 //! 127.0.0.1:5901, no VNC password, XFCE session) and `mango-novnc.service`
 //! (websockify serving /usr/share/novnc on 127.0.0.1:6080 -> 5901).
@@ -368,7 +372,10 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String]) -> Re
         for t in &tags {
             valid_tag(t)?;
         }
-        key_file = ts.and_then(|t| t.auth_key_file.clone()).filter(|k| !k.trim().is_empty());
+        // The key file lives on a master; a joined environment has none.
+        key_file = ts
+            .and_then(|t| t.auth_key_file.clone())
+            .filter(|k| !k.trim().is_empty() && host.direct.is_none());
         if let Some(k) = &key_file {
             valid_master_path(k)?;
         }
@@ -394,11 +401,15 @@ pub(crate) fn master_install_args(target: &str, plan: &InstallPlan) -> Vec<Strin
 }
 
 /// The remote argv (for `ssh::argv`) installing `plan` into `instance`.
-pub(crate) fn install_remote(host: &EnvHost, instance: &str, plan: &InstallPlan) -> Vec<String> {
+pub(crate) fn install_remote(host: &EnvHost, instance: &str, plan: &InstallPlan) -> Result<Vec<String>, String> {
+    if host.direct.is_some() {
+        let inner = ["bash".to_string(), "-c".into(), plan.script.clone()];
+        return ssh::in_instance(host, instance, ssh::Mode::Tty, &inner);
+    }
     let script = format!("{MASTER_PRELUDE}T=$1 SCRIPT=$2 KEY=$3 TUN=$4\n{MASTER_INSTALL}");
     let mut a = vec!["sh".to_string(), "-c".into(), script, "mango-install".into()];
     a.extend(master_install_args(&ssh::target(host, instance), plan));
-    a
+    Ok(a)
 }
 
 /* ---------- probing what is installed ---------- */
@@ -482,7 +493,7 @@ pub async fn env_components(app: AppHandle, host_id: String, instance: String) -
         valid_instance(&instance)?;
         let host = hosts::get(&app, &host_id)?;
         let inner = ["sh".to_string(), "-c".into(), PROBE.into()];
-        let remote = ssh::incus_exec(&host, &instance, ssh::Mode::Batch, &inner);
+        let remote = ssh::in_instance(&host, &instance, ssh::Mode::Batch, &inner)?;
         let out = ssh::run(&host, &remote, Duration::from_secs(60)).map_err(|e| exec_error(&instance, e))?;
         Ok(parse_probe(&out))
     })
@@ -504,7 +515,7 @@ pub async fn env_install(
     }
     let host = hosts::get(&app, &host_id)?;
     let plan = install_plan(&host, &instance, &components)?;
-    let argv = ssh::argv(&host, ssh::Mode::Tty, &install_remote(&host, &instance, &plan))?;
+    let argv = ssh::argv(&host, ssh::Mode::Tty, &install_remote(&host, &instance, &plan)?)?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }
 
@@ -598,7 +609,7 @@ mod tests {
         let ts = EnvTailscale { tags: vec!["tag:mango".into()], auth_key_file: Some("~/keys/ts".into()) };
         let h = host(Some(ts));
         let p = install_plan(&h, "dev", &ids(&["tailscale"])).unwrap();
-        let remote = install_remote(&h, "dev", &p);
+        let remote = install_remote(&h, "dev", &p).unwrap();
         assert_eq!(&remote[..2], ["sh", "-c"]);
         assert_eq!(&remote[3..5], ["mango-install", "os1:dev"]);
         assert_eq!(remote[6], "~/keys/ts");
@@ -612,8 +623,27 @@ mod tests {
 
         // Without Tailscale the key and tun arguments are empty strings.
         let p = install_plan(&h, "dev", &ids(&["claude"])).unwrap();
-        let l = ssh::line(&install_remote(&h, "dev", &p));
+        let l = ssh::line(&install_remote(&h, "dev", &p).unwrap());
         assert!(l.ends_with(" '' ''"), "{}", &l[l.len() - 40..]);
+    }
+
+    #[test]
+    fn joined_environment_installs_through_sudo() {
+        let mut h = host(Some(EnvTailscale { tags: vec![], auth_key_file: Some("~/k".into()) }));
+        h.direct = Some(crate::envs::EnvDirect {
+            instance: "dev".into(),
+            host_key: String::new(),
+            shared_from: "forge/dev".into(),
+            share_id: "s".into(),
+            expires_at: None,
+        });
+        let p = install_plan(&h, "dev", &ids(&["tailscale"])).unwrap();
+        assert!(p.key_file.is_none(), "no master to hold a key file");
+        let remote = install_remote(&h, "dev", &p).unwrap();
+        assert_eq!(&remote[..5], ["sudo", "-n", "--", "bash", "-c"]);
+        assert_eq!(remote[5], p.script);
+        assert_eq!(remote.len(), 6);
+        assert!(install_remote(&h, "other", &p).is_err());
     }
 
     #[test]
@@ -622,7 +652,7 @@ mod tests {
         let h = host(Some(ts));
         let all: Vec<String> = RECIPES.iter().map(|r| r.id.to_string()).collect();
         let p = install_plan(&h, "dev", &all).unwrap();
-        let l = ssh::line(&install_remote(&h, "dev", &p));
+        let l = ssh::line(&install_remote(&h, "dev", &p).unwrap());
         assert!(l.is_ascii(), "keep scripts ASCII: they cross Windows argv conversion");
         // CreateProcess allows 32767 characters; Windows quoting escapes '"' and '\'.
         let windows = l.len() + l.matches(['"', '\\']).count() + 300;

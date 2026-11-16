@@ -282,6 +282,7 @@ pub async fn env_server_setup(
     rows: u16,
 ) -> Result<String, String> {
     let host = hosts::get(&app, &host_id)?;
+    super::owner_only(&host, "set up the server of this environment")?;
     let argv = setup_argv(&host)?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }

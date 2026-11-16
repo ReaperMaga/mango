@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager};
 
 use super::{ssh, valid_master_path, valid_remote, valid_ssh_dest, valid_tag, EnvHost};
 
@@ -27,7 +27,7 @@ fn file(app: &AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("Could not locate the app data folder: {e}"))
 }
 
-fn load(app: &AppHandle) -> Result<Vec<EnvHost>, String> {
+pub(crate) fn load(app: &AppHandle) -> Result<Vec<EnvHost>, String> {
     let file = file(app)?;
     match fs::read_to_string(&file) {
         Ok(text) => Ok(serde_json::from_str(&text).unwrap_or_default()),
@@ -46,6 +46,16 @@ fn save(app: &AppHandle, list: &[EnvHost]) -> Result<(), String> {
     fs::write(&tmp, json)
         .and_then(|_| fs::rename(&tmp, &file))
         .map_err(|e| format!("Could not save {}: {e}", file.display()))
+}
+
+/// Change the saved list under the lock: load, `f`, save (only when `f` succeeds).
+pub(crate) fn update<T>(app: &AppHandle, f: impl FnOnce(&mut Vec<EnvHost>) -> Result<T, String>) -> Result<T, String> {
+    let state = app.state::<EnvsState>();
+    let _guard = state.lock.lock().unwrap_or_else(|e| e.into_inner());
+    let mut list = load(app)?;
+    let out = f(&mut list)?;
+    save(app, &list)?;
+    Ok(out)
 }
 
 /// The saved server `id`, or an error for one that was removed.
@@ -142,13 +152,22 @@ pub async fn env_host_save(app: AppHandle, host: EnvHost) -> Result<EnvHost, Str
     .await
 }
 
-/// Forget a server. Its instances are untouched.
+/// Forget a server. Its instances are untouched. A joined environment's key and
+/// pinned host key go with it.
 #[tauri::command]
-pub async fn env_host_remove(app: AppHandle, state: State<'_, EnvsState>, id: String) -> Result<(), String> {
-    let _guard = state.lock.lock().unwrap_or_else(|e| e.into_inner());
-    let mut list = load(&app)?;
-    list.retain(|h| h.id != id);
-    save(&app, &list)
+pub async fn env_host_remove(app: AppHandle, id: String) -> Result<(), String> {
+    super::blocking(move || {
+        let removed = update(&app, |list| {
+            let (gone, keep): (Vec<EnvHost>, Vec<EnvHost>) = list.drain(..).partition(|h| h.id == id);
+            *list = keep;
+            Ok(gone)
+        })?;
+        for h in removed.iter().filter(|h| h.direct.is_some()) {
+            super::join::forget_key_files(&app, h)?;
+        }
+        Ok(())
+    })
+    .await
 }
 
 /// Incus on a server, as the probe finds it (`EnvIncusState` in ipc.ts).
@@ -367,11 +386,42 @@ pub(crate) fn probe_remote(host: &EnvHost) -> Vec<String> {
     vec!["sh".into(), "-c".into(), script, "mango-probe".into(), remote]
 }
 
+/// The probe of a joined environment (as its agent user): it answers, and runs what.
+const DIRECT_PROBE: &str = r#"PRETTY_NAME= NAME=
+[ -r /etc/os-release ] && . /etc/os-release
+printf 'os=%s
+' "${PRETTY_NAME:-$NAME}"
+exit 0
+"#;
+
+/// A joined environment's probe: no Incus, nothing to set up; reachable or why not.
+pub(crate) fn direct_probe(result: Result<String, String>) -> EnvProbe {
+    let (ok, os, error) = match result {
+        Ok(out) => (true, Facts::parse(&out).get("os").map(String::from), None),
+        Err(e) => (false, None, Some(e)),
+    };
+    EnvProbe {
+        ok,
+        reachable: ok,
+        incus: None,
+        incus_version: None,
+        os,
+        can_setup: false,
+        setup_note: None,
+        remotes: vec![],
+        error,
+    }
+}
+
 /// Can Mango reach the server, and what state is its Incus in? One SSH call.
 #[tauri::command]
 pub async fn env_probe(app: AppHandle, host_id: String) -> Result<EnvProbe, String> {
     super::blocking(move || {
         let host = get(&app, &host_id)?;
+        if host.direct.is_some() {
+            let remote = ["sh".to_string(), "-c".into(), DIRECT_PROBE.into()];
+            return Ok(direct_probe(ssh::run(&host, &remote, Duration::from_secs(30))));
+        }
         if let Some(r) = &host.incus_remote {
             valid_remote(r)?;
         }
@@ -569,6 +619,20 @@ mod tests {
         assert!(v.get("incusVersion").is_some() && v.get("setupNote").is_some());
         let v = serde_json::to_value(probe("incus=1\npkg=1\ndaemon=1\nadmin=1\ninfo=ok\npools=0\n")).unwrap();
         assert_eq!(v["incus"], "uninitialised");
+    }
+
+    #[test]
+    fn probe_of_a_joined_environment() {
+        let p = direct_probe(Ok("os=Ubuntu 24.04.1 LTS
+".into()));
+        assert!(p.ok && p.reachable && !p.can_setup);
+        assert_eq!(p.incus, None);
+        assert_eq!(p.os.as_deref(), Some("Ubuntu 24.04.1 LTS"));
+        let v = serde_json::to_value(&p).unwrap();
+        assert!(v["incus"].is_null());
+        let p = direct_probe(Err("Could not reach dev at 203.0.113.24 port 22.".into()));
+        assert!(!p.ok && !p.reachable && !p.can_setup);
+        assert!(p.error.unwrap().starts_with("Could not reach"));
     }
 
     #[test]

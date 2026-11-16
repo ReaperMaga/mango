@@ -365,14 +365,15 @@ exit 0"#;
     impl Run {
         /// Stop the run's processes inside the instance (blocking, up to `timeout`).
         pub fn stop(&self, timeout: Duration) -> Result<(), String> {
-            ssh::run(&self.host, &stop_line(&self.host, &self.instance, &self.id), timeout).map(|_| ())
+            ssh::run(&self.host, &stop_line(&self.host, &self.instance, &self.id)?, timeout).map(|_| ())
         }
     }
 
     /// The master-side argv of [`STOP_SCRIPT`] for one run.
-    pub fn stop_line(host: &EnvHost, instance: &str, run_id: &str) -> Vec<String> {
+    /// Root (`sudo -n` in a joined environment) sees every process's environment.
+    pub fn stop_line(host: &EnvHost, instance: &str, run_id: &str) -> Result<Vec<String>, String> {
         let inner: Vec<String> = vec!["sh".into(), "-c".into(), STOP_SCRIPT.into(), "mango-stop".into(), run_id.into()];
-        ssh::incus_exec(host, instance, ssh::Mode::Batch, &inner)
+        ssh::in_instance(host, instance, ssh::Mode::Batch, &inner)
     }
 
     /// The master-side argv starting `program args…` as the agent user inside
@@ -411,7 +412,7 @@ exit 0"#;
         }
         let mut argv = vec![program.to_string()];
         argv.extend(args.iter().cloned());
-        Ok(ssh::incus_exec(host, instance, ssh::Mode::Batch, &ssh::as_agent(cwd, &vars, &argv)))
+        ssh::in_instance(host, instance, ssh::Mode::Batch, &ssh::as_agent(cwd, &vars, &argv))
     }
 
     /// A `Mango: …` line explaining why a remote run ended, when it is not
@@ -500,7 +501,7 @@ exit 0"#;
 
         #[test]
         fn stop_line_targets_the_run() {
-            let l = ssh::line(&stop_line(&host(), "dev", "6f1c-77"));
+            let l = ssh::line(&stop_line(&host(), "dev", "6f1c-77").unwrap());
             assert!(l.starts_with("incus exec os1:dev -T -- sh -c '"), "{l}");
             assert!(l.ends_with("' mango-stop 6f1c-77"), "{l}");
             assert!(STOP_SCRIPT.contains(&format!("{RUN_TAG}=$1")));

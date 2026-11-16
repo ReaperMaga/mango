@@ -16,12 +16,16 @@ mod updater;
 mod vcs;
 mod voice;
 
-use tauri::webview::{PermissionKind, PermissionResponse};
+use tauri::webview::{PageLoadEvent, PermissionKind, PermissionResponse};
 use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // First: a second Mango (started by a mango:// link on Windows and Linux) hands its
+        // arguments to this one (through the deep-link plugin, see `envs::join`) and exits.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| envs::join::focus_main(app)))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -39,6 +43,16 @@ pub fn run() {
         .manage(voice::VoiceState::default())
         .manage(envs::hosts::EnvsState::default())
         .manage(envs::remote::DesktopState::default())
+        .manage(envs::join::JoinLinkState::default())
+        .setup(|app| {
+            envs::join::setup_deep_link(app.handle());
+            Ok(())
+        })
+        .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
+                envs::join::page_loaded(webview.app_handle());
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             projects::recent_projects,
             projects::open_project,
