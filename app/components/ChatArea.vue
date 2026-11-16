@@ -5,7 +5,7 @@ import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
-import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
+import { isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { useFiles } from '~/stores/files'
 import { hasUnreadResult, type Thread } from '~/types/chat'
 
@@ -20,22 +20,16 @@ type Tab =
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
   | { id: string; kind: 'file'; title: string; file: string }
 
-/** Tabs belonging to the active project (chats and diffs); other projects' tabs stay open but hidden. */
+/** Tabs belonging to the active project (chats, diffs, files); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
   const out: Tab[] = []
-  for (const id of threads.tabs) {
+  for (const id of threads.visibleTabs) {
     const diff = parseDiffTab(id)
-    if (diff) {
-      if (diff.projectPath === ws.activeProjectPath) out.push({ id, kind: 'diff', title: diff.name, file: diff.file, staged: diff.staged })
-      continue
-    }
+    if (diff) { out.push({ id, kind: 'diff', title: diff.name, file: diff.file, staged: diff.staged }); continue }
     const file = parseFileTab(id)
-    if (file) {
-      if (file.projectPath === ws.activeProjectPath) out.push({ id, kind: 'file', title: file.name, file: file.file })
-      continue
-    }
+    if (file) { out.push({ id, kind: 'file', title: file.name, file: file.file }); continue }
     const t = threads.byId(id)
-    if (t && t.projectPath === ws.activeProjectPath) out.push({ id, kind: 'chat', title: t.title, thread: t })
+    if (t) out.push({ id, kind: 'chat', title: t.title, thread: t })
   }
   return out
 })
@@ -57,14 +51,23 @@ function newChat() {
   if (ws.activeProjectPath) threads.create(ws.activeProjectPath)
 }
 
-/* When the project changes, make sure the active pane shows one of its threads. */
-watch(() => ws.activeProjectPath, (path) => {
+/*
+ * A pane only ever shows the active project's tabs. Checked when the project changes and
+ * whenever a pane gets something new: a chat of another project would sit there with no tab
+ * and no sidebar row, and a message typed into it would run in the other project's folder.
+ */
+watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join('\n')], ([path]) => {
   if (!path) return
+  let moved = false
   for (const pane of threads.panes) {
-    const owner = tabProject(pane.threadId) ?? threads.byId(pane.threadId)?.projectPath
-    if (owner && owner !== path) pane.threadId = tabs.value.find(x => !threads.panes.some(p => p.threadId === x.id))?.id ?? null
+    const owner = threads.projectOf(pane.threadId)
+    if (owner && owner !== path) {
+      pane.threadId = tabs.value.find(x => !threads.panes.some(p => p.threadId === x.id))?.id ?? null
+      moved = true
+    }
   }
   if (threads.panes.length > 1 && threads.panes.every(p => !p.threadId)) threads.closePane('pane-b')
+  else if (moved) threads.persist()
 }, { immediate: true })
 
 /* split resize */
