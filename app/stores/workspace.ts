@@ -23,7 +23,8 @@ export interface TerminalTab {
   shell: string | null
 }
 
-export type SidebarView = 'threads' | 'files' | 'changes'
+/** The tool windows that open on the right: the project's files and source control. */
+export type ToolView = 'files' | 'changes'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type SettingsSection = 'agents' | 'terminal' | 'voice' | 'appearance' | 'general'
 
@@ -45,6 +46,8 @@ function loadPrefs() {
     return {}
   }
 }
+
+const toolView = (v: unknown): ToolView | null => (v === 'files' || v === 'changes' ? v : null)
 
 let tabSeq = 0
 
@@ -80,8 +83,12 @@ export const useWorkspace = defineStore('workspace', {
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
-      /** What the left sidebar shows: chat threads, the project's files or source control. */
-      sidebarView: (['changes', 'files'].includes(prefs.sidebarView) ? prefs.sidebarView : 'threads') as SidebarView,
+      /**
+       * The tool window open on the right, or null. Older builds kept these views
+       * in the left sidebar (`sidebarView`); one that was showing there opens here.
+       */
+      toolPanel: toolView(prefs.toolPanel !== undefined ? prefs.toolPanel : prefs.sidebarView),
+      toolWidth: (prefs.toolWidth ?? 340) as number,
 
       /** Permission mode new chats start in. */
       defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
@@ -121,7 +128,8 @@ export const useWorkspace = defineStore('workspace', {
           sidebarWidth: this.sidebarWidth,
           terminalOpen: this.terminalOpen,
           terminalHeight: this.terminalHeight,
-          sidebarView: this.sidebarView,
+          toolPanel: this.toolPanel,
+          toolWidth: this.toolWidth,
           diffView: this.diffView,
           terminalProfileId: this.terminalProfileId,
           terminalFontSize: this.terminalFontSize,
@@ -235,20 +243,31 @@ export const useWorkspace = defineStore('workspace', {
       this.sidebarWidth = Math.round(Math.min(560, Math.max(200, w)))
     },
 
-    setSidebarView(view: SidebarView) {
-      this.sidebarView = view
-      this.sidebarOpen = true
+    /** Open a tool window on the right. */
+    openTool(view: ToolView) {
+      this.toolPanel = view
       this.persist()
     },
-    /** Show source control in the sidebar; again to go back to threads. */
-    toggleGit(force?: boolean) {
-      const showing = this.sidebarOpen && this.sidebarView === 'changes'
-      this.setSidebarView(force ?? !showing ? 'changes' : 'threads')
+    /** Show a tool window; again (or `force` false) to close it. */
+    toggleTool(view: ToolView, force?: boolean) {
+      const showing = this.toolPanel === view
+      this.toolPanel = (force ?? !showing) ? view : null
+      this.persist()
     },
-    /** Show the project's files in the sidebar; again to go back to threads. */
+    closeTool() {
+      this.toolPanel = null
+      this.persist()
+    },
+    setToolWidth(w: number) {
+      this.toolWidth = Math.round(Math.min(640, Math.max(260, w)))
+    },
+    /** Show source control on the right; again to close it. */
+    toggleGit(force?: boolean) {
+      this.toggleTool('changes', force)
+    },
+    /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {
-      const showing = this.sidebarOpen && this.sidebarView === 'files'
-      this.setSidebarView(force ?? !showing ? 'files' : 'threads')
+      this.toggleTool('files', force)
     },
     openSettings(section: SettingsSection = 'general') {
       this.settings = section

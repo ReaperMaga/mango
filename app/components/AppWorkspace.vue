@@ -16,6 +16,10 @@ useFilesSync()
       <ChatArea class="workspace__chat" />
       <TerminalPanel v-show="ws.terminalOpen" :container="column" />
     </div>
+    <Transition name="tool">
+      <AppToolPanel v-if="ws.toolPanel" />
+    </Transition>
+    <AppToolStrip />
   </div>
 </template>
 
@@ -33,12 +37,15 @@ useFilesSync()
   flex-direction: column;
   background: var(--bg-canvas);
   border-top-left-radius: var(--radius-lg);
-  border-top: 1px solid var(--line-soft);
-  border-left: 1px solid var(--line-soft);
+  border-top-right-radius: var(--radius-lg);
+  border: 1px solid var(--line-soft);
+  border-bottom: 0;
   overflow: hidden;
 }
 .workspace__chat { flex: 1; min-height: 0; }
 
 .rail-enter-active, .rail-leave-active { transition: margin-left var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
 .rail-enter-from, .rail-leave-to { margin-left: calc(var(--rail-w, 264px) * -1); opacity: 0; }
+.tool-enter-active, .tool-leave-active { transition: margin-right var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
+.tool-enter-from, .tool-leave-to { margin-right: calc(var(--tool-w, 340px) * -1); opacity: 0; }
 </style>
