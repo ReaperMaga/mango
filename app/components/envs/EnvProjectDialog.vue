@@ -67,7 +67,6 @@ async function submit() {
     const path = await envs.prepareDir(props.hostId, props.instance, dir.value, cloneUrl.value.trim() || null)
     await ws.openEnvProject({ hostId: props.hostId, instance: props.instance, dir: path }, leaf.value || undefined)
     emit('close')
-    envs.closeView()
   } catch (e) {
     error.value = (e instanceof Error ? e.message : String(e)).replace(/\.$/, '')
   } finally {

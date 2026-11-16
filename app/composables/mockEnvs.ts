@@ -309,9 +309,9 @@ export function createMockEnvs(ctx: MockEnvContext) {
           ...(fresh
             ? [
                 [500, '==> Adding the Zabbly package repository for Incus (stable)'],
-                [900, '==> Installing incus, incus-ui-canonical'],
+                [900, '==> Installing incus'],
                 [1600, 'Setting up incus (1:6.18-ubuntu24.04-202611080412) ...'],
-                [700, '==> Initialising: storage pool "default" (btrfs), network incusbr0 (NAT)'],
+                [700, '==> Initialising: storage pool "default" (btrfs, 60 GiB), network incusbr0 (NAT)'],
                 [600, `==> Adding ${h.host.ssh.replace(/@.*/, '')} to the incus-admin group`],
               ] as Array<[number, string]>
             : [
@@ -321,7 +321,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
               ] as Array<[number, string]>),
           [400, ok(`Incus 6.18 is ready ${dim('(simulated: the browser preview installs nothing)')}`)],
         ])
-        setTimeout(() => { h.incusVersion = '6.18' }, fresh ? 5000 : 2800)
+        setTimeout(() => { h.incusVersion = '6.18' }, fresh ? 4300 : 2200) // before the terminal exits, so the re-check sees it
         return id
       }
 

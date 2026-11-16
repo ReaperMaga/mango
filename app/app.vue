@@ -40,7 +40,6 @@ onBeforeUnmount(() => window.removeEventListener('mango:files-changed', onFilesC
     <SetupGettingStarted />
     <UsageDialog />
     <SettingsView />
-    <EnvsEnvironmentsView />
     <CommandPalette />
     <UiImageViewer />
   </div>

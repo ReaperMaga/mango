@@ -14,8 +14,8 @@ import EnvProjectDialog from './EnvProjectDialog.vue'
 /**
  * One instance: its state and power actions, ways into it (project, shell,
  * desktop), sign-ins for the CLIs inside it, and its components. Jobs
- * (installers, sign-ins, a shell) run in a terminal on this page; the view
- * keeps the page alive while another one shows, so a job keeps running.
+ * (installers, sign-ins, a shell) run in a terminal on this page; Settings >
+ * Environments keeps the page alive while another one shows, so a job keeps running.
  */
 const props = defineProps<{ hostId: string; name: string }>()
 
@@ -192,7 +192,7 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
     <template v-if="inst">
       <header class="ip__head">
         <div class="ip__title-row">
-          <h2 class="ip__title">{{ name }}</h2>
+          <h2 class="ip__title" data-page-title tabindex="-1">{{ name }}</h2>
           <EnvStatus :status="inst.status" :busy="busy" word />
           <span class="ip__actions">
             <UiButton
@@ -361,7 +361,7 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
     </template>
 
     <div v-else class="ip__missing">
-      <h2 class="ip__title">{{ name }}</h2>
+      <h2 class="ip__title" data-page-title tabindex="-1">{{ name }}</h2>
       <p class="ip__desc">
         <template v-if="envs.loadingInstances[hostId]">Looking for it on the server…</template>
         <template v-else>It isn't on {{ host?.name ?? 'the server' }} any more, or the server can't be reached.</template>
@@ -398,6 +398,7 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ip__title:focus { outline: none; }
 .ip__actions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); margin-left: auto; }
 .ip__meta {
   display: flex;

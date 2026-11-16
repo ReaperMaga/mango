@@ -257,6 +257,8 @@ export const useWorkspace = defineStore('workspace', {
      */
     async openEnvProject(loc: EnvLocation, name?: string): Promise<void> {
       this._openEnv(loc, name)
+      // Opened from Settings > Environments: show the project.
+      this.settings = null
     },
 
     _openEnv(loc: EnvLocation, name?: string): ProjectInfo {

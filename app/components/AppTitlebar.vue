@@ -7,7 +7,6 @@ import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
 import { hasUnreadResult } from '~/types/chat'
 import { isEnvPath } from '~/utils/envPath'
-import { useEnvironments } from '~/stores/environments'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -45,9 +44,6 @@ function jumpToAttention() {
 }
 
 const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'light')
-
-const envs = useEnvironments()
-const toggleEnvironments = () => (envs.viewOpen ? envs.closeView() : envs.openView())
 </script>
 
 <template>
@@ -123,9 +119,6 @@ const toggleEnvironments = () => (envs.viewOpen ? envs.closeView() : envs.openVi
         <span class="tabular">{{ attention.length }}</span>
       </button>
 
-      <UiIconButton label="Environments" :active="envs.viewOpen" size="sm" @click="toggleEnvironments">
-        <Server />
-      </UiIconButton>
       <UiIconButton label="Usage limits" :shortcut="`${mod}+Shift+U`" :active="ws.dialog === 'usage'" size="sm" @click="ws.openUsage()">
         <Gauge />
       </UiIconButton>

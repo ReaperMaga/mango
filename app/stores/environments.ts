@@ -33,22 +33,47 @@ export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; d
   { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
 ]
 
-/** What the Environments view shows: a server, or one instance on it. */
+/**
+ * Where Settings > Environments is: a server's page, or one instance on it.
+ * `null` (the store's `selected`) is the section's first page, the list of servers.
+ */
 export interface EnvSelection { hostId: string; instance: string | null }
 
-/** Dialogs the Environments view owns. */
+/** Dialogs the Environments section owns. */
 export type EnvDialog =
   | { kind: 'host'; id: string } // id '' adds a server
   | { kind: 'create'; hostId: string }
 
-/** Something to do once an instance page shows (e.g. a next step chosen after creating it). */
-export type EnvIntent = 'login-claude' | 'open-project'
+/**
+ * Something to do once a page shows: for an instance (keyed by `instanceKey`) a next step chosen
+ * after creating it; for a server (keyed by its id) leading to the Incus setup after adding it.
+ */
+export type EnvIntent = 'login-claude' | 'open-project' | 'setup-incus'
+
+/** How a server is doing, for its row and its page: reachability first, then Incus. */
+export type HostTone = 'ready' | 'setup' | 'bad' | 'checking' | 'unknown'
+export function hostState(probe: EnvProbe | null | undefined, probing: boolean): { tone: HostTone; label: string } {
+  if (probing && !probe) return { tone: 'checking', label: 'Checking…' }
+  if (!probe) return { tone: 'unknown', label: 'Not checked' }
+  if (!probe.reachable) return { tone: 'bad', label: 'Can\'t reach it' }
+  switch (probe.incus) {
+    case 'ready': return { tone: 'ready', label: probe.incusVersion ? `Incus ${probe.incusVersion}` : 'Ready' }
+    case 'missing': return { tone: 'setup', label: 'Incus not installed' }
+    case 'uninitialised': return { tone: 'setup', label: 'Incus not set up' }
+    case 'no-access': return { tone: 'setup', label: 'No access to Incus' }
+    default: return { tone: probe.ok ? 'ready' : 'setup', label: probe.ok ? 'Ready' : 'Incus not ready' }
+  }
+}
+
+/** The login part of `user@host`, for copy that names who gets access ("your SSH user" for an alias). */
+export const sshUser = (ssh: string) => (ssh.includes('@') ? ssh.slice(0, ssh.lastIndexOf('@')) : null)
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /**
- * Remote environments: master servers (reached over SSH) and the Incus instances on them.
- * Servers are saved by the backend (`environments.json`); everything else is fetched on demand.
+ * Remote environments: master servers (reached over SSH) and the Incus instances on them,
+ * shown in Settings > Environments. Servers are saved by the backend (`environments.json`);
+ * everything else is fetched on demand.
  * Terminal-based actions (create, install, shell, sign-in) return a pty id for a terminal view.
  */
 export const useEnvironments = defineStore('environments', {
@@ -70,12 +95,11 @@ export const useEnvironments = defineStore('environments', {
     busy: {} as Record<string, EnvInstanceAction | null>,
     desktops: {} as Record<string, EnvDesktop>,
 
-    /* ---- UI ---- */
-    /** The Environments view covers the workspace (like Settings). */
-    viewOpen: false,
+    /* ---- UI (Settings > Environments) ---- */
+    /** The page showing: null is the list of servers. */
     selected: null as EnvSelection | null,
     dialog: null as EnvDialog | null,
-    /** Per instance (see `instanceKey`): picked up by its page when it shows. */
+    /** Per instance (see `instanceKey`) or server (its id): picked up by its page when it shows. */
     intents: {} as Record<string, EnvIntent>,
   }),
 
@@ -85,19 +109,20 @@ export const useEnvironments = defineStore('environments', {
   },
 
   actions: {
-    /** Show the Environments view (closes Settings, which sits in the same place). */
-    openView(selection?: EnvSelection) {
-      const ws = useWorkspace()
-      ws.settings = null
-      if (selection) this.selected = selection
-      this.viewOpen = true
-    },
-    closeView() {
-      this.viewOpen = false
-      this.dialog = null
+    /**
+     * Open Settings > Environments, on a server or instance page when given
+     * (otherwise where the user left it).
+     */
+    openView(selection?: EnvSelection | null) {
+      if (selection !== undefined) this.selected = selection
+      useWorkspace().openSettings('environments')
     },
     select(hostId: string, instance: string | null = null) {
       this.selected = { hostId, instance }
+    },
+    /** Back to the list of servers. */
+    home() {
+      this.selected = null
     },
 
     async load() {
@@ -123,7 +148,8 @@ export const useEnvironments = defineStore('environments', {
       delete this.probes[id]
       delete this.instances[id]
       delete this.errors[id]
-      if (this.selected?.hostId === id) this.selected = this.hosts[0] ? { hostId: this.hosts[0].id, instance: null } : null
+      delete this.intents[id]
+      if (this.selected?.hostId === id) this.selected = null
     },
 
     async probe(hostId: string) {
@@ -139,6 +165,14 @@ export const useEnvironments = defineStore('environments', {
         this.probing[hostId] = false
       }
       return this.probes[hostId]!
+    },
+
+    /** Check the server again, and list its instances when Incus is ready there. */
+    async refreshHost(hostId: string) {
+      const p = await this.probe(hostId)
+      if (p.ok) await this.refreshInstances(hostId)
+      else delete this.instances[hostId]
+      return p
     },
 
     async refreshInstances(hostId: string) {

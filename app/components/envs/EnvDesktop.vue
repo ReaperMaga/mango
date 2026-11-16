@@ -2,10 +2,12 @@
 import { ExternalLink, Maximize2, Minimize2, TriangleAlert } from 'lucide-vue-next'
 import { openExternal } from '~/composables/useBackend'
 import { instanceKey, useEnvironments } from '~/stores/environments'
+import { useWorkspace } from '~/stores/workspace'
 
 /**
  * An instance's desktop, served by noVNC through a tunnel on this computer,
- * shown in place. Closing it closes the tunnel.
+ * shown in place. "Fill" spreads it over the whole Settings canvas (the rail
+ * stays); Escape or Restore puts it back. Closing it closes the tunnel.
  */
 const props = defineProps<{ hostId: string; instance: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -15,7 +17,30 @@ const key = computed(() => instanceKey(props.hostId, props.instance))
 const desktop = computed(() => envs.desktops[key.value] ?? null)
 const error = ref<string | null>(null)
 const opening = ref(false)
-const tall = ref(false)
+const full = ref(false)
+const root = ref<HTMLElement | null>(null)
+const ws = useWorkspace()
+const hostName = computed(() => envs.host(props.hostId)?.name ?? 'its server')
+
+/** Filled, it covers the page: keep focus on it (Restore). */
+watch(full, async (on) => {
+  await nextTick()
+  if (on) root.value?.querySelector<HTMLElement>('.dt__fill')?.focus()
+})
+/* Settings closed or moved to another section: the filled desktop goes back in place. */
+watch(() => ws.settings === 'environments', (shown) => { if (!shown) full.value = false })
+
+/* Escape leaves the filled desktop before it would close Settings. */
+function onKey(e: KeyboardEvent) {
+  if (!full.value || e.key !== 'Escape' || ws.settings !== 'environments') return
+  e.preventDefault()
+  e.stopPropagation()
+  full.value = false
+}
+onMounted(() => window.addEventListener('keydown', onKey, true))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
+/* Navigating away (the page is kept alive) leaves it in place. */
+onDeactivated(() => { full.value = false })
 
 /** "localhost:6080": where the tunnel listens, without the noVNC query string. */
 const where = computed(() => {
@@ -37,6 +62,7 @@ async function connect() {
 }
 
 async function close() {
+  full.value = false
   emit('close')
   await envs.closeDesktop(props.hostId, props.instance)
 }
@@ -45,19 +71,19 @@ onMounted(() => { if (!desktop.value) connect() })
 </script>
 
 <template>
-  <section class="dt" :class="{ 'dt--failed': !!error, 'dt--tall': tall }" :aria-label="`Desktop of ${instance}`">
+  <section ref="root" class="dt" :class="{ 'dt--failed': !!error, 'dt--full': full }" :aria-label="`Desktop of ${instance}`">
     <header class="dt__head">
       <span class="dt__status" role="status">
         <TriangleAlert v-if="error" class="dt__warn" aria-hidden="true" />
         <span v-else-if="opening" class="ring" aria-hidden="true" />
-        <span class="dt__title">{{ error ? 'The desktop didn\'t open' : opening ? 'Opening the desktop…' : 'Desktop' }}</span>
+        <span class="dt__title">{{ error ? 'The desktop didn\'t open' : opening ? 'Opening the desktop…' : full ? `Desktop of ${instance} on ${hostName}` : 'Desktop' }}</span>
         <span v-if="desktop && !error && where" class="dt__url selectable">{{ where }}</span>
       </span>
       <span class="dt__actions">
         <UiButton v-if="error" size="sm" @click="connect">Try again</UiButton>
         <template v-else-if="desktop">
-          <UiIconButton :label="tall ? 'Smaller' : 'Taller'" size="sm" @click="tall = !tall">
-            <Minimize2 v-if="tall" /><Maximize2 v-else />
+          <UiIconButton class="dt__fill" :label="full ? 'Restore' : 'Fill the window'" :shortcut="full ? 'Esc' : undefined" size="sm" @click="full = !full">
+            <Minimize2 v-if="full" /><Maximize2 v-else />
           </UiIconButton>
           <UiButton variant="ghost" size="sm" :title="desktop.url" @click="openExternal(desktop.url)"><ExternalLink />Open in browser</UiButton>
         </template>
@@ -87,7 +113,15 @@ onMounted(() => { if (!desktop.value) connect() })
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 .dt__status { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
-.dt__title { flex: none; font-size: var(--text-sm); font-weight: 560; }
+.dt__title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 560;
+}
 .dt__url {
   min-width: 0;
   overflow: hidden;
@@ -113,7 +147,19 @@ onMounted(() => { if (!desktop.value) connect() })
   border-top: 1px solid var(--line-soft);
   background: var(--bg-inset);
 }
-.dt--tall .dt__frame { max-height: none; height: calc(100vh - var(--titlebar-h) - 160px); aspect-ratio: auto; }
+/* Filled: over the Settings canvas, beside the rail (the view sets --rail-w), with the canvas's own corner. */
+.dt--full {
+  position: fixed;
+  inset: var(--titlebar-h) 0 0 var(--rail-w, 248px);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  border-color: var(--line-soft);
+  border-right: 0;
+  border-bottom: 0;
+  border-radius: var(--radius-lg) 0 0 0;
+}
+.dt--full .dt__frame { flex: 1; min-height: 0; max-height: none; aspect-ratio: auto; }
 .dt__frame iframe { display: block; width: 100%; height: 100%; border: 0; }
 
 .ring {

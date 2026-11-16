@@ -1,0 +1,312 @@
+<script setup lang="ts">
+import { ChevronRight, Plus, Server, TriangleAlert } from 'lucide-vue-next'
+import { hostState, instanceKey, useEnvironments } from '~/stores/environments'
+import type { EnvInstance } from '~/types/ipc'
+import EnvStatus from './EnvStatus.vue'
+
+/**
+ * The first page of Settings > Environments: every server with its state and,
+ * where Incus is ready, its instances. A row opens the server's or the
+ * instance's page; adding a server or an environment opens its dialog.
+ */
+const envs = useEnvironments()
+
+const stateOf = (id: string) => hostState(envs.probes[id], !!envs.probing[id])
+const ready = (id: string) => envs.probes[id]?.ok === true
+const instancesOf = (id: string) => envs.instances[id] ?? null
+
+const sshLine = (id: string) => {
+  const h = envs.host(id)
+  if (!h) return ''
+  return h.port ? `${h.ssh}:${h.port}` : h.ssh
+}
+const addresses = (i: EnvInstance) => [i.tailscaleIp, ...i.ipv4].filter(Boolean).join(', ')
+
+function openSetup(id: string) {
+  envs.intents[id] = 'setup-incus'
+  envs.select(id)
+}
+</script>
+
+<template>
+  <div class="eh">
+    <header class="eh__head">
+      <div class="eh__intro">
+        <h2 class="eh__title" data-page-title tabindex="-1">Environments</h2>
+        <p class="eh__desc">
+          Containers and VMs on your own servers, reached over SSH. A project opened in one runs its chats' agent there.
+        </p>
+      </div>
+      <UiButton v-if="envs.hosts.length" size="sm" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+    </header>
+
+    <!-- no servers yet -->
+    <div v-if="envs.loaded && !envs.hosts.length" class="eh__empty">
+      <h3 class="eh__empty-title">Run agents on your own server</h3>
+      <p class="eh__empty-text">
+        Add a Linux server you can reach with <code>ssh</code>. Mango installs Incus there if it isn't yet, creates
+        containers and VMs with Claude Code, Codex and the GitHub CLI in them, and opens projects inside, so chats run
+        the agent on the server.
+      </p>
+      <p class="eh__empty-text eh__empty-text--quiet">
+        All it needs is SSH access with your own keys, and sudo for the one-time Incus setup. Nothing of Mango's keeps
+        running on the server.
+      </p>
+      <UiButton variant="primary" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+    </div>
+
+    <div v-else-if="!envs.loaded" class="eh__list" aria-busy="true" aria-label="Loading servers">
+      <div v-for="n in 2" :key="n" class="host" aria-hidden="true">
+        <span class="row row--host row--skeleton"><span class="bone bone--icon" /><span class="bone bone--name" /></span>
+      </div>
+    </div>
+
+    <ul v-else class="eh__list" aria-label="Servers">
+      <li v-for="h in envs.hosts" :key="h.id" class="host">
+        <button type="button" class="row row--host" :data-row="h.id" @click="envs.select(h.id)">
+          <Server class="row__icon" aria-hidden="true" />
+          <span class="row__main">
+            <span class="row__name">{{ h.name }}</span>
+            <span class="row__meta">
+              <span class="row__mono" :title="sshLine(h.id)">{{ sshLine(h.id) }}</span>
+              <template v-if="envs.probes[h.id]?.os">
+                <span aria-hidden="true">·</span><span class="row__clip">{{ envs.probes[h.id]?.os }}</span>
+              </template>
+            </span>
+          </span>
+          <span class="state" :class="`state--${stateOf(h.id).tone}`">
+            <span v-if="stateOf(h.id).tone === 'checking'" class="ring" aria-hidden="true" />
+            <TriangleAlert v-else-if="stateOf(h.id).tone === 'bad'" class="state__warn" aria-hidden="true" />
+            <span v-else class="state__mark" aria-hidden="true" />
+            <span class="state__word">{{ stateOf(h.id).label }}</span>
+          </span>
+          <ChevronRight class="row__go" aria-hidden="true" />
+        </button>
+
+        <!-- Incus needs setting up: say so where the server is listed, and lead to its page. -->
+        <div v-if="stateOf(h.id).tone === 'setup' && envs.probes[h.id]?.canSetup" class="host__note">
+          <span>Mango can {{ envs.probes[h.id]?.incus === 'missing' ? 'install' : 'set up' }} Incus on this server for you.</span>
+          <UiButton size="sm" @click="openSetup(h.id)">
+            {{ envs.probes[h.id]?.incus === 'missing' ? 'Install Incus…' : 'Set up Incus…' }}
+          </UiButton>
+        </div>
+        <p v-else-if="stateOf(h.id).tone === 'setup'" class="host__note host__note--quiet">
+          {{ envs.probes[h.id]?.setupNote ?? 'Incus isn\'t ready on this server.' }}
+        </p>
+
+        <template v-if="ready(h.id)">
+          <p v-if="envs.errors[h.id]" class="host__error" role="alert">
+            Couldn't list its environments. <span class="selectable">{{ envs.errors[h.id] }}</span>
+          </p>
+          <ul v-if="instancesOf(h.id)?.length" class="insts" :aria-label="`Environments on ${h.name}`">
+            <li v-for="i in instancesOf(h.id)" :key="i.name">
+              <button type="button" class="row row--inst" :data-row="instanceKey(h.id, i.name)" @click="envs.select(h.id, i.name)">
+                <span class="row__name row__name--inst">{{ i.name }}</span>
+                <EnvStatus class="row__status" :status="i.status" :busy="envs.busy[instanceKey(h.id, i.name)]" word />
+                <span class="row__addr selectable" :title="addresses(i)">{{ addresses(i) || '–' }}</span>
+                <span class="row__kind">{{ i.kind === 'vm' ? 'VM' : 'Container' }}</span>
+                <ChevronRight class="row__go" aria-hidden="true" />
+              </button>
+            </li>
+          </ul>
+          <p v-else-if="instancesOf(h.id) && !envs.loadingInstances[h.id]" class="host__none">No environments on it yet.</p>
+          <button type="button" class="host__add" @click="envs.dialog = { kind: 'create', hostId: h.id }">
+            <Plus aria-hidden="true" />New environment
+          </button>
+        </template>
+      </li>
+    </ul>
+  </div>
+</template>
+
+<style scoped>
+.eh { display: grid; gap: var(--space-5); }
+
+.eh__head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.eh__intro { display: grid; gap: var(--space-2); min-width: 0; }
+.eh__title {
+  margin: 0;
+  font-size: var(--text-xl);
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: var(--leading-tight);
+}
+.eh__title:focus { outline: none; }
+.eh__desc { margin: 0; max-width: 62ch; font-size: var(--text-sm); color: var(--fg-subtle); text-wrap: pretty; }
+.eh__head > :deep(.btn) { flex: none; }
+
+/* ---- no servers yet ---- */
+.eh__empty {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-3);
+  max-width: 560px;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--line-soft);
+}
+.eh__empty-title { margin: 0; font-size: var(--text-lg); font-weight: 620; letter-spacing: -0.01em; }
+.eh__empty-text { margin: 0; font-size: var(--text-md); color: var(--fg-muted); text-wrap: pretty; }
+.eh__empty-text--quiet { font-size: var(--text-sm); color: var(--fg-subtle); }
+.eh__empty-text code { font-size: var(--text-xs); color: var(--fg); }
+.eh__empty :deep(.btn) { margin-top: var(--space-2); }
+
+/* ---- servers, each with its environments under it ---- */
+.eh__list { display: grid; margin: 0; padding: 0; list-style: none; }
+.host {
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2) 0 var(--space-3);
+  border-top: 1px solid var(--line-soft);
+}
+.host:last-child { border-bottom: 1px solid var(--line-soft); }
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+button.row:hover { background: var(--bg-hover); }
+button.row:active { background: var(--bg-active); }
+button.row:focus-visible { outline: none; background: var(--bg-hover); box-shadow: inset 0 0 0 1.5px var(--focus-ring); }
+.row--host { min-height: 48px; padding: var(--space-1) var(--space-2); margin: 0 calc(var(--space-2) * -1); width: calc(100% + var(--space-2) * 2); }
+.row__icon { flex: none; width: 16px; height: 16px; stroke-width: 1.75; color: var(--fg-subtle); }
+.row__main { flex: 1; display: grid; min-width: 0; }
+.row__name {
+  min-width: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.row__meta {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+.row__mono {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.row__clip { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.row__go { flex: none; width: 14px; height: 14px; stroke-width: 1.85; color: var(--fg-faint); transition: color var(--dur-fast) var(--ease-out); }
+button.row:hover .row__go { color: var(--fg-subtle); }
+
+/* Instances sit under their server, indented to its name. */
+.insts { display: grid; gap: 1px; margin: 0; padding: 0; list-style: none; }
+.row--inst {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) 92px minmax(0, 1fr) 76px 14px;
+  min-height: 32px;
+  padding: 0 var(--space-2) 0 calc(16px + var(--space-3) + var(--space-2));
+  margin: 0 calc(var(--space-2) * -1);
+  width: calc(100% + var(--space-2) * 2);
+}
+.row__name--inst { font-size: var(--text-sm); font-weight: 560; }
+.row__kind { font-size: var(--text-xs); color: var(--fg-subtle); text-align: right; }
+.row__addr {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- server state: colour, fill and a word ---- */
+.state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+.state__mark {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.25px var(--ripe-idle);
+}
+.state--ready .state__mark { background: var(--ripe-queued); box-shadow: none; }
+.state--ready .state__word { color: var(--fg-muted); }
+/* Needs setting up: half full in the "needs you" colour. */
+.state--setup .state__mark {
+  box-shadow: inset 0 0 0 1.25px var(--ripe-waiting);
+  background: linear-gradient(var(--ripe-waiting), var(--ripe-waiting)) bottom / 100% 50% no-repeat;
+}
+.state--setup .state__word { color: var(--ripe-waiting-fg); }
+.state--bad .state__word { color: var(--ripe-error-fg); }
+.state__warn { flex: none; width: 12px; height: 12px; stroke-width: 2; color: var(--ripe-error); }
+
+.host__note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 32px;
+  margin: 0;
+  padding-left: calc(16px + var(--space-3));
+  font-size: var(--text-sm);
+  color: var(--fg-muted);
+  text-wrap: pretty;
+}
+.host__note--quiet { color: var(--fg-subtle); }
+.host__error,
+.host__none {
+  margin: 0;
+  padding: var(--space-1) 0 var(--space-1) calc(16px + var(--space-3));
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+}
+.host__error { color: var(--ripe-error-fg); }
+.host__add {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  margin-left: calc(16px + var(--space-3) - var(--space-2));
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--fg-subtle);
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.host__add:hover { background: var(--bg-hover); color: var(--fg); }
+.host__add svg { width: 14px; height: 14px; stroke-width: 1.85; color: var(--accent-ink); }
+
+/* ---- loading ---- */
+.row--skeleton { min-height: 48px; padding: 0 var(--space-2); }
+.bone { height: 10px; border-radius: var(--radius-xs); background: var(--bg-hover); }
+.bone--icon { width: 16px; height: 16px; }
+.bone--name { width: 30%; height: 12px; }
+
+.ring {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-subtle);
+  border-right-color: transparent;
+  animation: eh-turn 0.7s linear infinite;
+}
+@keyframes eh-turn { to { transform: rotate(360deg); } }
+</style>

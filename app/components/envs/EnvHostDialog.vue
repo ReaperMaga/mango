@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-vue-next'
 import { isTauri, pickFiles } from '~/composables/useBackend'
-import { useEnvironments } from '~/stores/environments'
+import { sshUser, useEnvironments } from '~/stores/environments'
 import type { EnvHost } from '~/types/ipc'
 
 /**
  * Add or edit a master server: how to reach it over SSH, which Incus remote
  * holds the instances, and whether instances join a tailnet. "Save and check"
- * saves and probes it, so the remotes the server knows can be offered.
+ * saves and probes it, so the remotes the server knows can be offered and the
+ * state of Incus shows. The server needs only SSH (and sudo): Mango can install
+ * Incus from the server's page, where adding a server that needs it leads.
  */
 const envs = useEnvironments()
 
@@ -35,6 +37,28 @@ const canBrowse = isTauri()
 
 const probe = computed(() => (hostId.value ? envs.probes[hostId.value] ?? null : null))
 const probing = computed(() => !!hostId.value && !!envs.probing[hostId.value])
+
+/** Incus needs work Mango can do: a new server's next step is its setup on the server's page. */
+const setupNext = computed(() => {
+  const p = probe.value
+  if (!adding.value || !p?.reachable || p.ok || !p.canSetup) return null
+  return p.incus === 'missing' ? 'Install Incus…' : 'Set up Incus…'
+})
+
+/** What the check found about Incus, when the server answered but Incus isn't ready. */
+const incusNote = computed(() => {
+  const p = probe.value
+  if (!p?.reachable || p.ok) return null
+  // "Save and check" has saved it already: the next page is the server's.
+  const later = adding.value ? 'on the next page' : "from the server's page"
+  if (!p.canSetup) return p.setupNote ?? "Incus isn't ready there, and Mango can't set it up on this system."
+  switch (p.incus) {
+    case 'missing': return `Incus isn't installed. Mango can install it ${later}.`
+    case 'uninitialised': return `Incus is installed but not set up. Mango can set it up ${later}.`
+    case 'no-access': return `${sshUser(ssh.value.trim()) ? `The SSH user “${sshUser(ssh.value.trim())}”` : 'Your SSH user'} may not use Incus yet. Mango can add them to incus-admin ${later}.`
+    default: return "Incus isn't ready there yet."
+  }
+})
 
 watch(open, (isOpen) => {
   if (!isOpen) return
@@ -143,9 +167,11 @@ async function submit() {
   if (!ok) return
   const id = hostId.value
   envs.dialog = null
+  // A new server that needs Incus: its page leads with the setup, focused.
+  if (adding.value) envs.intents[id] = 'setup-incus'
   envs.select(id)
   // Fresh settings: look again.
-  envs.probe(id).then((p) => { if (p.ok) envs.refreshInstances(id) })
+  envs.refreshHost(id)
 }
 
 async function check() {
@@ -171,8 +197,8 @@ function close() {
   <UiDialog :open="open" :title="adding ? 'Add server' : 'Edit server'" :width="520" @close="close">
     <form id="env-host-form" class="hf" novalidate @submit.prevent="submit">
       <p class="hf__lede">
-        A machine you can reach with <code>ssh</code> that has the <code>incus</code> command. Mango runs each action as one
-        SSH command with your own keys and installs nothing of its own there.
+        A Linux server you can reach with <code>ssh</code>, where you can use <code>sudo</code>. Mango installs Incus there if
+        it isn't yet, and runs each action as one SSH command with your own keys; nothing of Mango's keeps running there.
       </p>
 
       <div class="hf__pair">
@@ -247,13 +273,15 @@ function close() {
       </UiField>
 
       <div v-if="probe && !probing" class="hf__probe" role="status">
-        <template v-if="probe.ok">
+        <template v-if="probe.reachable">
           <p class="hf__probe-line">
             <CircleCheck class="hf__probe-icon hf__probe-icon--ok" aria-hidden="true" />
             <span class="hf__probe-word hf__probe-word--ok">Connected</span>
-            <span v-if="probe.incusVersion" class="hf__probe-more">Incus {{ probe.incusVersion }}</span>
+            <span v-if="probe.os" class="hf__probe-more">{{ probe.os }}</span>
+            <span v-if="probe.ok && probe.incusVersion" class="hf__probe-more">· Incus {{ probe.incusVersion }}</span>
           </p>
-          <div v-if="probe.remotes.length" class="hf__remotes" role="group" aria-label="Remotes on this server">
+          <p v-if="incusNote" class="hf__probe-note">{{ incusNote }}</p>
+          <div v-if="probe.ok && probe.remotes.length" class="hf__remotes" role="group" aria-label="Remotes on this server">
             <span class="hf__remotes-label">Remotes on this server</span>
             <button
               v-for="r in probe.remotes"
@@ -325,14 +353,14 @@ function close() {
         class="hf__check"
         :loading="busy === 'check' || probing"
         :disabled="!!busy"
-        title="Save the server and test the connection; its Incus remotes are offered above"
+        title="Save the server and test the connection: the state of Incus and its remotes show above"
         @click="check"
       >
         Save and check
       </UiButton>
       <UiButton variant="ghost" :disabled="!!busy" @click="close">{{ adding && editing ? 'Close' : 'Cancel' }}</UiButton>
       <UiButton variant="primary" type="submit" form="env-host-form" :loading="busy === 'save'" :disabled="busy === 'check'">
-        {{ adding ? (editing ? 'Done' : 'Add server') : 'Save' }}
+        {{ adding ? (editing ? (setupNext ?? 'Done') : 'Add server') : 'Save' }}
       </UiButton>
     </template>
   </UiDialog>
@@ -390,6 +418,7 @@ function close() {
 .hf__probe-word { font-weight: 560; }
 .hf__probe-word--ok { color: var(--ripe-queued-fg); }
 .hf__probe-more { color: var(--fg-subtle); }
+.hf__probe-note { margin: 0; padding-left: 22px; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
 .hf__remotes { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1); }
 .hf__remotes-label { margin-right: var(--space-1); font-size: var(--text-xs); color: var(--fg-subtle); }
 .hf__remote {
