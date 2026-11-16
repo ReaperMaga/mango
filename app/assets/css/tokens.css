@@ -63,6 +63,10 @@
   --hue-ground: 160;   /* grounds, lines, shadows */
   --hue-ink: 150;      /* text */
   --ground-tint: 1;    /* chroma multiplier for grounds and text; 0 is neutral grey */
+
+  /* Vendor marks (ui/AgentIcon.vue). Brand colours, not part of any scheme:
+     only the agent logos use them. Codex's mark is monochrome (currentColor). */
+  --brand-claude: #d97757;
 }
 
 /* ---------- Dark (default) ----------
