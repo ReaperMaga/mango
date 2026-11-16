@@ -1,4 +1,4 @@
-import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
+import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
 
 /**
@@ -183,6 +183,9 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
     }
   }
 }
+
+/** A message that is a slash command (`/compact`, `/review 12`, a skill): the CLI runs it itself. */
+const isSlash = (prompt: string) => /^\/[\w.:-]+(\s|$)/.test(prompt.trim())
 
 /** The prompt as message content: attached images first, then the text (an empty text block is refused). */
 function userContent(options: SteerInput): unknown[] {
@@ -397,7 +400,8 @@ function run(options: AgentRunOptions): AgentRun {
   }).then((t) => {
     transport = t
     if (ended) { t.kill().catch(() => {}); return }
-    sentMessages++
+    // A slash command is not echoed back when the CLI reads it: counting it would wait forever.
+    if (!isSlash(options.prompt)) sentMessages++
     send({ type: 'user', message: { role: 'user', content: userContent(options) } })
   }).catch((err) => {
     end('error', err instanceof Error ? err.message : String(err))
@@ -409,6 +413,8 @@ function run(options: AgentRunOptions): AgentRun {
     async steer(input) {
       // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
       if (ended || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
+      // A command runs as a turn of its own, not in the middle of this one.
+      if (isSlash(input.prompt)) return false
       sentMessages++
       await send({ type: 'user', message: { role: 'user', content: userContent(input) } })
       return true
@@ -519,6 +525,71 @@ function listModels(spawn: SpawnFn): Promise<AgentModel[]> {
   })
 }
 
+/**
+ * Commands Mango does not offer: the composer's own chips set model and effort, `/clear` is
+ * Mango's (a new conversation in the same chat), and the rest only change the terminal UI
+ * or are internal plumbing.
+ */
+const HIDDEN_COMMANDS = new Set([
+  'clear', 'model', 'effort', 'fast', 'color', 'focus', 'heapdump', 'config', 'rename', 'exit',
+  'workflow-launch-exec',
+])
+
+/** A command's description, without the "(user)" source tag or "(plugin)" prefix Claude Code adds. */
+const commandDescription = (raw: unknown) =>
+  typeof raw === 'string'
+    ? raw.replace(/\s*\((user|project|plugin|bundled|dynamic workflow)\)\s*$/i, '').replace(/^\([\w.:-]+\)\s*/, '').trim()
+    : ''
+
+/**
+ * The slash commands Claude Code runs in this project: its built-ins that work without the
+ * terminal UI, the user's and the project's commands, and skills. Read from the `initialize`
+ * answer; no prompt is sent.
+ */
+function listCommands(spawn: SpawnFn): Promise<AgentCommand[]> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    const finish = (commands: AgentCommand[] | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (commands) resolve(commands)
+      else reject(new Error(why ?? 'Claude Code did not list its commands.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Claude Code took too long to list its commands.'), 30_000)
+    spawn(['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose'], {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-commands') return
+        const list = m.response?.response?.commands
+        if (!Array.isArray(list)) return finish(null)
+        const out: AgentCommand[] = []
+        for (const c of list) {
+          const name = typeof c?.name === 'string' ? c.name : ''
+          const description = commandDescription(c.description)
+          if (!name || name.startsWith('_') || HIDDEN_COMMANDS.has(name) || /^\(removed\)|^renamed to/i.test(description)) continue
+          if (out.some(o => o.name === name)) continue
+          out.push({
+            name,
+            ...(description ? { description } : {}),
+            ...(typeof c.argumentHint === 'string' && c.argumentHint ? { argumentHint: c.argumentHint } : {}),
+            ...(Array.isArray(c.aliases) && c.aliases.length ? { aliases: c.aliases.map(String) } : {}),
+          })
+        }
+        finish(out)
+      },
+      onExit: () => finish(null, 'Claude Code exited before listing its commands.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-commands', request: { subtype: 'initialize' } })).catch(() => {})
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
 /** "max" → "Max", "team_premium" → "Team premium". */
 const planName = (raw: unknown): string | null =>
   typeof raw === 'string' && raw ? raw.charAt(0).toUpperCase() + raw.slice(1).replace(/_/g, ' ') : null
@@ -606,5 +677,5 @@ function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
   })
 }
 
-export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage }
+export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage, listCommands }
 export default claudeAdapter

@@ -1,4 +1,4 @@
-import type { AgentId, AgentModel, DiffLine, ToolKind } from '~/types/chat'
+import type { AgentCommand, AgentId, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
  * How an agent CLI is driven. One `run()` is one turn: the adapter starts (or
@@ -148,4 +148,9 @@ export interface AgentAdapter {
    * turn (no quota is spent). Rejects when the CLI can't answer (missing, signed out, too old).
    */
   readUsage?(spawn: SpawnFn): Promise<AgentUsage>
+  /**
+   * The slash commands a message can start with in this project (`spawn` runs in it), without
+   * running a turn. A message `/name args` goes to `run()` as its prompt, unchanged.
+   */
+  listCommands?(spawn: SpawnFn, cwd: string): Promise<AgentCommand[]>
 }

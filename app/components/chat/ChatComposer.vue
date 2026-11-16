@@ -4,6 +4,7 @@ import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useWorkspace } from '~/stores/workspace'
 import { useVoice } from '~/stores/voice'
 import { useModels } from '~/stores/models'
+import { useCommands } from '~/stores/commands'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { AGENTS, effortLabel, type AgentId, type Attachment, type Thread } from '~/types/chat'
@@ -13,6 +14,7 @@ import { baseName } from '~/utils/paths'
 import { openImage } from '~/utils/imageViewer'
 import type { MenuItem } from '~/types/ui'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
+import ChatCommandMenu, { type CommandMatch } from '~/components/chat/ChatCommandMenu.vue'
 
 /**
  * Message composer. With a thread it sends to that thread; without one
@@ -62,6 +64,7 @@ function submit() {
 }
 
 function onKey(e: KeyboardEvent) {
+  if (menuOpen.value && onMenuKey(e)) return
   if (e.code === 'Space' && e.shiftKey && isMod(e)) {
     e.preventDefault()
     toggleDictation()
@@ -78,6 +81,100 @@ function onKey(e: KeyboardEvent) {
     e.preventDefault()
     submit()
   }
+}
+
+/* ---------- slash commands: typing "/" at the start lists the agent's commands ---------- */
+
+const commands = useCommands()
+const menuId = useId()
+const focused = ref(false)
+/** Escape closes the list until the text stops being a bare command name. */
+const dismissed = ref(false)
+const activeMatch = ref(0)
+
+/** What follows the slash while only a command name is typed; null otherwise. */
+const slashQuery = computed(() => {
+  const m = /^\/([\w.:-]*)$/.exec(text.value)
+  return m ? m[1]!.toLowerCase() : null
+})
+watch(slashQuery, (q, before) => {
+  if (q === null) dismissed.value = false
+  if (q !== before) activeMatch.value = 0
+  // Opening the list is the moment to catch up with commands added since the last look.
+  if (q === '' && before == null) void commands.refresh(props.agent, ws.activeProjectPath)
+})
+
+/** Name prefix first, then a prefix of an alias or of the part after a plugin's "plugin:", then anywhere in the name. */
+const matches = computed<CommandMatch[]>(() => {
+  const q = slashQuery.value
+  if (q === null) return []
+  const all = commands.list(props.agent, ws.activeProjectPath)
+  if (!q) return all.map(command => ({ command, at: null }))
+  const ranked: Array<CommandMatch & { rank: number; order: number }> = []
+  all.forEach((command, order) => {
+    const name = command.name.toLowerCase()
+    const at = name.indexOf(q)
+    const tail = name.lastIndexOf(':') + 1
+    let rank = -1
+    if (at === 0) rank = 0
+    else if (tail > 0 && name.startsWith(q, tail)) rank = 1
+    else if (command.aliases?.some(a => a.toLowerCase().startsWith(q))) rank = 1
+    else if (at > 0) rank = 2
+    if (rank >= 0) ranked.push({ command, at: at >= 0 ? at : null, rank, order })
+  })
+  return ranked.sort((a, b) => a.rank - b.rank || a.order - b.order).map(({ command, at }) => ({ command, at }))
+})
+
+const menuOpen = computed(() => focused.value && !dismissed.value && slashQuery.value !== null)
+const commandMenu = ref<InstanceType<typeof ChatCommandMenu> | null>(null)
+const activeOption = computed(() => (menuOpen.value && matches.value.length ? commandMenu.value?.optionId(activeMatch.value) : undefined))
+
+/** Puts the command in the box; one that takes nothing goes out at once when `send` is set. */
+function pickCommand(i: number, send: boolean) {
+  const m = matches.value[i]
+  if (!m) return
+  const name = `/${m.command.name}`
+  if (send && !m.command.argumentHint) {
+    text.value = name
+    nextTick(submit)
+    return
+  }
+  text.value = `${name} `
+  nextTick(() => {
+    const el = ta.value
+    el?.focus()
+    el?.setSelectionRange(text.value.length, text.value.length)
+  })
+}
+
+/** Keys while the list is open. True when the key was the list's. */
+function onMenuKey(e: KeyboardEvent): boolean {
+  const n = matches.value.length
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    dismissed.value = true
+    return true
+  }
+  if (!n) return false
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    activeMatch.value = (activeMatch.value + (e.key === 'ArrowDown' ? 1 : -1) + n) % n
+    return true
+  }
+  if (e.key === 'Tab' && !e.shiftKey) {
+    e.preventDefault()
+    pickCommand(activeMatch.value, false)
+    return true
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault()
+    // A name typed out in full is sent as typed; otherwise Enter takes the highlighted one.
+    const exact = matches.value.findIndex(m => m.command.name.toLowerCase() === slashQuery.value)
+    pickCommand(exact >= 0 ? exact : activeMatch.value, true)
+    return true
+  }
+  return false
 }
 
 /* ---------- attachments: paste, pick or drop; stored on disk by the backend ---------- */
@@ -300,6 +397,7 @@ const agentItems = computed<MenuItem[]>(() => (Object.keys(AGENTS) as AgentId[])
 const models = useModels()
 const refreshModels = () => void models.refresh(props.agent, ws.activeProjectPath)
 watch(() => props.agent, refreshModels, { immediate: true })
+watch(() => [props.agent, ws.activeProjectPath] as const, ([agent, cwd]) => void commands.refresh(agent, cwd), { immediate: true })
 
 const modelItems = computed<MenuItem[]>(() => {
   const list = models.list(props.agent)
@@ -355,7 +453,7 @@ const modeItems = computed<MenuItem[]>(() => (Object.keys(modes) as Thread['mode
 
 const ph = computed(() => props.placeholder ?? (props.busy
   ? `Steer ${AGENTS[props.agent].name}: it reads this at its next step…`
-  : `Ask ${AGENTS[props.agent].name} to build, fix or explain…`))
+  : `Ask ${AGENTS[props.agent].name} to build, fix or explain, or type / for commands…`))
 const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].name} reads it at its next step (Enter)` : 'Send (Enter)'))
 </script>
 
@@ -406,8 +504,27 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
       rows="1"
       :placeholder="ph"
       :aria-label="ph"
+      role="combobox"
+      aria-autocomplete="list"
+      :aria-expanded="menuOpen && matches.length > 0"
+      :aria-controls="menuOpen && matches.length ? menuId : undefined"
+      :aria-activedescendant="activeOption"
       @keydown="onKey"
       @paste="onPaste"
+      @focus="focused = true"
+      @blur="focused = false"
+    />
+    <ChatCommandMenu
+      v-if="menuOpen"
+      :id="menuId"
+      ref="commandMenu"
+      :anchor="formEl"
+      :matches="matches"
+      :active="activeMatch"
+      :query="slashQuery ?? ''"
+      :agent-name="AGENTS[agent].name"
+      @hover="i => (activeMatch = i)"
+      @pick="i => pickCommand(i, true)"
     />
     <div class="cp__bar">
       <UiMenu :items="agentItems" placement="top-start" :width="280" label="Agent">

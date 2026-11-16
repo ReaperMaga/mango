@@ -1,5 +1,5 @@
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
-import type { AgentModel, DiffLine, ToolKind } from '~/types/chat'
+import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -201,6 +201,41 @@ function describeError(error: Json, model: string): string {
   return short ? `Codex error: ${short}` : 'Codex failed without saying why. Try again.'
 }
 
+/* ---------- slash commands ---------- */
+
+/**
+ * Codex's own slash commands belong to its terminal UI; the app-server has requests for the
+ * useful ones instead. A message `/name args` that names one of these (or a skill) is turned
+ * into that request; any other text goes to Codex as written.
+ */
+const BUILTIN_COMMANDS: AgentCommand[] = [
+  { name: 'review', description: 'Review the uncommitted changes, or what the instructions ask for', argumentHint: '[instructions]' },
+  { name: 'compact', description: 'Summarize the conversation so far to free up context' },
+  { name: 'init', description: 'Create an AGENTS.md with instructions for Codex' },
+]
+
+/** What Codex's own `/init` asks for, in short. */
+const INIT_PROMPT = [
+  'Generate a file named AGENTS.md that serves as a contributor guide for this repository.',
+  'Look at the project first, then write a concise, well-structured document (200-400 words) with headings such as',
+  'Project Structure, Build and Test Commands, Coding Style, Testing Guidelines, and Commit and Pull Request Guidelines.',
+  'Use concrete commands and paths from this repository rather than generic advice.',
+  'If an AGENTS.md already exists, improve it instead of replacing what is still right.',
+].join(' ')
+
+/** `/name rest` → name and rest; null when `prompt` is not a slash command. */
+function parseSlash(prompt: string): { name: string; args: string } | null {
+  const m = /^\/([\w.:-]+)(?:\s+([\s\S]*))?$/.exec(prompt.trim())
+  return m ? { name: m[1]!, args: (m[2] ?? '').trim() } : null
+}
+
+/** The enabled skills for `cwd`, as `skills/list` reports them. */
+async function readSkills(request: (method: string, params: Json) => Promise<Json>, cwd: string): Promise<Json[]> {
+  const res: Json = await request('skills/list', { cwds: [cwd] })
+  const entry = (res?.data ?? []).find((e: Json) => e?.cwd === cwd) ?? res?.data?.[0]
+  return (entry?.skills ?? []).filter((s: Json) => s?.enabled !== false && typeof s?.name === 'string' && typeof s?.path === 'string')
+}
+
 /* ---------- the adapter ---------- */
 
 interface FileTool { id: string; diff: string; kind: string }
@@ -246,6 +281,8 @@ function run(options: AgentRunOptions): AgentRun {
   const commandOutput = new Map<string, string>()
   const fileTools = new Map<string, Map<string, FileTool>>()
   const approvals = new Map<string, OpenApproval>()
+  /** The "Reviewed …" row of a `/review`, open until Codex hands over its findings. */
+  let reviewRow: string | null = null
 
   const emit = (event: AgentEvent) => { if (!ended) options.emit(event) }
 
@@ -433,6 +470,13 @@ function run(options: AgentRunOptions): AgentRun {
       case 'imageGeneration':
         startTool(item.id, 'other', 'an image', 'Generated')
         break
+      case 'enteredReviewMode':
+        reviewRow = item.id
+        startTool(item.id, 'other', String(item.review || 'the changes'), 'Reviewed')
+        break
+      case 'contextCompaction':
+        startTool(item.id, 'other', 'the conversation', 'Compacted')
+        break
     }
   }
 
@@ -495,6 +539,15 @@ function run(options: AgentRunOptions): AgentRun {
       case 'imageView':
         onItemStarted(item, null)
         endTool(item.id, 'ok', item.path ? { images: [{ mime: '', path: String(item.path) }] } : {})
+        break
+      case 'exitedReviewMode':
+        // The review row closes, and the findings are the answer.
+        if (reviewRow) endTool(reviewRow, 'ok')
+        if (item.review) emit({ type: 'text', id: item.id, text: String(item.review) })
+        break
+      case 'contextCompaction':
+        onItemStarted(item, null)
+        endTool(item.id, 'ok')
         break
       case 'imageGeneration': {
         onItemStarted(item, null)
@@ -673,7 +726,47 @@ function run(options: AgentRunOptions): AgentRun {
     stopTimer = setTimeout(() => finish('stopped'), 5000)
   }
 
+  const slash = parseSlash(options.prompt)
+  const builtin = slash && BUILTIN_COMMANDS.some(c => c.name === slash.name) ? slash.name : null
+
+  /** The turn's work on the open thread: a command's request, else `turn/start` with the prompt. */
+  const startWork = async (turnModel: string | null, turnEffort: string | null): Promise<Json> => {
+    turnRequested = true
+    if (builtin === 'compact') {
+      // Codex reports the compaction as a turn of its own (turn/started … turn/completed).
+      await request('thread/compact/start', { threadId }, 60_000)
+      return null
+    }
+    if (builtin === 'review') {
+      const target = slash!.args ? { type: 'custom', instructions: slash!.args } : { type: 'uncommittedChanges' }
+      return request('review/start', { threadId, target, delivery: 'inline' }, 60_000)
+    }
+    let input = turnInput(options)
+    if (builtin === 'init') input = turnInput({ ...options, prompt: INIT_PROMPT })
+    else if (slash) {
+      // A skill goes the way Codex's own UI sends it: "$name …" plus a skill item naming its file.
+      const skill = await readSkills((m, p) => request(m, p, 10_000), cwd).then(list => list.find(s => s.name === slash.name), () => undefined)
+      if (skill) {
+        const text = `$${skill.name}${slash.args ? ` ${slash.args}` : ''}`
+        input = [...turnInput({ ...options, prompt: text }), { type: 'skill', name: skill.name, path: skill.path }]
+      }
+    }
+    return request('turn/start', {
+      threadId,
+      input,
+      approvalPolicy: policy.approvalPolicy,
+      approvalsReviewer: 'user',
+      // Reasoning summaries are what the thinking block shows; without this Codex sends none.
+      summary: 'auto',
+      ...(turnModel ? { model: turnModel } : {}),
+      ...(turnEffort ? { effort: turnEffort } : {}),
+    }, 60_000)
+  }
+
   const start = async () => {
+    if (builtin === 'compact' && !options.sessionId) {
+      return finish('error', 'There is no conversation to compact yet.')
+    }
     try {
       transport = await options.spawn(['app-server'], {
         onLine,
@@ -707,6 +800,8 @@ function run(options: AgentRunOptions): AgentRun {
         approvalsReviewer: 'user',
         sandbox: policy.sandbox,
         ...(model && model !== 'default' ? { model } : {}),
+        // Codex reviews with its own review model unless told otherwise: use the chat's.
+        ...(builtin === 'review' && model && model !== 'default' ? { config: { review_model: model } } : {}),
       }
       let opened: Json
       let turnModel = model && model !== 'default' ? model : null
@@ -749,17 +844,7 @@ function run(options: AgentRunOptions): AgentRun {
       emit({ type: 'session', sessionId: threadId })
       if (stopRequested) return finish('stopped')
 
-      turnRequested = true
-      const started = await request('turn/start', {
-        threadId,
-        input: turnInput(options),
-        approvalPolicy: policy.approvalPolicy,
-        approvalsReviewer: 'user',
-        // Reasoning summaries are what the thinking block shows; without this Codex sends none.
-        summary: 'auto',
-        ...(turnModel ? { model: turnModel } : {}),
-        ...(turnEffort ? { effort: turnEffort } : {}),
-      }, 60_000)
+      const started = await startWork(turnModel, turnEffort)
       if (ended) return
       if (!turnId && started?.turn?.id) turnId = started.turn.id
       if (stopRequested) sendInterrupt()
@@ -775,6 +860,8 @@ function run(options: AgentRunOptions): AgentRun {
     async steer(input) {
       // Before Codex named the turn, or once it is over, there is nothing to add to.
       if (ended || closing || stopRequested || !threadId || !turnId) return false
+      // A command runs as a turn of its own; a review or a compaction takes no messages.
+      if (parseSlash(input.prompt) || builtin === 'review' || builtin === 'compact') return false
       try {
         await request('turn/steer', { threadId, input: turnInput(input), expectedTurnId: turnId }, 15_000)
         return !stopRequested
@@ -948,6 +1035,20 @@ function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
   })
 }
 
-export const codexAdapter: AgentAdapter = { id: 'codex', run, listModels, readUsage }
+/** The Codex commands Mango can run (review, compact, init), then the skills enabled for `cwd`. */
+function listCommands(spawn: SpawnFn, cwd: string): Promise<AgentCommand[]> {
+  return askAppServer(spawn, 'list its skills', async (request) => {
+    const skills = await readSkills(request, cwd).catch(() => [])
+    const out = [...BUILTIN_COMMANDS]
+    for (const s of skills) {
+      if (out.some(c => c.name === s.name)) continue
+      const description = String(s.interface?.shortDescription ?? s.shortDescription ?? s.description ?? '').trim()
+      out.push({ name: String(s.name), ...(description ? { description } : {}), argumentHint: '[request]' })
+    }
+    return out
+  })
+}
+
+export const codexAdapter: AgentAdapter = { id: 'codex', run, listModels, readUsage, listCommands }
 
 export default codexAdapter
