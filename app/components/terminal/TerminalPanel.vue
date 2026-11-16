@@ -6,6 +6,7 @@ import { envPath, isEnvPath, parseEnvPath } from '~/utils/envPath'
 import { whereItems } from '~/composables/usePlace'
 import { refreshEnvs } from '~/composables/envProjects'
 import { useEnvironments } from '~/stores/environments'
+import { holdOverlay } from '~/composables/useOverlay'
 
 /**
  * Docked terminal panel at the bottom of the main column.
@@ -60,6 +61,8 @@ const toggleTall = () => jumpTo(ws.terminalHeight > (DEFAULT_H + TALL_H) / 2 ? D
 
 /* ---------- drag handle ---------- */
 const dragging = ref(false)
+/* A browser's page would swallow the pointer once it crosses it: the browsers hide during the drag. */
+let release = () => {}
 let dragStartY = 0
 let dragStartFrac = 0
 
@@ -70,6 +73,7 @@ function onHandleDown(e: PointerEvent) {
   dragStartY = e.clientY
   dragStartFrac = ws.terminalHeight
   dragging.value = true
+  release = holdOverlay()
   document.body.style.cursor = 'row-resize'
 }
 
@@ -81,6 +85,7 @@ function onHandleMove(e: PointerEvent) {
 function endDrag(e: PointerEvent) {
   if (!dragging.value) return
   dragging.value = false
+  release()
   document.body.style.cursor = ''
   const el = e.currentTarget as HTMLElement
   if (el.hasPointerCapture(e.pointerId)) el.releasePointerCapture(e.pointerId)

@@ -8,6 +8,8 @@ import type { PtyDataEvent, PtyExitEvent } from '~/types/ipc'
 import { enhanceTerminal, terminalFontFamily } from '~/utils/xtermSetup'
 import { cssVar, hex2, toHex } from '~/utils/cssColor'
 import { parseEnvPath } from '~/utils/envPath'
+import { useBrowser } from '~/stores/browser'
+import { useThreads } from '~/stores/threads'
 
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
@@ -24,6 +26,17 @@ const props = defineProps<{
 
 const ws = useWorkspace()
 const host = ref<HTMLElement | null>(null)
+
+/**
+ * A link in the output: a dev server on this computer (`localhost:3000` from `npm run dev`)
+ * opens in Mango's browser beside the chat in front; anything else in the system browser.
+ * In a remote project that is the environment's localhost, tunnelled by the backend.
+ */
+function openLink(uri: string) {
+  const threads = useThreads()
+  const local = useBrowser().openLink(uri, ws.activeProjectPath, threads.activePane.threadId)
+  if (!local) openExternal(uri).catch(() => {})
+}
 
 let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
@@ -237,13 +250,13 @@ onMounted(async () => {
     macOptionIsMeta: true,
     theme: buildTheme(),
     // OSC 8 hyperlinks (CLIs print sign-in URLs this way): open in the system browser, no confirm dialog.
-    linkHandler: { activate: (_event, uri) => { openExternal(uri).catch(() => {}) } },
+    linkHandler: { activate: (_event, uri) => openLink(uri) },
   })
   fitAddon = new FitAddon()
   term.loadAddon(fitAddon)
   term.loadAddon(new WebLinksAddon((event, uri) => {
     event.preventDefault()
-    openExternal(uri).catch(() => {})
+    openLink(uri)
   }))
   term.open(host.value)
   enhanceTerminal(term)

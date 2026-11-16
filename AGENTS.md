@@ -54,16 +54,18 @@ app/
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
+    browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
     settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance)
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
-  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts
+  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
+  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts,
+                     browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
-  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, imageFiles.ts, editorModels.ts, time.ts, paths.ts,
+  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
@@ -75,6 +77,9 @@ src-tauri/src/
   plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
+  browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
+  browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
+  browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
@@ -120,6 +125,10 @@ scripts/try-agent.ts run an adapter against the real CLI
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
   trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.
+- The browser (`browser.rs`, `browser_mcp.rs`, `stores/browser.ts`): pages in it are untrusted. Its webviews load only http(s)
+  (and about:blank) and never get Mango's IPC. The MCP server that hands agents the browser tools binds 127.0.0.1 only, and
+  each chat's URL carries its own secret token. Each webview is a native view drawn over all HTML: every floating layer
+  (menu, dialog, popup, a resize drag) registers with `useOverlay`/`holdOverlay` so the browsers hide while it is up.
 - Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
   call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
   `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.

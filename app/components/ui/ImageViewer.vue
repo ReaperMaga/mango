@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-vue-next'
 import { call } from '~/composables/useBackend'
 import { closeImage, imageViewer } from '~/utils/imageViewer'
 import { formatSize } from '~/utils/attachments'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Full-size view of an attached or agent-produced image. Opens on the small preview
@@ -10,6 +11,7 @@ import { formatSize } from '~/utils/attachments'
  * Escape or a click outside closes; arrow keys step through the set.
  */
 const current = computed(() => imageViewer.images[imageViewer.index] ?? null)
+useOverlay(() => imageViewer.open && !!current.value)
 const full = ref<Record<string, string>>({})
 const failed = ref(false)
 const panel = ref<HTMLElement | null>(null)

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
+import { holdOverlay } from '~/composables/useOverlay'
 
 /**
  * The open tool window on the right of the chats: where the project runs, its files,
@@ -12,8 +13,11 @@ const LABELS = { env: 'Environment', files: 'Files', changes: 'Changes', links: 
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
+/* A browser's page would swallow the pointer once it crosses it: the browsers hide during the drag. */
+let release = () => {}
 function startResize(e: PointerEvent) {
   dragging = true
+  release = holdOverlay()
   ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
 }
 function onResize(e: PointerEvent) {
@@ -23,6 +27,7 @@ function onResize(e: PointerEvent) {
 function endResize() {
   if (!dragging) return
   dragging = false
+  release()
   ws.persist()
 }
 </script>

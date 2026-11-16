@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
   Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -8,9 +8,11 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
+import { useBrowser } from '~/stores/browser'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -19,6 +21,7 @@ import type { ThreadStatus } from '~/types/chat'
 const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
+useOverlay(() => ws.paletteOpen)
 
 /** Environments known to be usable right now (from what the store already has). */
 function knownPlaces() {
@@ -84,6 +87,7 @@ const actions = computed<Item[]>(() => {
   const items: Item[] = []
   if (project) {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
+    items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: [mod, shift, 'B'], keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
   }
   // With environments around, say where these put the project (the remembered choice).
   const where = projectWhere()

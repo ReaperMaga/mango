@@ -431,14 +431,14 @@ pub async fn env_list_dir(app: AppHandle, host_id: String, instance: String, dir
 const NOVNC_ADDR: &str = "TCP:127.0.0.1:6080";
 
 /// The far end of one tunnelled connection.
-struct Upstream {
+pub(crate) struct Upstream {
     reader: Box<dyn Read + Send>,
     writer: Box<dyn Write + Send>,
     /// Ends it (kills the ssh); safe to call more than once.
     close: Arc<dyn Fn() + Send + Sync>,
 }
 
-type Dialer = Arc<dyn Fn() -> Result<Upstream, String> + Send + Sync>;
+pub(crate) type Dialer = Arc<dyn Fn() -> Result<Upstream, String> + Send + Sync>;
 
 struct Live {
     client: TcpStream,
@@ -453,32 +453,45 @@ struct Shared {
     conns: Mutex<HashMap<u64, Live>>,
 }
 
-struct Tunnel {
-    port: u16,
+pub(crate) struct Tunnel {
+    pub(crate) port: u16,
     shared: Arc<Shared>,
+}
+
+/// Which pages may use a tunnel: only its own (the desktop), or any page served from this
+/// computer's loopback (the browser's tunnels to dev servers, which call each other across ports).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Origins {
+    Own,
+    Loopback,
 }
 
 impl Tunnel {
     /// Listen on a random local port and serve every connection through `dialer`.
     fn start(dialer: Dialer) -> Result<Tunnel, String> {
         let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Could not open a local port for the desktop: {e}"))?;
+        Self::serve_on(listener, dialer, Origins::Own)
+    }
+
+    /// Serve every connection to `listener` (bound to 127.0.0.1) through `dialer`.
+    pub(crate) fn serve_on(listener: TcpListener, dialer: Dialer, origins: Origins) -> Result<Tunnel, String> {
         let port = listener.local_addr().map_err(|e| e.to_string())?.port();
         let shared = Arc::new(Shared::default());
         shared.serving.store(true, Ordering::SeqCst);
         let s = shared.clone();
         std::thread::Builder::new()
             .name(format!("desktop-tunnel-{port}"))
-            .spawn(move || serve(listener, s, dialer, port))
-            .map_err(|e| format!("Could not start the desktop tunnel: {e}"))?;
+            .spawn(move || serve(listener, s, dialer, port, origins))
+            .map_err(|e| format!("Could not start the tunnel: {e}"))?;
         Ok(Tunnel { port, shared })
     }
 
-    fn alive(&self) -> bool {
+    pub(crate) fn alive(&self) -> bool {
         !self.shared.stop.load(Ordering::SeqCst) && self.shared.serving.load(Ordering::SeqCst)
     }
 
     /// Stop listening and end every open connection (and its ssh).
-    fn stop(&self) {
+    pub(crate) fn stop(&self) {
         self.shared.stop.store(true, Ordering::SeqCst);
         // Wake the accept loop so it sees the flag and drops the listener.
         let _ = TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], self.port)), Duration::from_millis(500));
@@ -494,7 +507,7 @@ impl Tunnel {
     }
 }
 
-fn serve(listener: TcpListener, shared: Arc<Shared>, dialer: Dialer, port: u16) {
+fn serve(listener: TcpListener, shared: Arc<Shared>, dialer: Dialer, port: u16, origins: Origins) {
     for conn in listener.incoming() {
         if shared.stop.load(Ordering::SeqCst) {
             break;
@@ -506,7 +519,7 @@ fn serve(listener: TcpListener, shared: Arc<Shared>, dialer: Dialer, port: u16) 
         let (shared, dialer) = (shared.clone(), dialer.clone());
         let _ = std::thread::Builder::new()
             .name("desktop-conn".into())
-            .spawn(move || handle(client, &shared, &dialer, port));
+            .spawn(move || handle(client, &shared, &dialer, port, origins));
     }
     // Close the port before saying so: a connection in between would still be accepted by the kernel.
     drop(listener);
@@ -537,7 +550,7 @@ fn read_head(client: &mut TcpStream) -> io::Result<(Vec<u8>, usize)> {
 /// away other web pages (including DNS rebinding) trying to reach the desktop
 /// through the local port. Browsers never reuse a connection across origins
 /// and open every WebSocket on a fresh one, so the first request is enough.
-fn check_request(head: &[u8], port: u16) -> Result<(), &'static str> {
+fn check_request(head: &[u8], port: u16, origins: Origins) -> Result<(), &'static str> {
     let text = std::str::from_utf8(head).map_err(|_| "not HTTP")?;
     let mut lines = text.split("\r\n");
     let first = lines.next().unwrap_or("");
@@ -552,6 +565,9 @@ fn check_request(head: &[u8], port: u16) -> Result<(), &'static str> {
         if name.eq_ignore_ascii_case("host") {
             host_ok = ours.iter().any(|o| o == value);
         } else if name.eq_ignore_ascii_case("origin") && !ours.iter().any(|o| value == format!("http://{o}")) {
+            if origins == Origins::Loopback && loopback_origin(value) {
+                continue;
+            }
             return Err("foreign origin");
         }
     }
@@ -562,11 +578,21 @@ fn check_request(head: &[u8], port: u16) -> Result<(), &'static str> {
     }
 }
 
-fn handle(mut client: TcpStream, shared: &Shared, dialer: &Dialer, port: u16) {
+/// `http(s)://localhost[:port]`, `http(s)://127.0.0.1[:port]` or `http(s)://[::1][:port]`.
+fn loopback_origin(origin: &str) -> bool {
+    let Some(rest) = origin.strip_prefix("http://").or_else(|| origin.strip_prefix("https://")) else { return false };
+    let host = match rest.rsplit_once(':') {
+        Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => rest,
+    };
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+fn handle(mut client: TcpStream, shared: &Shared, dialer: &Dialer, port: u16, origins: Origins) {
     let _ = client.set_nodelay(true);
     let _ = client.set_read_timeout(Some(Duration::from_secs(15)));
     let Ok((head, end)) = read_head(&mut client) else { return };
-    if let Err(why) = check_request(&head[..end], port) {
+    if let Err(why) = check_request(&head[..end], port, origins) {
         let body = format!("Mango refused this request ({why}).\n");
         let _ = client.write_all(
             format!("HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())
@@ -632,7 +658,12 @@ fn handle(mut client: TcpStream, shared: &Shared, dialer: &Dialer, port: u16) {
 
 /// Connections through `ssh … incus exec T -T -- socat - TCP:127.0.0.1:6080`.
 fn ssh_dialer(host: &EnvHost, instance: &str) -> Result<Dialer, String> {
-    let inner = ["socat", "-", NOVNC_ADDR].map(String::from);
+    ssh_dialer_to(host, instance, NOVNC_ADDR)
+}
+
+/// Connections to `addr` (a socat address such as `TCP:127.0.0.1:3000`) inside the instance.
+pub(crate) fn ssh_dialer_to(host: &EnvHost, instance: &str, addr: &str) -> Result<Dialer, String> {
+    let inner = ["socat".to_string(), "-".into(), addr.to_string()];
     let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, &inner)?)?;
     Ok(Arc::new(move || {
         let mut cmd = ssh::command(&argv);
@@ -1055,15 +1086,23 @@ mod tests {
     #[test]
     fn request_checks() {
         let ok = b"GET /vnc.html HTTP/1.1\r\nHost: 127.0.0.1:5000\r\n\r\n";
-        assert!(check_request(ok, 5000).is_ok());
+        assert!(check_request(ok, 5000, Origins::Own).is_ok());
         let ws = b"GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:5000\r\nUpgrade: websocket\r\nOrigin: http://127.0.0.1:5000\r\n\r\n";
-        assert!(check_request(ws, 5000).is_ok());
+        assert!(check_request(ws, 5000, Origins::Own).is_ok());
         let foreign = b"GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:5000\r\nOrigin: https://evil.example\r\n\r\n";
-        assert_eq!(check_request(foreign, 5000), Err("foreign origin"));
+        assert_eq!(check_request(foreign, 5000, Origins::Own), Err("foreign origin"));
         let rebound = b"GET / HTTP/1.1\r\nHost: evil.example:5000\r\n\r\n";
-        assert_eq!(check_request(rebound, 5000), Err("foreign host"));
-        assert_eq!(check_request(b"GET / HTTP/1.1\r\n\r\n", 5000), Err("foreign host"));
-        assert_eq!(check_request(b"\x16\x03\x01garbage\r\n\r\n", 5000), Err("not HTTP"));
+        assert_eq!(check_request(rebound, 5000, Origins::Own), Err("foreign host"));
+        assert_eq!(check_request(b"GET / HTTP/1.1\r\n\r\n", 5000, Origins::Own), Err("foreign host"));
+        assert_eq!(check_request(b"\x16\x03\x01garbage\r\n\r\n", 5000, Origins::Own), Err("not HTTP"));
+        // The browser's tunnels also take pages from other loopback ports (a dev frontend calling its API).
+        let api = b"GET / HTTP/1.1\r\nHost: 127.0.0.1:5000\r\nOrigin: http://localhost:3000\r\n\r\n";
+        assert_eq!(check_request(api, 5000, Origins::Own), Err("foreign origin"));
+        assert!(check_request(api, 5000, Origins::Loopback).is_ok());
+        let web = b"GET / HTTP/1.1\r\nHost: 127.0.0.1:5000\r\nOrigin: https://evil.example\r\n\r\n";
+        assert_eq!(check_request(web, 5000, Origins::Loopback), Err("foreign origin"));
+        assert!(!loopback_origin("http://localhost.evil.example"));
+        assert!(loopback_origin("https://[::1]:8443"));
     }
 
     /* A tunnel whose far end is a local echo server instead of ssh + socat. */

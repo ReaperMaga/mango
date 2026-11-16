@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Check } from 'lucide-vue-next'
 import type { MenuItem } from '~/types/ui'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Dropdown menu. The popover is teleported to <body> and positioned with
@@ -15,6 +16,8 @@ const props = withDefaults(defineProps<{
 }>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
 
 const open = ref(false)
+/* An open menu hides the browsers' native pages, which would cover it. */
+useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
 const list = ref<HTMLElement | null>(null)
 const active = ref(-1)

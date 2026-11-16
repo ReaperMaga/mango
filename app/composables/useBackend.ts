@@ -323,6 +323,19 @@ const mock = (() => {
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
+      /* Browser: no native webview here (BrowserPane shows an iframe); pages "load" at once. */
+      case 'browser_open': case 'browser_navigate': {
+        const { id, url } = args as { id: string; url: string }
+        if (url === 'about:blank') return
+        let title = url
+        try { title = new URL(url).host } catch { /* keep the URL */ }
+        emit('browser://state', { id, url, title, loading: true })
+        setTimeout(() => emit('browser://state', { id, url, title, loading: false }), 400)
+        return
+      }
+      case 'browser_bounds': case 'browser_go': case 'browser_devtools': case 'browser_close': case 'browser_reset': return
+      case 'browser_screenshot': throw new Error('The browser preview has no native browser to take a screenshot of.')
+      case 'browser_mcp': throw new Error('Simulated agents do not use the browser tools.')
       case 'voice_models': return voiceModels.map(m => ({ ...m }))
       case 'voice_download': return fakeVoiceDownload(args.model)
       case 'voice_download_cancel': voiceCancel.add(args.model); return

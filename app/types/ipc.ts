@@ -285,6 +285,46 @@ export interface FsListing {
   truncated: boolean
 }
 
+/* ---------- the browser: native webviews laid over browser tabs (src-tauri/src/browser.rs) ---------- */
+
+/** Where a browser's webview sits, in CSS pixels of the main window (getBoundingClientRect). */
+export interface BrowserBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/** A browser's page as it changes (`browser://state`). */
+export interface BrowserState {
+  /** The id the browser was opened with. */
+  id: string
+  url: string
+  title: string
+  loading: boolean
+}
+
+/**
+ * An agent's first browser call in a chat with no browser yet (`browser://agent-open`): open a browser
+ * tab with this id for that chat (its root chat) and call `browser_open` with it. The tool call waits
+ * up to 15 seconds for it.
+ */
+export interface BrowserAgentOpen {
+  id: string
+  threadId: string
+  url: string
+}
+
+/** The browser tools Mango hands an agent run (an MCP server over HTTP on 127.0.0.1). */
+export interface BrowserMcp {
+  /** Streamable-HTTP MCP endpoint; the secret token in its path ties it to the chat. */
+  url: string
+  /** Name to register the server under: tools are `mcp__<name>__<tool>` in Claude Code. */
+  name: string
+  /** Tools that only read the page (snapshot, screenshot, console logs), safe to allow without asking. */
+  readOnlyTools: string[]
+}
+
 /** A picture an agent's reply points at (`chat_image`). */
 export interface ChatImage {
   /** The whole file, base64. */
@@ -690,6 +730,37 @@ export interface Commands {
    */
   chat_image: [{ path: string; base: string | null }, ChatImage]
 
+  /*
+   * The browser. Each browser is a native webview, its own label `browser-<id>` (`id`: letters,
+   * digits, `-`, `_`, up to 64), laid over the main window at `bounds` and kept until `browser_close`,
+   * hidden while its tab is not in a pane. Only http(s) pages and about:blank load in it; it has no
+   * access to Mango's commands. Page changes arrive as `browser://state`.
+   */
+  /**
+   * Create the webview (or, for an id that exists, move it and load `url`). `projectPath` is the
+   * tab's project: in a remote environment (`env://…`) local addresses such as `localhost:3000` are
+   * the environment's own, reached through an SSH tunnel; `browser://state` reports them as typed.
+   */
+  browser_open: [{ id: string; url: string; bounds: BrowserBounds; visible: boolean; projectPath: string | null }, void]
+  /** Move or resize it, show or hide it (hidden while an overlay covers it or its tab is not shown). */
+  browser_bounds: [{ id: string; bounds: BrowserBounds; visible: boolean }, void]
+  /** Load a page (routed like `browser_open`, by the project it was opened with). */
+  browser_navigate: [{ id: string; url: string }, void]
+  browser_go: [{ id: string; action: 'back' | 'forward' | 'reload' | 'stop' }, void]
+  /** The webview's own developer tools. */
+  browser_devtools: [{ id: string }, void]
+  browser_close: [{ id: string }, void]
+  /** Close every browser webview (the frontend calls it when it starts: a reloaded UI leaves none behind). */
+  browser_reset: [Record<string, never>, void]
+  /** The page as a PNG, base64. Linux only for now; elsewhere it rejects with a message saying so. */
+  browser_screenshot: [{ id: string }, string]
+  /**
+   * The browser tools for an agent run in `threadId` (the root chat) of the project at `projectPath`.
+   * Starts the local MCP server on first use; the URL stays the same for the chat while Mango runs.
+   * For a remote environment the URL is one that works inside it (a reverse SSH forward back to Mango).
+   */
+  browser_mcp: [{ threadId: string; projectPath: string }, BrowserMcp]
+
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
   /**
@@ -770,6 +841,10 @@ export interface Events {
   'agent://exit': AgentExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
+  /** A browser's page changed: URL, title, loading. */
+  'browser://state': BrowserState
+  /** An agent wants a browser for its chat: open a tab with this id (see BrowserAgentOpen). */
+  'browser://agent-open': BrowserAgentOpen
   /** A `mango://join/…` link was opened (deep link): show the join dialog for it. */
   'envs://join': { link: string }
 }

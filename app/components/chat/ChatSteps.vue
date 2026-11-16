@@ -25,15 +25,17 @@ const nouns: Record<ToolKind, [verb: string, one: string, many: string]> = {
 
 const summary = computed(() => {
   // Phrases in order of first appearance; each tool kind counted on its own.
-  const counts = new Map<ToolKind | 'thinking', number>()
+  const counts = new Map<ToolKind | 'thinking' | 'browser', number>()
   let seconds = 0
   for (const s of props.steps) {
-    const key = s.type === 'thinking' ? 'thinking' : s.tool
+    // Steps in Mango's browser (labelled so by the adapters) are counted as browser use, not page fetches.
+    const key = s.type === 'thinking' ? 'thinking' : s.label === 'Browser' ? 'browser' : s.tool
     counts.set(key, (counts.get(key) ?? 0) + 1)
     if (s.type === 'thinking') seconds += s.seconds
   }
   const bits = [...counts].map(([key, n]) => {
     if (key === 'thinking') return seconds > 0 ? `thought for ${formatDuration(seconds * 1000)}` : 'thought'
+    if (key === 'browser') return n === 1 ? 'used the browser' : `used the browser ${n} times`
     const [verb, one, many] = nouns[key]
     return `${verb} ${n} ${n === 1 ? one : many}`
   })

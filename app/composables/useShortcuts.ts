@@ -2,6 +2,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
+import { useBrowser } from '~/stores/browser'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
 
@@ -40,6 +41,7 @@ export async function openLocalFolder() {
  *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
  *   Mod+Shift+U  usage limits   Mod+Shift+P  pull requests panel
  *   Mod+Shift+H  environment panel (where the project runs)
+ *   Mod+Shift+B  new browser tab
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -68,6 +70,7 @@ export function useShortcuts() {
       return
     }
     if (k === 'o') { e.preventDefault(); openFolderFlow(); return }
+    if (k === 'b' && e.shiftKey) { e.preventDefault(); useBrowser().openNew(); return }
     if (k === 'b') { e.preventDefault(); ws.toggleSidebar(); return }
     if (k === '\\') { e.preventDefault(); threads.isSplit ? threads.closePane(threads.activePaneId) : threads.split(); return }
     if (k === 'g' && e.shiftKey) { e.preventDefault(); if (ws.hasProject) ws.toggleGit(); return }

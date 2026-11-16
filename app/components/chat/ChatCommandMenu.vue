@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentCommand } from '~/types/chat'
+import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * The slash command list over the composer. The composer owns the text and the keys
@@ -27,6 +28,7 @@ const emit = defineEmits<{
 }>()
 
 const list = ref<HTMLElement | null>(null)
+useOverlay(() => props.matches.length > 0)
 const pos = ref<{ left: number; top?: number; bottom?: number; width: number; maxHeight: number }>({ left: 0, bottom: 0, width: 480, maxHeight: 300 })
 
 const GAP = 6

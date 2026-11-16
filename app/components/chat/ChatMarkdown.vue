@@ -4,14 +4,16 @@ import type { Attachment } from '~/types/chat'
 import { chatImage, localBase, localImagePath } from '~/utils/chatImages'
 import { openImage } from '~/utils/imageViewer'
 import { baseName } from '~/utils/paths'
+import { useBrowser } from '~/stores/browser'
 
 /**
  * Renders agent markdown. Raw HTML in the source is escaped, never injected:
  * agent output is untrusted text. Pictures (`![alt](path)`) are shown only from
  * files on this computer, never fetched from the web; `base` is the chat's project
- * folder, for relative paths.
+ * folder, for relative paths. A link to a dev server on this computer (localhost and the
+ * like) opens in Mango's browser beside the chat; other links open as they always have.
  */
-const props = defineProps<{ text: string; streaming?: boolean; base?: string | null }>()
+const props = defineProps<{ text: string; streaming?: boolean; base?: string | null; threadId?: string | null }>()
 
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 
@@ -47,7 +49,9 @@ const html = computed(() => {
 
 function onClick(e: MouseEvent) {
   const el = (e.target as HTMLElement).closest<HTMLElement>('[data-img]')
-  if (el) openImage(shown, Number(el.dataset.img))
+  if (el) { openImage(shown, Number(el.dataset.img)); return }
+  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[href]')
+  if (a && e.button === 0 && useBrowser().openLink(a.href, props.base ?? null, props.threadId ?? null)) e.preventDefault()
 }
 </script>
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { useOverlay } from '~/composables/useOverlay'
 /**
  * Modal shell for short, focused tasks (new project, clone, setup). Closes on
  * Escape and scrim click unless `dismissible` is false (e.g. while something
@@ -10,6 +11,8 @@ const props = withDefaults(
   { width: 460, dismissible: true },
 )
 const emit = defineEmits<{ close: [] }>()
+/* The browsers' native pages would cover the dialog: they hide while it is open. */
+useOverlay(() => props.open)
 
 const panel = ref<HTMLElement | null>(null)
 /** The body is scrolled down: the head gets an edge so cut-off content reads as scrolled, not broken. */

@@ -47,6 +47,30 @@ import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 
 type Json = any
 
+/** The name Mango registers its browser tools under (`browser_mcp`, src-tauri/src/browser_mcp.rs). */
+const BROWSER_SERVER = 'mango-browser'
+
+/** What one of Mango's browser tools does, for its row: `navigate http://localhost:3000`. */
+function browserTarget(tool: string, input: any): string {
+  let i = input ?? {}
+  if (typeof i === 'string') { try { i = JSON.parse(i) ?? {} } catch { i = {} } }
+  const s = (v: unknown) => (typeof v === 'string' ? v : '')
+  const what = typeof i.ref === 'number' ? `[${i.ref}]` : s(i.selector)
+  switch (tool) {
+    case 'navigate': return `navigate ${s(i.url)}`.trim()
+    case 'snapshot': return 'read the page'
+    case 'click': return `click ${what}`.trim()
+    case 'type': return `type ${JSON.stringify(s(i.text))}${what ? ` into ${what}` : ''}${i.submit ? ' and submit' : ''}`
+    case 'press_key': return `press ${s(i.key)}`.trim()
+    case 'scroll': return `scroll ${s(i.direction)}`.trim()
+    case 'evaluate': { const x = s(i.script).replace(/\s+/g, ' '); return `evaluate ${x.length > 80 ? `${x.slice(0, 79)}…` : x}`.trim() }
+    case 'console_logs': return 'read the console'
+    case 'screenshot': return 'take a screenshot'
+    case 'go': return s(i.action) || 'go'
+    default: return tool.replace(/_/g, ' ')
+  }
+}
+
 interface Policy { approvalPolicy: 'untrusted' | 'on-request' | 'never'; sandbox: 'read-only' | 'workspace-write' }
 
 const POLICIES: Record<PermissionMode, Policy> = {
@@ -463,7 +487,8 @@ function run(options: AgentRunOptions): AgentRun {
         startTool(item.id, 'web', webTarget(item))
         break
       case 'mcpToolCall':
-        startTool(item.id, 'search', `${item.server}.${item.tool}`)
+        if (item.server === BROWSER_SERVER) startTool(item.id, 'web', browserTarget(String(item.tool ?? ''), item.arguments), 'Browser')
+        else startTool(item.id, 'search', `${item.server}.${item.tool}`)
         break
       case 'dynamicToolCall':
         startTool(item.id, 'search', item.namespace ? `${item.namespace}.${item.tool}` : String(item.tool))
@@ -772,7 +797,10 @@ function run(options: AgentRunOptions): AgentRun {
       return finish('error', 'There is no conversation to compact yet.')
     }
     try {
-      transport = await options.spawn(['app-server'], {
+      // Mango's browser for this chat, for this run only (`-c` comes before the subcommand).
+      const browser = options.browserMcp
+      const config = browser ? ['-c', `mcp_servers.${browser.name}.url=${JSON.stringify(browser.url)}`] : []
+      transport = await options.spawn([...config, 'app-server'], {
         onLine,
         onStderr: (line) => { const text = cleanStderr(line); if (text) lastStderr = text },
         onExit,

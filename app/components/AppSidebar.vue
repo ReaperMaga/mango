@@ -11,6 +11,7 @@ import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
+import { holdOverlay } from '~/composables/useOverlay'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -234,8 +235,11 @@ function threadMenu(t: Thread): MenuItem[] {
 
 /* resize */
 let dragging = false
+/* A browser's page would swallow the pointer once it crosses it: the browsers hide during the drag. */
+let release = () => {}
 function startResize(e: PointerEvent) {
   dragging = true
+  release = holdOverlay()
   ;(e.target as HTMLElement).setPointerCapture(e.pointerId)
 }
 function onResize(e: PointerEvent) {
@@ -244,6 +248,7 @@ function onResize(e: PointerEvent) {
 function endResize() {
   if (!dragging) return
   dragging = false
+  release()
   ws.persist()
 }
 
