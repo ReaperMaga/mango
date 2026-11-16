@@ -123,8 +123,9 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
   call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
   `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
-  Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`); anything that touches the local disk
-  must skip them (`isEnvPath`).
+  Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`). The `git_*`, `fs_*` and `gh_*`
+  commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
+  repository is read from the remotes there); anything else that touches the local disk must skip them (`isEnvPath`).
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State
