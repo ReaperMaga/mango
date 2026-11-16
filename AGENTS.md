@@ -55,7 +55,8 @@ app/
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem
-    settings/        SettingsView and its sections (Agents, Terminal, Appearance, General)
+    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance)
+    envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
@@ -77,7 +78,8 @@ src-tauri/src/
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
   envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
-                     incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel)
+                     incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel),
+                     server.rs (install, set up and update Incus on the server)
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
