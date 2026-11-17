@@ -35,6 +35,8 @@ src/remote/          the environment: shell.ts (quoting, command lines, validato
                      mockBackend.ts, chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
 src/attachments/     picking (Photos, camera, Files), previews, pictures fitted for the model, upload into the
                      environment (`~/.local/share/mango/attachments/<id>/`); input.ts: what a run gets (pure)
+src/voice/           dictation: transcript.ts (merging, locales, messages: pure), engine.native.ts (Apple's recognizer via
+                     expo-speech-recognition, on-device required where offered), engine.ts (Web Speech API or simulated), useDictation
 src/agents/          run.ts + turn.ts (app/agents/index.ts: drives the desktop's own adapters), simulated.ts (fake CLI for web)
 src/state/           envs.ts, threads.ts (zustand), chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
 src/theme/           tokens.ts (from app/assets/css/tokens.css, both themes), ThemeProvider, fonts

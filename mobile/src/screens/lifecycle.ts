@@ -5,11 +5,13 @@ import { useThreads } from '@/state/threads'
 import { backend } from '@/remote'
 import { envOf, flushRemoteChats, syncEnv } from '@/remote/chatSync'
 import type { EnvRemote } from '@/remote/types'
+import { stopDictation } from '@/voice'
 
 /**
  * The app's life around its data: read the saved environments and chats once, save before iOS
  * suspends the app, and catch up when it comes back. Connections die while the app is in the
  * background, so coming back drops them (`backend.reset`) and pulls what other computers wrote.
+ * A dictation in progress stops on the way out.
  */
 
 /** Every environment instance some chat here lives in. */
@@ -71,6 +73,8 @@ export function useAppLifecycle() {
     const sub = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (next === 'background' && !away) {
         away = true
+        // iOS takes the microphone away in the background: end a dictation, keeping its words (never sending).
+        stopDictation()
         // iOS may end the app any time from here: write what is pending, here and in the environments.
         void useThreads.getState().flush()
         void flushRemoteChats()

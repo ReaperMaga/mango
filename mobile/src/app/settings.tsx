@@ -1,20 +1,21 @@
-import { useState } from 'react'
-import { View } from 'react-native'
+import { useEffect, useState } from 'react'
+import { Platform, Switch, View } from 'react-native'
 import { useRouter } from 'expo-router'
 import Constants from 'expo-constants'
-import { LayoutGrid, Link2, Moon, Plus, QrCode, Server, Smartphone, Sun } from 'lucide-react-native'
+import { Languages, LayoutGrid, Link2, Moon, Plus, QrCode, SendHorizontal, Server, ShieldCheck, Smartphone, Sun } from 'lucide-react-native'
 import { space, useAppearance, useTheme, type Appearance } from '@/theme'
-import { Banner, ListRow, ListSection, Segmented, Text } from '@/ui'
+import { Banner, ListRow, ListSection, Segmented, Sheet, Text, haptic } from '@/ui'
 import { backend } from '@/remote'
 import { useEnvs } from '@/state/envs'
 import { EnvActions } from '@/screens/EnvActions'
 import { ScreenScroll } from '@/screens/Screen'
 import { connectionText } from '@/screens/names'
+import { languageLabel, useVoicePrefs, voiceEngine, VOICE_LANGUAGES } from '@/voice'
 
 /**
  * Settings: appearance, the environments on this phone (each opens to its projects; a long press
- * holds rename, check connection and remove; joining one or adding a server starts here), and
- * what this build is.
+ * holds rename, check connection and remove; joining one or adding a server starts here), voice
+ * input, and what this build is.
  */
 export default function SettingsScreen() {
   const t = useTheme()
@@ -75,6 +76,8 @@ export default function SettingsScreen() {
         />
       </ListSection>
 
+      <VoiceSection />
+
       <ListSection title="About">
         <ListRow title="Version" trailing={<Text variant="bodySm" tone="muted" tabular selectable>{version}</Text>} />
         <ListRow title="Connections" trailing={<Text variant="bodySm" tone="muted">{backend.real ? 'SSH' : 'Simulated'}</Text>} />
@@ -89,5 +92,82 @@ export default function SettingsScreen() {
 
       {editing ? <EnvActions envId={editing} visible onClose={() => setEditing(null)} /> : null}
     </ScreenScroll>
+  )
+}
+
+const DEVICE = Platform.OS === 'web' ? 'this browser' : 'this iPhone'
+
+/** Where speech becomes text, as the Voice section names it. */
+function recognitionPlace(): { label: string; footer: string } {
+  switch (voiceEngine.kind) {
+    case 'device':
+      return voiceEngine.onDevice()
+        ? { label: 'On this iPhone', footer: 'Tap the microphone in a message to dictate it. iOS turns your speech into text on this iPhone, so recordings stay on it. A language it cannot recognize offline goes to Apple\'s servers instead.' }
+        : { label: 'Apple\'s servers', footer: 'Tap the microphone in a message to dictate it. This iPhone cannot recognize speech offline, so iOS sends recordings to Apple to turn them into text.' }
+    case 'browser':
+      return { label: 'This browser', footer: 'Tap the microphone in a message to dictate it. In the web preview your browser recognizes speech, which may send recordings to its maker. On an iPhone speech stays on the device.' }
+    case 'simulated':
+      return { label: 'Simulated', footer: 'This browser has no speech recognition, so the preview simulates dictation. On an iPhone, iOS recognizes speech on the device.' }
+    case 'none':
+      return { label: 'Not in this build', footer: 'This build of Mango has no speech recognition. Install the latest build to dictate messages.' }
+  }
+}
+
+/** Voice: the dictation language and "send after", as Settings > Voice on the desktop. */
+function VoiceSection() {
+  const t = useTheme()
+  const language = useVoicePrefs(st => st.language)
+  const sendAfter = useVoicePrefs(st => st.sendAfter)
+  const [picking, setPicking] = useState(false)
+  useEffect(() => { void useVoicePrefs.getState().load() }, [])
+  const place = recognitionPlace()
+  const pick = (code: string | null) => {
+    haptic('select')
+    useVoicePrefs.getState().setLanguage(code)
+    setPicking(false)
+  }
+  return (
+    <>
+      <ListSection title="Voice" footer={place.footer}>
+        <ListRow
+          title="Language"
+          leading={<Languages size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+          detail={languageLabel(language)}
+          onPress={() => setPicking(true)}
+        />
+        <ListRow
+          title="Send after dictation"
+          subtitle="Send as soon as you stop speaking"
+          leading={<SendHorizontal size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+          trailing={(
+            <Switch
+              value={sendAfter}
+              onValueChange={(on) => { haptic('select'); useVoicePrefs.getState().setSendAfter(on) }}
+              trackColor={{ false: t.colors.lineStrong, true: t.colors.accent }}
+              ios_backgroundColor={t.colors.lineStrong}
+              accessibilityLabel="Send after dictation"
+            />
+          )}
+        />
+        <ListRow
+          title="Recognition"
+          leading={<ShieldCheck size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+          trailing={<Text variant="bodySm" tone="muted">{place.label}</Text>}
+        />
+      </ListSection>
+      <Sheet visible={picking} onClose={() => setPicking(false)} title="Language">
+        <ListSection footer="The language you dictate in. iOS recognizes one at a time.">
+          {[null, ...VOICE_LANGUAGES.map(l => l.code)].map(code => (
+            <ListRow
+              key={code ?? 'device'}
+              title={languageLabel(code)}
+              subtitle={code === null ? `Follows ${DEVICE}'s language` : undefined}
+              accessory={code === language ? 'check' : 'none'}
+              onPress={() => pick(code)}
+            />
+          ))}
+        </ListSection>
+      </Sheet>
+    </>
   )
 }

@@ -1,9 +1,11 @@
-import { useState, type ComponentType, type ReactNode } from 'react'
-import { Image, Platform, Pressable, ScrollView, TextInput, View } from 'react-native'
-import { ArrowUp, ChevronDown, CircleAlert, FilePen, FileText, Map as MapIcon, Paperclip, ShieldCheck, Square, X, Zap, type LucideProps } from 'lucide-react-native'
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { Animated, Image, Linking, Platform, Pressable, ScrollView, TextInput, View } from 'react-native'
+import { useRouter } from 'expo-router'
+import { ArrowUp, ChevronDown, CircleAlert, FilePen, FileText, Info, Map as MapIcon, Mic, Paperclip, ShieldCheck, Square, X, Zap, type LucideProps } from 'lucide-react-native'
 import { AGENTS, effortLabel, type AgentId, type AgentModel, type PermissionMode } from '~/types/chat'
-import { fonts, fontSize, makeStyles, radius, space, useTheme } from '@/theme'
-import { AgentIcon, ListRow, ListSection, Sheet, Spinner, Text, haptic } from '@/ui'
+import { easeInOut, fonts, fontSize, makeStyles, radius, space, useReducedMotion, useTheme } from '@/theme'
+import { AgentIcon, Badge, ListRow, ListSection, Sheet, Spinner, Text, haptic } from '@/ui'
+import { clock, useDictation } from '@/voice'
 
 /** The four permission modes, as the desktop's composer names them. */
 export const PERMISSION_MODES: Record<PermissionMode, { label: string; hint: string; icon: ComponentType<LucideProps> }> = {
@@ -57,6 +59,10 @@ export interface ComposerAttachment {
  * Soft shadow and 12pt corners, the input growing with the text, and a bar of quiet chips (model,
  * permissions) that open sheets, with the send button at the right. Ripe Mango when there is
  * something to send; while the agent works it becomes stop, in inverted ink.
+ *
+ * The microphone dictates into the draft (`@/voice`): the words appear as they are heard, at the
+ * caret or after the text. While it listens the chips give way to the recording state (a pulsing
+ * dot, the clock, a level meter) and a discard button, as on the desktop.
  */
 export function ChatComposer(props: ChatComposerProps) {
   const { value, onChangeText, onSend, onStop, running = false, agent, model, mode, effort = null, onModelChange, onModeChange, onEffortChange, disabled = false, autoFocus } = props
@@ -64,6 +70,11 @@ export function ChatComposer(props: ChatComposerProps) {
   const s = useStyles()
   const [focused, setFocused] = useState(false)
   const [sheet, setSheet] = useState<'model' | 'mode' | null>(null)
+  const [narrow, setNarrow] = useState(false)
+  const router = useRouter()
+  const selection = useRef<{ start: number; end: number } | null>(null)
+  const dictation = useDictation({ value, onChangeText, onSend, selection: () => selection.current })
+  const listening = dictation.phase === 'listening' || dictation.phase === 'starting'
 
   const name = AGENTS[agent].name
   const models = props.models ?? AGENTS[agent].models
@@ -72,18 +83,28 @@ export function ChatComposer(props: ChatComposerProps) {
   const files = props.attachments ?? []
   const uploading = files.some(f => f.state === 'uploading')
   const canSend = !disabled && !uploading && (!!value.trim() || files.some(f => f.state === 'ready'))
-  const placeholder = props.placeholder ?? (running ? `Write the next message: it is sent when ${name} is done…` : `Ask ${name} to build, fix or explain…`)
+  const placeholder = dictation.busy ? 'Listening…' : props.placeholder ?? (running ? `Write the next message: it is sent when ${name} is done…` : `Ask ${name} to build, fix or explain…`)
   const ModeIcon = PERMISSION_MODES[mode].icon
   const effortText = effort ? effortLabel(effort) : null
 
   const send = () => {
     if (!canSend) return
+    // Sending mid-dictation sends what is in the draft now and ends the dictation.
+    dictation.settle()
     haptic('light')
     onSend(value)
   }
 
+  const micLabel = dictation.phase === 'stopping' ? 'Finishing dictation' : listening ? 'Stop dictation' : 'Dictate'
+  const notice = dictation.notice
+  const openFix = () => {
+    dictation.clearNotice()
+    if (notice?.settings === 'system') void Linking.openSettings().catch(() => {})
+    else router.push('/settings')
+  }
+
   return (
-    <View style={[s.box, focused && s.focused]}>
+    <View style={[s.box, focused && s.focused]} onLayout={e => setNarrow(e.nativeEvent.layout.width < NARROW)}>
       {files.length
         ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.tray} keyboardShouldPersistTaps="handled">
@@ -100,16 +121,56 @@ export function ChatComposer(props: ChatComposerProps) {
         cursorColor={t.colors.accent}
         keyboardAppearance={t.dark ? 'dark' : 'light'}
         multiline
-        editable={!disabled}
+        editable={!disabled && !dictation.busy}
         autoFocus={autoFocus}
         maxFontSizeMultiplier={1.4}
         accessibilityLabel={placeholder}
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        onSelectionChange={(e) => { selection.current = e.nativeEvent.selection }}
         style={[s.input, Platform.OS === 'web' && s.web]}
       />
+      {notice
+        ? (
+            <View style={s.notice} accessibilityRole={notice.tone === 'error' ? 'alert' : undefined} accessibilityLiveRegion="polite">
+              {notice.tone === 'error'
+                ? <CircleAlert size={14} strokeWidth={2} color={t.colors.ripeError} style={s.noticeIcon} />
+                : <Info size={14} strokeWidth={2} color={t.colors.fgSubtle} style={s.noticeIcon} />}
+              <Text variant="caption" tone={notice.tone === 'error' ? 'error' : 'subtle'} style={s.noticeText} maxFontSizeMultiplier={1.3}>
+                {notice.text}
+              </Text>
+              {notice.settings
+                ? (
+                    <Pressable onPress={openFix} hitSlop={{ top: 12, bottom: 12, left: 6, right: 6 }} accessibilityRole="button" style={({ pressed }) => [s.noticeAction, pressed && s.chipPressed]}>
+                      <Text variant="captionStrong" tone="accent" maxFontSizeMultiplier={1.3}>{notice.settings === 'system' ? 'Open Settings' : 'Voice settings'}</Text>
+                    </Pressable>
+                  )
+                : null}
+              <Pressable onPress={dictation.clearNotice} hitSlop={11} accessibilityRole="button" accessibilityLabel="Dismiss" style={({ pressed }) => [s.fileRemove, pressed && s.chipPressed]}>
+                <X size={13} strokeWidth={2.25} color={t.colors.fgSubtle} />
+              </Pressable>
+            </View>
+          )
+        : null}
       <View style={s.bar}>
-        {props.onAttach
+        {dictation.busy
+          ? (
+              <>
+                <Pressable
+                  onPress={dictation.discard}
+                  hitSlop={{ top: 6, bottom: 6 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Discard dictation"
+                  accessibilityHint="Puts the message back as it was"
+                  style={({ pressed }) => [s.attach, pressed && s.chipPressed]}
+                >
+                  <X size={17} strokeWidth={1.85} color={t.colors.fgSubtle} />
+                </Pressable>
+                <Recording phase={dictation.phase} seconds={dictation.seconds} level={dictation.levels ? dictation.level : null} simulated={dictation.kind === 'simulated'} />
+              </>
+            )
+          : null}
+        {!dictation.busy && props.onAttach
           ? (
               <Pressable
                 onPress={props.onAttach}
@@ -123,21 +184,47 @@ export function ChatComposer(props: ChatComposerProps) {
               </Pressable>
             )
           : null}
-        <Chip
-          label={`${current?.label ?? model}${effortText ? ` · ${effortText}` : ''}`}
-          lead={<AgentIcon agent={agent} size={13} />}
-          a11y={`Model: ${current?.label ?? model}${effortText ? `, effort ${effortText}` : ''}`}
-          onPress={() => setSheet('model')}
-          disabled={!onModelChange && !onEffortChange}
-        />
-        <Chip
-          label={PERMISSION_MODES[mode].label}
-          lead={<ModeIcon size={14} strokeWidth={1.85} color={mode === 'auto' ? t.colors.accentInk : t.colors.fgSubtle} />}
-          a11y={`Permissions: ${PERMISSION_MODES[mode].label}`}
-          onPress={() => setSheet('mode')}
-          disabled={!onModeChange}
-        />
+        {dictation.busy
+          ? null
+          : (
+              <>
+                <Chip
+                  label={`${current?.label ?? model}${effortText ? ` · ${effortText}` : ''}`}
+                  lead={<AgentIcon agent={agent} size={13} />}
+                  a11y={`Model: ${current?.label ?? model}${effortText ? `, effort ${effortText}` : ''}`}
+                  onPress={() => setSheet('model')}
+                  disabled={!onModelChange && !onEffortChange}
+                />
+                <Chip
+                  label={narrow ? null : PERMISSION_MODES[mode].label}
+                  lead={<ModeIcon size={14} strokeWidth={1.85} color={mode === 'auto' ? t.colors.accentInk : t.colors.fgSubtle} />}
+                  a11y={`Permissions: ${PERMISSION_MODES[mode].label}`}
+                  onPress={() => setSheet('mode')}
+                  disabled={!onModeChange}
+                />
+              </>
+            )}
         <View style={s.spacer} />
+        {disabled
+          ? null
+          : (
+              <Pressable
+                onPress={dictation.toggle}
+                disabled={dictation.phase === 'stopping' || dictation.phase === 'starting'}
+                hitSlop={6}
+                accessibilityRole="button"
+                accessibilityLabel={micLabel}
+                accessibilityHint={dictation.busy ? undefined : 'Speak to add to the message'}
+                accessibilityState={{ selected: listening, busy: dictation.phase === 'stopping' }}
+                style={({ pressed }) => [s.mic, (listening || pressed) && s.micOn]}
+              >
+                {dictation.phase === 'stopping'
+                  ? <Spinner size={14} />
+                  : listening
+                    ? <Square size={10} fill={t.colors.fg} color={t.colors.fg} />
+                    : <Mic size={18} strokeWidth={1.85} color={t.colors.fgSubtle} />}
+              </Pressable>
+            )}
         {running
           ? (
               <Pressable
@@ -271,8 +358,61 @@ function FileChip({ file, onRemove }: { file: ComposerAttachment; onRemove?: (ke
   )
 }
 
+/** Five bars, each lit once the level passes its step (the desktop's meter). */
+const STEPS = [0.08, 0.2, 0.35, 0.55, 0.75]
+
+/**
+ * The recording state in the bar, where the chips were: a dot in Bruise Red pulsing slowly (still
+ * under Reduce Motion), the clock, and the input level; "Finishing…" while the last words come in.
+ */
+function Recording({ phase, seconds, level, simulated }: { phase: string; seconds: number; level: number | null; simulated: boolean }) {
+  const t = useTheme()
+  const s = useStyles()
+  const reduced = useReducedMotion()
+  const pulse = useRef(new Animated.Value(1)).current
+  useEffect(() => {
+    if (reduced) return
+    const loop = Animated.loop(Animated.sequence([
+      Animated.timing(pulse, { toValue: 0.35, duration: 700, easing: easeInOut, useNativeDriver: true }),
+      Animated.timing(pulse, { toValue: 1, duration: 700, easing: easeInOut, useNativeDriver: true }),
+    ]))
+    loop.start()
+    return () => loop.stop()
+  }, [reduced, pulse])
+
+  if (phase === 'stopping') {
+    return (
+      <View style={s.rec} accessibilityLiveRegion="polite">
+        <Text variant="caption" tone="subtle" maxFontSizeMultiplier={1.3}>Finishing…</Text>
+      </View>
+    )
+  }
+  return (
+    <View style={s.rec} accessible accessibilityLabel={phase === 'starting' ? 'Starting dictation' : `Listening, ${seconds} seconds`}>
+      <Animated.View style={[s.recDot, { opacity: pulse }]} />
+      <Text variant="caption" tone="muted" tabular maxFontSizeMultiplier={1.3}>{clock(seconds)}</Text>
+      {level !== null
+        ? (
+            <View style={s.meter}>
+              {STEPS.map((step, i) => (
+                <View key={step} style={[s.level, { height: 4 + i * 2, backgroundColor: level > step ? t.colors.fgMuted : t.colors.lineStrong }]} />
+              ))}
+            </View>
+          )
+        : null}
+      {simulated ? <Badge label="Simulated" dashed /> : null}
+    </View>
+  )
+}
+
+/**
+ * Under this width the permissions chip shows its icon only, so the model keeps its name: the
+ * desktop composer's container rule (under 400px), for a phone with the microphone in the bar.
+ */
+const NARROW = 400
+
 /** A picker chip: no fill at rest, subtle ink, a small chevron; pressed adds the Hover Wash. */
-function Chip({ label, lead, a11y, onPress, disabled }: { label: string; lead?: ReactNode; a11y: string; onPress: () => void; disabled?: boolean }) {
+function Chip({ label, lead, a11y, onPress, disabled }: { label: string | null; lead?: ReactNode; a11y: string; onPress: () => void; disabled?: boolean }) {
   const t = useTheme()
   const s = useStyles()
   return (
@@ -285,7 +425,7 @@ function Chip({ label, lead, a11y, onPress, disabled }: { label: string; lead?: 
       style={({ pressed }) => [s.chip, pressed && s.chipPressed]}
     >
       {lead}
-      <Text variant="caption" tone="subtle" numberOfLines={1} maxFontSizeMultiplier={1.3} style={s.chipText}>{label}</Text>
+      {label === null ? null : <Text variant="caption" tone="subtle" numberOfLines={1} maxFontSizeMultiplier={1.3} style={s.chipText}>{label}</Text>}
       {disabled ? null : <ChevronDown size={13} strokeWidth={2} color={t.colors.fgFaint} />}
     </Pressable>
   )
@@ -349,6 +489,25 @@ const useStyles = makeStyles(t => ({
   sendPressed: { backgroundColor: t.colors.accentStrong, transform: [{ scale: 0.94 }] },
   sendOff: { backgroundColor: t.colors.bgActive },
   stop: { backgroundColor: t.colors.fg },
+  /** The microphone: quiet at rest like the chips, Active Wash while it listens (the desktop's). */
+  /** 32pt like the paperclip, 44 with its hit slop. */
+  mic: {
+    width: 32,
+    height: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radius.md,
+    borderCurve: 'continuous',
+  },
+  micOn: { backgroundColor: t.colors.bgActive },
+  rec: { flexDirection: 'row', alignItems: 'center', gap: space[2], paddingLeft: space[1], flexShrink: 1, minWidth: 0 },
+  recDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: t.colors.ripeError },
+  meter: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 12 },
+  level: { width: 2, borderRadius: radius.pill },
+  notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2], paddingHorizontal: space[1], paddingBottom: space[1] },
+  noticeIcon: { marginTop: 2 },
+  noticeText: { flex: 1 },
+  noticeAction: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.xs, marginTop: -2 },
   stopPressed: { backgroundColor: t.colors.fgMuted, transform: [{ scale: 0.94 }] },
   gap: { marginTop: space[5] },
   attach: {

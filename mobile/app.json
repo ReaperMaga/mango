@@ -58,7 +58,7 @@
         "expo-camera",
         {
           "cameraPermission": "Mango uses the camera to scan an environment share code and to attach photos to a message.",
-          "microphonePermission": false,
+          "microphonePermission": "Mango uses the microphone while you dictate a message.",
           "recordAudioAndroid": false
         }
       ],
@@ -67,7 +67,14 @@
         {
           "photosPermission": "Mango attaches the photos you pick to a message for your coding agent.",
           "cameraPermission": "Mango uses the camera to scan an environment share code and to attach photos to a message.",
-          "microphonePermission": false
+          "microphonePermission": "Mango uses the microphone while you dictate a message."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Mango uses the microphone while you dictate a message.",
+          "speechRecognitionPermission": "Mango turns what you dictate into text, on this iPhone where iOS supports it."
         }
       ]
     ],
