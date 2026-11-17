@@ -261,8 +261,12 @@ if [ -n "$rel" ]; then t=$(readlink -f "$root/$rel" 2>/dev/null) || exit 10; fi
 [ -n "$t" ] && [ -e "$t" ] || exit 10
 case $root in /) ;; *) case $t in "$root"|"$root"/*) ;; *) exit 11 ;; esac ;; esac
 mtime() {
-  m=$(date -r "$1" +%s%3N 2>/dev/null)
-  case $m in ''|*[!0-9]*) m=$(stat -c %Y "$1")000 ;; esac
+  # Whole nanoseconds, cut to milliseconds here: uutils' date drops the zeros `%3N` should keep.
+  m=$(date -r "$1" +%s.%N 2>/dev/null)
+  mtime_s=${m%%.*} mtime_n=${m#*.}
+  mtime_n=${mtime_n%"${mtime_n#???}"}
+  case $mtime_s in ''|*[!0-9]*) m= ;; *) case $mtime_n in [0-9][0-9][0-9]) m=$mtime_s$mtime_n ;; *) m= ;; esac ;; esac
+  [ -n "$m" ] || m=$(stat -c %Y "$1")000
 }
 "#
         };
