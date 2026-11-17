@@ -8,24 +8,27 @@ const emit = defineEmits<{ resolve: [allow: boolean] }>()
 </script>
 
 <template>
-  <!-- Pending: a card that asks. Settled: one quiet line, the tool row above tells the rest. -->
-  <div v-if="part.state === 'pending'" class="ap ap--pending" role="group" :aria-label="part.title ?? `${agentName} needs your approval`">
-    <div class="ap__head">
-      <ShieldQuestion class="ap__icon" />
-      <span>{{ part.title ?? `${agentName} wants to run a command` }}</span>
+  <!-- Pending: a card that asks. Settled: one quiet line, the tool row above tells the rest.
+       Answering folds the card away and the line opens in its place. -->
+  <UiReveal mode="out-in">
+    <div v-if="part.state === 'pending'" class="ap ap--pending" role="group" :aria-label="part.title ?? `${agentName} needs your approval`">
+      <div class="ap__head">
+        <ShieldQuestion class="ap__icon" />
+        <span>{{ part.title ?? `${agentName} wants to run a command` }}</span>
+      </div>
+      <pre v-if="part.command" class="ap__cmd selectable">{{ part.command }}</pre>
+      <p v-if="part.reason" class="ap__reason">{{ part.reason }}</p>
+      <div class="ap__actions">
+        <UiButton variant="primary" size="sm" @click="emit('resolve', true)">Allow once</UiButton>
+        <UiButton variant="ghost" size="sm" @click="emit('resolve', false)">Deny</UiButton>
+      </div>
     </div>
-    <pre v-if="part.command" class="ap__cmd selectable">{{ part.command }}</pre>
-    <p v-if="part.reason" class="ap__reason">{{ part.reason }}</p>
-    <div class="ap__actions">
-      <UiButton variant="primary" size="sm" @click="emit('resolve', true)">Allow once</UiButton>
-      <UiButton variant="ghost" size="sm" @click="emit('resolve', false)">Deny</UiButton>
-    </div>
-  </div>
-  <p v-else class="ap-done" :class="`ap-done--${part.state}`">
-    <Check v-if="part.state === 'allowed'" />
-    <Ban v-else />
-    <span>{{ part.state === 'allowed' ? 'You allowed this' : part.state === 'denied' ? 'You denied this' : 'Not answered' }}</span>
-  </p>
+    <p v-else class="ap-done" :class="`ap-done--${part.state}`">
+      <Check v-if="part.state === 'allowed'" />
+      <Ban v-else />
+      <span>{{ part.state === 'allowed' ? 'You allowed this' : part.state === 'denied' ? 'You denied this' : 'Not answered' }}</span>
+    </p>
+  </UiReveal>
 </template>
 
 <style scoped>

@@ -156,12 +156,13 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
 
 <style scoped>
 /* A grid, so the context menu's empty anchor adds no line box under the row. */
-.gf { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+/* The row's height is a variable so the Changes list can fold a row to nothing and back (GitPanel). */
+.gf { --gf-row-h: 28px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .gf__row {
   display: flex;
   align-items: center;
   gap: 2px;
-  height: 28px;
+  height: var(--gf-row-h);
   padding-right: 3px;
   border-radius: var(--radius-sm);
   transition: background var(--dur-fast) var(--ease-out);

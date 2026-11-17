@@ -35,27 +35,30 @@ const labels: Record<DotStatus, string> = {
     :aria-label="labels[props.status]"
     :title="labels[props.status]"
   >
-    <svg v-if="props.status === 'done'" :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
-      <defs>
-        <mask :id="maskId">
-          <rect width="12" height="12" fill="#fff" />
-          <path class="ripe__tick" d="M3.6 6.2 5.3 7.9 8.5 4.4" />
-        </mask>
-      </defs>
-      <!-- settled: a full lime disc with the check cut out so the ground shows through -->
-      <circle class="ripe__done" cx="6" cy="6" r="5.4" :mask="`url(#${maskId})`" />
-    </svg>
-    <svg v-else :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
-      <defs>
-        <clipPath :id="clipId">
-          <rect class="ripe__level" x="0" y="0" width="12" height="12" />
-        </clipPath>
-      </defs>
-      <!-- mango body: outline always, flesh fills up as the thread ripens -->
-      <path class="ripe__skin" :d="body" />
-      <path class="ripe__flesh" :d="body" :clip-path="`url(#${clipId})`" />
-      <path class="ripe__leaf" d="M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z" />
-    </svg>
+    <!-- Settling swaps the fruit for the lime disc: the two cross-fade in one grid cell. -->
+    <Transition name="ripe-swap">
+      <svg v-if="props.status === 'done'" key="done" :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
+        <defs>
+          <mask :id="maskId">
+            <rect width="12" height="12" fill="#fff" />
+            <path class="ripe__tick" d="M3.6 6.2 5.3 7.9 8.5 4.4" />
+          </mask>
+        </defs>
+        <!-- settled: a full lime disc with the check cut out so the ground shows through -->
+        <circle class="ripe__done" cx="6" cy="6" r="5.4" :mask="`url(#${maskId})`" />
+      </svg>
+      <svg v-else key="fruit" :width="props.size" :height="props.size" viewBox="0 0 12 12" aria-hidden="true">
+        <defs>
+          <clipPath :id="clipId">
+            <rect class="ripe__level" x="0" y="0" width="12" height="12" />
+          </clipPath>
+        </defs>
+        <!-- mango body: outline always, flesh fills up as the thread ripens -->
+        <path class="ripe__skin" :d="body" />
+        <path class="ripe__flesh" :d="body" :clip-path="`url(#${clipId})`" />
+        <path class="ripe__leaf" d="M6.9 1.9c.3-.9 1.1-1.5 2.2-1.5-.2 1-1 1.6-2.2 1.5Z" />
+      </svg>
+    </Transition>
   </span>
 </template>
 
@@ -70,11 +73,11 @@ const labels: Record<DotStatus, string> = {
   --c: var(--ripe-idle);
   --level: 12px; /* y of the fill line: 12 = empty, 0 = full */
 }
-.ripe svg { display: block; overflow: visible; }
+.ripe svg { display: block; overflow: visible; grid-area: 1 / 1; }
 .ripe__skin { fill: none; stroke: var(--c); stroke-width: 1.2; transition: stroke var(--dur-med) var(--ease-out); }
 .ripe__flesh { fill: var(--c); stroke: var(--c); stroke-width: 1.2; transition: fill var(--dur-med) var(--ease-out), stroke var(--dur-med) var(--ease-out); }
-.ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-slow) var(--ease-out); }
-.ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; }
+.ripe__level { transform: translateY(var(--level)); transition: transform var(--dur-med) var(--ease-out); }
+.ripe__leaf { fill: var(--ripe-queued); opacity: 0.9; transition: fill var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
 .ripe__done { fill: var(--c); transition: fill var(--dur-med) var(--ease-out); }
 .ripe__tick { fill: none; stroke: #000; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -91,14 +94,21 @@ const labels: Record<DotStatus, string> = {
 .ripe--error .ripe__leaf { fill: var(--ripe-error); opacity: 0.6; }
 
 /* Unseen results and requests get a soft halo ring so they read at a glance. */
-.ripe--unseen::after {
+.ripe::after {
   content: '';
   position: absolute;
   inset: -3px;
   border-radius: 50%;
   border: 1.5px solid var(--c);
-  opacity: 0.45;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-med) var(--ease-out), border-color var(--dur-med) var(--ease-out);
 }
+.ripe--unseen::after { opacity: 0.45; }
+
+.ripe-swap-enter-active, .ripe-swap-leave-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.ripe-swap-enter-from { opacity: 0; transform: scale(0.7); }
+.ripe-swap-leave-to { opacity: 0; }
 
 /* Running: the flesh level rises and settles, like fruit filling out. */
 @keyframes ripen {

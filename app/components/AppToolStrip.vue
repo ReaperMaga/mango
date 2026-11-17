@@ -49,6 +49,22 @@ const tools = computed(() => [
   { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: `${mod.value}+Shift+G`, count: changeCount.value, counts: 'changed file' },
   { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: `${mod.value}+Shift+P`, count: linkCount.value, counts: 'linked item' },
 ])
+
+/*
+ * The highlight behind the open tool is one shape that glides from button to button, so switching
+ * tools reads as a move rather than one light going off and another coming on. It fades in where it
+ * is when a tool opens from nothing, and out when the tool window closes or the environment opens.
+ */
+const btns: HTMLElement[] = []
+const glide = ref<{ y: number; on: boolean; still: boolean }>({ y: 0, on: false, still: true })
+watch(() => ws.toolPanel, async (id) => {
+  await nextTick()
+  const i = tools.value.findIndex(t => t.id === id)
+  const el = btns[i]
+  if (!el) { glide.value = { ...glide.value, on: false }; return }
+  // Opening from nothing: appear in place; only a switch between tools travels.
+  glide.value = { y: el.offsetTop, on: true, still: !glide.value.on }
+}, { immediate: true })
 </script>
 
 <template>
@@ -68,9 +84,16 @@ const tools = computed(() => [
     </button>
     </div>
     <div class="ts__tools">
+    <span
+      class="ts__glide"
+      :class="{ 'is-on': glide.on, 'is-still': glide.still }"
+      :style="{ transform: `translateY(${glide.y}px)` }"
+      aria-hidden="true"
+    />
     <button
-      v-for="t in tools"
+      v-for="(t, i) in tools"
       :key="t.id"
+      :ref="el => { if (el) btns[i] = el as HTMLElement }"
       type="button"
       class="ts__btn"
       :class="{ 'is-active': ws.toolPanel === t.id }"
@@ -106,6 +129,7 @@ const tools = computed(() => [
   border-bottom: 1px solid var(--line);
 }
 .ts__tools {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -124,7 +148,27 @@ const tools = computed(() => [
 }
 .ts__btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
 .ts__btn:hover { background: var(--bg-hover); color: var(--fg); }
-.ts__btn.is-active { background: var(--accent-soft); color: var(--accent-ink); }
+.ts__btn.is-active { color: var(--accent-ink); }
+/* The environment button has no neighbours to glide from: it keeps its own fill. */
+.ts__btn--env.is-active { background: var(--accent-soft); }
+.ts__glide {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 28px;
+  height: 28px;
+  margin-left: -14px;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
+}
+.ts__glide.is-on { opacity: 1; }
+.ts__glide.is-still { transition: opacity var(--dur-fast) var(--ease-out); }
+/* Buttons sit above the glide; a hovered one still shows its own hover fill. */
+.ts__tools .ts__btn { z-index: 1; }
+.ts__tools .ts__btn.is-active:hover { background: transparent; }
 /* The environment's state, tucked into the corner of its icon on the stripe's own ground. */
 .ts__mark {
   position: absolute;

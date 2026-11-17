@@ -127,6 +127,37 @@ watch(() => ws.settings, async (now, before) => {
   if (target?.isConnected) target.focus()
 }, { flush: 'pre' })
 
+/* ---------- the current section's highlight ---------- */
+
+/*
+ * One shape behind the current section that glides to the next one, across the groups and down to the
+ * bottom of the rail, so changing section reads as a move. It is placed without motion when Settings opens
+ * and whenever the rail itself changes size (its width follows the sidebar; the bottom items follow the window).
+ */
+const rail = ref<HTMLElement | null>(null)
+const glide = reactive({ x: 0, y: 0, w: 0, h: 0, still: true })
+function placeGlide(still: boolean) {
+  const box = rail.value
+  const el = box?.querySelector<HTMLElement>('.settings__item[aria-current="page"]')
+  if (!box || !el) return
+  const a = box.getBoundingClientRect()
+  const b = el.getBoundingClientRect()
+  if (!b.width) return // hidden (closed with Environments kept mounted)
+  Object.assign(glide, { x: b.left - a.left, y: b.top - a.top, w: b.width, h: b.height, still })
+}
+watch([section, open], async ([, isOpen], [, wasOpen]) => {
+  if (!isOpen) return
+  await nextTick()
+  placeGlide(!wasOpen)
+}, { flush: 'post' })
+let railRo: ResizeObserver | undefined
+onMounted(() => {
+  railRo = new ResizeObserver(() => placeGlide(true))
+  if (rail.value) railRo.observe(rail.value)
+  if (open.value) placeGlide(true)
+})
+onBeforeUnmount(() => railRo?.disconnect())
+
 /* ---------- keys ---------- */
 
 function onKey(e: KeyboardEvent) {
@@ -170,7 +201,13 @@ onBeforeUnmount(() => {
       :aria-labelledby="titleId"
       :style="{ '--rail-w': `${railWidth}px` }"
     >
-      <div class="settings__rail">
+      <div ref="rail" class="settings__rail">
+        <span
+          class="settings__glide"
+          :class="{ 'is-still': glide.still }"
+          :style="{ transform: `translate(${glide.x}px, ${glide.y}px)`, width: `${glide.w}px`, height: `${glide.h}px` }"
+          aria-hidden="true"
+        />
         <header class="settings__head">
           <h1 :id="titleId" class="settings__title">Settings</h1>
           <UiIconButton label="Close settings" shortcut="Esc" @click="close"><X /></UiIconButton>
@@ -214,24 +251,31 @@ onBeforeUnmount(() => {
       <div class="settings__main">
         <div ref="scroller" class="settings__scroll">
           <div class="settings__col" :class="{ 'settings__col--wide': section === 'environments' }">
+            <!-- Changing section: the old page goes at once, the new one settles in (not when Settings opens: the view moves then). -->
             <template v-if="rendered">
               <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
-              <SettingsAgents v-show="section === 'agents'" :active="open && section === 'agents'" />
-              <SettingsTerminal v-if="section === 'terminal'" />
-              <SettingsVoice v-else-if="section === 'voice'" />
-              <SettingsAppearance v-else-if="section === 'appearance'" />
-              <SettingsChangelog v-else-if="section === 'changelog'" />
-              <SettingsMaintenance v-else-if="section === 'maintenance'" />
-              <SettingsArchive v-else-if="section === 'archive'" />
-              <SettingsProjects v-else-if="section === 'projects'" />
-              <SettingsBehavior v-else-if="section === 'behavior'" />
-              <SettingsGeneral v-else-if="section === 'general'" />
+              <Transition name="page">
+                <SettingsAgents v-show="section === 'agents'" :active="open && section === 'agents'" />
+              </Transition>
+              <Transition name="page">
+                <SettingsTerminal v-if="section === 'terminal'" />
+                <SettingsVoice v-else-if="section === 'voice'" />
+                <SettingsAppearance v-else-if="section === 'appearance'" />
+                <SettingsChangelog v-else-if="section === 'changelog'" />
+                <SettingsMaintenance v-else-if="section === 'maintenance'" />
+                <SettingsArchive v-else-if="section === 'archive'" />
+                <SettingsProjects v-else-if="section === 'projects'" />
+                <SettingsBehavior v-else-if="section === 'behavior'" />
+                <SettingsGeneral v-else-if="section === 'general'" />
+              </Transition>
             </template>
-            <SettingsEnvironments
-              v-if="envsMounted"
-              v-show="section === 'environments'"
-              :active="open && section === 'environments'"
-            />
+            <Transition name="page">
+              <SettingsEnvironments
+                v-if="envsMounted"
+                v-show="section === 'environments'"
+                :active="open && section === 'environments'"
+              />
+            </Transition>
           </div>
         </div>
       </div>
@@ -252,6 +296,7 @@ onBeforeUnmount(() => {
 
 /* ---- section rail: same ground and rhythm as the sidebar ---- */
 .settings__rail {
+  position: relative;
   flex: none;
   width: var(--rail-w, 248px);
   display: flex;
@@ -318,7 +363,24 @@ onBeforeUnmount(() => {
   transition: color var(--dur-fast) var(--ease-out);
 }
 .settings__item:hover { background: var(--bg-hover); color: var(--fg); }
-.settings__item.is-current { background: var(--bg-active); color: var(--fg); font-weight: 560; }
+.settings__item.is-current { color: var(--fg); font-weight: 560; }
+.settings__item.is-current:hover { background: transparent; }
+.settings__item { position: relative; z-index: 1; }
+.settings__glide {
+  position: absolute;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-sm);
+  background: var(--bg-active);
+  pointer-events: none;
+  transition:
+    transform var(--dur-med) var(--ease-out),
+    width var(--dur-med) var(--ease-out),
+    height var(--dur-med) var(--ease-out);
+}
+.settings__glide.is-still { transition: none; }
+.page-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.page-enter-from { opacity: 0; transform: translateY(4px); }
 .settings__item:hover svg,
 .settings__item.is-current svg { color: var(--fg); }
 .settings__item:focus-visible { border-radius: var(--radius-sm); }
@@ -356,20 +418,25 @@ onBeforeUnmount(() => {
 .settings__col--wide { max-width: calc(880px + var(--space-8) * 2); }
 
 /* ---- open / close: a short fade with a small settle ---- */
-.settings-enter-active,
-.settings-leave-active {
-  transition: opacity var(--dur-fast) var(--ease-out);
-}
+/*
+ * Opening: the view fades in over the panel time; the rail (where the sidebar is) slides in from the left
+ * and the page rises a beat after it, so the eye goes from the list to the section. Closing is quick.
+ */
+.settings-enter-active { transition: opacity var(--dur-med) var(--ease-out); }
+.settings-leave-active { transition: opacity var(--dur-fast) var(--ease-out); }
 .settings-enter-active .settings__rail,
-.settings-enter-active .settings__main,
+.settings-enter-active .settings__main {
+  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out);
+}
+.settings-enter-active .settings__main { transition-delay: calc(40ms * var(--motion-scale)); }
 .settings-leave-active .settings__rail,
 .settings-leave-active .settings__main {
   transition: transform var(--dur-fast) var(--ease-out);
 }
-.settings-enter-from,
+.settings-enter-from { opacity: 0; }
+.settings-enter-from .settings__rail { transform: translateX(-8px); opacity: 0; }
+.settings-enter-from .settings__main { transform: translateY(6px); opacity: 0; }
 .settings-leave-to { opacity: 0; }
-.settings-enter-from .settings__rail,
-.settings-enter-from .settings__main,
 .settings-leave-to .settings__rail,
 .settings-leave-to .settings__main { transform: translateY(4px); }
 

@@ -14,7 +14,9 @@ useFilesSync()
     </Transition>
     <div ref="column" class="workspace__main">
       <ChatArea class="workspace__chat" />
-      <TerminalPanel v-show="ws.terminalOpen" :container="column" />
+      <Transition name="dock">
+        <TerminalPanel v-show="ws.terminalOpen" :container="column" />
+      </Transition>
     </div>
     <Transition name="tool">
       <AppToolPanel v-if="ws.toolPanel" />
@@ -47,4 +49,7 @@ useFilesSync()
 .rail-enter-from, .rail-leave-to { margin-left: calc(var(--rail-w, 264px) * -1); opacity: 0; }
 .tool-enter-active, .tool-leave-active { transition: margin-right var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
 .tool-enter-from, .tool-leave-to { margin-right: calc(var(--tool-w, 340px) * -1); opacity: 0; }
+/* The terminal dock slides up out of the column's bottom edge; its height (--dock-h) stays put, so xterm never refits mid-slide. */
+.dock-enter-active, .dock-leave-active { transition: margin-bottom var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out); }
+.dock-enter-from, .dock-leave-to { margin-bottom: calc(var(--dock-h, 0px) * -1); opacity: 0; }
 </style>

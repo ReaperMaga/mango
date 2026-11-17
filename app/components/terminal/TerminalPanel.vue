@@ -37,22 +37,34 @@ watch(() => props.container, (el, _old, onCleanup) => {
   onCleanup(() => ro.disconnect())
 }, { immediate: true })
 
-const panelStyle = computed(() => ({
-  height: containerHeight.value
+const panelStyle = computed(() => {
+  const height = containerHeight.value
     ? `${Math.round(ws.terminalHeight * containerHeight.value)}px`
-    : `${ws.terminalHeight * 100}%`,
-}))
+    : `${ws.terminalHeight * 100}%`
+  // --dock-h: how far the dock slides when it opens or closes (AppWorkspace's dock transition).
+  return { height, '--dock-h': containerHeight.value ? height : '0px' }
+})
 
 /* ---------- height changes ---------- */
 // Animate only deliberate jumps (double-click, maximize), never drags or window resizes.
+// While the height moves the terminals hold their grid (see TerminalView) and refit once it has settled.
 const animating = ref(false)
+provide('terminal-settling', readonly(animating))
 let animTimer: ReturnType<typeof setTimeout> | undefined
+function settle() {
+  clearTimeout(animTimer)
+  animating.value = false
+}
 function jumpTo(fraction: number) {
   animating.value = true
   clearTimeout(animTimer)
-  animTimer = setTimeout(() => { animating.value = false }, 280)
+  // Fallback for a jump to the height it already has: no transition runs, so no transitionend comes.
+  animTimer = setTimeout(settle, 500)
   ws.setTerminalHeight(fraction)
   ws.persist()
+}
+function onPanelTransitionEnd(e: TransitionEvent) {
+  if (e.target === e.currentTarget && e.propertyName === 'height') settle()
 }
 
 const isMaximized = computed(() => ws.terminalHeight >= MAX_H - 0.01)
@@ -194,6 +206,7 @@ const profileItems = computed<MenuItem[]>(() => {
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
     aria-label="Terminal"
+    @transitionend="onPanelTransitionEnd"
   >
     <div
       class="terminal-panel__handle"
