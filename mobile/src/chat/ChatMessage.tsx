@@ -4,6 +4,7 @@ import { AGENTS, type Message, type Part, type QuestionAnswers, type Thread } fr
 import { fonts, makeStyles, radius, space, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { ChatApproval } from './ChatApproval'
+import { ChatChanges } from './ChatChanges'
 import { ChatMarkdown } from './ChatMarkdown'
 import { ChatQuestion } from './ChatQuestion'
 import { ChatSteps, ChatThinking, type Step } from './ChatSteps'
@@ -146,6 +147,7 @@ export function ChatMessage({ message, thread, last = false, toolCalls = 'all', 
         }
         return null
       })}
+      {!live ? <ChatChanges message={message} thread={thread} /> : null}
       {message.elapsedMs !== undefined && !live
         ? (
             <Text variant="caption" tone="faint" tabular style={s.ran}>
