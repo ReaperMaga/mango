@@ -394,6 +394,16 @@ export interface WriteResult {
   modifiedMs: number
 }
 
+/** An env file at a project's root (Project settings > Environment variables). */
+export interface EnvFile {
+  /** File name at the project root, e.g. ".env", ".env.vault", "prod.env". */
+  name: string
+  size: number
+  modifiedMs: number
+  /** Whether git ignores it (`git check-ignore`); null when the folder is not a git repository or git is unavailable. */
+  ignored: boolean | null
+}
+
 /** A shell the terminal can run, found on this machine. */
 export interface TerminalProfile {
   /** Stable id, e.g. "zsh", "git-bash", "wsl:Ubuntu". */
@@ -780,6 +790,24 @@ export interface Commands {
    * changed on disk since then is left alone and `saved` is false; null writes regardless.
    */
   fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
+  /** Create a new file (never overwrites: an existing file is an error). `file` is project-relative. Returns its modifiedMs. */
+  fs_create_file: [{ root: string; file: string; text: string }, WriteResult]
+  /** Delete one file in the project (never a folder; a symlink is removed itself, not its target). */
+  fs_delete_file: [{ root: string; file: string }, void]
+  /**
+   * Env files at the project root: names that are `.env`, start with `.env.`, or end in `.env`, except
+   * example/template files (`.env.example`, `.env.sample`, `.env.template`, `example.env`, `sample.env`,
+   * `template.env`, any case); plus any `extra` names that exist as files there (templates included).
+   * Sorted, `.env` first. Works for remote (env://) projects. `extra` must be plain file names (no
+   * separators, not `.`/`..`).
+   */
+  env_files: [{ root: string; extra: string[] }, EnvFile[]]
+  /**
+   * Append `/<name>` on its own line to the project's root .gitignore (creating it; adds a leading newline
+   * if the file doesn't end with one; no-op if that exact line is already there). Glob characters in the
+   * name are escaped (`\*`), and a CRLF file gets CRLF.
+   */
+  env_gitignore_add: [{ root: string; name: string }, void]
 
   /** Stores pasted or browser-picked bytes (`data` is base64, at most 25 MB) as an attachment called `name`. */
   attachment_save: [{ name: string; data: string }, AttachmentInfo]
