@@ -177,6 +177,13 @@ export interface AgentRunOptions {
    * without asking. Absent in remote environments and the browser preview.
    */
   browserMcp?: BrowserMcpServer
+  /**
+   * MCP servers the user added (Settings > MCP servers) that apply to this run, already filtered
+   * by agent and project; names never clash with each other or with `browserMcp`. Register them
+   * with the CLI for this turn (see `agents/mcp.ts`). Values in `env` and `headers` are secrets:
+   * keep them out of the command line where the CLI can read them from its environment instead.
+   */
+  mcpServers?: AgentMcpServer[]
   spawn: SpawnFn
   emit(event: AgentEvent): void
 }
@@ -188,6 +195,11 @@ export interface BrowserMcpServer {
   name: string
   readOnlyTools: string[]
 }
+
+/** An MCP server the user added, as an agent run gets it. */
+export type AgentMcpServer =
+  | { name: string; transport: 'stdio'; command: string; args: string[]; env: Record<string, string> }
+  | { name: string; transport: 'http'; url: string; headers: Record<string, string> }
 
 /** A message sent while a turn runs. Same shape as the turn's own prompt. */
 export type SteerInput = Pick<AgentRunOptions, 'prompt' | 'images' | 'readDirs'>

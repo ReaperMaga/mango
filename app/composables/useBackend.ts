@@ -6,6 +6,7 @@ import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
+import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { isEnvPath } from '~/utils/envPath'
 
 /**
@@ -394,6 +395,8 @@ const mock = (() => {
       case 'browser_bounds': case 'browser_go': case 'browser_devtools': case 'browser_close': case 'browser_reset': return
       case 'browser_screenshot': throw new Error('The browser preview has no native browser to take a screenshot of.')
       case 'browser_mcp': throw new Error('Simulated agents do not use the browser tools.')
+      case 'mcp_servers': return mockMcpServers()
+      case 'mcp_servers_save': return mockMcpSave(args.servers)
       case 'voice_models': return voiceModels.map(m => ({ ...m }))
       case 'voice_download': return fakeVoiceDownload(args.model)
       case 'voice_download_cancel': voiceCancel.add(args.model); return

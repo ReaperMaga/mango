@@ -1,6 +1,7 @@
 import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import { elicitationForm, elicitationLink } from './questions.ts'
+import { BROWSER_SERVER, codexMcp } from './mcp.ts'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -48,8 +49,6 @@ import { elicitationForm, elicitationLink } from './questions.ts'
 
 type Json = any
 
-/** The name Mango registers its browser tools under (`browser_mcp`, src-tauri/src/browser_mcp.rs). */
-const BROWSER_SERVER = 'mango-browser'
 
 /** What one of Mango's browser tools does, for its row: `navigate http://localhost:3000`. */
 function browserTarget(tool: string, input: any): string {
@@ -490,7 +489,8 @@ function run(options: AgentRunOptions): AgentRun {
         break
       case 'mcpToolCall':
         if (item.server === BROWSER_SERVER) startTool(item.id, 'web', browserTarget(String(item.tool ?? ''), item.arguments), 'Browser')
-        else startTool(item.id, 'search', `${item.server}.${item.tool}`)
+        // Shown as Claude Code's are: "Used github · create_issue".
+        else startTool(item.id, 'other', `${item.server} · ${item.tool}`, 'Used')
         break
       case 'dynamicToolCall':
         startTool(item.id, 'search', item.namespace ? `${item.namespace}.${item.tool}` : String(item.tool))
@@ -832,14 +832,14 @@ function run(options: AgentRunOptions): AgentRun {
       return finish('error', 'There is no conversation to compact yet.')
     }
     try {
-      // Mango's browser for this chat, for this run only (`-c` comes before the subcommand).
-      const browser = options.browserMcp
-      const config = browser ? ['-c', `mcp_servers.${browser.name}.url=${JSON.stringify(browser.url)}`] : []
-      transport = await options.spawn([...config, 'app-server'], {
+      // Mango's browser for this chat and the user's MCP servers, for this run only (`-c` comes
+      // before the subcommand). Their secrets travel in the environment, not in the arguments.
+      const mcp = codexMcp(options.mcpServers ?? [], options.browserMcp)
+      transport = await options.spawn([...mcp.args, 'app-server'], {
         onLine,
         onStderr: (line) => { const text = cleanStderr(line); if (text) lastStderr = text },
         onExit,
-      })
+      }, Object.keys(mcp.env).length ? mcp.env : undefined)
     }
     catch (e: Json) {
       const why = String(e?.message ?? e ?? '').trim()

@@ -72,7 +72,7 @@ const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPr
 /** A yes/no question before something is archived or deleted. */
 export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -247,7 +247,7 @@ export const useWorkspace = defineStore('workspace', {
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
       /** A block of the section to scroll to once it shows (Projects > Environment variables). Not persisted. */
-      settingsAnchor: null as null | 'project-env',
+      settingsAnchor: null as null | 'project-env' | 'project-mcp',
       /** which tab of Settings > Agents shows; not persisted */
       agentsTab: 'agents' as AgentsTab,
 
@@ -612,6 +612,11 @@ export const useWorkspace = defineStore('workspace', {
     /** Settings > Projects for the active project, scrolled to its environment variables. */
     openProjectEnv() {
       this.settingsAnchor = 'project-env'
+      this.openSettings('projects')
+    },
+    /** Settings > Projects for the active project, scrolled to its MCP servers. */
+    openProjectMcp() {
+      this.settingsAnchor = 'project-mcp'
       this.openSettings('projects')
     },
     openUsage() {
