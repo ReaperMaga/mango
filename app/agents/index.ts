@@ -1,4 +1,5 @@
-import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, Thread } from '~/types/chat'
+import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
+import { awaitsUser } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
@@ -27,6 +28,10 @@ export const isRunning = (threadId: string) => runs.has(threadId)
 
 export function respondApproval(threadId: string, approvalId: string, allow: boolean) {
   runs.get(threadId)?.run.respondApproval(approvalId, allow)
+}
+
+export function answerQuestion(threadId: string, questionId: string, answers: QuestionAnswers | null) {
+  runs.get(threadId)?.run.answerQuestion?.(questionId, answers)
 }
 
 export function interruptRun(threadId: string): boolean {
@@ -211,7 +216,7 @@ function findTool(targets: Iterable<Target>, id: string) {
 function settleParts(msgs: Message[], status: 'done' | 'error' | 'stopped') {
   for (const p of msgs.flatMap(m => m.parts)) {
     if (p.type === 'tool' && p.status === 'running') { p.status = 'error'; p.summary = status === 'stopped' ? 'stopped' : 'did not finish' }
-    if (p.type === 'approval' && p.state === 'pending') p.state = 'cancelled'
+    if ((p.type === 'approval' || p.type === 'question') && p.state === 'pending') p.state = 'cancelled'
     if (p.type === 'thinking' && p.seconds === 0) p.seconds = 1
   }
 }
@@ -272,7 +277,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   const subs = new Map<string, Target>()
   const targetFor = (agent: string | undefined) => (agent ? subs.get(agent) : main)
   const push = <P extends Part>(target: Target, part: P) => store._pushPart(target.threadId, target.msg, part) as P
-  const pendingApprovals = () => main.msgs.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
+  const pendingApprovals = () => main.msgs.some(m => m.parts.some(awaitsUser))
 
   /** End a sub-agent's chat: how it went shows as its status and on its last message. */
   const endSub = (target: Target, status: 'done' | 'error' | 'stopped') => {
@@ -426,8 +431,14 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         store._setStatus(threadId, 'waiting')
         break
       }
+      case 'question': {
+        const part: Part = { type: 'question', id: e.id, questions: e.questions, ...(e.title ? { title: e.title } : {}), ...(e.message ? { message: e.message } : {}), state: 'pending' }
+        push(main, part)
+        store._setStatus(threadId, 'waiting')
+        break
+      }
       case 'approval-cancelled': {
-        const part = findIn(main, 'approval', e.id)
+        const part = findIn(main, 'approval', e.id) ?? findIn(main, 'question', e.id)
         if (part?.state === 'pending') part.state = 'cancelled'
         if (!pendingApprovals() && t.status === 'waiting') store._setStatus(threadId, 'running')
         break

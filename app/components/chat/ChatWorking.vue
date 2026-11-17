@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AGENTS, type Thread } from '~/types/chat'
+import { AGENTS, waitingFor, type Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
 import { useThreads } from '~/stores/threads'
 
@@ -21,7 +21,7 @@ const waitingOn = computed(() => {
 const activity = computed(() => {
   const t = props.thread
   if (t.status === 'queued') return `Starting ${agent.value}`
-  if (t.status === 'waiting') return 'Waiting for your approval'
+  if (t.status === 'waiting') return `Waiting for your ${waitingFor(t)}`
   if (waitingOn.value) return `Waiting for ${waitingOn.value} background task${waitingOn.value === 1 ? '' : 's'}`
   const last = t.messages[t.messages.length - 1]
   const part = last?.role === 'agent' ? last.parts[last.parts.length - 1] : undefined

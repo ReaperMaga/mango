@@ -1,5 +1,6 @@
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, ToolImage, UsageWindow } from '~/agents/types'
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
+import { elicitationForm, elicitationLink } from './questions.ts'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -263,7 +264,8 @@ async function readSkills(request: (method: string, params: Json) => Promise<Jso
 /* ---------- the adapter ---------- */
 
 interface FileTool { id: string; diff: string; kind: string }
-interface OpenApproval { rpcId: string | number; respond(allow: boolean): Json }
+/** A server request waiting for the user: an approval (true/false) or questions (answers; null when dismissed). */
+interface OpenApproval { rpcId: string | number; respond(value: boolean | QuestionAnswers | null): Json }
 
 
 /**
@@ -661,6 +663,12 @@ function run(options: AgentRunOptions): AgentRun {
     emit({ type: 'approval', id, title, command, reason })
   }
 
+  const askQuestions = (rpcId: string | number, questions: AgentQuestion[], respond: (answers: QuestionAnswers | null) => Json, from: { title?: string; message?: string } = {}) => {
+    const id = `question-${rpcId}`
+    approvals.set(id, { rpcId, respond: v => respond(Array.isArray(v) ? v : null) })
+    emit({ type: 'question', id, questions, ...(from.title ? { title: from.title } : {}), ...(from.message ? { message: from.message } : {}) })
+  }
+
   const onServerRequest = (rpcId: string | number, method: string, p: Json) => {
     switch (method) {
       case 'item/commandExecution/requestApproval': {
@@ -695,19 +703,46 @@ function run(options: AgentRunOptions): AgentRun {
         break
       }
       case 'mcpServer/elicitation/request': {
-        // Codex asks for MCP tool approval through an empty form. Forms with real fields cannot be shown here.
-        const fields = p.mode === 'form' ? Object.keys(p.requestedSchema?.properties ?? {}) : null
-        if (fields && fields.length === 0) {
-          askUser(rpcId, `Codex wants to use the ${p.serverName} tools`, String(p.message ?? p.serverName), '', allow => ({ action: allow ? 'accept' : 'decline', content: allow ? {} : null, _meta: null }))
+        // An MCP server asks the user something. Codex also asks for MCP tool approval this way, as an empty form.
+        const decline = { action: 'decline', content: null, _meta: null }
+        const server = String(p.serverName ?? 'An MCP server')
+        const ask = { title: `${server} asks`, message: String(p.message ?? '') }
+        if (p.mode === 'url' && typeof p.url === 'string' && /^https?:\/\//i.test(p.url)) {
+          askQuestions(rpcId, [elicitationLink(p.url)], a => (Array.isArray(a) ? { action: 'accept', content: null, _meta: null } : decline), ask)
+          break
         }
-        else {
-          send({ id: rpcId, result: { action: 'decline', content: null, _meta: null } })
+        const form = p.mode === 'form' ? elicitationForm(p.requestedSchema) : null
+        if (!form) send({ id: rpcId, result: decline })
+        else if (!form.questions.length) {
+          askUser(rpcId, `Codex wants to use the ${server} tools`, String(p.message ?? server), '', allow => ({ action: allow ? 'accept' : 'decline', content: allow ? {} : null, _meta: null }))
         }
+        else askQuestions(rpcId, form.questions, a => (Array.isArray(a) ? { action: 'accept', content: form.content(a), _meta: null } : decline), ask)
         break
       }
-      case 'item/tool/requestUserInput':
-        send({ id: rpcId, result: { answers: {} } })
+      case 'item/tool/requestUserInput': {
+        // The agent's own questions (request_user_input). Answers go back by question id.
+        const list: Json[] = Array.isArray(p.questions) ? p.questions : []
+        const questions: AgentQuestion[] = list.map((q) => {
+          const options = (Array.isArray(q?.options) ? q.options : [])
+            .filter((o: Json) => typeof o?.label === 'string' && o.label)
+            .map((o: Json) => ({ label: o.label as string, ...(typeof o.description === 'string' && o.description ? { description: o.description } : {}) }))
+          return {
+            question: String(q?.question ?? '').trim(),
+            ...(typeof q?.header === 'string' && q.header ? { header: q.header } : {}),
+            options,
+            ...(q?.isOther || !options.length ? { freeText: true } : {}),
+            ...(q?.isSecret ? { secret: true } : {}),
+          }
+        })
+        if (!questions.length || questions.some(q => !q.question)) {
+          send({ id: rpcId, result: { answers: {} } })
+          break
+        }
+        askQuestions(rpcId, questions, a => ({
+          answers: Array.isArray(a) ? Object.fromEntries(list.map((q, i) => [String(q.id), { answers: a[i] ?? [] }])) : {},
+        }))
         break
+      }
       default:
         send({ id: rpcId, error: { code: -32601, message: `Mango does not handle ${method}` } })
     }
@@ -907,6 +942,12 @@ function run(options: AgentRunOptions): AgentRun {
       if (!approval || ended) return
       approvals.delete(id)
       send({ id: approval.rpcId, result: approval.respond(allow) })
+    },
+    answerQuestion(id, answers) {
+      const open = approvals.get(id)
+      if (!open || ended) return
+      approvals.delete(id)
+      send({ id: open.rpcId, result: open.respond(answers) })
     },
     interrupt() {
       if (ended || stopRequested || closing) return

@@ -2,14 +2,14 @@
  * Drive an agent adapter against the real CLI, outside the app.
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
- *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--interrupt-after ms]
+ *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
  *        [--steer "<text>" [--steer-after ms]] [--task-output-after ms] [--stop-task-after ms] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
- * Approvals are allowed automatically unless --deny is given.
+ * Approvals are allowed automatically unless --deny is given; questions get their first option unless --dismiss is.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
  * --usage prints the plan's usage limits (5-hour, weekly, …), also without a turn.
  * --commands prints the slash commands the composer offers for <cwd>, also without a turn.
@@ -102,6 +102,10 @@ const run = adapter.run({
     flush()
     console.log(JSON.stringify(event))
     if (event.type === 'approval') setTimeout(() => run.respondApproval(event.id, !has('deny')), 300)
+    // Questions get each one's first option (or "42" where there are none), unless --dismiss.
+    if (event.type === 'question') {
+      setTimeout(() => run.answerQuestion?.(event.id, has('dismiss') ? null : event.questions.map(q => [q.options[0]?.label ?? '42'])), 300)
+    }
     if (event.type === 'turn-end') setTimeout(() => process.exit(0), 1500)
     if (event.type === 'task-start') {
       const id = event.id
