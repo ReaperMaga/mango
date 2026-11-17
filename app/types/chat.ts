@@ -1,6 +1,6 @@
-import type { PermissionMode } from '~/agents/types'
+import type { AgentQuestion, PermissionMode, QuestionAnswers } from '~/agents/types'
 
-export type { PermissionMode }
+export type { AgentQuestion, PermissionMode, QuestionAnswers }
 export type AgentId = 'claude' | 'codex'
 
 /** Ripeness: how far along a thread is. Drives the signature status dot. */
@@ -39,8 +39,31 @@ export type Part =
       childId?: string
     }
   | { type: 'approval'; id?: string; title?: string; command: string; reason: string; state: 'pending' | 'allowed' | 'denied' | 'cancelled' }
+  /**
+   * Questions from the agent or an MCP server, answered in the chat. `title` names who asks when
+   * it is not the agent itself; `message` is what they say first. `answers` holds one entry per
+   * question (secret ones are not kept).
+   */
+  | {
+      type: 'question'
+      id?: string
+      questions: AgentQuestion[]
+      title?: string
+      message?: string
+      state: 'pending' | 'answered' | 'dismissed' | 'cancelled'
+      answers?: QuestionAnswers
+    }
   /** A run-level problem shown inline (CLI missing, not signed in, crashed). */
   | { type: 'notice'; level: 'error' | 'info'; text: string }
+
+/** An approval or a question still waiting for the user: while one is open, the chat needs them. */
+export const awaitsUser = (p: Part) => (p.type === 'approval' || p.type === 'question') && p.state === 'pending'
+
+/** What a waiting chat waits for: an answer to a question, or an approval. */
+export const waitingFor = (t: Pick<Thread, 'messages'>): 'answer' | 'approval' => {
+  const last = t.messages[t.messages.length - 1]
+  return last?.parts.some(p => p.type === 'question' && p.state === 'pending') ? 'answer' : 'approval'
+}
 
 /**
  * A file sent with a user message. The bytes live in Mango's attachment store on disk

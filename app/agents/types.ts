@@ -38,6 +38,37 @@ export interface ToolImage {
   path?: string
 }
 
+/**
+ * One question an agent (or an MCP server through it) asks the user: Claude Code's
+ * AskUserQuestion, Codex's request_user_input, a field of an MCP elicitation form.
+ */
+export interface AgentQuestion {
+  question: string
+  /** A short tag for it ("Auth method"). */
+  header?: string
+  /** More about what is asked, under the question. */
+  detail?: string
+  /** Choices; empty when the answer can only be typed. */
+  options: { label: string; description?: string }[]
+  /** Several options may be picked. */
+  multiSelect?: boolean
+  /** An answer may be typed: an "Other" field beside the options, or the only field without them. */
+  freeText?: boolean
+  /** A typed answer is hidden as it is typed, and never saved with the chat. */
+  secret?: boolean
+  /** May be left unanswered. */
+  optional?: boolean
+  /** A typed answer must be a number (or a whole number). */
+  format?: 'number' | 'integer'
+  /** What a typed answer looks like ("name@example.com"). */
+  placeholder?: string
+  /** Picked (option labels) or typed when the card opens. */
+  preset?: string[]
+}
+
+/** What the user gave for each question, in order: the picked option labels and any typed text. */
+export type QuestionAnswers = string[][]
+
 /** What a background task is: a shell command, a sub-agent, or something else the CLI runs on its own (a monitor). */
 export type TaskKind = 'command' | 'agent' | 'other'
 
@@ -96,7 +127,12 @@ export type AgentEvent =
   /** The agent needs a yes/no from the user. Answer with `AgentRun.respondApproval(id, allow)`. */
   /** `toolId` (optional) is the tool-start id this request is about, so the UI can show it next to that row. */
   | { type: 'approval'; id: string; title: string; command: string; reason: string; toolId?: string }
-  /** The approval was settled without the user (e.g. the run was interrupted). */
+  /**
+   * The agent asks the user to pick from options (one card, several questions). Answer with
+   * `AgentRun.answerQuestion(id, answers)`. `toolId` is the tool call it belongs to.
+   */
+  | { type: 'question'; id: string; questions: AgentQuestion[]; toolId?: string; title?: string; message?: string }
+  /** The approval or question was settled without the user (e.g. the run was interrupted). */
   | { type: 'approval-cancelled'; id: string }
   /** Exactly one per run, always last. */
   | { type: 'turn-end'; status: 'done' | 'error' | 'stopped'; error?: string }
@@ -158,6 +194,8 @@ export type SteerInput = Pick<AgentRunOptions, 'prompt' | 'images' | 'readDirs'>
 
 export interface AgentRun {
   respondApproval(id: string, allow: boolean): void
+  /** Answer a `question` event, one entry per question. Null: the user dismissed it without answering. */
+  answerQuestion?(id: string, answers: QuestionAnswers | null): void
   /**
    * Hand the running turn another user message ("steering"): the agent reads it at its next
    * step and answers within the same turn. Resolves false when this run cannot take it
