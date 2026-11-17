@@ -105,6 +105,17 @@ watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join
   else if (moved) threads.persistLayout()
 }, { immediate: true })
 
+/*
+ * Tabs grow in, collapse out and slide over when one is opened, closed or moved. Not on the first
+ * render, and not on a project switch, which swaps the whole strip: that is a new set, not a change.
+ */
+const tabMotion = ref(false)
+onMounted(() => requestAnimationFrame(() => (tabMotion.value = true)))
+watch(() => ws.activeProjectPath, () => {
+  tabMotion.value = false
+  nextTick(() => requestAnimationFrame(() => (tabMotion.value = true)))
+}, { flush: 'pre' })
+
 /* split resize */
 const split = ref(0.5)
 const panesEl = ref<HTMLElement | null>(null)
@@ -205,7 +216,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 <template>
   <section class="ca">
     <div class="ca__tabs" role="tablist" aria-label="Open chats">
-      <div class="ca__strip">
+      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'">
         <div
           v-for="(t, i) in tabs"
           :key="t.id"
@@ -253,8 +264,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             @click.stop="threads.closeTab(t.id)"
           ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
         </div>
-        <UiIconButton class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
-      </div>
+        <UiIconButton key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
+      </TransitionGroup>
       <div class="ca__tools">
         <UiIconButton size="sm" label="New browser tab" :shortcut="`${mod}+Shift+B`" @click="browsers.openNew()"><Globe /></UiIconButton>
         <UiIconButton
@@ -369,6 +380,19 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .ca__tab:hover { color: var(--fg-muted); background: var(--bg-hover); }
+/* Opening and closing: the width (and so the neighbours' place) follows max-width; reordering slides by transform. */
+.ca-tab-enter-active, .ca-tab-leave-active {
+  overflow: hidden;
+  transition:
+    max-width var(--dur-med) var(--ease-out),
+    padding var(--dur-med) var(--ease-out),
+    margin var(--dur-med) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.ca-tab-leave-active { pointer-events: none; }
+/* margin-right cancels the strip's 2px gap, so a closing tab leaves no step behind. */
+.ca-tab-enter-from, .ca-tab-leave-to { max-width: 0; padding-left: 0; padding-right: 0; margin-right: -2px; opacity: 0; }
+.ca-tab-move { transition: transform var(--dur-med) var(--ease-out); }
 .ca__tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -1px; }
 /* Shown in the other split pane: a quiet ring, no fill. */
 .ca__tab.is-shown { color: var(--fg-muted); box-shadow: inset 0 0 0 1px var(--line); }

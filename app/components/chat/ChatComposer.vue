@@ -60,6 +60,7 @@ function submit(opposite = false) {
   emit('send', text.value, attachments.value, opposite)
   text.value = ''
   attachments.value = []
+  armFiles()
 }
 
 function onKey(e: KeyboardEvent) {
@@ -201,6 +202,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
   await Promise.all(jobs.slice(0, room).map(async (job) => {
     const key = ++pendingKey
     pending.value = [...pending.value, { key, name: job.name }]
+    armFiles()
     try {
       const a = await job.store()
       attachments.value = [...attachments.value, a]
@@ -208,6 +210,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
       attachError.value = `Could not attach ${job.name}. ${errText(e)}`
     } finally {
       pending.value = pending.value.filter(p => p.key !== key)
+      armFiles()
     }
   }))
   ta.value?.focus()
@@ -245,7 +248,45 @@ function viewAttachment(id: string) {
 
 function removeAttachment(id: string) {
   attachments.value = attachments.value.filter(a => a.id !== id)
+  armFiles()
   ta.value?.focus()
+}
+
+/*
+ * The attachment strip opens and closes by sliding its height, but only for this composer's own
+ * actions (attach, remove, send): switching chats swaps in another draft and should just show it.
+ * Arm after the change, so the flag lives exactly until the render it causes has run.
+ */
+let filesArmed = false
+function armFiles() {
+  filesArmed = true
+  void nextTick(() => (filesArmed = false))
+}
+
+function slideFiles(node: Element, open: boolean, done: () => void) {
+  const el = node as HTMLElement
+  if (!filesArmed) return done()
+  const height = `${el.offsetHeight}px`
+  const margin = getComputedStyle(el).marginBottom
+  const shut = { height: '0px', marginBottom: '0px', opacity: '0' }
+  const full = { height, marginBottom: margin, opacity: '1' }
+  Object.assign(el.style, open ? shut : full, { overflow: 'hidden' })
+  void el.offsetHeight
+  el.style.transition = 'height var(--dur-med) var(--ease-out), margin-bottom var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out)'
+  Object.assign(el.style, open ? full : shut)
+  let fallback: ReturnType<typeof setTimeout> | undefined
+  const finish = () => {
+    clearTimeout(fallback)
+    el.removeEventListener('transitionend', onEnd)
+    for (const p of ['height', 'marginBottom', 'opacity', 'overflow', 'transition'] as const) el.style[p] = ''
+    done()
+  }
+  function onEnd(e: TransitionEvent) {
+    if (e.target === el && e.propertyName === 'height') finish()
+  }
+  el.addEventListener('transitionend', onEnd)
+  // In case no transitionend comes (the element left the document, the height did not change).
+  fallback = setTimeout(finish, 600)
 }
 
 /** Pasting files (a screenshot, files copied in the file manager) attaches them; pasted text stays text. */
@@ -462,36 +503,38 @@ const sendTitle = computed(() => (props.busy
     @submit.prevent="submit()"
     @click.self="ta?.focus()"
   >
-    <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">
-      <li
-        v-for="a in attachments"
-        :key="a.id"
-        class="cp__file"
-        :class="{ 'cp__file--image': a.thumb }"
-        :title="`${a.name} · ${formatSize(a.size)}`"
-      >
-        <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
-          <img class="cp__thumb" :src="a.thumb" alt="">
-        </button>
-        <template v-else>
-          <FileText class="cp__file-icon" aria-hidden="true" />
+    <Transition :css="false" @enter="(el, done) => slideFiles(el, true, done)" @leave="(el, done) => slideFiles(el, false, done)">
+      <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">
+        <li
+          v-for="a in attachments"
+          :key="a.id"
+          class="cp__file"
+          :class="{ 'cp__file--image': a.thumb }"
+          :title="`${a.name} · ${formatSize(a.size)}`"
+        >
+          <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
+            <img class="cp__thumb" :src="a.thumb" alt="">
+          </button>
+          <template v-else>
+            <FileText class="cp__file-icon" aria-hidden="true" />
+            <span class="cp__file-meta">
+              <span class="cp__file-name">{{ a.name }}</span>
+              <span class="cp__file-size tabular">{{ formatSize(a.size) }}</span>
+            </span>
+          </template>
+          <button type="button" class="cp__file-x" :aria-label="`Remove ${a.name}`" @click="removeAttachment(a.id)">
+            <X />
+          </button>
+        </li>
+        <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="`Attaching ${p.name}…`">
+          <span class="cp__spin" aria-hidden="true" />
           <span class="cp__file-meta">
-            <span class="cp__file-name">{{ a.name }}</span>
-            <span class="cp__file-size tabular">{{ formatSize(a.size) }}</span>
+            <span class="cp__file-name">{{ p.name }}</span>
+            <span class="cp__file-size">Attaching…</span>
           </span>
-        </template>
-        <button type="button" class="cp__file-x" :aria-label="`Remove ${a.name}`" @click="removeAttachment(a.id)">
-          <X />
-        </button>
-      </li>
-      <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="`Attaching ${p.name}…`">
-        <span class="cp__spin" aria-hidden="true" />
-        <span class="cp__file-meta">
-          <span class="cp__file-name">{{ p.name }}</span>
-          <span class="cp__file-size">Attaching…</span>
-        </span>
-      </li>
-    </ul>
+        </li>
+      </ul>
+    </Transition>
     <p v-if="dropping" class="cp__drop" aria-hidden="true">Drop files to attach</p>
     <input ref="fileInput" type="file" multiple hidden @change="onFileInput">
     <textarea

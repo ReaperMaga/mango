@@ -26,6 +26,8 @@ const props = defineProps<{
 
 const ws = useWorkspace()
 const host = ref<HTMLElement | null>(null)
+/** The panel's height is animating (maximise, double-click): hold the grid and refit once, when it ends. */
+const settling = inject<Readonly<Ref<boolean>>>('terminal-settling', ref(false))
 
 /**
  * A link in the output: a dev server on this computer (`localhost:3000` from `npm run dev`)
@@ -127,7 +129,7 @@ function fitNow() {
 }
 
 function scheduleFit() {
-  if (fitFrame) return
+  if (fitFrame || settling.value) return
   fitFrame = requestAnimationFrame(() => {
     fitFrame = 0
     fitNow()
@@ -291,6 +293,8 @@ onMounted(async () => {
   if (props.active && props.visible) term.focus()
   await spawn()
 })
+
+watch(settling, (moving) => { if (!moving) scheduleFit() })
 
 // Refit + focus when this tab is selected or the panel is reopened.
 watch(() => props.active && props.visible, async (shown) => {
