@@ -507,7 +507,7 @@ function childBranch(name: string, parent: string): string {
 }
 
 const repos = new Map<string, Repo>()
-/** Linked worktrees made with `git_worktree_add`: folder → the main working tree's folder. */
+/** Linked worktrees (Unity VCS: chat workspaces) made with `git_worktree_add`: folder → the project's folder. */
 const linkedTrees = new Map<string, string>()
 /** The `mango` project comes with one linked worktree, a few commits ahead of main (start a chat in it from the sidebar's "Continue in" list). */
 const SEEDED = { leaf: 'fix-diff-wrap', branch: 'fix/diff-wrap' }
@@ -758,13 +758,33 @@ async function worktreeAdd(path: string, branch: string, from: string | null, cr
   return worktreeList(folder).find(w => w.path === folder)!
 }
 
+/** Unity VCS: a chat workspace beside the project, on a new child branch, after "downloading" its files. */
+async function workspaceAdd(path: string, branch: string, from: string | null, create: boolean): Promise<GitWorktree> {
+  const main = linkedTrees.get(path) ?? path
+  const mainRepo = repoAt(main)
+  const full = create ? childBranch(branch, from || mainRepo.branch) : childBranch(branch, '')
+  if (create && mainRepo.branches[full]) throw new Error(`A branch named ${full} already exists`)
+  if (!create && !mainRepo.branches[full]) throw new Error(`There is no branch named ${full}`)
+  const leaf = (create && !branch.trim().startsWith('/') ? branch.trim() : full.slice(1)).replace(/\//g, '-')
+  const folder = `${main.replace(/\/+$/, '')}.worktrees/${leaf}`
+  if (repos.has(folder)) throw new Error(`${folder} already exists; pick another branch name`)
+  // A fresh workspace downloads every file of its branch: the slow part on a real project.
+  await wait(2500)
+  if (create) createBranch(mainRepo, full, false)
+  repos.set(folder, { ...mainRepo, branch: full, files: [], log: [...mainRepo.log], incoming: [], renames: [] })
+  linkedTrees.set(folder, main)
+  return worktreeList(folder).find(w => w.path === folder)!
+}
+
 async function worktreeRemove(path: string, folder: string, force: boolean) {
   await wait(250)
   const main = linkedTrees.get(path) ?? path
-  if (folder === main) throw new Error('That is the main working tree; it cannot be removed')
+  if (folder === main) throw new Error(repoAt(main).vcs === 'plastic' ? "The project's own workspace can't be removed here" : 'That is the main working tree; it cannot be removed')
   if (linkedTrees.get(folder) !== main) throw new Error(`${folder} is not a worktree of this repository`)
   const r = repoAt(folder)
-  if (r.files.length && !force) throw new Error(`${r.branch} has uncommitted changes; commit or discard them first`)
+  if (r.files.length && !force) {
+    throw new Error(r.vcs === 'plastic' ? `${r.branch} has pending changes; check them in or undo them first` : `${r.branch} has uncommitted changes; commit or discard them first`)
+  }
   repos.delete(folder)
   linkedTrees.delete(folder)
 }
@@ -772,16 +792,16 @@ async function worktreeRemove(path: string, folder: string, force: boolean) {
 export async function mockGit(cmd: string, args: any): Promise<any> {
   const path = String(args?.path ?? '')
   const r = repoAt(path)
-  if (cmd === 'git_worktrees') return r.isRepo && r.vcs === 'git' ? worktreeList(path) : []
+  if (cmd === 'git_worktrees') return r.isRepo ? worktreeList(path) : []
   if (cmd === 'git_worktree_add') {
-    if (r.vcs === 'plastic') throw new Error('Worktrees are a git feature; Unity Version Control workspaces have none')
+    if (r.vcs === 'plastic') return workspaceAdd(path, String(args.branch ?? ''), args.from ?? null, args.create !== false)
     return worktreeAdd(path, String(args.branch ?? ''), args.from ?? null, args.create !== false)
   }
   if (cmd === 'git_worktree_remove') return worktreeRemove(path, String(args.worktree ?? ''), !!args.force)
   if (cmd === 'git_status') return statusOf(r, path)
   if (cmd === 'git_ahead') {
     if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
-    if (r.vcs === 'plastic') throw new Error("Worktrees are a git feature; Unity Version Control workspaces don't have them.")
+    if (r.vcs === 'plastic') throw new Error("Unity VCS workspaces aren't compared with the project's branch.")
     await wait(120)
     const mainRepo = repoAt(linkedTrees.get(path) ?? path)
     const base = args.base ? String(args.base) : mainRepo.branch

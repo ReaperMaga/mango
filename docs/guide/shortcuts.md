@@ -8,7 +8,7 @@ Mango is built to be driven from the keyboard. On macOS, <kbd>⌘</kbd> replaces
 | --- | --- |
 | <kbd>Ctrl</kbd> <kbd>K</kbd> | Command palette |
 | <kbd>Ctrl</kbd> <kbd>N</kbd> | New chat (with no project open: New project) |
-| <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd> | New chat in its own git worktree |
+| <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd> | New chat in its own git worktree (Unity VCS: its own workspace) |
 | <kbd>Ctrl</kbd> <kbd>O</kbd> | Open folder |
 | <kbd>Ctrl</kbd> <kbd>J</kbd> or <kbd>Ctrl</kbd> <kbd>`</kbd> | Show or hide the terminal |
 | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>T</kbd> | New terminal |

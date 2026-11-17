@@ -174,33 +174,36 @@ pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, for
     dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
 }
 
-const NO_PLASTIC_WORKTREES: &str = "Worktrees are a git feature; Unity Version Control workspaces don't have them.";
-
-/// The repository's worktrees, the main one first. Unity VCS has none.
+/// The repository's worktrees, the main one first. For Unity VCS: the project's workspace and
+/// the chat workspaces Mango made beside it (`plastic::workspaces`).
 #[tauri::command]
 pub async fn git_worktrees(app: AppHandle, path: String) -> Result<Vec<GitWorktree>, String> {
-    dispatch!(app, path, git(at) => git::worktrees(&at), plastic(_root) => Ok(Vec::new()))
+    dispatch!(app, path, git(at) => git::worktrees(&at), plastic(root) => plastic::workspaces::list(&root))
 }
 
 /// Add a linked worktree for `branch` beside the repository (`<parent>/<repo>.worktrees/<branch>`).
+/// Unity VCS: a new workspace of the same repository in that folder, switched to `branch`.
 #[tauri::command]
 pub async fn git_worktree_add(app: AppHandle, path: String, branch: String, from: Option<String>, create: bool) -> Result<GitWorktree, String> {
     dispatch!(app, path, git(at) => git::worktree_add(&at, &branch, from.as_deref(), create),
-        plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+        plastic(root) => plastic::workspaces::add(&root, &branch, from.as_deref(), create))
 }
 
-/// Remove the linked worktree in the folder `worktree`; its branch is kept.
+/// Remove the linked worktree (Unity VCS: the chat workspace) in the folder `worktree`; its branch is kept.
 #[tauri::command]
 pub async fn git_worktree_remove(app: AppHandle, path: String, worktree: String, force: bool) -> Result<(), String> {
-    dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+    dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force),
+        plastic(root) => plastic::workspaces::remove(&root, &worktree, force))
 }
 
 /// How many commits the folder's branch has that `base` doesn't. Without `base`: compared with the
 /// branch checked out in the repository's main working tree (what a linked worktree merges into).
 #[tauri::command]
 pub async fn git_ahead(app: AppHandle, path: String, base: Option<String>) -> Result<GitAhead, String> {
-    dispatch!(app, path, git(at) => git::ahead_of(&at, base.as_deref()), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+    dispatch!(app, path, git(at) => git::ahead_of(&at, base.as_deref()), plastic(_root) => Err(NO_PLASTIC_AHEAD.into()))
 }
+
+const NO_PLASTIC_AHEAD: &str = "Unity VCS workspaces aren't compared with the project's branch.";
 
 /// `git init` in `path`. Does nothing when it is already under version control.
 #[tauri::command]

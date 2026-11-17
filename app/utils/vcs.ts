@@ -28,6 +28,10 @@ export interface VcsTerms {
   mergeRebase: boolean
   /** Branch names are paths from the root (`/main/task`), and a new one is a child of its base. */
   pathBranches: boolean
+  /** A chat can run in its own working copy: a linked worktree, or an extra Unity VCS workspace. */
+  worktrees: boolean
+  /** What that working copy is called: "worktree" / "workspace". */
+  worktree: string
   /** Periodic refresh. Unity VCS scans the whole workspace, which can take seconds on a big project. */
   pollMs: number
 }
@@ -35,11 +39,11 @@ export interface VcsTerms {
 const TERMS: Record<VcsKind, VcsTerms> = {
   git: {
     name: 'git', commit: 'Commit', commitAll: 'Commit all', committed: 'Committed', message: 'Commit message', unit: 'commit',
-    pull: 'Pull', remotes: true, amend: true, mergeRebase: true, pathBranches: false, pollMs: 4000,
+    pull: 'Pull', remotes: true, amend: true, mergeRebase: true, pathBranches: false, worktrees: true, worktree: 'worktree', pollMs: 4000,
   },
   plastic: {
     name: 'Unity VCS', commit: 'Check in', commitAll: 'Check in all', committed: 'Checked in', message: 'Checkin comment', unit: 'changeset',
-    pull: 'Update', remotes: false, amend: false, mergeRebase: false, pathBranches: true, pollMs: 15000,
+    pull: 'Update', remotes: false, amend: false, mergeRebase: false, pathBranches: true, worktrees: true, worktree: 'workspace', pollMs: 15000,
   },
 }
 

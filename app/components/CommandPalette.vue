@@ -90,10 +90,10 @@ const actions = computed<Item[]>(() => {
   if (project) {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
-      items.push({ id: 'new-worktree-chat', group: 'Actions', label: 'New chat in a worktree', detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree parallel branch isolated new chat thread git', run: () => threads.createAwaitingWorktree(project) })
+      items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
       for (const w of wts.linked.value) {
         if (w.prunable) continue
-        items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to worktree ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
+        items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to ${wts.term.value} ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree workspace switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
       }
     }
     items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: [mod, shift, 'B'], keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
