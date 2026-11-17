@@ -1,4 +1,7 @@
-# Keeps the release build's Rust cache warm.
+# Keeps the Rust caches warm: the release build's and the CI jobs'.
+#
+# A pull request can restore caches saved on main but its own saves are visible only to
+# itself, so the CI jobs save theirs only when this workflow runs them on main.
 #
 # Releases run on tag pushes, and a run for a tag can only restore caches saved on its
 # own ref or on main. Without this workflow every release compiles all dependencies from
@@ -15,6 +18,7 @@ on:
       - 'src-tauri/**'
       - '.github/workflows/rust-cache.yml'
       - '.github/workflows/release.yml'
+      - '.github/workflows/ci.yml'
   schedule:
     - cron: '0 4 * * 1,4'
   workflow_dispatch:
@@ -31,6 +35,12 @@ env:
   PNPM_VERSION: 10
 
 jobs:
+  ci:
+    name: Warm CI cache
+    uses: ./.github/workflows/ci.yml
+    with:
+      warm-cache: true
+
   build:
     name: Warm cache (${{ matrix.name }})
     strategy:

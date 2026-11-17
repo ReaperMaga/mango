@@ -75,7 +75,7 @@ The workflow can also be started by hand (**Run workflow** in GitHub Actions). A
 
 ### Build cache
 
-A run for a tag can only restore caches saved on that tag or on `main`, so a release cannot reuse what the previous release compiled. `.github/workflows/rust-cache.yml` does the same release build (without installers) on `main` whenever `src-tauri/` changes, and twice a week so the cache does not expire. Both workflows use the cache key `release`; the release workflow only reads it. A release then compiles Mango itself instead of every dependency. If the cache is cold (new `Cargo.lock`, new Rust version), run **Rust cache** by hand before tagging.
+A run for a tag can only restore caches saved on that tag or on `main`, so a release cannot reuse what the previous release compiled. `.github/workflows/rust-cache.yml` does the same release build (without installers) on `main` whenever `src-tauri/` changes, and twice a week so the cache does not expire. Both workflows use the cache key `release`; the release workflow only reads it. A release then compiles Mango itself instead of every dependency. The same workflow also runs the CI's Rust jobs on `main` (keys `ci-linux` and `ci-windows`), which is the only place they save their caches for pull requests to restore. If the cache is cold (new `Cargo.lock`, new Rust version), run **Rust cache** by hand before tagging.
 
 ## Documentation
 

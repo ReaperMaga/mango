@@ -1,13 +1,23 @@
-# Checks every pull request: the frontend typechecks and builds, the backend builds
-# without warnings and its tests pass, and Windows keeps compiling.
+# Checks every pull request: the version agrees everywhere, the frontend typechecks and
+# builds, the backend's tests pass with no warnings, and Windows keeps compiling.
 #
-# Pushes to main run it too, so the Rust cache it saves there can be restored by the
-# next pull request (a pull request's cache is only visible to that pull request).
+# Only the parts a pull request touches run: a frontend-only change skips the Rust jobs
+# and the other way round. "CI result" sums them up and is the one check to require.
+#
+# rust-cache.yml calls this workflow on main (warm-cache) so the Rust caches the
+# backend jobs save there can be restored by the next pull request. A pull request's
+# own cache is only visible to that pull request, so pull requests never save one.
 name: CI
 
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      warm-cache:
+        description: Run only the Rust jobs, to save their caches on main.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -20,10 +30,55 @@ concurrency:
 env:
   NODE_VERSION: 24
   PNPM_VERSION: 10
+  # Smaller, faster CI builds: incremental state is never reused here, and line tables
+  # are enough for a backtrace.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_TERM_COLOR: always
+  # "No new warnings": any warning fails the build.
+  RUSTFLAGS: -D warnings
 
 jobs:
+  changes:
+    name: Changes and version
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs.ci == 'true' || github.event_name != 'pull_request' }}
+      backend: ${{ steps.filter.outputs.backend == 'true' || github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dorny/paths-filter@v4
+        id: filter
+        if: github.event_name == 'pull_request'
+        with:
+          # A file counts for the frontend unless it is backend, docs, prose or CI
+          # configuration. A change to this workflow runs everything.
+          predicate-quantifier: every
+          filters: |
+            frontend:
+              - '**'
+              - '!src-tauri/**'
+              - '!docs/**'
+              - '!**/*.md'
+              - '!.github/**'
+            backend:
+              - '{src-tauri/**,.github/workflows/ci.yml}'
+            ci:
+              - '.github/workflows/ci.yml'
+
+      # Plain Node, no install: cheap enough to run on every pull request.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Every copy of the version agrees
+        run: node scripts/version.ts --check
+
   frontend:
     name: Frontend
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' && !inputs.warm-cache
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,71 +96,123 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Every copy of the version agrees
-        run: pnpm version:check
-
       - name: Typecheck
         run: pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json
 
       - name: Build
         run: pnpm build
 
-  backend:
-    name: Backend (${{ matrix.name }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # The full test suite runs on Linux.
-          - name: Linux
-            os: ubuntu-22.04
-            test: true
-          # Windows builds the app and compiles the tests. Running them waits on the git
-          # tests learning Windows paths (they compare against `\\?\C:\...` there).
-          - name: Windows
-            os: windows-latest
-            test: false
-    runs-on: ${{ matrix.os }}
-    env:
-      # "No new warnings": any warning fails the build.
-      RUSTFLAGS: -D warnings
+  backend-linux:
+    name: Backend (Linux)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-22.04
     defaults:
       run:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
 
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        working-directory: .
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
-            libayatana-appindicator3-dev libssl-dev patchelf xdg-utils
+      # Restores the installed packages from the cache instead of apt-get update + install.
+      - uses: awalsh128/cache-apt-pkgs-action@v1.6.3
+        with:
+          packages: libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev libayatana-appindicator3-dev libssl-dev patchelf xdg-utils
+          version: tauri-1
+          execute_install_scripts: true
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # Its own key: these are debug builds with -D warnings, nothing the release cache holds.
+      - uses: rui314/setup-mold@v1
+
+      # The tests never run the voice model (that test is #[ignore]d), so the candle
+      # crates need not be optimised here: it halves their cold build.
+      - name: CI cargo profile
+        working-directory: .
+        run: |
+          mkdir -p ~/.cargo
+          for p in candle-core candle-nn candle-transformers gemm gemm-common gemm-f32 half; do
+            printf '[profile.dev.package.%s]\nopt-level = 0\n' "$p"
+          done >> ~/.cargo/config.toml
+
+      # Its own key: debug test builds, nothing the release cache holds.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-          shared-key: ci
+          shared-key: ci-linux
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Tauri reads build.frontendDist at compile time. The backend does not need the real
-      # frontend for a debug build or tests, only the folder.
+      # frontend for tests, only the folder.
       - name: Placeholder frontend
         working-directory: .
-        shell: bash
         run: mkdir -p .output/public
 
-      - name: Build
-        run: cargo build --locked
-
+      # `cargo test` also compiles the library as the app uses it (the binary links it),
+      # so warnings outside test code still fail here; a separate `cargo build` would only
+      # add a link of the app binary.
       - name: Test
-        if: matrix.test
         run: cargo test --locked
 
-      - name: Compile tests
-        if: ${{ !matrix.test }}
-        run: cargo test --locked --no-run
+  # Windows compiles from Linux with cargo-xwin, as AGENTS.md does locally: faster than a
+  # Windows runner, and `check` needs no linking. It covers the cfg(windows) code and the
+  # tests; it does not run anything on Windows.
+  backend-windows:
+    name: Backend (Windows check)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cross-compile tools
+        working-directory: .
+        run: |
+          if ! command -v clang-cl >/dev/null || ! command -v lld-link >/dev/null || ! command -v llvm-lib >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends clang lld llvm
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-xwin@0.23.1
+
+      # The MSVC CRT and Windows SDK headers cargo-xwin downloads (~1 GB, ~50 s).
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/cargo-xwin
+          key: cargo-xwin-0.23.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ci-windows
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Placeholder frontend
+        working-directory: .
+        run: mkdir -p .output/public
+
+      - name: Check
+        run: cargo xwin check --locked --target x86_64-pc-windows-msvc --all-targets
+
+  result:
+    name: CI result
+    needs: [changes, frontend, backend-linux, backend-windows]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          case " $RESULTS " in
+            *" failure "*|*" cancelled "*) exit 1 ;;
+          esac
