@@ -259,6 +259,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
   align-items: center;
   gap: var(--space-2);
   height: var(--tabbar-h);
+  border-bottom: 1px solid var(--line);
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 .fp__title {

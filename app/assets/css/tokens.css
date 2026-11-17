@@ -47,9 +47,9 @@
   --radius-pill: 999px;
 
   /* Layout */
-  --titlebar-h: 46px;
+  --titlebar-h: 40px;
   --sidebar-w: 264px;
-  --tabbar-h: 36px;
+  --tabbar-h: 38px;
 
   /* Motion */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);

@@ -36,10 +36,9 @@ useFilesSync()
   display: flex;
   flex-direction: column;
   background: var(--bg-canvas);
-  border-top-left-radius: var(--radius-lg);
-  border-top-right-radius: var(--radius-lg);
+  /* No top edge: the tab strip's hairline shares one row with the tool window's header. */
   border: 1px solid var(--line-soft);
-  border-bottom: 0;
+  border-width: 0 1px;
   overflow: hidden;
 }
 .workspace__chat { flex: 1; min-height: 0; }

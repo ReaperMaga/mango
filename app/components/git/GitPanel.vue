@@ -828,6 +828,7 @@ function onListKey(e: KeyboardEvent) {
   align-items: center;
   gap: var(--space-2);
   height: var(--tabbar-h);
+  border-bottom: 1px solid var(--line);
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 .gp__title {

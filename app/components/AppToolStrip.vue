@@ -53,6 +53,7 @@ const tools = computed(() => [
 
 <template>
   <nav class="ts" aria-label="Tool windows">
+    <div class="ts__first">
     <button
       type="button"
       class="ts__btn ts__btn--env"
@@ -65,7 +66,8 @@ const tools = computed(() => [
       <component :is="place ? Server : Laptop" />
       <EnvsEnvStatus v-if="placeMark" class="ts__mark" :status="placeMark.status" />
     </button>
-    <span class="ts__sep" aria-hidden="true" />
+    </div>
+    <div class="ts__tools">
     <button
       v-for="t in tools"
       :key="t.id"
@@ -80,6 +82,7 @@ const tools = computed(() => [
       <component :is="t.icon" />
       <span v-if="t.count" class="ts__count tabular" aria-hidden="true">{{ t.count > 99 ? '99+' : t.count }}</span>
     </button>
+    </div>
   </nav>
 </template>
 
@@ -89,47 +92,63 @@ const tools = computed(() => [
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 2px;
   width: 40px;
-  padding-top: var(--space-1);
   background: var(--bg-app);
+}
+/* The environment button's own cell: the strip's part of the row shared with the chat tabs and tool header. */
+.ts__first {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: var(--tabbar-h);
+  border-bottom: 1px solid var(--line);
+}
+.ts__tools {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
 }
 .ts__btn {
   position: relative;
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-faint);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  color: var(--fg-muted);
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.ts__btn svg { width: 17px; height: 17px; stroke-width: 1.75; }
-.ts__btn:hover { background: var(--bg-hover); color: var(--fg-muted); }
-.ts__btn.is-active { background: var(--bg-active); color: var(--fg); }
-.ts__sep { width: 18px; height: 1px; margin: 3px 0; background: var(--line-soft); }
+.ts__btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.ts__btn:hover { background: var(--bg-hover); color: var(--fg); }
+.ts__btn.is-active { background: var(--accent-soft); color: var(--accent-ink); }
 /* The environment's state, tucked into the corner of its icon on the stripe's own ground. */
 .ts__mark {
   position: absolute;
-  right: 3px;
-  bottom: 3px;
+  right: 1px;
+  bottom: 1px;
   padding: 1.5px;
   border-radius: var(--radius-pill);
   background: var(--bg-app);
 }
 .ts__count {
   position: absolute;
-  top: 1px;
-  right: -1px;
+  top: -3px;
+  right: -4px;
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
   border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-size: 9.5px;
-  font-weight: 650;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: 0 0 0 1.5px var(--bg-app);
+  font-size: var(--text-2xs);
+  font-weight: 600;
   line-height: 14px;
   text-align: center;
 }
+.ts__btn.is-active .ts__count { background: var(--accent); color: var(--accent-fg); }
 </style>

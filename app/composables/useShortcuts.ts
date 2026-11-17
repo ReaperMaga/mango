@@ -41,7 +41,7 @@ export async function openLocalFolder() {
  *   Mod+Shift+E  files panel    Mod+S  save the file in the active pane
  *   Mod+Shift+U  usage limits   Mod+Shift+P  pull requests panel
  *   Mod+Shift+H  environment panel (where the project runs)
- *   Mod+Shift+B  new browser tab
+ *   Mod+Shift+B  new browser tab   Mod+Alt+B  show or hide the tool window
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -76,6 +76,7 @@ export function useShortcuts() {
       return
     }
     if (k === 'o') { e.preventDefault(); openFolderFlow(); return }
+    if (e.altKey && e.code === 'KeyB') { e.preventDefault(); if (ws.hasProject) ws.toggleToolPanel(); return }
     if (k === 'b' && e.shiftKey) { e.preventDefault(); useBrowser().openNew(); return }
     if (k === 'b') { e.preventDefault(); ws.toggleSidebar(); return }
     if (k === '\\') { e.preventDefault(); threads.isSplit ? threads.closePane(threads.activePaneId) : threads.split(); return }
