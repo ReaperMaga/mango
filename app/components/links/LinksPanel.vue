@@ -4,6 +4,8 @@ import type { LinkedItem } from '~/types/chat'
 import type { GhCheck } from '~/types/ipc'
 import { useThreads } from '~/stores/threads'
 import { useLinks } from '~/stores/links'
+import { useGit } from '~/stores/git'
+import { useWorkspace } from '~/stores/workspace'
 import { openExternal } from '~/composables/useBackend'
 import { stateOf } from '~/utils/linkState'
 
@@ -15,6 +17,16 @@ import { stateOf } from '~/utils/linkState'
 
 const threads = useThreads()
 const links = useLinks()
+const git = useGit()
+const workspace = useWorkspace()
+
+/** A Unity VCS workspace in view has code reviews, not GitHub pull requests: LinksReviews takes the window. */
+const reviewsPath = computed(() => {
+  const dir = threads.workdir
+  if (!dir) return null
+  const vcs = git.repos[dir]?.status?.vcs ?? (workspace.activeProject?.path === dir ? workspace.activeProject.vcs : null)
+  return vcs === 'plastic' ? dir : null
+})
 
 /** The chat in the active pane; a sub-agent's chat stands for the chat that started it. */
 const chat = computed(() => {
@@ -135,7 +147,8 @@ watch(() => chat.value?.id, cancelAdd)
 
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
-  <section class="lp" aria-label="Pull requests and issues" @keydown.esc="check && closeCheck()">
+  <LinksReviews v-if="reviewsPath" :path="reviewsPath" />
+  <section v-else class="lp" aria-label="Pull requests and issues" @keydown.esc="check && closeCheck()">
     <header class="lp__head">
       <button
         v-if="check && current"

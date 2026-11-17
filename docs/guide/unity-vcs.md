@@ -23,6 +23,7 @@ When you open a folder, Mango walks up from it looking for a `.git` or a `.plast
 | Update | **Update** brings the workspace to the newest changeset on its branch (`cm update`), with a count of newer changesets |
 | History | Recent changesets of the branch |
 | Branches | Switch, create, rename and delete, from the branch popup |
+| Code reviews | The branch's reviews and the repository's open ones in the Pull requests tool window; request a review of the branch |
 
 ## No staging area
 
@@ -41,6 +42,17 @@ Unity VCS branches are paths from the root, such as `/main` or `/main/task-12`, 
 - **Switch** keeps your pending changes: `cm` shelves and reapplies them instead of stopping at a prompt.
 - **Rename** keeps the branch under its parent; only the last part of the name changes.
 - **Delete** removes the branch from the repository for everyone. Unity VCS only deletes a branch that has no changesets and no child branches.
+
+## Code reviews
+
+For a Unity VCS workspace, the **Pull requests** tool window on the right (`Ctrl/⌘ Shift P`) shows Unity VCS code reviews instead of GitHub pull requests:
+
+- **This branch:** every review of the branch the workspace is on (the newest 20), whatever its status.
+- **Open in the repository:** the reviews still **Under review** or waiting on **Rework required** (the newest 50), with the branch or changeset each one is for.
+
+Each review shows its title, status, number, who asked for it and when, the number of unresolved change requests and questions when your client reports them, and each reviewer with their own verdict (older reviews have a single assignee instead). Statuses use the same colours as chats: under review is ripening, rework required needs you, reviewed is ripe. Mango reads the list when the window opens and when you press **Refresh** (`cm find review`); it does not poll.
+
+**Request a review** (the speech-bubble button, or the button in an empty list) asks Unity VCS for a review of the current branch (`cm codereview br:/main/… "title"`), with optional reviewers: users or groups, separated by commas (`--users`). Commenting, approving and asking for rework happen in the Unity Version Control app or Unity Cloud; Mango only reads them. There is no "open in Unity VCS" link, because Unity documents no stable address for a review.
 
 ## What is not there
 
