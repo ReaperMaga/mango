@@ -6,7 +6,7 @@ import AppPreview from './AppPreview.vue'
 
 /**
  * The home page: mark, headline, one-click downloads of the current release
- * for Windows and Linux, links into the docs, and a picture of the app.
+ * for Windows, macOS and Linux, links into the docs, and a picture of the app.
  */
 const { theme } = useData<ThemeConfig>()
 const release = computed(() => theme.value.release)
@@ -14,14 +14,16 @@ const pick = (id: string) => release.value.assets.find(a => a.id === id)!
 
 const downloads = computed(() => [
   { os: 'windows' as const, label: 'Windows', asset: pick('windows-exe'), detail: 'Installer (.exe), x64' },
+  { os: 'mac' as const, label: 'macOS', asset: pick('macos-arm64'), detail: '.dmg, Apple Silicon' },
   { os: 'linux' as const, label: 'Linux', asset: pick('linux-appimage'), detail: 'AppImage, x86_64' },
 ])
 
-/** The visitor's platform gets the filled button; unknown (macOS, phones) leaves both quiet. */
-const current = ref<'windows' | 'linux' | null>(null)
+/** The visitor's platform gets the filled button; unknown (phones) leaves them all quiet. */
+const current = ref<'windows' | 'mac' | 'linux' | null>(null)
 onMounted(() => {
   const ua = navigator.userAgent
   if (/Windows/i.test(ua)) current.value = 'windows'
+  else if (/Macintosh|Mac OS X/i.test(ua) && !/iPhone|iPad/i.test(ua)) current.value = 'mac'
   else if (/Linux|X11/i.test(ua) && !/Android/i.test(ua)) current.value = 'linux'
 })
 </script>
@@ -60,7 +62,7 @@ onMounted(() => {
         </a>
       </div>
       <p class="get__foot">
-        Also as .msi, .deb and .rpm. Needs the <code>claude</code> or <code>codex</code> CLI, signed in.
+        Also as .msi, an Intel .dmg, .deb and .rpm. Needs the <code>claude</code> or <code>codex</code> CLI, signed in.
       </p>
     </div>
 
@@ -110,7 +112,7 @@ onMounted(() => {
 /* ---------- downloads ---------- */
 .get {
   width: 100%;
-  max-width: 640px;
+  max-width: 760px;
   margin-top: 36px;
   text-align: left;
   border: 1px solid var(--vp-c-divider);
@@ -131,10 +133,12 @@ onMounted(() => {
 .get__version { font-family: var(--vp-font-family-mono); font-size: 12px; color: var(--vp-c-text-1); }
 .get__more { color: var(--vp-c-brand-1); font-weight: 500; text-decoration: none; white-space: nowrap; }
 .get__more:hover { text-decoration: underline; text-underline-offset: 3px; }
-.get__body { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 16px; }
+.get__body { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 14px 16px; }
+@media (max-width: 700px) {
+  .get__body { grid-template-columns: 1fr; }
+}
 @media (max-width: 560px) {
   .get__head { flex-direction: column; gap: 2px; }
-  .get__body { grid-template-columns: 1fr; }
 }
 
 .get__btn {

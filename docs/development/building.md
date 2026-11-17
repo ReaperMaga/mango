@@ -13,6 +13,8 @@ sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev \
   libayatana-appindicator3-dev libssl-dev
 ```
 
+On macOS, the Xcode command line tools (`xcode-select --install`) are enough. `src-tauri/tauri.macos.conf.json` adds the macOS window settings (native traffic lights over Mango's titlebar) and bundle settings on top of `tauri.conf.json`. To build the other Mac architecture, add its target (`rustup target add x86_64-apple-darwin`) and pass `--target x86_64-apple-darwin` to `pnpm tauri build`.
+
 ## Get the code
 
 ```bash
@@ -47,7 +49,7 @@ pnpm nuxt prepare && pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json
 # Backend tests and build, with no new warnings
 cd src-tauri && cargo test && cargo build
 
-# Windows must keep compiling
+# Windows must keep compiling (CI also checks macOS)
 cd src-tauri && cargo check --target x86_64-pc-windows-msvc
 ```
 

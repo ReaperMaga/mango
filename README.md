@@ -56,7 +56,7 @@ pnpm bump minor   # new version (patch, minor, major or an exact 1.2.3) in every
 
 The version you are running, with the commit it was built from, is in Settings > Preferences. What changed in each version is in Settings > Changelog (the same file as the docs site's changelog, `docs/changelog.md`).
 
-Linux needs the Tauri system packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
+macOS needs the Xcode command line tools. Linux needs the Tauri system packages (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`,
 `librsvg2-dev`, `libayatana-appindicator3-dev`, `libssl-dev`).
 
 Cross-compiling the Windows installer from Linux (needs `nsis`, `lld`, `llvm`,

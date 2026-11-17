@@ -26,6 +26,7 @@ Running chats and terminals stop when Mango restarts; the menu tells you how man
 | --- | --- |
 | Windows installer (`-setup.exe`) | Runs the new installer with a small progress window, then starts Mango. |
 | Windows MSI | Runs the new MSI the same way. |
+| macOS `.dmg` | Replaces `Mango.app` in place. |
 | AppImage | Replaces the AppImage file in place. |
 | `.deb` / `.rpm` | Installs the new package. Linux asks for your password, because packages install system-wide. |
 
