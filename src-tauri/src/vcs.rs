@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::envs::{self, hosts};
-use crate::git::{self, blocking, At, EnvAt, GitBranchList, GitBranches, GitCommit, GitStatus, Vcs};
+use crate::git::{self, blocking, At, EnvAt, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
 use crate::plastic;
 
 /// Where a folder's version control lives.
@@ -172,6 +172,27 @@ pub async fn git_branch_rename(app: AppHandle, path: String, from: String, to: S
 #[tauri::command]
 pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, force: bool) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
+}
+
+const NO_PLASTIC_WORKTREES: &str = "Worktrees are a git feature; Unity Version Control workspaces don't have them.";
+
+/// The repository's worktrees, the main one first. Unity VCS has none.
+#[tauri::command]
+pub async fn git_worktrees(app: AppHandle, path: String) -> Result<Vec<GitWorktree>, String> {
+    dispatch!(app, path, git(at) => git::worktrees(&at), plastic(_root) => Ok(Vec::new()))
+}
+
+/// Add a linked worktree for `branch` beside the repository (`<parent>/<repo>.worktrees/<branch>`).
+#[tauri::command]
+pub async fn git_worktree_add(app: AppHandle, path: String, branch: String, from: Option<String>, create: bool) -> Result<GitWorktree, String> {
+    dispatch!(app, path, git(at) => git::worktree_add(&at, &branch, from.as_deref(), create),
+        plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+}
+
+/// Remove the linked worktree in the folder `worktree`; its branch is kept.
+#[tauri::command]
+pub async fn git_worktree_remove(app: AppHandle, path: String, worktree: String, force: bool) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
 }
 
 /// `git init` in `path`. Does nothing when it is already under version control.

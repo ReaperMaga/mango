@@ -3,6 +3,7 @@ import { MessageSquareText, Bug, GitPullRequestDraft, CornerLeftUp, Square } fro
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
 import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { worktreeName } from '~/utils/worktrees'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
@@ -109,7 +110,11 @@ function onKey(e: KeyboardEvent) {
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
-            <p>{{ AGENTS[thread.agent].name }} is ready in <code>{{ ws.activeProject?.name }}</code>. Describe the change you want.</p>
+            <p v-if="thread.worktree">
+              {{ AGENTS[thread.agent].name }} is ready in its own worktree <code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code><template v-if="thread.branch">
+                on <code>{{ thread.branch }}</code></template>, beside {{ ws.activeProject?.name }}. Other chats keep working undisturbed. Describe the change you want.
+            </p>
+            <p v-else>{{ AGENTS[thread.agent].name }} is ready in <code>{{ ws.activeProject?.name }}</code>. Describe the change you want.</p>
           </div>
           <ChatMessage
             v-for="(m, i) in thread.messages"

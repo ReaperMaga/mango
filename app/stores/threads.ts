@@ -13,6 +13,8 @@ import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
+import { workdirOf } from '~/utils/worktrees'
+import { call } from '~/composables/useBackend'
 import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
@@ -86,8 +88,42 @@ export const useThreads = defineStore('threads', {
     isSplit: s => s.panes.length > 1,
     /** The project a tab belongs to: a chat's own, or the one named in a diff or file tab's id. */
     projectOf(): (id: string | null | undefined) => string | null {
-      return id => tabProject(id) ?? this.byId(id)?.projectPath ?? null
+      return (id) => {
+        const path = tabProject(id)
+        return path ? this.ownerOf(path) : this.byId(id)?.projectPath ?? null
+      }
     },
+    /**
+     * The project a folder belongs to: a worktree a chat works in belongs to that chat's project
+     * (diff and file tabs opened from it carry the worktree's folder); anything else is its own.
+     */
+    ownerOf: s => (path: string): string =>
+      s.threads.find(t => t.worktree === path)?.projectPath ?? path,
+    /** The folder a chat works in: its top-level chat's worktree, or the project. */
+    workdirFor(): (id: string | null | undefined) => string | null {
+      return (id) => {
+        const root = this.rootOf(id ?? '')
+        return root ? workdirOf(root) : null
+      }
+    },
+    /**
+     * The working copy in view: what the Changes and Files tool windows, the branch in the titlebar
+     * and a new terminal follow. The chat in the active pane decides (its worktree, or the project);
+     * a diff or file tab keeps the folder it was opened from; anything else is the project.
+     */
+    workdir(): string | null {
+      const project = useWorkspace().activeProjectPath
+      if (!project) return null
+      const id = this.activePane.threadId
+      const tabPath = parseDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath
+      if (tabPath && this.ownerOf(tabPath) === project) return tabPath
+      const t = this.byId(id)
+      if (t && t.projectPath === project) return this.workdirFor(t.id)
+      return project
+    },
+    /** Every worktree folder a chat of this project works in, archived chats included. */
+    worktreesOf: s => (projectPath: string): string[] =>
+      [...new Set(s.threads.filter(t => t.projectPath === projectPath && t.worktree).map(t => t.worktree!))],
     /**
      * The active project's tabs, in order. `tabs` holds every project's tabs; only these
      * are on screen, so only these may be put in a pane (closing a tab, split, Ctrl+1–9).
@@ -168,10 +204,11 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    create(projectPath: string, agentArg?: AgentId, branch: string | null = null): Thread {
+    /** A new chat; with `worktree`, one that works in that linked worktree (see `createInWorktree`). */
+    create(projectPath: string, agentArg?: AgentId, branch: string | null = null, worktree: string | null = null): Thread {
       const agent = agentArg ?? this.defaultAgent
-      // Reuse an untouched empty chat instead of piling up "New chat" rows.
-      const blank = this.threads.find(x => x.projectPath === projectPath && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
+      // Reuse an untouched empty chat (in the same folder) instead of piling up "New chat" rows.
+      const blank = this.threads.find(x => x.projectPath === projectPath && (x.worktree ?? null) === worktree && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
       if (blank) {
         if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id; blank.effort = null }
         this.show(blank.id)
@@ -191,11 +228,56 @@ export const useThreads = defineStore('threads', {
         updatedAt: Date.now(),
         seen: true,
         branch,
+        ...(worktree ? { worktree } : {}),
       }
       this.threads.push(t)
       this.show(t.id)
       this.persist(t.id)
       return t
+    },
+
+    /**
+     * A chat that works in its own git worktree, so it can run beside the project's other chats.
+     * `existing`: a worktree folder that is already there; otherwise a new one is added for
+     * `branch` (a new branch from `from`, or the existing local branch when `create` is false).
+     * Rejects with git's reason when the worktree cannot be made.
+     */
+    async createInWorktree(projectPath: string, opts: { existing?: string; branch?: string; from?: string | null; create?: boolean; agent?: AgentId }): Promise<Thread> {
+      let folder = opts.existing ?? null
+      let branch: string | null = null
+      if (folder) {
+        const list = await call('git_worktrees', { path: projectPath }).catch(() => [])
+        branch = list.find(w => w.path === folder)?.branch ?? null
+      } else {
+        const wt = await call('git_worktree_add', { path: projectPath, branch: opts.branch ?? '', from: opts.from ?? null, create: opts.create ?? true })
+        folder = wt.path
+        branch = wt.branch
+      }
+      const t = this.create(projectPath, opts.agent, branch, folder)
+      void useGit().loadWorktrees(projectPath)
+      return t
+    },
+
+    /**
+     * Remove the worktree a chat works in (its branch stays). Every chat that worked there goes
+     * back to the project folder. Rejects with the reason (uncommitted changes, unless `force`).
+     */
+    async removeWorktree(id: string, force = false) {
+      const t = this.byId(id)
+      const folder = t?.worktree
+      if (!t || !folder) return
+      const users = this.threads.filter(x => x.worktree === folder)
+      if (users.some(isBusy)) throw new Error('A chat is still working in this worktree. Stop it first.')
+      await call('git_worktree_remove', { path: t.projectPath, worktree: folder, force })
+      for (const x of users) x.worktree = null
+      // Diff and file tabs opened from the folder show nothing now.
+      for (const tab of [...this.tabs]) {
+        if ((parseDiffTab(tab)?.projectPath ?? parseFileTab(tab)?.projectPath) === folder) this.closeTab(tab)
+      }
+      const git = useGit()
+      delete git.repos[folder]
+      void git.loadWorktrees(t.projectPath)
+      this.persist(users.map(x => x.id))
     },
 
     /** Show a thread in the active pane (or the pane that already shows it). */
@@ -759,7 +841,8 @@ function normalizeLoaded(t: Thread): Thread {
   const links = Array.isArray(t.links)
     ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
     : []
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined }
+  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree }
 }
 
 function titleFrom(text: string) {

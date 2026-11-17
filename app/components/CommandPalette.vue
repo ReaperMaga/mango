@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun, History,
+  FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun, History,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -13,6 +13,7 @@ import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
 import { useOverlay } from '~/composables/useOverlay'
+import { useWorktrees } from '~/composables/useWorktrees'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -21,6 +22,7 @@ import { useOverlay } from '~/composables/useOverlay'
 const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
+const wts = useWorktrees()
 useOverlay(() => ws.paletteOpen)
 
 /** Environments known to be usable right now (from what the store already has). */
@@ -87,6 +89,13 @@ const actions = computed<Item[]>(() => {
   const items: Item[] = []
   if (project) {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
+    if (wts.supported.value) {
+      items.push({ id: 'new-worktree-chat', group: 'Actions', label: 'New chat in a worktree…', detail: 'Its own folder and branch, to work in parallel', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree parallel branch isolated new chat thread git', run: () => ws.openWorktreeDialog() })
+      for (const w of wts.linked.value) {
+        if (w.prunable) continue
+        items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to worktree ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
+      }
+    }
     items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: [mod, shift, 'B'], keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
   }
   // With environments around, say where these put the project (the remembered choice).

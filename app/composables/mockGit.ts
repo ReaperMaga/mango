@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, VcsKind } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -507,6 +507,8 @@ function childBranch(name: string, parent: string): string {
 }
 
 const repos = new Map<string, Repo>()
+/** Linked worktrees made with `git_worktree_add`: folder → the main working tree's folder. */
+const linkedTrees = new Map<string, string>()
 function repoAt(path: string): Repo {
   let repo = repos.get(path)
   if (!repo) {
@@ -522,7 +524,7 @@ function repoAt(path: string): Repo {
 const tracking = (r: Repo): Tracking => r.branches[r.branch] ?? { upstream: null, ahead: 0, behind: 0 }
 
 function statusOf(r: Repo, path: string): GitStatus {
-  if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
+  if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, mainRoot: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
   const t = tracking(r)
   const files: GitFile[] = r.files
     .map(f => ({ path: f.path, origPath: f.staged?.origPath ?? f.unstaged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
@@ -530,9 +532,9 @@ function statusOf(r: Repo, path: string): GitStatus {
   if (r.vcs === 'plastic') {
     // A changeset number for HEAD; "behind" is newer changesets on the branch, known without a fetch.
     const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null
-    return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
+    return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
   }
-  return { vcs: 'git', repository: null, isRepo: true, root: path, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
+  return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
 }
 
 const wanted = (files: string[]) => (f: MockFile) => files.length === 0 || files.includes(f.path)
@@ -696,9 +698,59 @@ function checkout(r: Repo, branch: string, create: boolean) {
   r.branch = name
 }
 
+/* ---------- worktrees ---------- */
+
+function worktreeList(path: string): GitWorktree[] {
+  const main = linkedTrees.get(path) ?? path
+  const entry = (at: string, isMain: boolean): GitWorktree => {
+    const r = repoAt(at)
+    return { path: at, branch: r.branch, head: r.log[0]?.shortHash ?? null, isMain, isCurrent: at === path, locked: false, prunable: false }
+  }
+  return [entry(main, true), ...[...linkedTrees].filter(([, m]) => m === main).map(([at]) => entry(at, false))]
+}
+
+async function worktreeAdd(path: string, branch: string, from: string | null, create: boolean): Promise<GitWorktree> {
+  await wait(350)
+  const main = linkedTrees.get(path) ?? path
+  const mainRepo = repoAt(main)
+  const name = branch.trim()
+  if (!name || /\s|\.\.|[~^:?*[\\]/.test(name)) throw new Error(`"${name}" is not a valid branch name`)
+  const list = worktreeList(main)
+  if (list.some(w => w.branch === name)) throw new Error(`fatal: '${name}' is already checked out at '${list.find(w => w.branch === name)!.path}'`)
+  if (create && mainRepo.branches[name]) throw new Error(`A branch named ${name} already exists`)
+  if (!create && !mainRepo.branches[name]) throw new Error(`fatal: invalid reference: ${name}`)
+  const sep = main.includes('\\') && !main.includes('/') ? '\\' : '/'
+  const cut = main.replace(/[\\/]+$/, '').lastIndexOf(sep)
+  const folder = `${main.slice(0, cut + 1)}${baseName(main)}.worktrees${sep}${name.replace(/\//g, '-')}`
+  if (repos.has(folder)) throw new Error(`${folder} already exists; pick another branch name`)
+  // The mock has one history: a new branch starts where the project's does, whatever `from` says.
+  void from
+  if (create) mainRepo.branches[name] = { upstream: null, ahead: 0, behind: 0 }
+  repos.set(folder, { ...cleanRepo(), branch: name, branches: mainRepo.branches, log: [...mainRepo.log], incoming: [] })
+  linkedTrees.set(folder, main)
+  return worktreeList(folder).find(w => w.path === folder)!
+}
+
+async function worktreeRemove(path: string, folder: string, force: boolean) {
+  await wait(250)
+  const main = linkedTrees.get(path) ?? path
+  if (folder === main) throw new Error('That is the main working tree; it cannot be removed')
+  if (linkedTrees.get(folder) !== main) throw new Error(`${folder} is not a worktree of this repository`)
+  const r = repoAt(folder)
+  if (r.files.length && !force) throw new Error(`${r.branch} has uncommitted changes; commit or discard them first`)
+  repos.delete(folder)
+  linkedTrees.delete(folder)
+}
+
 export async function mockGit(cmd: string, args: any): Promise<any> {
   const path = String(args?.path ?? '')
   const r = repoAt(path)
+  if (cmd === 'git_worktrees') return r.isRepo && r.vcs === 'git' ? worktreeList(path) : []
+  if (cmd === 'git_worktree_add') {
+    if (r.vcs === 'plastic') throw new Error('Worktrees are a git feature; Unity Version Control workspaces have none')
+    return worktreeAdd(path, String(args.branch ?? ''), args.from ?? null, args.create !== false)
+  }
+  if (cmd === 'git_worktree_remove') return worktreeRemove(path, String(args.worktree ?? ''), !!args.force)
   if (cmd === 'git_status') return statusOf(r, path)
   if (cmd === 'git_init') {
     if (!r.isRepo) {

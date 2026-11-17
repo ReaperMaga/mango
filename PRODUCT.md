@@ -49,7 +49,7 @@ Constraints:
 - Mango never handles credentials itself; signing in is the CLI's own flow, run in an embedded terminal.
 - The list of agents will grow; anything agent-specific lives behind the adapter interface in `app/agents/`.
 
-Undecided: persistence format for chat history, per-thread worktrees, attachments, "always allow" approval rules.
+Undecided: persistence format for chat history, attachments, "always allow" approval rules.
 
 ## Brand Commitments
 

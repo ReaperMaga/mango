@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call } from '~/composables/useBackend'
 import { isEnvPath } from '~/utils/envPath'
@@ -12,6 +12,7 @@ import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
 import { holdOverlay } from '~/composables/useOverlay'
+import { worktreeName } from '~/utils/worktrees'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -66,6 +67,9 @@ function newChat(path?: string) {
   ws.setActiveProject(target)
   threads.create(target)
 }
+
+/** Worktrees are a git feature: offered for git projects only (not Unity VCS). */
+const canWorktree = computed(() => !!ws.activeProject?.isGit && ws.activeProject.vcs !== 'plastic')
 
 function open(t: Thread) {
   if (justDragged) return // the click that ends a drag is not a click
@@ -229,8 +233,44 @@ function threadMenu(t: Thread): MenuItem[] {
     // Status. Settled is only set with the row's mark.
     { label: 'Working', icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
     { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) threads.archive(t.id) } },
-    { label: 'Delete chat', icon: Trash2, danger: true, divider: true, onSelect: () => threads.remove(t.id) },
+    ...(t.worktree ? [{ label: 'Remove worktree…', icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
+    { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => threads.remove(t.id) },
   ]
+}
+
+/* ---------- remove a chat's worktree: asks first, then once more when it has uncommitted work ---------- */
+
+const removing = ref<Thread | null>(null)
+const removeBusy = ref(false)
+const removeError = ref('')
+/** The worktree has changes git would throw away: the next press removes it anyway. */
+const removeForce = ref(false)
+const removeOthers = computed(() => {
+  const r = removing.value
+  return r ? threads.threads.filter(x => x.worktree === r.worktree && x.id !== r.id && !x.parentId).length : 0
+})
+
+function askRemoveWorktree(t: Thread) {
+  removing.value = t
+  removeError.value = ''
+  removeForce.value = false
+}
+async function removeWorktree() {
+  const t = removing.value
+  if (!t || removeBusy.value) return
+  removeBusy.value = true
+  removeError.value = ''
+  try {
+    await threads.removeWorktree(t.id, removeForce.value)
+    removing.value = null
+  } catch (err) {
+    const why = (typeof err === 'string' ? err : err instanceof Error ? err.message : String(err)).trim().replace(/\.$/, '')
+    removeError.value = `${why}.`
+    // Uncommitted work: offer the destructive version, as a second, explicit step.
+    if (/uncommitted|untracked|modified|changes/i.test(why)) removeForce.value = true
+  } finally {
+    removeBusy.value = false
+  }
 }
 
 /* resize */
@@ -337,6 +377,7 @@ const codeItems = computed<MenuItem[]>(() => [
             <span v-if="!sec.open && sec.unseen" class="sb__unseen" :title="`${sec.unseen} new result${sec.unseen === 1 ? '' : 's'}`" />
           </component>
           <div v-if="sec.id === 'active'" class="sb__group-actions">
+            <UiIconButton v-if="canWorktree" size="sm" :label="`New chat in a worktree (${mod}+Shift+N)`" @click="ws.openWorktreeDialog()"><FolderGit2 /></UiIconButton>
             <UiIconButton size="sm" label="New chat" @click="newChat()"><Plus /></UiIconButton>
           </div>
         </div>
@@ -390,6 +431,10 @@ const codeItems = computed<MenuItem[]>(() => [
                 </span>
                 <span class="sb__subline">
                   <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
+                  <span v-if="t.worktree" class="sb__wt" :title="`Works in its own worktree: ${t.worktree}${t.branch ? `\nBranch: ${t.branch}` : ''}`">
+                    <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ t.branch ?? worktreeName(t.worktree) }}</span>
+                    <span class="sr-only">, in worktree {{ worktreeName(t.worktree) }}</span>
+                  </span>
                   <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
                     #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
                     <span class="sr-only">, {{ m.label }}</span>
@@ -467,6 +512,24 @@ const codeItems = computed<MenuItem[]>(() => [
         </template>
       </UiMenu>
     </footer>
+
+    <UiDialog :open="!!removing" title="Remove worktree" :width="440" :dismissible="!removeBusy" @close="removing = null">
+      <template v-if="removing">
+        <p class="sb__logout">
+          Remove the worktree folder <code class="sb__code selectable">{{ removing.worktree }}</code>?
+          The branch{{ removing.branch ? ' ' : '' }}<code v-if="removing.branch" class="sb__code">{{ removing.branch }}</code> and its commits stay.
+          {{ removeOthers ? `This chat and ${removeOthers} other${removeOthers === 1 ? '' : 's'} that worked there` : 'The chat' }}
+          will work in the project folder from then on.
+        </p>
+        <p v-if="removeError" class="sb__logout sb__logout--error selectable" role="alert">
+          {{ removeError }}<template v-if="removeForce"> Removing it anyway throws those changes away.</template>
+        </p>
+      </template>
+      <template #footer>
+        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">Cancel</UiButton>
+        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : 'Remove worktree' }}</UiButton>
+      </template>
+    </UiDialog>
 
     <UiDialog :open="logoutOpen" title="Log out" :width="420" :dismissible="!loggingOut" @close="logoutOpen = false">
       <p class="sb__logout">
@@ -618,6 +681,24 @@ const codeItems = computed<MenuItem[]>(() => [
 .sb__link-icon.is-done { color: var(--ripe-done); }
 .sb__link-icon.is-error { color: var(--ripe-error); }
 .sb__link-more { margin-left: 2px; color: var(--fg-faint); }
+/* A chat with its own worktree: its branch at the right of the status line, cut short before the status is. */
+.sb__wt {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  color: var(--fg-subtle);
+}
+.sb__wt svg { flex: none; width: 11px; height: 11px; stroke-width: 1.9; }
+.sb__wt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb__wt + .sb__link { margin-left: 0; }
+.sb__thread.is-current .sb__wt { color: var(--fg-muted); }
 .sb__thread.is-current .sb__link { color: var(--fg-muted); }
 .sb__sub { font-size: var(--text-xs); color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.35; }
 .sb__sub--waiting { color: var(--ripe-waiting-fg); }
@@ -724,6 +805,7 @@ const codeItems = computed<MenuItem[]>(() => [
 .sb__btn .sb__agent-icon.agent-icon--codex { color: var(--fg); }
 .sb__logout { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
 .sb__logout--error { margin-top: var(--space-2); color: var(--ripe-error-fg); }
+.sb__code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg); word-break: break-all; }
 .sb__dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ripe-waiting); }
 
 .sb__resize {

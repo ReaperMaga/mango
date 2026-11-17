@@ -6,6 +6,7 @@ import { baseName } from '~/utils/paths'
 import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
+import { useThreads } from '~/stores/threads'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -165,7 +166,7 @@ export const useWorkspace = defineStore('workspace', {
        * which dialog is open: a project dialog ('open-env' picks a folder inside an environment),
        * "Get started" (setup) or the usage limits
        */
-      dialog: null as null | 'new' | 'clone' | 'open-env' | 'setup' | 'usage',
+      dialog: null as null | 'new' | 'clone' | 'open-env' | 'setup' | 'usage' | 'worktree',
       /**
        * Where Open folder, New project and Clone put a project: an environment, or null for this
        * computer. The last choice, remembered.
@@ -386,6 +387,12 @@ export const useWorkspace = defineStore('workspace', {
       if (tab) this.agentsTab = tab
       this.paletteOpen = false
     },
+    /** "New chat in a worktree" for the active project (a git repository on this computer or in an environment). */
+    openWorktreeDialog() {
+      if (!this.activeProject?.isGit || this.activeProject.vcs === 'plastic') return
+      this.dialog = 'worktree'
+      this.paletteOpen = false
+    },
     openUsage() {
       this.dialog = 'usage'
       this.paletteOpen = false
@@ -441,13 +448,14 @@ export const useWorkspace = defineStore('workspace', {
     },
     /** `profileId` picks a shell for this one terminal; omitted, the default shell is used. */
     /**
-     * Open a terminal tab. `cwd` defaults to the active project: for a remote project that is a shell in its
+     * Open a terminal tab. `cwd` defaults to the working copy in view (the active chat's worktree, else the
+     * active project): for a remote project that is a shell in its
      * environment. Picking a local shell (`profileId`) always runs on this computer, in the home folder when the
      * project is remote.
      */
     newTerminal(cwd?: string | null, profileId?: string | null) {
       const id = `term-${++tabSeq}`
-      let dir = cwd ?? this.activeProjectPath
+      let dir = cwd ?? useThreads().workdir ?? this.activeProjectPath
       if (profileId && isEnvPath(dir)) dir = null
       // In a remote project the terminal is a shell inside the instance (TerminalView starts it with `env_shell`).
       const remote = parseEnvPath(dir)

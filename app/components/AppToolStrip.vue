@@ -14,19 +14,20 @@ import { modLabel } from '~/composables/useShortcuts'
 
 const ws = useWorkspace()
 const git = useGit()
+const threads = useThreads()
 const mod = ref('Ctrl')
 onMounted(() => (mod.value = modLabel()))
 
-/** Number of changed files in the active project, shown on the Changes button. */
-const changeCount = computed(() => git.status(ws.activeProjectPath)?.files.length ?? 0)
+/** Number of changed files in the working copy in view (the active chat's worktree, or the project), shown on the Changes button. */
+const workdir = computed(() => threads.workdir ?? ws.activeProjectPath)
+const changeCount = computed(() => git.status(workdir.value)?.files.length ?? 0)
 // Keep that number honest without the Changes view being open.
-watch(() => ws.activeProjectPath, (path) => { if (path) refreshGit(path).catch(() => {}) }, { immediate: true })
-function onWindowFocus() { if (ws.activeProjectPath) refreshGit(ws.activeProjectPath).catch(() => {}) }
+watch(workdir, (path) => { if (path) refreshGit(path).catch(() => {}) }, { immediate: true })
+function onWindowFocus() { if (workdir.value) refreshGit(workdir.value).catch(() => {}) }
 onMounted(() => window.addEventListener('focus', onWindowFocus))
 onBeforeUnmount(() => window.removeEventListener('focus', onWindowFocus))
 
 /** Pull requests and issues linked to the chat in the active pane (or the chat a sub-agent belongs to). */
-const threads = useThreads()
 const linkCount = computed(() => {
   const id = threads.activePane.threadId
   return (id && threads.byId(id) ? threads.rootOf(id)?.links?.length : 0) ?? 0
