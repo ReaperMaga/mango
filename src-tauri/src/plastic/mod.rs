@@ -18,6 +18,8 @@ use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+pub(crate) mod reviews;
+
 use crate::git::{
     chunks, clean_rel, finish_diff, lossy, remove_untracked, run_process, tidy_output, GitBranchList,
     GitBranches, GitCommit, GitFile, GitLocalBranch, GitStatus, Output, Vcs, DIFF_CAP, LOCAL_TIMEOUT,

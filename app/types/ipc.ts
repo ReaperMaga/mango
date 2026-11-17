@@ -200,6 +200,50 @@ export interface GhLabel {
 
 export type GhState = 'open' | 'draft' | 'merged' | 'closed'
 
+/** A Unity VCS code review's status (`cm codereview --status`). */
+export type PlasticReviewStatus = 'underReview' | 'reviewed' | 'reworkRequired'
+
+export interface PlasticReviewer {
+  /** A user or group name (an email on Unity Cloud). */
+  name: string
+  status: PlasticReviewStatus
+}
+
+/** One Unity VCS code review as `cm find review` reports it. */
+export interface PlasticReview {
+  id: number
+  guid: string | null
+  title: string
+  status: PlasticReviewStatus
+  owner: string
+  /** The single assignee of older reviews; newer ones have reviewers. */
+  assignee: string | null
+  reviewers: PlasticReviewer[]
+  targetType: 'branch' | 'changeset'
+  /** The branch (`/main/task-1`) or changeset (`cs:12`); empty when `cm` named it only by id. */
+  target: string
+  /** Unix ms; 0 when unknown. */
+  created: number
+  /** Last activity, Unix ms, when the client reports it. */
+  modified: number | null
+  comments: number | null
+  /** Change requests not applied plus questions not answered, when the client reports it. */
+  unresolved: number | null
+}
+
+/** Code reviews of a Unity VCS workspace (`plastic_reviews`). */
+export interface PlasticReviews {
+  repository: string | null
+  /** The branch the workspace is on; null when pinned to a changeset or label. */
+  branch: string | null
+  /** Reviews of that branch, newest first, whatever their status (at most 20). */
+  branchReviews: PlasticReview[]
+  /** The repository's reviews under review or waiting for rework, newest first, without the branch's own (at most 50). */
+  open: PlasticReview[]
+  /** More open reviews exist than `open` holds. */
+  more: boolean
+}
+
 /** One pull request or issue as `gh_item` reads it. */
 export interface GhItem {
   kind: 'pr' | 'issue'
@@ -789,6 +833,16 @@ export interface Commands {
    * and once it finished, its log split into them. Other links are refused.
    */
   gh_job: [{ url: string }, GhJob]
+  /**
+   * Unity VCS code reviews for the workspace holding `path`: its branch's, and the repository's open
+   * ones. Fails for a git folder.
+   */
+  plastic_reviews: [{ path: string }, PlasticReviews]
+  /**
+   * Ask for a code review of the branch the workspace at `path` is on (`cm codereview`), optionally
+   * naming reviewers (comma-separated users). Returns the new review's id.
+   */
+  plastic_review_create: [{ path: string; title: string; reviewers: string | null }, number]
 
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]

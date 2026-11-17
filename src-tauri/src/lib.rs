@@ -114,6 +114,8 @@ pub fn run() {
             vcs::git_worktree_add,
             vcs::git_worktree_remove,
             vcs::git_ahead,
+            plastic::reviews::plastic_reviews,
+            plastic::reviews::plastic_review_create,
             github::gh_item,
             github::gh_merge,
             github::gh_pr_create,

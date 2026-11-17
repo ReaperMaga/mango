@@ -4,6 +4,7 @@ import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { isEnvPath } from '~/utils/envPath'
 
@@ -339,6 +340,8 @@ const mock = (() => {
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
       case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))
+      case 'plastic_reviews': await new Promise(r => setTimeout(r, 500)); return mockPlasticReviews(args.path)
+      case 'plastic_review_create': await new Promise(r => setTimeout(r, 900)); return mockPlasticReviewCreate(args.path, args.title, args.reviewers)
       /* Browser: no native webview here (BrowserPane shows an iframe); pages "load" at once. */
       case 'browser_open': case 'browser_navigate': {
         const { id, url } = args as { id: string; url: string }
