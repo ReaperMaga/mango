@@ -2,6 +2,8 @@
 import { AGENTS, type Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
 import { useThreads } from '~/stores/threads'
+import { useWorkspace } from '~/stores/workspace'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * The live "the agent is at work" row under the conversation: what it is
@@ -12,6 +14,7 @@ const props = defineProps<{ thread: Thread }>()
 
 const agent = computed(() => AGENTS[props.thread.agent].name)
 const threads = useThreads()
+const ws = useWorkspace()
 /** Answered already, and only background tasks keep the run open (they are listed above the composer). */
 const waitingOn = computed(() => {
   const live = threads.live[props.thread.id]
@@ -20,6 +23,11 @@ const waitingOn = computed(() => {
 
 const activity = computed(() => {
   const t = props.thread
+  if (t.status === 'queued' && t.awaitingWorktree) {
+    // Unity VCS downloads the branch's files into the new workspace first: minutes on a big project.
+    const terms = vcsTerms(ws.openProjects.find(p => p.path === t.projectPath)?.vcs)
+    return terms.pathBranches ? `Making a ${terms.worktree} and downloading its files` : `Making a ${terms.worktree}`
+  }
   if (t.status === 'queued') return `Starting ${agent.value}`
   if (t.status === 'waiting') return 'Waiting for your approval'
   if (waitingOn.value) return `Waiting for ${waitingOn.value} background task${waitingOn.value === 1 ? '' : 's'}`

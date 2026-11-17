@@ -13,6 +13,7 @@ import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
 import { holdOverlay } from '~/composables/useOverlay'
 import { worktreeName } from '~/utils/worktrees'
+import { vcsTerms } from '~/utils/vcs'
 import { useWorktrees } from '~/composables/useWorktrees'
 import { useGit } from '~/stores/git'
 
@@ -70,17 +71,16 @@ function newChat(path?: string) {
   threads.create(target)
 }
 
-/** Worktrees are a git feature: offered for git projects only (not Unity VCS). */
-const canWorktree = computed(() => !!ws.activeProject?.isGit && ws.activeProject.vcs !== 'plastic')
-
 /* ---------- the "+" split button: a plain chat, or the menu of where else a new chat can start ---------- */
 const wts = useWorktrees()
+/** A chat in its own git worktree, or its own Unity VCS workspace: for projects under version control. */
+const canWorktree = wts.supported
 const newChatItems = computed<MenuItem[]>(() => {
   const path = ws.activeProjectPath
   if (!path) return []
   const items: MenuItem[] = [{ label: 'New chat', icon: Plus, kbd: `${mod.value}+N`, onSelect: () => newChat() }]
   if (!canWorktree.value) return items
-  items.push({ label: 'New chat in a worktree', icon: FolderGit2, kbd: `${mod.value}+Shift+N`, onSelect: () => threads.createAwaitingWorktree(path) })
+  items.push({ label: `New chat in a ${wts.term.value}`, icon: FolderGit2, kbd: `${mod.value}+Shift+N`, onSelect: () => threads.createAwaitingWorktree(path) })
   wts.linked.value.forEach((w, i) => items.push({
     label: worktreeName(w.path),
     hint: wts.hint(w),
@@ -261,12 +261,17 @@ function threadMenu(t: Thread): MenuItem[] {
     // Status. Settled is only set with the row's mark.
     { label: 'Working', icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
     { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) ws.confirmThen('archive', { title: 'Archive chat?', body: `“${t.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(t.id)) } },
-    ...(t.worktree ? [{ label: 'Remove worktree…', icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
+    ...(t.worktree ? [{ label: `Remove ${termOf(t)}…`, icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
     { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => ws.confirmThen('delete', { title: 'Delete chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
   ]
 }
 
 /* ---------- remove a chat's worktree: asks first, then once more when it has uncommitted work ---------- */
+
+/** "worktree", or "workspace" for a Unity VCS chat. */
+const termOf = (t: Thread) => vcsTerms(ws.openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
+/** Unity VCS branches are long paths; the chip shows their last part (`/main/task/fix` → `fix`). */
+const chipBranch = (b: string) => (b.startsWith('/') ? b.slice(b.lastIndexOf('/') + 1) : b)
 
 const removing = ref<Thread | null>(null)
 const removeBusy = ref(false)
@@ -277,6 +282,10 @@ const removeOthers = computed(() => {
   const r = removing.value
   return r ? threads.threads.filter(x => x.worktree === r.worktree && x.id !== r.id && !x.parentId).length : 0
 })
+
+const removeTerm = computed(() => (removing.value ? termOf(removing.value) : 'worktree'))
+/** "commit", or "changeset" for Unity VCS. */
+const removeUnit = computed(() => vcsTerms(ws.openProjects.find(p => p.path === removing.value?.projectPath)?.vcs).unit)
 
 function askRemoveWorktree(t: Thread) {
   removing.value = t
@@ -405,7 +414,7 @@ const codeItems = computed<MenuItem[]>(() => [
             <span v-if="!sec.open && sec.unseen" class="sb__unseen" :title="`${sec.unseen} new result${sec.unseen === 1 ? '' : 's'}`" />
           </component>
           <div v-if="sec.id === 'active'" class="sb__group-actions">
-            <UiMenu :items="newChatItems" placement="bottom-end" :width="260" label="New chat">
+            <UiMenu :items="newChatItems" placement="bottom-end" :width="280" label="New chat">
               <template #default="{ open: menuOpen, toggle }">
                 <div class="sb__split" :class="{ 'is-open': menuOpen }">
                   <button type="button" class="sb__split-main" :aria-label="`New chat (${mod}+N)`" :title="`New chat (${mod}+N)`" @click="newChat()"><Plus /></button>
@@ -475,12 +484,12 @@ const codeItems = computed<MenuItem[]>(() => [
                 </span>
                 <span class="sb__subline">
                   <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
-                  <span v-if="t.worktree" class="sb__wt" :title="`Works in its own worktree: ${t.worktree}${t.branch ? `\nBranch: ${t.branch}` : ''}`">
-                    <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ t.branch ?? worktreeName(t.worktree) }}</span>
-                    <span class="sr-only">, in worktree {{ worktreeName(t.worktree) }}</span>
+                  <span v-if="t.worktree" class="sb__wt" :title="`Works in its own ${termOf(t)}: ${t.worktree}${t.branch ? `\nBranch: ${t.branch}` : ''}`">
+                    <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ t.branch ? chipBranch(t.branch) : worktreeName(t.worktree) }}</span>
+                    <span class="sr-only">, in {{ termOf(t) }} {{ worktreeName(t.worktree) }}</span>
                   </span>
-                  <span v-else-if="t.awaitingWorktree" class="sb__wt" title="Gets its own worktree and branch when you send the first message">
-                    <FolderGit2 aria-hidden="true" /><span class="sr-only">, worktree made on the first message</span>
+                  <span v-else-if="t.awaitingWorktree" class="sb__wt" :title="`Gets its own ${termOf(t)} and branch when you send the first message`">
+                    <FolderGit2 aria-hidden="true" /><span class="sr-only">, {{ termOf(t) }} made on the first message</span>
                   </span>
                   <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
                     #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
@@ -560,11 +569,11 @@ const codeItems = computed<MenuItem[]>(() => [
       </UiMenu>
     </footer>
 
-    <UiDialog :open="!!removing" title="Remove worktree" :width="440" :dismissible="!removeBusy" @close="removing = null">
+    <UiDialog :open="!!removing" :title="`Remove ${removeTerm}`" :width="440" :dismissible="!removeBusy" @close="removing = null">
       <template v-if="removing">
         <p class="sb__logout">
-          Remove the worktree folder <code class="sb__code selectable">{{ removing.worktree }}</code>?
-          The branch{{ removing.branch ? ' ' : '' }}<code v-if="removing.branch" class="sb__code">{{ removing.branch }}</code> and its commits stay.
+          Remove the {{ removeTerm }} folder <code class="sb__code selectable">{{ removing.worktree }}</code>?
+          The branch{{ removing.branch ? ' ' : '' }}<code v-if="removing.branch" class="sb__code">{{ removing.branch }}</code> and its {{ removeUnit }}s stay.
           {{ removeOthers ? `This chat and ${removeOthers} other${removeOthers === 1 ? '' : 's'} that worked there` : 'The chat' }}
           will work in the project folder from then on.
         </p>
@@ -574,7 +583,7 @@ const codeItems = computed<MenuItem[]>(() => [
       </template>
       <template #footer>
         <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">Cancel</UiButton>
-        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : 'Remove worktree' }}</UiButton>
+        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : `Remove ${removeTerm}` }}</UiButton>
       </template>
     </UiDialog>
 

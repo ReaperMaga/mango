@@ -3,11 +3,12 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useGit } from '~/stores/git'
 import { worktreeName } from '~/utils/worktrees'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * The active project's working trees, for the sidebar's new-chat menu and the command palette: the
- * project folder and each linked worktree, and going to one (its latest chat, or a new chat there
- * when none works in it yet).
+ * project folder and each linked worktree (for Unity VCS: each chat workspace beside it), and going
+ * to one (its latest chat, or a new chat there when none works in it yet).
  */
 export function useWorktrees() {
   const ws = useWorkspace()
@@ -15,8 +16,10 @@ export function useWorktrees() {
   const git = useGit()
 
   const project = computed(() => ws.activeProjectPath)
-  /** Worktrees are a git feature: none for Unity VCS or a folder without version control. */
-  const supported = computed(() => !!ws.activeProject?.isGit && ws.activeProject.vcs !== 'plastic')
+  /** None for a folder without version control. */
+  const supported = computed(() => !!ws.activeProject?.isGit && vcsTerms(ws.activeProject.vcs).worktrees)
+  /** "worktree", or "workspace" for Unity VCS. */
+  const term = computed(() => vcsTerms(ws.activeProject?.vcs).worktree)
   const list = computed(() => (supported.value ? git.worktrees(project.value) : []))
   /** The other working trees: every one but the project folder's own (`isCurrent`, asked about the project). */
   const linked = computed(() => list.value.filter(w => !w.isCurrent))
@@ -48,5 +51,5 @@ export function useWorktrees() {
     return w.prunable ? `${branch} · folder is gone` : `${branch}${n ? ` · ${n} chat${n === 1 ? '' : 's'}` : ''}`
   }
 
-  return { supported, list, linked, chatsIn, goTo, label, hint }
+  return { supported, term, list, linked, chatsIn, goTo, label, hint }
 }

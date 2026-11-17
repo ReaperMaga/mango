@@ -5,6 +5,7 @@ import { useThreads, type Pane } from '~/stores/threads'
 import { useModels } from '~/stores/models'
 import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
 import { worktreeName } from '~/utils/worktrees'
+import { vcsTerms } from '~/utils/vcs'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
@@ -12,6 +13,8 @@ const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
 const ws = useWorkspace()
 const threads = useThreads()
 const thread = computed(() => threads.byId(props.pane.threadId))
+/** "worktree", or "workspace" for a Unity VCS project. */
+const term = computed(() => vcsTerms(ws.openProjects.find(p => p.path === thread.value?.projectPath)?.vcs).worktree)
 const busy = computed(() => !!thread.value && ['running', 'queued', 'waiting'].includes(thread.value.status))
 /** A sub-agent's chat: filled by its parent's run, so it has no composer of its own. */
 const parent = computed(() => (thread.value?.parentId ? threads.byId(thread.value.parentId) : null))
@@ -117,9 +120,9 @@ function onKey(e: KeyboardEvent) {
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
-            <p v-if="thread.awaitingWorktree">{{ AGENTS[thread.agent].name }} will start in a new worktree, made when you send your first message. Its branch is named after what you write.</p>
+            <p v-if="thread.awaitingWorktree">{{ AGENTS[thread.agent].name }} will start in a new {{ term }}, made when you send your first message. Its branch is named after what you write.</p>
             <p v-else-if="thread.worktree">
-              {{ AGENTS[thread.agent].name }} is ready in its own worktree <code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code><template v-if="thread.branch">
+              {{ AGENTS[thread.agent].name }} is ready in its own {{ term }} <code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code><template v-if="thread.branch">
                 on <code>{{ thread.branch }}</code></template>, beside {{ ws.activeProject?.name }}. Other chats keep working undisturbed. Describe the change you want.
             </p>
             <p v-else>{{ AGENTS[thread.agent].name }} is ready in <code>{{ ws.activeProject?.name }}</code>. Describe the change you want.</p>

@@ -14,6 +14,8 @@
 //! - branches are paths such as `/main/task-12`, and a new branch is a child
 //!   of the branch it starts from.
 
+pub(crate) mod workspaces;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;

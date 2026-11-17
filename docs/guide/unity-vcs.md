@@ -26,6 +26,7 @@ When you open a folder, Mango walks up from it looking for a `.git` or a `.plast
 | Code reviews | The branch's reviews and the repository's open ones in the Pull requests tool window; request a review of the branch |
 | Locks | See who holds which file, lock files and release your own locks (see below) |
 | Shelves | Shelve pending changes, apply a shelve back, delete one, from the **Shelves** section of the Changes view |
+| Parallel chats | A chat in its own workspace, on its own branch (see below) |
 
 ## No staging area
 
@@ -93,6 +94,22 @@ A shelve (`sh:12`) parks pending changes on the server so you can bring them bac
 - **Delete** asks first (two steps, like discard) and removes the shelve from the server for good.
 
 Under the hood these run `cm shelveset create … --all --dependencies -c=<comment>`, `cm undo` for the undo step, `cm shelveset apply sh:<n>`, `cm shelveset delete sh:<n>`, and `cm find shelve "where owner='me'"`.
+
+## A workspace per chat
+
+What git projects do with [worktrees](./chats#worktrees-chats-that-work-in-parallel), Unity VCS projects do with workspaces: a chat can work in a workspace of its own, so several agents change the project at once without touching each other's files or yours.
+
+Start one with <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>N</kbd>, the caret beside **+** in the sidebar, or **New chat in a workspace** in the command palette. Nothing is made until you send the first message. Then Mango:
+
+1. creates a branch named after the message as a child of the project's current branch (`/main/feature/inventory/fix-the-login`; `-2`, `-3` … when the name is taken),
+2. creates a new workspace of the same repository in a folder beside the project, `<project>.worktrees/fix-the-login` (registered with `cm` as `<project>-fix-the-login`),
+3. switches that workspace to the new branch, which downloads the branch's files, and only then starts the agent there.
+
+The download is the slow part: on a big Unity project it can take minutes, and the chat shows "Making a workspace and downloading its files" with the time so far. Mango waits up to an hour. If anything fails, the new workspace, its folder and the empty branch are removed again, and the message stays so you can send it again.
+
+The workspaces Mango made for the project are listed under **Continue in** in the sidebar's new-chat menu and in the command palette. Only workspaces of the same repository in the `<project>.worktrees` folder are listed or removed; your other workspaces are never touched.
+
+**Remove workspace…** in a chat's menu runs `cm workspace delete` and deletes the folder (which `cm` leaves on disk). The branch and its changesets stay. With pending changes in the workspace, private files included, Mango says so, and removing it anyway is a separate second step that throws them away.
 
 ## What is not there
 
