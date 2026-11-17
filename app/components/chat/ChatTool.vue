@@ -82,15 +82,17 @@ function showCreated(item: ItemRef) {
       </li>
     </ul>
 
-    <div v-if="open && expandable" class="tool__detail selectable">
-      <div v-if="part.diff?.length" class="diff" role="table" aria-label="Diff">
-        <div v-for="(l, i) in part.diff" :key="i" class="diff__line" :class="`diff__line--${l.kind}`" role="row">
-          <span class="diff__sign" aria-hidden="true">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : l.kind === 'hunk' ? '⋯' : ' ' }}</span>
-          <span class="diff__text">{{ l.text || ' ' }}</span>
+    <UiReveal>
+      <div v-if="open && expandable" class="tool__detail selectable">
+        <div v-if="part.diff?.length" class="diff" role="table" aria-label="Diff">
+          <div v-for="(l, i) in part.diff" :key="i" class="diff__line" :class="`diff__line--${l.kind}`" role="row">
+            <span class="diff__sign" aria-hidden="true">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : l.kind === 'hunk' ? '⋯' : ' ' }}</span>
+            <span class="diff__text">{{ l.text || ' ' }}</span>
+          </div>
         </div>
+        <pre v-else-if="part.output" class="tool__out">{{ part.output }}</pre>
       </div>
-      <pre v-else-if="part.output" class="tool__out">{{ part.output }}</pre>
-    </div>
+    </UiReveal>
   </div>
 </template>
 

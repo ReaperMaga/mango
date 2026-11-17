@@ -75,42 +75,44 @@ const plain = computed(() => output.value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ''
       <span class="bg__title">Background</span>
       <span class="bg__count tabular">{{ running ? `${running} running` : 'all finished' }}</span>
     </button>
-    <ul v-show="open" class="bg__list" role="list">
-      <li v-for="t in tasks" :key="t.id" class="bg__item" :class="`is-${t.status}`">
-        <div class="bg__row">
-          <span class="bg__icon" aria-hidden="true">
-            <span v-if="t.status === 'running'" class="bg__spin" />
-            <component :is="END_ICONS[t.status]" v-else />
-          </span>
-          <component :is="ICONS[t.kind]" class="bg__kind" aria-hidden="true" />
-          <span class="bg__name" :title="t.title">{{ t.title }}</span>
-          <span v-if="t.status === 'running' && t.activity" class="bg__activity" :title="t.activity">{{ t.activity }}</span>
-          <span v-else-if="t.status !== 'running'" class="bg__activity">{{ END_WORDS[t.status] }}</span>
-          <span class="bg__time tabular">{{ elapsed(t) }}</span>
-          <span class="bg__actions">
-            <UiIconButton
-              v-if="t.kind === 'command' || t.kind === 'other'"
-              size="sm"
-              :label="peeking === t.id ? 'Hide output' : 'Show output'"
-              :active="peeking === t.id"
-              @click="togglePeek(t)"
-            >
-              <ScrollText />
-            </UiIconButton>
-            <UiIconButton v-else-if="childOf(t)" size="sm" label="Open the sub-agent's chat" @click="threads.show(childOf(t)!.id)">
-              <ArrowUpRight />
-            </UiIconButton>
-            <UiIconButton v-if="t.status === 'running'" size="sm" label="Stop" @click="stopTask(thread.id, t.id)">
-              <CircleStop />
-            </UiIconButton>
-          </span>
-        </div>
-        <div v-if="peeking === t.id" class="bg__out selectable">
-          <pre v-if="outputState === 'ready' && plain" :ref="setOutEl">{{ plain }}</pre>
-          <p v-else class="bg__out-note">{{ outputState === 'loading' ? 'Reading output…' : outputState === 'ready' ? 'No output yet.' : 'This task has no output to show.' }}</p>
-        </div>
-      </li>
-    </ul>
+    <UiReveal>
+      <ul v-show="open" class="bg__list" role="list">
+        <li v-for="t in tasks" :key="t.id" class="bg__item" :class="`is-${t.status}`">
+          <div class="bg__row">
+            <span class="bg__icon" aria-hidden="true">
+              <span v-if="t.status === 'running'" class="bg__spin" />
+              <component :is="END_ICONS[t.status]" v-else />
+            </span>
+            <component :is="ICONS[t.kind]" class="bg__kind" aria-hidden="true" />
+            <span class="bg__name" :title="t.title">{{ t.title }}</span>
+            <span v-if="t.status === 'running' && t.activity" class="bg__activity" :title="t.activity">{{ t.activity }}</span>
+            <span v-else-if="t.status !== 'running'" class="bg__activity">{{ END_WORDS[t.status] }}</span>
+            <span class="bg__time tabular">{{ elapsed(t) }}</span>
+            <span class="bg__actions">
+              <UiIconButton
+                v-if="t.kind === 'command' || t.kind === 'other'"
+                size="sm"
+                :label="peeking === t.id ? 'Hide output' : 'Show output'"
+                :active="peeking === t.id"
+                @click="togglePeek(t)"
+              >
+                <ScrollText />
+              </UiIconButton>
+              <UiIconButton v-else-if="childOf(t)" size="sm" label="Open the sub-agent's chat" @click="threads.show(childOf(t)!.id)">
+                <ArrowUpRight />
+              </UiIconButton>
+              <UiIconButton v-if="t.status === 'running'" size="sm" label="Stop" @click="stopTask(thread.id, t.id)">
+                <CircleStop />
+              </UiIconButton>
+            </span>
+          </div>
+          <div v-if="peeking === t.id" class="bg__out selectable">
+            <pre v-if="outputState === 'ready' && plain" :ref="setOutEl">{{ plain }}</pre>
+            <p v-else class="bg__out-note">{{ outputState === 'loading' ? 'Reading output…' : outputState === 'ready' ? 'No output yet.' : 'This task has no output to show.' }}</p>
+          </div>
+        </li>
+      </ul>
+    </UiReveal>
   </section>
 </template>
 

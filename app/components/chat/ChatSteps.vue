@@ -55,17 +55,19 @@ const visible = computed<Step[]>(() => (open.value ? props.steps : props.live ? 
       <span class="steps__sum">{{ summary }}</span>
       <span v-if="failed" class="steps__failed">· {{ failed }} failed</span>
     </button>
-    <div v-if="visible.length" class="steps__body">
-      <template v-for="(s, i) in visible" :key="s.id ?? i">
-        <ChatThinking
-          v-if="s.type === 'thinking'"
-          :text="s.text"
-          :seconds="s.seconds"
-          :live="live && s === latest && s.seconds === 0"
-        />
-        <ChatTool v-else :part="s" />
-      </template>
-    </div>
+    <UiReveal>
+      <div v-if="visible.length" class="steps__body">
+        <template v-for="(s, i) in visible" :key="s.id ?? i">
+          <ChatThinking
+            v-if="s.type === 'thinking'"
+            :text="s.text"
+            :seconds="s.seconds"
+            :live="live && s === latest && s.seconds === 0"
+          />
+          <ChatTool v-else :part="s" />
+        </template>
+      </div>
+    </UiReveal>
   </div>
 </template>
 

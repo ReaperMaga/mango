@@ -12,7 +12,9 @@ const open = ref(false)
       <span v-if="props.live" class="th__live">Thinking…</span>
       <span v-else>Thought for {{ props.seconds }}s</span>
     </button>
-    <p v-if="props.text && (open || props.live)" class="th__body selectable">{{ props.text }}</p>
+    <UiReveal>
+      <p v-if="props.text && (open || props.live)" class="th__body selectable">{{ props.text }}</p>
+    </UiReveal>
   </div>
 </template>
 

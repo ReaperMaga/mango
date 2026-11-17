@@ -7,6 +7,7 @@ import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat
 import { worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
+import { DUR, EASE_OUT, motionMs } from '~/utils/motion'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
 
@@ -108,6 +109,12 @@ watch(scroller, (el) => {
 }, { immediate: true, flush: 'post' })
 onBeforeUnmount(() => ro?.disconnect())
 
+/* Switching chats: the new one fades in over the old instead of swapping in one frame. */
+watch(() => thread.value?.id, (id, was) => {
+  if (!id || !was) return
+  scroller.value?.firstElementChild?.animate([{ opacity: 0 }, { opacity: 1 }], { duration: motionMs(DUR.fast), easing: EASE_OUT })
+}, { flush: 'post' })
+
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && busy.value && thread.value) threads.stop(thread.value.id)
 }
@@ -127,14 +134,19 @@ function onKey(e: KeyboardEvent) {
             </p>
             <p v-else>{{ AGENTS[thread.agent].name }} is ready in <code>{{ ws.activeProject?.name }}</code>. Describe the change you want.</p>
           </div>
-          <ChatMessage
-            v-for="(m, i) in thread.messages"
-            :key="m.id"
-            :message="m"
-            :thread="thread"
-            :last="i === thread.messages.length - 1"
-          />
-          <ChatWorking v-if="busy" :thread="thread" />
+          <!-- Keyed by chat: opening one shows its history at once, only messages that arrive after rise in. -->
+          <TransitionGroup :key="thread.id" name="msg">
+            <ChatMessage
+              v-for="(m, i) in thread.messages"
+              :key="m.id"
+              :message="m"
+              :thread="thread"
+              :last="i === thread.messages.length - 1"
+            />
+          </TransitionGroup>
+          <Transition name="msg">
+            <ChatWorking v-if="busy" :thread="thread" />
+          </Transition>
         </div>
       </div>
 
@@ -289,4 +301,8 @@ function onKey(e: KeyboardEvent) {
 .pane__suggest button:hover { background: var(--bg-hover); color: var(--fg); }
 .pane__suggest svg { width: 15px; height: 15px; flex: none; stroke-width: 1.75; color: var(--fg-faint); }
 .pane__suggest button:hover svg { color: var(--accent-ink); }
+
+/* A message that arrives rises into place. Nothing on leave: a cleared chat should just be clear. */
+.msg-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.msg-enter-from { opacity: 0; transform: translateY(6px); }
 </style>
