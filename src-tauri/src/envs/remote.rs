@@ -1196,13 +1196,16 @@ mod tests {
         t.stop();
         let mut rest = Vec::new();
         let _ = c.read_to_end(&mut rest);
-        for _ in 0..100 {
-            if !t.shared.serving.load(Ordering::SeqCst) {
-                break;
-            }
+        // The accept loop closes the port on its own thread; a busy test runner can take a while to
+        // schedule it, so wait generously and say so if it never happens.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while t.shared.serving.load(Ordering::SeqCst) {
+            assert!(std::time::Instant::now() < deadline, "the accept loop did not stop within 10 s");
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(!t.alive());
-        assert!(TcpStream::connect_timeout(&SocketAddr::from(([127, 0, 0, 1], t.port)), Duration::from_millis(300)).is_err());
+        // `serving` turns false only after the listener is dropped, so the port is closed. Probing it
+        // would be flaky: other tests running at the same time may already have bound the freed port.
+        assert!(t.shared.conns.lock().unwrap().is_empty());
     }
 }

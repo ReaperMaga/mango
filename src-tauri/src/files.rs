@@ -997,7 +997,8 @@ mod tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .unwrap();
-            child.stdin.take().unwrap().write_all(stdin).unwrap();
+            // A script that refuses exits without reading its input: the pipe may be closed by now.
+            let _ = child.stdin.take().unwrap().write_all(stdin);
             let out = child.wait_with_output().unwrap();
             (out.status.code(), out.stdout)
         }
