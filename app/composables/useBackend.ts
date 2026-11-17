@@ -3,7 +3,7 @@ import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockChatImage, mockFiles } from '~/composables/mockFiles'
-import { mockGhItem, mockGhJob, mockGhMerge } from '~/composables/mockGithub'
+import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { isEnvPath } from '~/utils/envPath'
 
@@ -338,6 +338,7 @@ const mock = (() => {
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
+      case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))
       /* Browser: no native webview here (BrowserPane shows an iframe); pages "load" at once. */
       case 'browser_open': case 'browser_navigate': {
         const { id, url } = args as { id: string; url: string }

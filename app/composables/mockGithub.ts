@@ -1,4 +1,4 @@
-import type { GhCheck, GhItem, GhJob, GhJobStep, GhMergeMethod, GhRunState } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhJobStep, GhMergeMethod, GhRunState, GitStatus } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -196,8 +196,33 @@ export function mockGhMerge(path: string, reference: string, _method: GhMergeMet
   mergedHere.add(key)
 }
 
+/** Pull requests opened in this session (`gh_pr_create`), by key: they read back with their own branch and title. */
+const opened = new Map<string, { title: string; head: string; base: string }>()
+/** Pull requests opened for a branch, by `owner/repo:branch`: opening again returns the same one. */
+const openedFor = new Map<string, number>()
+let nextNumber = 58
+
+/** `gh_pr_create` for the browser preview: a made-up pull request from the folder's branch. */
+export function mockGhPrCreate(path: string, base: string, status: GitStatus): GhItem {
+  const branch = status.branch
+  if (!branch) throw new Error('HEAD is detached, so there is no branch to open a pull request from. Switch to a branch first.')
+  if (!status.upstream) throw new Error(`pull request create failed: GraphQL: Head sha can't be blank, Head ref must be a branch (createPullRequest)\nPush ${branch} first.`)
+  const repo = baseName(status.mainRoot ?? path)
+  const forKey = `you/${repo}:${branch}`
+  const number = openedFor.get(forKey) ?? (nextNumber += 2)
+  openedFor.set(forKey, number)
+  const words = (branch.split('/').pop() ?? branch).replace(/[-_]/g, ' ')
+  opened.set(`github.com/you/${repo}#${number}`, { title: words.charAt(0).toUpperCase() + words.slice(1), head: branch, base })
+  return mockGhItem(path, `you/${repo}#${number}`)
+}
+
 export function mockGhItem(path: string, reference: string): GhItem {
   const { host, owner, repo, number, isPr, key } = parse(path, reference)
+  const mine = opened.get(key)
+  if (mine) {
+    const item = mockGhItem(path, `${owner}/${repo}#42`)
+    return { ...item, url: `https://${host}/${owner}/${repo}/pull/${number}`, number, title: mine.title, headRef: mine.head, baseRef: mine.base, state: 'open', checkRuns: [], checks: null, mergeState: 'clean', reviewDecision: null, comments: 0, createdAt: new Date().toISOString(), bodyHtml: '<p><em>Simulated: the browser preview cannot ask GitHub. Inside the Mango app this pull request is opened with the GitHub CLI.</em></p>' }
+  }
   const now = Date.now()
   const at = (h: number) => new Date(now - h * 3_600_000).toISOString()
 

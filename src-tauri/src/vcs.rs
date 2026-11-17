@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::envs::{self, hosts};
-use crate::git::{self, blocking, At, EnvAt, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
+use crate::git::{self, blocking, At, EnvAt, GitAhead, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
 use crate::plastic;
 
 /// Where a folder's version control lives.
@@ -193,6 +193,13 @@ pub async fn git_worktree_add(app: AppHandle, path: String, branch: String, from
 #[tauri::command]
 pub async fn git_worktree_remove(app: AppHandle, path: String, worktree: String, force: bool) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+}
+
+/// How many commits the folder's branch has that `base` doesn't. Without `base`: compared with the
+/// branch checked out in the repository's main working tree (what a linked worktree merges into).
+#[tauri::command]
+pub async fn git_ahead(app: AppHandle, path: String, base: Option<String>) -> Result<GitAhead, String> {
+    dispatch!(app, path, git(at) => git::ahead_of(&at, base.as_deref()), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
 }
 
 /// `git init` in `path`. Does nothing when it is already under version control.

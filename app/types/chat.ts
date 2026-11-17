@@ -144,6 +144,11 @@ export interface Thread {
    */
   worktree?: string | null
   /**
+   * A chat started as "New chat in a worktree" whose worktree is not made yet: it runs nowhere until
+   * its first message, which names the branch and adds the worktree before the agent starts.
+   */
+  awaitingWorktree?: true
+  /**
    * Set on a sub-agent's chat: the chat (or sub-agent) that started it. Such a chat is read-only,
    * filled by the parent's run, and listed under its parent instead of on its own.
    */

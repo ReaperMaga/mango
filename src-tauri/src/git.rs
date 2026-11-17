@@ -2305,12 +2305,21 @@ pub(crate) fn worktree_remove(at: &At, worktree: &str, force: bool) -> Result<()
             }
         }
     }
+    // Claude Code locks the worktrees it makes itself (`.claude/worktrees/<name>`). Removing one
+    // was the user's choice: unlock it first; the check for uncommitted changes above still held.
+    if entry.locked {
+        git(&main).args(["worktree", "unlock", "--"]).arg(&entry.path).run_ok("git worktree unlock")?;
+    }
     let mut cmd = git(&main).args(["worktree", "remove"]);
     if force {
         cmd = cmd.arg("--force");
     }
     let out = cmd.arg("--").arg(&entry.path).run()?;
     if !out.ok() {
+        if entry.locked {
+            // Left in place: lock it again, as it was.
+            let _ = git(&main).args(["worktree", "lock", "--"]).arg(&entry.path).run();
+        }
         let detail = out.error("git worktree remove");
         if detail.contains("contains modified or untracked files") {
             return Err(format!("{name} has uncommitted changes; commit or discard them first"));
@@ -2321,6 +2330,105 @@ pub(crate) fn worktree_remove(at: &At, worktree: &str, force: bool) -> Result<()
         return Err(detail);
     }
     prune()
+}
+
+/// How far a folder's branch is ahead of another branch.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitAhead {
+    /// The branch compared with.
+    pub base: String,
+    /// Commits on HEAD that `base` doesn't have.
+    pub ahead: u32,
+}
+
+/// What a linked worktree compares with: the main working tree's HEAD (git ≥ 2.23).
+const MAIN_HEAD: &str = "main-worktree/HEAD";
+
+/// Commits on HEAD that `base` doesn't have. Without `base`, the branch checked out in the
+/// repository's main working tree (what a linked worktree is merged into); both reads go in
+/// one call.
+pub(crate) fn ahead_of(at: &At, base: Option<&str>) -> Result<GitAhead, String> {
+    let root = require_root(at)?;
+    let count = |base: &str| git(&root).read_only().args(["rev-list", "--count"]).arg(format!("{base}..HEAD")).arg("--");
+    let parse = |out: &Output| -> Result<u32, String> {
+        if !out.ok() {
+            return Err(out.error("git rev-list"));
+        }
+        out.line().trim().parse().map_err(|_| format!("git gave no count: {}", out.line()))
+    };
+    if let Some(base) = base.map(str::trim).filter(|b| !b.is_empty()) {
+        let base = safe_ref(base)?;
+        return Ok(GitAhead { base: base.to_string(), ahead: parse(&count(base).run()?)? });
+    }
+    let name = git(&root).read_only().args(["symbolic-ref", "-q", "--short", MAIN_HEAD]);
+    let [name, ahead]: [Output; 2] = run_all(vec![name, count(MAIN_HEAD)])?.try_into().map_err(|_| "git gave no answer")?;
+    let base = name.line();
+    if !name.ok() || base.is_empty() {
+        return Err("The project's main folder is not on a branch (its HEAD is detached).".into());
+    }
+    Ok(GitAhead { base, ahead: parse(&ahead)? })
+}
+
+/// What a pull request from the current branch into `base` is about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PrDetails {
+    pub branch: String,
+    /// Title and body the way `gh pr create --fill` makes them (empty without `with_text`).
+    pub title: String,
+    pub body: String,
+}
+
+/// The current branch and, with `with_text`, a title and body from its commits since `base`:
+/// one commit gives its subject and message, several give the branch name and a list.
+pub(crate) fn pr_details(at: &At, base: &str, with_text: bool) -> Result<PrDetails, String> {
+    let root = require_root(at)?;
+    let base = safe_ref(base)?;
+    let mut cmds = vec![git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"])];
+    if with_text {
+        cmds.push(
+            git(&root)
+                .read_only()
+                .args(["log", "--no-merges", "--no-color", "--reverse", "--format=%s%x1f%b%x1e"])
+                .arg(format!("{base}..HEAD"))
+                .arg("--"),
+        );
+    }
+    let outs = run_all(cmds)?;
+    let branch = outs[0].line();
+    if !outs[0].ok() || branch.is_empty() {
+        return Err("HEAD is detached, so there is no branch to open a pull request from. Switch to a branch first.".into());
+    }
+    if !with_text {
+        return Ok(PrDetails { branch, title: String::new(), body: String::new() });
+    }
+    let log = &outs[1];
+    if !log.ok() {
+        return Err(log.error("git log"));
+    }
+    let (title, body) = pr_text(&branch, &log.text()).ok_or_else(|| format!("{branch} has no commits that {base} doesn't have, so there is nothing to open a pull request for."))?;
+    Ok(PrDetails { branch, title, body })
+}
+
+/// [`pr_details`]'s title and body from `log` (`subject \x1f body \x1e`, oldest first); `None` without commits.
+fn pr_text(branch: &str, log: &str) -> Option<(String, String)> {
+    let commits: Vec<(&str, &str)> = log
+        .split('\x1e')
+        .map(|c| c.trim_start_matches(['\n', '\r']))
+        .filter(|c| !c.trim().is_empty())
+        .map(|c| c.split_once('\x1f').map_or((c.trim(), ""), |(s, b)| (s.trim(), b.trim())))
+        .collect();
+    match commits.as_slice() {
+        [] => None,
+        [(subject, body)] => Some((subject.to_string(), body.to_string())),
+        many => {
+            let words = branch.rsplit('/').next().unwrap_or(branch).replace(['-', '_'], " ");
+            let mut chars = words.trim().chars();
+            let title = chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_else(|| branch.to_string());
+            let body = many.iter().map(|(s, _)| format!("- {s}")).collect::<Vec<_>>().join("\n");
+            Some((title, body))
+        }
+    }
 }
 
 pub(crate) fn init(at: &At) -> Result<(), String> {
@@ -2943,10 +3051,71 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         // The branch stays.
         assert!(branches(&s.at()).unwrap().local.contains(&"feat/side".to_string()));
 
+        // A locked one (as Claude Code leaves its own): still refused while dirty, then removed.
+        let locked = worktree_add(&s.at(), "locked", None, true).unwrap();
+        s.git(&["worktree", "lock", "--reason", "claude agent", &locked.path]);
+        assert!(worktrees(&s.at()).unwrap().iter().any(|w| w.path == locked.path && w.locked));
+        fs::write(PathBuf::from(&locked.path).join("new.txt"), "x").unwrap();
+        assert!(worktree_remove(&s.at(), &locked.path, false).unwrap_err().contains("uncommitted"));
+        assert!(worktrees(&s.at()).unwrap().iter().any(|w| w.path == locked.path && w.locked));
+        fs::remove_file(PathBuf::from(&locked.path).join("new.txt")).unwrap();
+        worktree_remove(&s.at(), &locked.path, false).unwrap();
+        assert!(!PathBuf::from(&locked.path).exists());
+
         // A folder that is already gone is just pruned.
         fs::remove_dir_all(beside.0.join("other")).unwrap();
         worktree_remove(&s.at(), &other.path, false).unwrap();
         assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_worktree_counts_what_it_has_over_the_main_branch() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        struct Gone(PathBuf);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let beside = Gone(PathBuf::from(format!("{}.worktrees", s.path())));
+        s.write("a.txt", "base\n");
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+        let main_branch = status_of(&s.at()).unwrap().branch.unwrap();
+        let added = worktree_add(&s.at(), "feat/ahead-count", None, true).unwrap();
+        let wt = At::local(&added.path);
+        assert_eq!(ahead_of(&wt, None).unwrap(), GitAhead { base: main_branch.clone(), ahead: 0 });
+        assert!(pr_details(&wt, &main_branch, true).unwrap_err().contains("nothing to open"));
+
+        fs::write(beside.0.join("feat-ahead-count").join("b.txt"), "b\n").unwrap();
+        stage(&wt, &[]).unwrap();
+        commit(&wt, "Add b\n\nBecause b matters.", false).unwrap();
+        assert_eq!(ahead_of(&wt, None).unwrap().ahead, 1);
+        let pr = pr_details(&wt, &main_branch, true).unwrap();
+        assert_eq!((pr.branch.as_str(), pr.title.as_str(), pr.body.as_str()), ("feat/ahead-count", "Add b", "Because b matters."));
+
+        fs::write(beside.0.join("feat-ahead-count").join("c.txt"), "c\n").unwrap();
+        stage(&wt, &[]).unwrap();
+        commit(&wt, "Add c", false).unwrap();
+        assert_eq!(ahead_of(&wt, None).unwrap().ahead, 2);
+        assert_eq!(ahead_of(&wt, Some(&main_branch)).unwrap().ahead, 2);
+        assert!(ahead_of(&wt, Some("-x")).is_err());
+        let pr = pr_details(&wt, &main_branch, true).unwrap();
+        assert_eq!((pr.title.as_str(), pr.body.as_str()), ("Ahead count", "- Add b\n- Add c"));
+
+        // Merged into the main branch from the main folder: nothing ahead any more.
+        merge(&s.at(), "feat/ahead-count").unwrap();
+        assert_eq!(ahead_of(&wt, None).unwrap().ahead, 0);
+        // The main folder compares with itself.
+        assert_eq!(ahead_of(&s.at(), None).unwrap(), GitAhead { base: main_branch, ahead: 0 });
+
+        // A detached main folder has no branch to name.
+        s.git(&["checkout", "-q", "--detach"]);
+        assert!(ahead_of(&wt, None).unwrap_err().contains("detached"));
+        worktree_remove(&s.at(), &added.path, true).unwrap();
     }
 
     #[test]

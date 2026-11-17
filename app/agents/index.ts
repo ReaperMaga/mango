@@ -4,7 +4,7 @@ import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
 import { forAgent, makeThumb } from '~/utils/attachments'
-import { parseEnvPath } from '~/utils/envPath'
+import { envPath, parseEnvPath } from '~/utils/envPath'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -288,6 +288,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     store._setStatus(target.threadId, status === 'error' ? 'error' : 'done', status)
   }
 
+  /** Folders the agent moved into during this turn: their files changed too. */
+  const moved = new Set<string>()
   let finish!: () => void
   const finished = new Promise<void>(resolve => (finish = resolve))
 
@@ -298,6 +300,14 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       case 'session':
         t.sessionId = e.sessionId
         break
+      case 'workdir': {
+        // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns,
+        // Changes, Files and the sidebar follow it. A remote run reports the folder inside its instance.
+        const folder = place.remote ? envPath({ ...place.remote, dir: e.path }) : e.path
+        moved.add(folder)
+        void store.moveToWorktree(threadId, folder, e.branch ?? null)
+        break
+      }
       case 'text-delta': {
         const to = targetFor(e.agent)
         if (!to) break
@@ -504,7 +514,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
 
   await finished
   // The agent probably changed files: let whoever shows them (the changes panel) catch up.
-  window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path: workdir } }))
+  for (const path of new Set([workdir, ...moved])) window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path } }))
 }
 
 export type { Thread }
