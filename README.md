@@ -45,6 +45,16 @@ folder. Saves are incremental: only the chats that changed are written, and a
 reply is saved while it streams. Chats from older versions move there on first
 launch. The agents keep their own session files (`~/.claude`, `~/.codex`) as usual.
 
+Chats of a remote project are also kept inside its environment
+(`~/.local/share/mango/chats/` of the `agent` user), so every computer that opens
+that environment, yours or one it is shared with, sees the same chats. A change is
+sent a few seconds after it happens (at least every 15 seconds while an agent
+replies), and Mango looks for changes from other computers when a remote project
+opens, when its window comes to the front, and every minute while it is in front.
+Deleting such a chat deletes it on the other computers too. When two computers
+change the same chat, the environment's copy wins, unless the chat is running
+here. Chats of folders on this computer stay on this computer.
+
 ## Run it
 
 ```bash

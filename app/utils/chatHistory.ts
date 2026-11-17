@@ -1,12 +1,14 @@
 import { call } from '~/composables/useBackend'
 import type { Thread } from '~/types/chat'
 import type { ChatRow } from '~/types/ipc'
+import { noteSaved } from '~/utils/remoteChats'
 
 /**
  * Saving chats to the chat history database (`chats_load` / `chats_save`, a SQLite file in the
  * app data folder). Saves are debounced and incremental: only chats marked changed are
  * serialised, and only the ones whose JSON actually differs from the last save are sent.
  * A sweep (no id given) compares every chat, and is the only thing that deletes rows.
+ * Remote projects' chats saved here also go to their environment (`remoteChats.ts`).
  */
 
 const DEBOUNCE_MS = 400
@@ -22,6 +24,8 @@ interface Source {
 
 /** Each saved chat's JSON as last sent: what a save compares against. */
 const saved = new Map<string, string>()
+/** Each saved chat's project: where a deleted one was. */
+const savedProject = new Map<string, string>()
 let savedLayout: string | null = null
 const dirty = new Set<string>()
 let sweep = false
@@ -41,6 +45,7 @@ export async function loadHistory(): Promise<{ threads: Thread[]; layout: unknow
       if (t && typeof t.id === 'string' && Array.isArray(t.messages)) {
         threads.push(t)
         saved.set(t.id, json)
+        savedProject.set(t.id, t.projectPath)
       }
     } catch { /* a damaged row is skipped, not fatal */ }
   }
@@ -97,10 +102,13 @@ export function flushHistory(): Promise<boolean> {
 function collect(s: Source): { upsert: ChatRow[]; remove: string[]; ui: string | null } | null {
   const upsert: ChatRow[] = []
   const remove: string[] = []
+  const changed: Thread[] = []
   const consider = (t: Thread) => {
     const json = JSON.stringify(t)
     if (saved.get(t.id) === json) return
     saved.set(t.id, json)
+    savedProject.set(t.id, t.projectPath)
+    changed.push(t)
     upsert.push({ id: t.id, projectPath: t.projectPath, updatedAt: t.updatedAt, data: json })
   }
   if (sweep) {
@@ -114,7 +122,9 @@ function collect(s: Source): { upsert: ChatRow[]; remove: string[]; ui: string |
       else if (saved.has(id)) remove.push(id)
     }
   }
-  for (const id of remove) saved.delete(id)
+  const removed = remove.map(id => ({ id, projectPath: savedProject.get(id) ?? '' }))
+  for (const id of remove) { saved.delete(id); savedProject.delete(id) }
+  if (changed.length || removed.length) noteSaved(changed, removed)
   sweep = false
   dirty.clear()
   const layout = JSON.stringify(s.layout())

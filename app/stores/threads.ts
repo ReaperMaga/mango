@@ -19,6 +19,7 @@ import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
 import { movedEnvPath } from '~/utils/envPath'
 import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
+import { attachRemoteChats } from '~/utils/remoteChats'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -180,6 +181,14 @@ export const useThreads = defineStore('threads', {
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }),
       })
+      // Remote projects' chats are kept in their environment too (see `utils/remoteChats.ts`).
+      attachRemoteChats({
+        byId: id => this.byId(id),
+        threads: () => this.threads,
+        busy: t => isBusy(t) || isRunning(t.id),
+        adopt: incoming => this._adoptRemote(incoming),
+        drop: ids => { for (const id of ids) if (this.byId(id)) this.remove(id) },
+      })
       // Statuses changed by loading (a run cut off by closing the app) are saved too.
       markChanged()
       if (migrating && await flushHistory()) localStorage.removeItem(LS_KEY)
@@ -196,6 +205,23 @@ export const useThreads = defineStore('threads', {
     /** Save the layout only: tabs, panes, the default agent. */
     persistLayout() {
       markChanged([])
+    },
+
+    /**
+     * Chats from a remote project's environment (saved there by another computer, or by this one
+     * before): new ones are added, newer copies replace the ones here. Nothing in them runs here.
+     */
+    _adoptRemote(incoming: Thread[]): Thread[] {
+      const out: Thread[] = []
+      for (const raw of incoming) {
+        const t = normalizeLoaded(raw)
+        const i = this.threads.findIndex(x => x.id === t.id)
+        if (i === -1) this.threads.push(t)
+        else this.threads[i] = t
+        out.push(this.byId(t.id)!)
+      }
+      if (out.length) this.persist(out.map(t => t.id))
+      return out
     },
 
     /** Seed realistic demo threads for a project (command palette: “Load demo threads”). */

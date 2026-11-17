@@ -70,7 +70,7 @@ app/
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
+                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -84,6 +84,7 @@ src-tauri/src/
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
   chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
+  chats_remote.rs    remote projects' chats kept inside their environment (`chats_remote_*`), so other computers see them
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
@@ -153,7 +154,9 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Chats and their layout persist to a SQLite file in the app data folder (`chats.rs`, `utils/chatHistory.ts`):
   one row per chat holding its JSON, saved debounced and incrementally. `persist(id)` marks one chat changed,
   `persist()` compares them all (and is the only way deletions reach the database), `persistLayout()` is tabs and
-  panes only; mutate a chat without one of them and the change is not saved. Prefs persist to localStorage
+  panes only; mutate a chat without one of them and the change is not saved. A remote project's chats are also mirrored
+  into its environment (`utils/remoteChats.ts`, fed by what `chatHistory.ts` saves), stored with `env://@` in place of
+  this computer's server id; a chat read from there must stay inside that environment (`parseShared`). Prefs persist to localStorage
   (`workspace.ts`). Loading must tolerate data written by older builds (`normalizeLoaded`).
 - Git is slow and external: all git state goes through `stores/git.ts`, which refreshes after every action.
 - A chat may work in its own linked git worktree (`Thread.worktree`, `utils/worktrees.ts`). "New chat in a worktree"
