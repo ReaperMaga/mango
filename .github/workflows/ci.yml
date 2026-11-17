@@ -153,41 +153,22 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-  # Windows compiles from Linux with cargo-xwin, as AGENTS.md does locally: faster than a
-  # Windows runner, and `check` needs no linking. It covers the cfg(windows) code and the
-  # tests; it does not run anything on Windows.
+  # Windows type-checks on its own runner: `check` covers the cfg(windows) code and the
+  # tests without linking, which is most of a build's time. (Cross-checking from Linux
+  # with cargo-xwin downloads the MSVC CRT from Microsoft on every cold cache, and that
+  # download can hang on GitHub's runners.) It does not run anything on Windows.
   backend-windows:
     name: Backend (Windows check)
     needs: changes
     if: needs.changes.outputs.backend == 'true'
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: src-tauri
     steps:
       - uses: actions/checkout@v7
 
-      - name: Cross-compile tools
-        working-directory: .
-        run: |
-          if ! command -v clang-cl >/dev/null || ! command -v lld-link >/dev/null || ! command -v llvm-lib >/dev/null; then
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends clang lld llvm
-          fi
-
       - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-xwin@0.23.1
-
-      # The MSVC CRT and Windows SDK headers cargo-xwin downloads (~1 GB, ~50 s).
-      - uses: actions/cache@v6
-        with:
-          path: ~/.cache/cargo-xwin
-          key: cargo-xwin-0.23.1
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -197,10 +178,11 @@ jobs:
 
       - name: Placeholder frontend
         working-directory: .
+        shell: bash
         run: mkdir -p .output/public
 
       - name: Check
-        run: cargo xwin check --locked --target x86_64-pc-windows-msvc --all-targets
+        run: cargo check --locked --all-targets
 
   result:
     name: CI result
