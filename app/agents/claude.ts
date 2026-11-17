@@ -1,5 +1,6 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
+import { elicitationForm, elicitationLink } from './questions.ts'
 
 /**
  * Claude Code adapter.
@@ -157,6 +158,10 @@ function describeTool(name: string, input: any, cwd: string): ToolShape {
       const done = todos.filter(t => t.status === 'completed').length
       return { tool: 'other', label: 'Updated plan', target: current?.content ?? `${todos.length} steps`, summary: todos.length ? `${done}/${todos.length}` : undefined }
     }
+    case 'AskUserQuestion': {
+      const qs = parseQuestions(i)
+      return { tool: 'other', label: 'Asked', target: qs.map(q => q.header || q.question).join(', ') || 'a question' }
+    }
     case 'ExitPlanMode':
       return { tool: 'other', label: 'Proposed', target: 'a plan' }
     case 'Skill':
@@ -169,6 +174,19 @@ function describeTool(name: string, input: any, cwd: string): ToolShape {
       return { tool: 'other', label: 'Used', target: mcp ? `${mcp[1]} · ${mcp[2]}` : name, summary: first && first.length < 60 ? first : undefined }
     }
   }
+}
+
+/** AskUserQuestion's input as questions to show; anything malformed is left out. */
+function parseQuestions(input: any): AgentQuestion[] {
+  const list: any[] = Array.isArray(input?.questions) ? input.questions : []
+  return list.flatMap((q) => {
+    const question = typeof q?.question === 'string' ? q.question.trim() : ''
+    const options = (Array.isArray(q?.options) ? q.options : [])
+      .map((o: any) => ({ label: typeof o?.label === 'string' ? o.label : '', description: typeof o?.description === 'string' ? o.description : undefined }))
+      .filter((o: { label: string }) => o.label)
+    if (!question || !options.length) return []
+    return [{ question, header: typeof q.header === 'string' && q.header ? q.header : undefined, options, multiSelect: q.multiSelect === true }]
+  })
 }
 
 function resultText(content: unknown): string {
@@ -323,7 +341,11 @@ function run(options: AgentRunOptions): AgentRun {
   const streamedMessages = new Set<string>()
   /** Every tool call, the main conversation's and the sub-agents' (`scope`: the sub-agent it belongs to). */
   const tools = new Map<string, { name: string; shape: ToolShape; scope?: string }>()
-  const pendingApprovals = new Map<string, { input: any }>()
+  /**
+   * Control requests waiting for the user (tool approvals, questions, MCP forms): what to answer
+   * for a decision, and what to answer when the run is stopped first.
+   */
+  const pendingApprovals = new Map<string, { reply(value: boolean | QuestionAnswers | null): unknown; stopped: unknown }>()
 
   /** Sub-agents by the id of the Agent call that started them. */
   const subagents = new Map<string, { ended: boolean; background: boolean; taskId?: string }>()
@@ -358,6 +380,14 @@ function run(options: AgentRunOptions): AgentRun {
   }
 
   const send = (obj: unknown) => transport?.write(JSON.stringify(obj)).catch(() => {})
+
+  /** The user decided on a pending control request: an approval (true/false) or answers (null: dismissed). */
+  const decide = (id: string, value: boolean | QuestionAnswers | null) => {
+    const pending = pendingApprovals.get(id)
+    if (!pending) return
+    pendingApprovals.delete(id)
+    send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: pending.reply(value) } })
+  }
 
   const scoped = (scope: string | undefined) => (scope ? { agent: scope } : {})
 
@@ -653,15 +683,65 @@ function run(options: AgentRunOptions): AgentRun {
     const requestId: string = m.request_id
     if (req.subtype === 'can_use_tool') {
       if (req.tool_name === 'AskUserQuestion') {
-        // Multiple-choice questions need their own UI; until then, steer the agent to plain text.
-        send({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { behavior: 'deny', message: 'This client cannot show multiple-choice questions. Ask the question in plain text instead.' } } })
+        const questions = parseQuestions(req.input)
+        if (!questions.length) {
+          send({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { behavior: 'deny', message: 'The question had no options to show. Ask it in plain text instead.' } } })
+          return
+        }
+        // Kept with the approvals: an interrupted or ended run settles both the same way.
+        pendingApprovals.set(requestId, {
+          // Claude Code reads the answers from the tool's input: question text to answer, several joined with ", ".
+          reply: answers => (Array.isArray(answers)
+            ? { behavior: 'allow', updatedInput: { ...req.input, answers: Object.fromEntries(questions.map((q, i) => [q.question, (answers[i] ?? []).join(', ')])) } }
+            : { behavior: 'deny', message: 'The user dismissed the question without answering. Go on without it, or ask in plain text.' }),
+          stopped: { behavior: 'deny', message: 'The user stopped the run.' },
+        })
+        emit({ type: 'question', id: requestId, questions, ...(req.tool_use_id ? { toolId: req.tool_use_id } : {}) })
         return
       }
-      pendingApprovals.set(requestId, { input: req.input })
+      pendingApprovals.set(requestId, {
+        reply: allow => (allow === true
+          ? { behavior: 'allow', updatedInput: req.input }
+          : { behavior: 'deny', message: 'The user denied this request.' }),
+        stopped: { behavior: 'deny', message: 'The user stopped the run.' },
+      })
       emit({ type: 'approval', id: requestId, toolId: req.tool_use_id, ...approvalFor(req.tool_name, req.input, cwd) })
       return
     }
+    if (req.subtype === 'elicitation') {
+      onElicitation(requestId, req)
+      return
+    }
     send({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `Unsupported control request: ${req.subtype}` } })
+  }
+
+  /**
+   * An MCP server asks the user something (MCP elicitation), through Claude Code: a form becomes
+   * questions, a link one question to confirm, an empty form an approval.
+   */
+  function onElicitation(requestId: string, req: any) {
+    const server = String(req.display_name || req.mcp_server_name || 'An MCP server')
+    const message = typeof req.message === 'string' ? req.message : ''
+    const decline = { action: 'decline' }
+    const respond = (response: unknown) => send({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } })
+    const title = `${server} asks`
+    if (req.mode === 'url' && typeof req.url === 'string' && /^https?:\/\//i.test(req.url)) {
+      pendingApprovals.set(requestId, { reply: a => (Array.isArray(a) ? { action: 'accept' } : decline), stopped: { action: 'cancel' } })
+      emit({ type: 'question', id: requestId, title, message, questions: [elicitationLink(req.url)] })
+      return
+    }
+    const form = req.mode === 'url' ? null : elicitationForm(req.requested_schema, req.property_order)
+    if (!form) { respond(decline); return }
+    if (!form.questions.length) {
+      pendingApprovals.set(requestId, { reply: allow => (allow === true ? { action: 'accept', content: {} } : decline), stopped: { action: 'cancel' } })
+      emit({ type: 'approval', id: requestId, title, command: message || server, reason: '' })
+      return
+    }
+    pendingApprovals.set(requestId, {
+      reply: a => (Array.isArray(a) ? { action: 'accept', content: form.content(a) } : decline),
+      stopped: { action: 'cancel' },
+    })
+    emit({ type: 'question', id: requestId, title, message, questions: form.questions })
   }
 
   /** Ask Claude Code something outside the conversation; resolves with its answer, or null. */
@@ -699,6 +779,12 @@ function run(options: AgentRunOptions): AgentRun {
       case 'assistant': onAssistant(m); break
       case 'user': onUser(m); break
       case 'control_request': onControlRequest(m); break
+      case 'control_cancel_request': {
+        // Claude Code gave up waiting (the request timed out, or another client answered it).
+        const id = typeof m.request_id === 'string' ? m.request_id : ''
+        if (pendingApprovals.delete(id)) emit({ type: 'approval-cancelled', id })
+        break
+      }
       case 'result': {
         if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
         if (interrupted) end('stopped')
@@ -781,25 +867,16 @@ function run(options: AgentRunOptions): AgentRun {
       return true
     },
     respondApproval(id, allow) {
-      const pending = pendingApprovals.get(id)
-      if (!pending) return
-      pendingApprovals.delete(id)
-      send({
-        type: 'control_response',
-        response: {
-          subtype: 'success',
-          request_id: id,
-          response: allow
-            ? { behavior: 'allow', updatedInput: pending.input }
-            : { behavior: 'deny', message: 'The user denied this request.' },
-        },
-      })
+      decide(id, allow)
+    },
+    answerQuestion(id, answers) {
+      decide(id, answers)
     },
     interrupt() {
       if (ended || interrupted) return
       interrupted = true
-      for (const [id] of pendingApprovals) {
-        send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: { behavior: 'deny', message: 'The user stopped the run.' } } })
+      for (const [id, pending] of pendingApprovals) {
+        send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: pending.stopped } })
       }
       // Stop means everything: the commands and sub-agents left running in the background too.
       for (const [id, task] of tasks) if (task.shown && !task.ended) stopTaskById(id)

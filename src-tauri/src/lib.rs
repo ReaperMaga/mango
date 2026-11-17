@@ -92,6 +92,7 @@ pub fn run() {
             setup::setup_install,
             vcs::git_status,
             vcs::git_diff,
+            vcs::git_base,
             vcs::git_stage,
             vcs::git_unstage,
             vcs::git_discard,

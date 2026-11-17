@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FileCode, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
@@ -7,6 +7,7 @@ import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
+import { fileIcon } from '~/utils/fileIcons'
 import { useFiles } from '~/stores/files'
 import { browserTitle, useBrowser, type Browser } from '~/stores/browser'
 import { isBrowserTab, isBlank } from '~/utils/browserTabs'
@@ -230,7 +231,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
           </template>
           <template v-else-if="t.kind === 'diff'">
-            <FileDiff class="ca__tab-icon" aria-hidden="true" />
+            <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
             <span class="ca__tab-title">{{ t.title }}</span>
             <span v-if="t.staged" class="ca__tab-note">staged</span>
           </template>
@@ -241,7 +242,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             <span v-if="t.browser.threadId" class="ca__tab-note">agent</span>
           </template>
           <template v-else>
-            <FileCode class="ca__tab-icon" aria-hidden="true" />
+            <component :is="fileIcon(t.title).icon" class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
             <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
           </template>
           <button
@@ -342,49 +343,36 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   flex: 1;
   min-width: 0;
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  gap: 2px;
   overflow-x: auto;
   scrollbar-width: none;
-  padding-left: var(--space-1);
+  padding-left: var(--space-2);
 }
 .ca__strip::-webkit-scrollbar { display: none; }
+/* Tabs are flat pills: the active one is lifted onto the raised ground and ringed in mango. */
 .ca__tab {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
   max-width: 220px;
-  padding: 0 4px 0 10px;
+  height: 26px;
+  padding: 0 3px 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--fg-subtle);
   cursor: pointer;
   flex: 0 1 auto;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
 }
 .ca__tab:hover { color: var(--fg-muted); background: var(--bg-hover); }
-.ca__tab.is-shown { color: var(--fg-muted); }
-.ca__tab.is-active { color: var(--fg); background: var(--bg-canvas); }
-/* Active tab: a mango underline, the one place the accent sits in the chrome. */
-.ca__tab.is-active::after {
-  content: '';
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--accent);
-}
-.ca__tab.is-shown:not(.is-active)::after {
-  content: '';
-  position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: -1px;
-  height: 2px;
-  background: var(--line-strong);
-}
+.ca__tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -1px; }
+/* Shown in the other split pane: a quiet ring, no fill. */
+.ca__tab.is-shown { color: var(--fg-muted); border-color: var(--line); }
+.ca__tab.is-active { color: var(--fg); background: var(--bg-raised); border-color: var(--accent-line); }
 .ca__tab-icon { width: 14px; height: 14px; flex: none; stroke-width: 1.75; color: var(--fg-subtle); }
 .ca__tab-note { flex: none; font-size: var(--text-2xs); color: var(--fg-faint); }
 /* A browser tab while its page loads: a small ring in ripening mango where the globe was. */
@@ -402,24 +390,25 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 @media (prefers-reduced-motion: reduce) { .ca__tab-spin { animation-duration: 2.4s; } }
 .ca__tab-wt { flex: none; width: 12px; height: 12px; stroke-width: 1.85; color: var(--fg-faint); }
 .ca__tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Inter leaves more room under its baseline than over its caps: centred boxes put the letters ~2px above the icons. */
+.ca__tab-title, .ca__tab-note { position: relative; top: 2px; }
 /* A file opened with a single click: the next one replaces it until it is edited or double-clicked. */
 .ca__tab-title.is-preview { font-style: italic; }
+/* The close button is always there, faint, so every tab has the same width whether hovered or not. */
 .ca__tab-x {
   display: grid;
   place-items: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--radius-xs);
   color: var(--fg-faint);
-  opacity: 0;
   flex: none;
-  transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
-.ca__tab-x svg { width: 13px; height: 13px; }
-.ca__tab:hover .ca__tab-x, .ca__tab.is-active .ca__tab-x, .ca__tab-x:focus-visible { opacity: 1; }
+.ca__tab-x svg { width: 12px; height: 12px; }
+.ca__tab:hover .ca__tab-x, .ca__tab.is-active .ca__tab-x { color: var(--fg-subtle); }
 .ca__tab-x:hover { background: var(--bg-active); color: var(--fg); }
 /* Unsaved edits: a dot in place of the close button, which comes back on hover. */
-.ca__tab-x.is-dirty { opacity: 1; }
 .ca__tab-x.is-dirty svg, .ca__tab-x.is-dirty:hover .ca__tab-dot, .ca__tab-x.is-dirty:focus-visible .ca__tab-dot { display: none; }
 .ca__tab-x.is-dirty:hover svg, .ca__tab-x.is-dirty:focus-visible svg { display: block; }
 .ca__tab-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }

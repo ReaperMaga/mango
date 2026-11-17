@@ -640,6 +640,24 @@ fn read_capped_file(path: &Path) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|e| format!("Could not read {}: {e}", path.display()))
 }
 
+/// The loaded revision of `file` (relative to `dir`, a folder inside the workspace at `root`), for
+/// the editor's change markers. A file with no pending change is its own base; a private or added
+/// one has none, nor has a binary or too large one.
+pub(crate) fn base(root: &Path, dir: &Path, file: &str) -> Result<Option<String>, String> {
+    let file = clean_rel(file)?;
+    let inner = dir.strip_prefix(root).map_err(|_| format!("{} is not inside the workspace", dir.display()))?;
+    let rel = inner.join(file).to_string_lossy().replace('\\', "/");
+    let bytes = match entry_for(root, &rel)? {
+        None => read_capped_file(&root.join(&rel))?,
+        Some(e) if matches!(e.letter, "?" | "A") || e.dir => return Ok(None),
+        Some(e) => base_content(root, e.orig.as_deref().unwrap_or(&e.path))?,
+    };
+    if bytes.len() > crate::git::BASE_CAP || bytes.contains(&0) {
+        return Ok(None);
+    }
+    Ok(String::from_utf8(bytes).ok())
+}
+
 pub(crate) fn diff(root: &Path, file: &str) -> Result<String, String> {
     let file = clean_rel(file)?;
     let Some(entry) = entry_for(root, file)? else {

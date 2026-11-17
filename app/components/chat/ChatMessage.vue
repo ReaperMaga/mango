@@ -40,7 +40,7 @@ const segments = computed<Segment[]>(() => {
   const lastText = parts.map(p => p.type).lastIndexOf('text')
   const shown = parts.map((p, i) => i).filter((i) => {
     const p = parts[i]!
-    if (mode === 'zen') return p.type === 'approval' || p.type === 'notice' || i === lastText
+    if (mode === 'zen') return p.type === 'approval' || p.type === 'question' || p.type === 'notice' || i === lastText
     if (p.type === 'tool' && !p.childId && !createdBy(p).length) {
       if (mode === 'hide') return false
       if (mode === 'hide-ok') return p.status !== 'ok'
@@ -122,6 +122,12 @@ ${a.path}`"
           :agent-name="AGENTS[thread.agent].name"
           @resolve="allow => threads.resolveApproval(thread.id, message.id, seg.i, allow)"
         />
+        <ChatQuestion
+          v-else-if="seg.part.type === 'question'"
+          :part="seg.part"
+          :agent-name="AGENTS[thread.agent].name"
+          @answer="answers => threads.answerQuestion(thread.id, message.id, seg.i, answers)"
+        />
         <p v-else-if="seg.part.type === 'notice'" class="msg__notice" :class="`msg__notice--${seg.part.level}`" :role="seg.part.level === 'error' ? 'alert' : undefined">
           <CircleAlert v-if="seg.part.level === 'error'" />
           <span class="selectable">{{ seg.part.text }}</span>
@@ -136,6 +142,7 @@ ${a.path}`"
         />
       </template>
     </template>
+    <ChatChanges v-if="!live" :message="message" :thread="thread" />
     <p v-if="message.elapsedMs !== undefined && !live" class="msg__ran tabular">
       {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}
     </p>

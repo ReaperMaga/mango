@@ -251,10 +251,11 @@ components:
   chat-tab:
     textColor: "{colors.fg-subtle}"
     typography: "{typography.body-sm}"
-    padding: "0 4px 0 10px"
-    height: "36px"
+    rounded: "{rounded.sm}"
+    padding: "0 3px 0 8px"
+    height: "26px"
   chat-tab-active:
-    backgroundColor: "{colors.bg-canvas}"
+    backgroundColor: "{colors.bg-raised}"
     textColor: "{colors.fg}"
   thread-row:
     textColor: "{colors.fg-muted}"
@@ -304,7 +305,7 @@ A colour scheme, chosen in Settings and set by `data-scheme` on the root, retint
 A near-neutral green-black ground, one warm accent family, and a ripening scale for status. All values are authored in OKLCH in `app/assets/css/tokens.css`; the frontmatter mirrors the default Mango scheme, with light-theme values under a `-light` suffix. The names below are Mango's; other schemes keep the roles and change the values.
 
 ### Primary
-- **Ripe Mango** (`accent`): the accent as a fill. The primary button, the composer's send button, the active chat tab's 2px underline, the on-state of a switch, progress bar fill, the streaming caret, the app mark.
+- **Ripe Mango** (`accent`): the accent as a fill. The primary button, the composer's send button, the on-state of a switch, progress bar fill, the streaming caret, the app mark.
 - **Ripe Mango Bright** (`accent-strong`): hover state of an accent fill. Lighter in dark, deeper in light.
 - **Mango Stone Ink** (`accent-fg`): the dark ink that sits on an accent fill (button label, send arrow). The same value in both themes.
 - **Mango Ink** (`accent-ink`): the accent as text or icon colour on a ground: links, the check mark of a selected menu item, matched characters in the command palette, the New chat icon, the active terminal tab's icon. Deepened sharply in the light theme.
@@ -480,7 +481,8 @@ Colour changes over 220ms and the fill level over 420ms, so a status change is s
 - **Sidebar:** threads only, with no view tabs: a full-width "New chat" button (Panel Lift, soft line, Mango Ink icon, keycaps), then the current project's threads in three sections: the open chats ("Working"), then Settled and Archived, which fold away. The open section grows to fill the list, so Settled and Archived always sit at the bottom of the sidebar. Group headers are 28px, 11.5px at 600, with a rotating caret and a faint count; their actions appear on hover. A thread row is 44px: ripeness dot, title over a one-line status, timestamp at the right that gives way to a "more" button on hover. A chat linked to a pull request (or only to an issue) leads its title with a 13px pull request (or issue) icon in the ripening scale's mark grade for its state, and ends its status line with `#42` at 10.5px in subtle ink at the right, `+1` in faint ink when more are linked; the status word keeps the lead and truncates first. Shown in a pane: Hover Wash. Current: Active Wash and primary ink. The footer is a Settings button, with a short note in the waiting text grade when an agent needs setting up.
 - **Tool stripe (40px):** the IDE-style tool-window rail at the right edge of the body, on the app ground. 30px icon buttons (Files, Changes, Pull requests) stacked from the top in faint ink; Hover Wash on hover, Active Wash and primary ink while that tool is open. Changes carries a small accent-fill pill with the changed-file count, Pull requests one with the number of items linked to the chat in front. A click opens the tool beside the chats, a second click closes it; Ctrl/Cmd+Shift+E, Ctrl/Cmd+Shift+G and Ctrl/Cmd+Shift+P do the same.
 - **Tool window:** the open tool between the main column and the stripe, on the app ground, with its own header from the panel inside. Resized from its left edge by the standard handle. Slides in from the right over 220ms (margin and opacity).
-- **Chat tabs (36px):** ripeness dot, title, close button that appears on hover or when active. The active tab takes the canvas ground and a 2px Ripe Mango underline; a tab shown in the other split pane takes a strong-line underline instead.
+- **Chat tabs (36px strip):** 26px pills (6px corners, 2px apart) holding a ripeness dot for a chat or a file-type icon for a file or diff, the title, and a close button that is always present in faint ink. Inactive tabs are flat; hover takes the Hover Wash. The active tab takes the raised ground and a 1px accent-line ring; a tab shown in the other split pane takes a 1px line ring without a fill.
+- **File-type tints:** file icons in tabs and the Files tree take a `--file-*` tint (blue, yellow, orange, green, purple, red) by extension, so a language reads at a glance. Tints are for icons only, never text; unknown types keep subtle ink.
 - **Terminal tabs:** 24px pills on the Inset Well; the active one gets the Hover Wash and a Mango Ink icon.
 - **Menus:** raised ground, 8px corners, Pop shadow, 4px padding; 30px items at 12.5px with an optional icon column, a second hint line, and either a Mango Ink check or a faint shortcut at the right. The active item gets the Hover Wash. Opens 6px from its trigger, scaling from 97% in 120ms.
 

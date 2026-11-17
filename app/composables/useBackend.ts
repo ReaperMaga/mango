@@ -2,7 +2,7 @@ import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupToo
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
-import { mockChatImage, mockFiles } from '~/composables/mockFiles'
+import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
@@ -367,6 +367,7 @@ const mock = (() => {
     }
     // Project env files, not remote environments: the in-memory project answers them.
     if (cmd === 'env_files' || cmd === 'env_gitignore_add') return mockFiles(cmd, args)
+    if (cmd === 'git_base') return mockBaseFile(args.file)
     if (cmd.startsWith('git_') || cmd.startsWith('vcs_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)

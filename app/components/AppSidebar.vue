@@ -5,7 +5,7 @@ import { call } from '~/composables/useBackend'
 import { isEnvPath } from '~/utils/envPath'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
-import { AGENTS, displayStatus, hasUnreadResult, type AgentId, type Thread } from '~/types/chat'
+import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type AgentId, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
@@ -196,7 +196,7 @@ function subtitle(t: Thread) {
   const background = live?.tasks.filter(x => x.status === 'running').length ?? 0
   const tasks = `${background} background task${background === 1 ? '' : 's'}`
   switch (displayStatus(t)) {
-    case 'waiting': return 'Needs your approval'
+    case 'waiting': return `Needs your ${waitingFor(t)}`
     case 'working':
       if (t.status === 'running' && background) return live?.idle ? `Waiting on ${tasks}` : `Working… · ${background} in background`
       return t.status === 'queued' ? 'Starting…' : t.status === 'running' ? 'Working…' : `Working · ${agent}`

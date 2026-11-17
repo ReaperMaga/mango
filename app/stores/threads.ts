@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
-import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, Thread } from '~/types/chat'
-import { AGENTS } from '~/types/chat'
-import { interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
+import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
+import { AGENTS, awaitsUser } from '~/types/chat'
+import { answerQuestion, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
@@ -760,12 +760,24 @@ export const useThreads = defineStore('threads', {
       const part = t?.messages.find(m => m.id === messageId)?.parts[partIndex]
       if (!t || !part || part.type !== 'approval' || part.state !== 'pending') return
       part.state = allow ? 'allowed' : 'denied'
-      const stillWaiting = t.messages.some(m => m.parts.some(p => p.type === 'approval' && p.state === 'pending'))
-      if (!stillWaiting && t.status === 'waiting') t.status = 'running'
+      if (!t.messages.some(m => m.parts.some(awaitsUser)) && t.status === 'waiting') t.status = 'running'
       this.persist(threadId)
       if (part.id) respondApproval(threadId, part.id, allow)
       // The simulated agent (browser preview) awaits this instead.
       approvalWaiters.get(`${threadId}:${messageId}:${partIndex}`)?.(allow)
+    },
+
+    /** Answer an agent's multiple-choice questions (null: dismissed without an answer). */
+    answerQuestion(threadId: string, messageId: string, partIndex: number, answers: QuestionAnswers | null) {
+      const t = this.byId(threadId)
+      const part = t?.messages.find(m => m.id === messageId)?.parts[partIndex]
+      if (!t || !part || part.type !== 'question' || part.state !== 'pending') return
+      part.state = answers ? 'answered' : 'dismissed'
+      // A secret answer goes to the agent only, never into the saved chat.
+      if (answers) part.answers = answers.map((a, i) => (part.questions[i]?.secret && a.length ? ['••••••'] : a))
+      if (!t.messages.some(m => m.parts.some(awaitsUser)) && t.status === 'waiting') t.status = 'running'
+      this.persist(threadId)
+      if (part.id) answerQuestion(threadId, part.id, answers)
     },
 
     stop(id: string) {
@@ -976,7 +988,7 @@ function normalizeLoaded(t: Thread): Thread {
     ...m,
     ...(Array.isArray(m.attachments) ? { attachments: m.attachments.filter(a => a && typeof a.path === 'string') } : { attachments: undefined }),
     parts: m.parts.map((p): Part => {
-      if (p.type === 'approval' && p.state === 'pending') return { ...p, state: 'cancelled' }
+      if ((p.type === 'approval' || p.type === 'question') && p.state === 'pending') return { ...p, state: 'cancelled' }
       if (p.type === 'tool' && p.status === 'running') return { ...p, status: 'error', summary: 'did not finish' }
       return p
     }),
