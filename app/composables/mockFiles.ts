@@ -247,3 +247,18 @@ export function mockTouchFile(root: string, file: string, text: string) {
   const f = filesOf(root).get(file)
   if (f) { f.text = text; f.modifiedMs = Date.now() }
 }
+
+/**
+ * Committed versions for the browser preview (`git_base`), so the editor's change markers show:
+ * the files the mock repository lists as modified differ from the seed here; the rest match it.
+ */
+const BASE: Record<string, string> = {
+  'app/stores/workspace.ts': "import { defineStore } from 'pinia'\n\n// Projects and layout.\nexport const useWorkspace = defineStore('workspace', {\n  state: () => ({\n    openProjects: [] as string[],\n    activeProject: null as string | null,\n  }),\n  actions: {\n    toggleSidebar() {\n      this.sidebarOpen = !this.sidebarOpen\n    },\n  },\n})\n",
+  'README.md': '# Mango\n\nA desktop workbench for coding agents.\n\n## Develop\n\n```bash\npnpm install\npnpm dev\n```\n',
+}
+
+export async function mockBaseFile(file: string): Promise<string | null> {
+  await wait(60)
+  const seed = SEED[file]
+  return BASE[file] ?? (typeof seed === 'string' ? seed : null)
+}
