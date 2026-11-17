@@ -524,7 +524,7 @@ const sendTitle = computed(() => (props.busy
       @pick="i => pickCommand(i, true)"
     />
     <div class="cp__bar">
-      <UiMenu :items="modelItems" placement="top-start" :width="270" label="Model">
+      <UiMenu :items="modelItems" placement="top-start" :width="270" :max-height="360" label="Model">
         <template #default="{ toggle, open }">
           <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="() => { toggle(); refreshModels() }">
             <span class="cp__chip-text">{{ models.label(agent, model) }}</span>

@@ -13,6 +13,8 @@ const props = withDefaults(defineProps<{
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
   width?: number
   label?: string
+  /** Cap on the list's height; longer lists scroll. Without it the menu may fill the space to the window edge. */
+  maxHeight?: number
 }>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
 
 const open = ref(false)
@@ -46,15 +48,18 @@ function place() {
   const spaceBelow = vh - r.bottom - GAP - MARGIN
   const spaceAbove = r.top - GAP - MARGIN
   // Flip when the preferred side is cramped and the other side has more room.
-  const estimated = Math.min(list.value?.scrollHeight ?? props.items.length * 34 + 8, 420)
+  const cap = props.maxHeight ?? 420
+  const estimated = Math.min(list.value?.scrollHeight ?? props.items.length * 34 + 8, cap)
   const top = wantTop && !point ? (spaceAbove >= estimated || spaceAbove >= spaceBelow) : !(spaceBelow >= estimated || spaceBelow >= spaceAbove)
   // A context menu grows down and to the right of the pointer, like every other one.
   const alignRight = alignEnd && !point
   let left = alignRight ? r.right - width : r.left
   left = Math.max(MARGIN, Math.min(left, vw - width - MARGIN))
+  const room = Math.max(120, top ? spaceAbove : spaceBelow)
+  const maxHeight = props.maxHeight ? Math.min(props.maxHeight, room) : room
   pos.value = top
-    ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight: Math.max(120, spaceAbove) }
-    : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight: Math.max(120, spaceBelow) }
+    ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight }
+    : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight }
 }
 
 function toggle() {
@@ -73,7 +78,13 @@ async function show(at: { x: number; y: number } | null = null) {
   await nextTick()
   place()
   list.value?.focus({ preventScroll: true })
+  revealActive()
 }
+/** Keep the highlighted row in view when the list scrolls (the checked one on open, then the keyboard's). */
+function revealActive() {
+  list.value?.querySelector<HTMLElement>('.menu__item.is-active')?.scrollIntoView({ block: 'nearest' })
+}
+
 function close(refocus = false) {
   if (!open.value) return
   open.value = false
@@ -94,6 +105,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(active.value) }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true) }
   else if (e.key === 'Tab') { e.preventDefault(); close(true) }
+  if (open.value) nextTick(revealActive)
 }
 
 function onDocDown(e: MouseEvent) {
