@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AGENTS, hasUnreadResult, waitingFor, type Thread } from '~/types/chat'
+import { AGENTS, waitingFor, type Thread } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
 import { useOverlay } from '~/composables/useOverlay'
@@ -16,13 +16,12 @@ const now = useNow(30_000)
 
 const MAX_ROWS = 6
 
-/** Same definition as before: waiting for approval, or finished and unread. Waiting ones first. */
-const needs = computed(() => {
-  const list = threads.threads.filter(t => !t.archived && (t.status === 'waiting' || hasUnreadResult(t)))
-  return [...list.filter(t => t.status === 'waiting'), ...list.filter(t => t.status !== 'waiting')]
-})
+/** Chats the widget counts: top-level ones only. Sub-agent chats belong to their parent's run. */
+const listed = computed(() => threads.threads.filter(t => !t.archived && !t.parentId))
+/** Waiting on the person (an approval or an answer). Finished chats are done, not waiting. */
+const needs = computed(() => listed.value.filter(t => t.status === 'waiting'))
 /** A run is active right now (queued runs are about to start). */
-const running = computed(() => threads.threads.filter(t => !t.archived && (t.status === 'running' || t.status === 'queued')))
+const running = computed(() => listed.value.filter(t => t.status === 'running' || t.status === 'queued'))
 
 const needsShown = computed(() => needs.value.slice(0, MAX_ROWS))
 const runningShown = computed(() => running.value.slice(0, MAX_ROWS))
@@ -35,7 +34,7 @@ function projectName(t: Thread) {
 }
 function subtitle(t: Thread) {
   const agent = AGENTS[t.agent].name
-  const what = t.status === 'waiting' ? `Needs your ${waitingFor(t)}` : t.status === 'running' ? 'Working…' : t.status === 'queued' ? 'Starting…' : 'Finished, unread'
+  const what = t.status === 'waiting' ? `Needs your ${waitingFor(t)}` : t.status === 'running' ? 'Working…' : 'Starting…'
   const where = t.projectPath !== ws.activeProjectPath ? projectName(t) : agent
   return `${what} · ${where}`
 }

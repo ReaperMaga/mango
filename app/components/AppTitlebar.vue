@@ -171,10 +171,6 @@ const branchTitle = computed(() => {
       <button type="button" class="tb__search" @click="ws.paletteOpen = true">
         <Search />
         <span class="tb__ph">Search threads or run a command</span>
-        <span v-if="threads.activeThread" class="tb__ctx">
-          <UiRipenessDot :status="threads.activeThread.archived ? 'archived' : threads.activeThread.status" :size="10" />
-          <span class="tb__ctx-title">{{ threads.activeThread.title }}</span>
-        </span>
         <span class="tb__keys"><kbd>{{ mod }}</kbd><kbd>K</kbd></span>
       </button>
     </div>
@@ -278,22 +274,7 @@ const branchTitle = computed(() => {
 .tb__search:hover { border-color: var(--line-strong); color: var(--fg-muted); }
 .tb__search svg { width: 14px; height: 14px; flex: none; }
 .tb__ph { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tb__ctx {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 55%;
-  margin-left: auto;
-  padding-left: var(--space-2);
-  border-left: 1px solid var(--line);
-  color: var(--fg-muted);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
-.tb__ctx-title { overflow: hidden; text-overflow: ellipsis; }
 .tb__keys { display: flex; align-items: center; gap: 2px; flex: none; }
-.tb__ctx + .tb__keys { margin-left: var(--space-1); }
 
 /* Layout cluster: one connected segmented group of panel toggles. */
 .tb__cluster {
@@ -331,7 +312,6 @@ const branchTitle = computed(() => {
 .tb__win-btn--close:hover { background: var(--ripe-error); color: white; }
 
 @media (max-width: 1180px) {
-  .tb__ctx { display: none; }
   .tb__branch-name { max-width: 130px; }
   .tb__right, .tb { gap: var(--space-3); }
 }
