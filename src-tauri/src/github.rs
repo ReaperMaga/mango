@@ -617,6 +617,66 @@ pub async fn gh_item(app: AppHandle, path: String, reference: String) -> Result<
     blocking(move || item(&reference, || project_repo(&app, &path))).await
 }
 
+/// The pull request a `gh pr create` printed: its link on success, or the one that already
+/// exists for the branch ("a pull request for branch … already exists: <link>").
+fn created_target(text: &str) -> Option<Target> {
+    text.split_whitespace()
+        .filter(|w| w.starts_with("https://") && w.contains("/pull/"))
+        .find_map(|w| match parse_reference(w) {
+            Ok(Reference::Full(t)) => Some(t),
+            _ => None,
+        })
+}
+
+/// `gh pr create` from the branch checked out at `path` into `base`. On this computer gh runs in
+/// the folder and fills the title and body from the commits (`--fill`); for a remote project gh
+/// has no folder, so git reads the commits inside the environment and gh is told the repository.
+fn pr_create(app: &AppHandle, path: &str, base: &str) -> Result<GhItem, String> {
+    let base = crate::git::safe_ref(base)?.to_string();
+    let mut cmd = if let Some(env) = crate::vcs::env_at(app, path) {
+        let at = At::Env(Box::new(env?));
+        let pr = crate::git::pr_details(&at, &base, true)?;
+        let (host, owner, repo) = env_repo(&at)?;
+        let mut cmd = gh(None);
+        let repo = if host == "github.com" { format!("{owner}/{repo}") } else { format!("{host}/{owner}/{repo}") };
+        cmd.args(["pr", "create"])
+            .arg(format!("--repo={repo}"))
+            .arg(format!("--head={}", pr.branch))
+            .arg(format!("--title={}", pr.title))
+            .arg(format!("--body={}", pr.body));
+        cmd
+    } else {
+        let dir = PathBuf::from(path.trim());
+        if path.trim().is_empty() || !dir.is_dir() {
+            return Err(format!("{path} is not a folder"));
+        }
+        let pr = crate::git::pr_details(&At::local(&dir), &base, false)?;
+        let mut cmd = gh(Some(&dir));
+        cmd.args(["pr", "create", "--fill"]).arg(format!("--head={}", pr.branch));
+        cmd
+    };
+    cmd.arg(format!("--base={base}"));
+    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "gh", MISSING)?;
+    let target = if out.ok() {
+        created_target(&out.text())
+    } else if out.combined().contains("already exists") {
+        created_target(&out.combined())
+    } else {
+        return Err(gh_error(&out, None));
+    };
+    let target = target.ok_or_else(|| format!("The GitHub CLI did not say where the pull request is.\n{}", out.combined()))?;
+    fetch(&target).map_err(|e| {
+        format!("Opened https://{}/{}/{}/pull/{}, but could not read it back: {e}", target.host, target.owner, target.repo, target.number)
+    })
+}
+
+/// Open a pull request from the branch checked out at `path` (pushed already) into `base`, or find
+/// the one that is already open for it, and read it. `path` may be a remote project.
+#[tauri::command]
+pub async fn gh_pr_create(app: AppHandle, path: String, base: String) -> Result<GhItem, String> {
+    blocking(move || pr_create(&app, &path, &base)).await
+}
+
 // ---------------------------------------------------------------------------
 // A GitHub Actions job and its log
 // ---------------------------------------------------------------------------
@@ -916,6 +976,16 @@ pub async fn gh_job(url: String) -> Result<GhJob, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn finds_the_pull_request_gh_created() {
+        let t = created_target("https://github.com/acme/app/pull/12\n").unwrap();
+        assert_eq!((t.owner.as_str(), t.repo.as_str(), t.number), ("acme", "app", 12));
+        let exists = "a pull request for branch \"feat/x\" into branch \"main\" already exists:\nhttps://github.com/acme/app/pull/7";
+        assert_eq!(created_target(exists).unwrap().number, 7);
+        assert!(created_target("Creating pull request for feat/x into main\n").is_none());
+        assert!(created_target("https://github.com/acme/app/issues/3").is_none());
+    }
 
     fn full(host: &str, owner: &str, repo: &str, number: u64) -> Reference {
         Reference::Full(Target { host: host.into(), owner: owner.into(), repo: repo.into(), number })

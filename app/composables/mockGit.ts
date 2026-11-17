@@ -509,15 +509,42 @@ function childBranch(name: string, parent: string): string {
 const repos = new Map<string, Repo>()
 /** Linked worktrees made with `git_worktree_add`: folder → the main working tree's folder. */
 const linkedTrees = new Map<string, string>()
+/** The `mango` project comes with one linked worktree, a few commits ahead of main (start a chat in it from the sidebar's "Continue in" list). */
+const SEEDED = { leaf: 'fix-diff-wrap', branch: 'fix/diff-wrap' }
+const seededMain = (path: string) => {
+  const m = new RegExp(`^(.*)\\.worktrees/${SEEDED.leaf}$`).exec(path)
+  return m && baseName(m[1]!) === 'mango' ? m[1]! : null
+}
+function seedWorktree(main: string, mainRepo: Repo) {
+  const folder = `${main.replace(/\/+$/, '')}.worktrees/${SEEDED.leaf}`
+  mainRepo.branches[SEEDED.branch] = { upstream: null, ahead: 0, behind: 0 }
+  const work = [
+    commitOf('Wrap long lines in the diff view', 12 * MIN),
+    commitOf('Keep the gutter fixed while a wrapped diff scrolls', 54 * MIN),
+    commitOf('Diff: soft-wrap setting in Appearance', 2 * 60 * MIN),
+  ]
+  repos.set(folder, { ...cleanRepo(), branch: SEEDED.branch, branches: mainRepo.branches, log: [...work, ...mainRepo.log], incoming: [] })
+  linkedTrees.set(folder, main)
+}
 function repoAt(path: string): Repo {
   let repo = repos.get(path)
   if (!repo) {
+    // The seeded worktree, asked for before its project: the project brings it.
+    const main = seededMain(path)
+    if (main && !repos.has(main)) {
+      repoAt(main)
+      if (repos.has(path)) return repos.get(path)!
+    }
     const name = baseName(path)
     repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : mangoRepo()
     repos.set(path, repo)
+    if (name === 'mango' && !linkedTrees.has(path)) seedWorktree(path, repo)
   }
   return repo
 }
+
+/** Commits in `r` that `base` doesn't have (the mock keeps one shared history of commit objects). */
+const notIn = (r: Repo, base: Repo) => r.log.filter(c => !base.log.some(b => b.hash === c.hash))
 
 /* ---------- operations ---------- */
 
@@ -752,6 +779,15 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
   }
   if (cmd === 'git_worktree_remove') return worktreeRemove(path, String(args.worktree ?? ''), !!args.force)
   if (cmd === 'git_status') return statusOf(r, path)
+  if (cmd === 'git_ahead') {
+    if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
+    if (r.vcs === 'plastic') throw new Error("Worktrees are a git feature; Unity Version Control workspaces don't have them.")
+    await wait(120)
+    const mainRepo = repoAt(linkedTrees.get(path) ?? path)
+    const base = args.base ? String(args.base) : mainRepo.branch
+    const other = worktreeList(path).map(w => repoAt(w.path)).find(x => x.branch === base) ?? mainRepo
+    return { base, ahead: notIn(r, other).length }
+  }
   if (cmd === 'git_init') {
     if (!r.isRepo) {
       Object.assign(r, emptyRepo(), {
@@ -855,7 +891,19 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       r.branch = local
       return local
     }
-    case 'git_merge': return `Merged 2 commits from ${String(args.branch)} into ${r.branch}.\n4 files changed, +38 −11`
+    case 'git_merge': {
+      const branch = String(args.branch)
+      // A branch checked out in another worktree of this repository: its commits really arrive.
+      const from = worktreeList(path).map(w => repoAt(w.path)).find(x => x !== r && x.branch === branch)
+      if (!from) return `Merged 2 commits from ${branch} into ${r.branch}.\n4 files changed, +38 −11`
+      await wait(600)
+      const fresh = notIn(from, r)
+      if (!fresh.length) return `${r.branch} already has every commit from ${branch}.`
+      r.log.unshift(...fresh)
+      const t = tracking(r)
+      if (t.upstream) t.ahead += fresh.length
+      return `Merged ${commits(fresh.length)} from ${branch} into ${r.branch}.\n${fresh.length + 2} files changed, +${fresh.length * 17} −${fresh.length * 4}`
+    }
     case 'git_rebase': return `Rebased ${r.branch} onto ${String(args.onto)}.\nPicked up 2 commits from ${String(args.onto)}.`
     case 'git_branch_rename': {
       const from = String(args.from); const to = String(args.to).trim()

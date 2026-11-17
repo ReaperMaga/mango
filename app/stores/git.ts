@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree } from '~/types/ipc'
+import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 
 /** The one action that can run at a time. */
-export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init'
+export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr'
 
 export interface GitDiffEntry {
   /** Unified diff text; null until the first load finishes. */
@@ -34,6 +34,11 @@ export interface GitRepoState {
   diffs: Record<string, GitDiffEntry>
   /** The repository's working trees, main first (`git worktree list`); null until read. */
   worktrees: GitWorktree[] | null
+  /**
+   * A linked worktree only: its branch against the one checked out in the main folder (what it merges
+   * into). Null when this is no linked worktree, or the count can't be read (a detached main folder).
+   */
+  vsMain: GitAhead | null
 }
 
 export const HISTORY_LIMIT = 20
@@ -49,7 +54,7 @@ const parseKey = (key: string) => {
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
 const newRepo = (): GitRepoState => ({
-  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null,
+  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null,
 })
 
 /* Refreshes are coalesced per project: one running, at most one queued behind it. */
@@ -138,7 +143,7 @@ export const useGit = defineStore('git', {
         repo.error = null
         this.syncProject(path, status)
         if (!status.isRepo) {
-          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null })
+          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null })
           return
         }
         this.reconcileDiffs(path)
@@ -149,6 +154,8 @@ export const useGit = defineStore('git', {
           repo.historyOpen && repo.logHead !== status.head ? this.loadLog(path) : null,
           // Worktrees come and go rarely: read once, and again when one is added or removed (or branches move).
           status.vcs === 'git' && (repo.worktrees === null || moved) ? this.loadWorktrees(path) : null,
+          // The main folder's branch moves without this folder knowing: read it every time.
+          status.vcs === 'git' && status.mainRoot ? this.loadVsMain(path) : (repo.vsMain = null),
         ])
       } catch (e) {
         repo.error = reason(e)
@@ -213,6 +220,16 @@ export const useGit = defineStore('git', {
         const list = await call('git_worktrees', { path })
         if (JSON.stringify(list) !== JSON.stringify(repo.worktrees)) repo.worktrees = list
       } catch { /* keep the last list */ }
+    },
+
+    async loadVsMain(path: string) {
+      const repo = this.ensure(path)
+      try {
+        const next = await call('git_ahead', { path, base: null })
+        if (JSON.stringify(next) !== JSON.stringify(repo.vsMain)) repo.vsMain = next
+      } catch {
+        repo.vsMain = null
+      }
     },
 
     async loadLog(path: string) {
@@ -345,6 +362,35 @@ export const useGit = defineStore('git', {
     },
     init(path: string) {
       return this.run(path, 'init', () => call('git_init', { path }))
+    },
+
+    /**
+     * Merge the branch of the linked worktree at `path` into the branch checked out in the main folder
+     * `main` (the merge runs there). The result shows with `path`; both folders are read again.
+     */
+    mergeWorktree(path: string, main: string, branch: string) {
+      return this.run(path, 'merge', async () => {
+        try {
+          return (await call('git_merge', { path: main, branch })) || `Merged ${branch}.`
+        } finally {
+          const project = useWorkspace().activeProjectPath
+          await Promise.all([...new Set([main, project])].filter((p): p is string => !!p && p !== path).map(p => this.refresh(p)))
+        }
+      })
+    },
+
+    /**
+     * Push the branch at `path` (publishing it when it has no upstream), then open a pull request from it
+     * into `base` with the GitHub CLI, or find the one already open. Resolves to it; null on failure (in `lastError`).
+     */
+    async openPullRequest(path: string, base: string): Promise<GhItem | null> {
+      let item: GhItem | null = null
+      await this.run(path, 'pr', async () => {
+        await call('git_push', { path })
+        item = await call('gh_pr_create', { path, base })
+        return `Pull request #${item.number} is open: ${item.title}\n${item.url}`
+      })
+      return item
     },
   },
 })

@@ -120,6 +120,14 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+/** How far a folder's branch is ahead of another (`git_ahead`). */
+export interface GitAhead {
+  /** The branch compared with. */
+  base: string
+  /** Commits on HEAD that `base` doesn't have. */
+  ahead: number
+}
+
 export interface GitCommit {
   hash: string
   /** e.g. "a1b2c3d"; "cs:12" for a Unity VCS changeset. */
@@ -729,10 +737,16 @@ export interface Commands {
    */
   git_worktree_add: [{ path: string; branch: string; from: string | null; create: boolean }, GitWorktree]
   /**
-   * Remove the linked worktree at `worktree` (its folder); the branch is kept. Refuses the main
-   * one, and one with uncommitted or untracked changes unless `force`.
+   * Remove the linked worktree at `worktree` (its folder; a locked one is unlocked first); the branch is
+   * kept. Refuses the main one, and one with uncommitted or untracked changes unless `force`.
    */
   git_worktree_remove: [{ path: string; worktree: string; force: boolean }, void]
+  /**
+   * Commits on the branch at `path` that `base` doesn't have. Without `base`: compared with the branch
+   * checked out in the repository's main working tree (what a linked worktree is merged into); fails when
+   * that is detached. Git only.
+   */
+  git_ahead: [{ path: string; base: string | null }, GitAhead]
 
   /** One folder of a project (`dir` "" for the top). */
   /**
@@ -745,6 +759,12 @@ export interface Commands {
    * fails and says the branch moved). The local checkout is not touched.
    */
   gh_merge: [{ path: string; reference: string; method: GhMergeMethod; headSha: string }, void]
+  /**
+   * Open a pull request from the branch checked out at `path` (push it first) into `base`, titled from
+   * its commits like `gh pr create --fill`, and read it back. When one is already open for the branch,
+   * that one comes back. Works for remote projects.
+   */
+  gh_pr_create: [{ path: string; base: string }, GhItem]
   /**
    * A GitHub Actions job by its link (a check's `url`, `…/actions/runs/<run>/job/<job>`): its steps,
    * and once it finished, its log split into them. Other links are refused.
