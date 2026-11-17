@@ -390,8 +390,6 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 @media (prefers-reduced-motion: reduce) { .ca__tab-spin { animation-duration: 2.4s; } }
 .ca__tab-wt { flex: none; width: 12px; height: 12px; stroke-width: 1.85; color: var(--fg-faint); }
 .ca__tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Inter leaves more room under its baseline than over its caps: centred boxes put the letters ~2px above the icons. */
-.ca__tab-title, .ca__tab-note { position: relative; top: 2px; }
 /* A file opened with a single click: the next one replaces it until it is edited or double-clicked. */
 .ca__tab-title.is-preview { font-style: italic; }
 /* The close button is always there, faint, so every tab has the same width whether hovered or not. */
