@@ -45,7 +45,9 @@ const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version'> & { latest: str
   { id: 'tailscale', name: 'Tailscale', description: "Joins the server's tailnet.", requires: ['base'], latest: '1.90.6' },
 ]
 
-interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp'> {
+interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp' | 'disk'> {
+  /** The root disk's size, when set. */
+  disk?: string | null
   /** Addresses while it runs (a stopped instance reports none). */
   addr: string
   tsIp: string | null
@@ -110,7 +112,7 @@ const hosts: MockHost[] = [
     instances: [
       {
         name: 'dev', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
-        addr: '10.88.0.12', tsIp: '100.101.7.33', cpus: 4, memory: '8GiB', createdAt: now - 12 * DAY,
+        addr: '10.88.0.12', tsIp: '100.101.7.33', cpus: 4, memory: '8GiB', disk: '40GiB', createdAt: now - 12 * DAY,
         installed: { ...all(['base', 'node', 'claude', 'codex', 'gh', 'tailscale']), claude: '2.3.9' },
         sshd: true,
         shares: [
@@ -226,6 +228,7 @@ const view = (i: MockInstance): EnvInstance => ({
   tailscaleIp: i.status === 'running' ? i.tsIp : null,
   cpus: i.cpus,
   memory: i.memory,
+  disk: i.disk ?? null,
   createdAt: i.createdAt,
 })
 
@@ -519,6 +522,43 @@ export function createMockEnvs(ctx: MockEnvContext) {
         return
       }
 
+      case 'env_rename': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner can rename this environment.')
+        const name = String(args.newName ?? '').trim()
+        if (!/^[a-z][a-z0-9-]{0,62}$/i.test(name) || name.endsWith('-')) {
+          throw new Error(`"${name}" can't be an instance name. Use a letter, then letters, digits and dashes (up to 63).`)
+        }
+        if (name === i.name) return null
+        if (h.instances.some(x => x.name === name)) throw new Error(`${h.host.name} already has an instance called ${name}.`)
+        const wasRunning = i.status === 'running'
+        if (wasRunning) { i.status = 'stopping'; await latency(700) }
+        i.status = 'stopped'
+        await latency(400)
+        i.name = name
+        if (wasRunning) { i.status = 'starting'; await latency(800); i.status = 'running' }
+        return null
+      }
+
+      case 'env_resize': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner can resize this environment.')
+        const input = args.input as { cpus: number | null; memoryGib: number | null; diskGib: number | null }
+        if (input.cpus == null && input.memoryGib == null && input.diskGib == null) throw new Error('Nothing to change.')
+        if (input.cpus != null && (input.cpus < 1 || input.cpus > 64)) throw new Error('Pick 1 to 64 CPUs.')
+        if (input.memoryGib != null && (input.memoryGib < 1 || input.memoryGib > 512)) throw new Error('Pick 1 to 512 GiB of memory.')
+        if (input.diskGib != null && (input.diskGib < 4 || input.diskGib > 2048)) throw new Error('Pick 4 to 2048 GiB of disk.')
+        const current = parseInt(i.disk ?? '', 10)
+        if (input.diskGib != null && current && input.diskGib < current) {
+          throw new Error(`Could not change the disk size of ${i.name}: a disk can only grow.`)
+        }
+        await latency(700)
+        if (input.cpus != null) i.cpus = input.cpus
+        if (input.memoryGib != null) i.memory = `${input.memoryGib}GiB`
+        if (input.diskGib != null) i.disk = `${input.diskGib}GiB`
+        return input.diskGib != null && i.kind === 'vm' ? "The VM's file system grows to the new disk size when it next starts." : null
+      }
+
       case 'env_components': {
         const { h, i } = instanceOf(args.hostId, args.instance)
         await latency(600)
@@ -552,7 +592,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
           name, kind: input.kind, status: 'starting',
           image: `${IMAGE_NAMES[input.image] ?? input.image}${vm ? ' cloud' : ''} (20261114_07:42)`,
           addr: `10.88.0.${50 + Math.floor(Math.random() * 150)}`, tsIp: null,
-          cpus: input.cpus, memory: input.memoryGib ? `${input.memoryGib}GiB` : null, createdAt: Date.now(), installed: {},
+          cpus: input.cpus, memory: input.memoryGib ? `${input.memoryGib}GiB` : null, disk: input.diskGib ? `${input.diskGib}GiB` : null, createdAt: Date.now(), installed: {},
         }
         const ids = withRequired(input.components)
         play(id, [

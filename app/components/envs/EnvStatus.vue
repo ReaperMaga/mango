@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { TriangleAlert } from 'lucide-vue-next'
-import type { EnvInstanceAction, EnvInstanceStatus } from '~/types/ipc'
+import type { EnvInstanceStatus } from '~/types/ipc'
+import type { EnvBusy } from '~/stores/environments'
 
 /**
  * An instance's state: a small round mark whose colour and fill follow the
@@ -12,7 +13,7 @@ import type { EnvInstanceAction, EnvInstanceStatus } from '~/types/ipc'
 const props = withDefaults(defineProps<{
   status: EnvInstanceStatus
   /** An action Mango has in flight; it wins over the reported status. */
-  busy?: EnvInstanceAction | null
+  busy?: EnvBusy | null
   word?: boolean
 }>(), { busy: null, word: false })
 
@@ -24,6 +25,8 @@ const view = computed<{ tone: Tone; label: string }>(() => {
     case 'stop': return { tone: 'moving', label: 'Stopping…' }
     case 'restart': return { tone: 'moving', label: 'Restarting…' }
     case 'delete': return { tone: 'moving', label: 'Deleting…' }
+    case 'rename': return { tone: 'moving', label: 'Renaming…' }
+    case 'resize': return { tone: 'moving', label: 'Resizing…' }
   }
   switch (props.status) {
     case 'running': return { tone: 'on', label: 'Running' }

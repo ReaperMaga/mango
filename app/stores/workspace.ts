@@ -5,7 +5,7 @@ import type { AgentId } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
 import { shortVersion } from '~/utils/agentCli'
-import { envPath, isEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
+import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 
@@ -420,6 +420,36 @@ export const useWorkspace = defineStore('workspace', {
       const all = { ...this.envExtraFiles }
       delete all[root]
       this.envExtraFiles = all
+      this.persist()
+    },
+
+    /**
+     * An environment's instance was renamed: its projects, their prefs, remembered env files, the
+     * place for new projects and its terminals follow it to `env://<hostId>/<to>/…`.
+     */
+    moveEnvInstance(hostId: string, from: string, to: string) {
+      const move = (p: string) => movedEnvPath(p, hostId, from, to) ?? p
+      const moveInfo = (p: ProjectInfo): ProjectInfo => {
+        const path = movedEnvPath(p.path, hostId, from, to)
+        if (!path) return p
+        // A project at the instance's root is named after it unless the user named it.
+        const root = parseEnvPath(path)!.dir === '/'
+        return { ...p, path, name: root && p.name === from ? to : p.name }
+      }
+      const moveKeys = <T>(o: Record<string, T>) => Object.fromEntries(Object.entries(o).map(([k, v]) => [move(k), v]))
+      saveEnvProjects(loadEnvProjects().map(moveInfo))
+      this.recent = this.recent.map(moveInfo)
+      this.openProjects = this.openProjects.map(moveInfo)
+      if (this.activeProjectPath) this.activeProjectPath = move(this.activeProjectPath)
+      this.projectPrefs = moveKeys(this.projectPrefs)
+      this.envExtraFiles = moveKeys(this.envExtraFiles)
+      if (this.where?.hostId === hostId && this.where.instance === from) this.where = { hostId, instance: to }
+      for (const t of this.terminalTabs) {
+        const cwd = movedEnvPath(t.cwd, hostId, from, to)
+        if (!cwd) continue
+        t.cwd = cwd
+        if (t.title === from) t.title = to
+      }
       this.persist()
     },
 

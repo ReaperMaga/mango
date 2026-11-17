@@ -66,6 +66,7 @@ export function envState(hostId: string, instance: string): EnvState {
   const busy = envs.busy[instanceKey(hostId, instance)]
   if (busy === 'start' || busy === 'restart') return { tone: 'moving', label: 'Starting…', status: 'starting' }
   if (busy === 'stop') return { tone: 'moving', label: 'Stopping…', status: 'stopping' }
+  if (busy === 'rename') return { tone: 'moving', label: 'Renaming…', status: 'stopping' }
   if (!inst) {
     if (envs.instances[hostId]) return { tone: 'bad', label: 'Not on its server any more', status: 'error' }
     return { tone: 'unknown', label: envs.probing[hostId] || envs.loadingInstances[hostId] ? 'Checking…' : 'Not checked', status: 'unknown' }

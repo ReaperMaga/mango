@@ -16,6 +16,7 @@ import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { call } from '~/composables/useBackend'
+import { movedEnvPath } from '~/utils/envPath'
 import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
@@ -498,6 +499,22 @@ export const useThreads = defineStore('threads', {
       const target = ids[ids.indexOf(id) + by]
       if (target) this.reorder(id, target, by < 0 ? 'before' : 'after')
     },
+    /**
+     * An environment's instance was renamed: chats in it follow it to `env://<hostId>/<to>/…` (the
+     * agent's session lives in the same folder inside, so it resumes). Diff, file and browser tabs of
+     * it close: their ids carry the old place.
+     */
+    moveEnvInstance(hostId: string, from: string, to: string) {
+      for (const id of [...this.tabs]) if (movedEnvPath(tabProject(id), hostId, from, to)) this.closeTab(id)
+      for (const t of this.threads) {
+        const path = movedEnvPath(t.projectPath, hostId, from, to)
+        if (path) t.projectPath = path
+        const wt = movedEnvPath(t.worktree, hostId, from, to)
+        if (wt) t.worktree = wt
+      }
+      this.persist()
+    },
+
     /** Forget the hand-made order of a project: newest first again. */
     resetOrder(projectPath: string) {
       for (const t of this.threads) if (t.projectPath === projectPath) delete t.order

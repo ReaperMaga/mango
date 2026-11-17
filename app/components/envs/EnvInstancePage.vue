@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
-  CircleCheck, CircleDashed, Ellipsis, FolderGit2, Link2, MonitorPlay, Pencil, Play, RefreshCw, RotateCw, Share2, Square,
-  SquareTerminal, Trash2, TriangleAlert,
+  CircleCheck, CircleDashed, Ellipsis, FolderGit2, Gauge, Info, Link2, MonitorPlay, Pencil, Play, RefreshCw, RotateCw, Share2, Square,
+  SquareTerminal, Trash2, TriangleAlert, X,
 } from 'lucide-vue-next'
 import { directProblem, directState, instanceKey, shareDay, useEnvironments } from '~/stores/environments'
 import type { EnvComponent, EnvComponentId, EnvInstanceAction, EnvLoginTool } from '~/types/ipc'
@@ -14,6 +14,8 @@ import EnvDeleteDialog from './EnvDeleteDialog.vue'
 import EnvProjectDialog from './EnvProjectDialog.vue'
 import EnvSharing from './EnvSharing.vue'
 import EnvShareDialog from './EnvShareDialog.vue'
+import EnvRenameDialog from './EnvRenameDialog.vue'
+import EnvResizeDialog from './EnvResizeDialog.vue'
 
 /**
  * One instance: its state and power actions, ways into it (project, shell,
@@ -24,7 +26,9 @@ import EnvShareDialog from './EnvShareDialog.vue'
  *
  * An environment joined from someone's link (a direct host) is the same page
  * without what only its owner can do: no power actions, no sharing, no server.
- * It can be renamed and left instead.
+ * It can be renamed (here only, as its owner named it) and left instead. The owner
+ * can rename and resize theirs (Incus renames only stopped instances: a running
+ * one is stopped and started again).
  */
 const props = defineProps<{ hostId: string; name: string }>()
 
@@ -65,11 +69,36 @@ async function act(action: EnvInstanceAction) {
 
 const deleting = ref(false)
 const sharing = ref(false)
+const renaming = ref(false)
+const resizing = ref(false)
 const moreItems = computed<MenuItem[]>(() => [
   { label: 'Restart', icon: RotateCw, disabled: !running.value, onSelect: () => act('restart') },
   { label: 'Share…', icon: Share2, disabled: !running.value, onSelect: () => { sharing.value = true } },
+  { label: 'Rename…', icon: Pencil, divider: true, disabled: !!busy.value, onSelect: () => { renaming.value = true } },
+  { label: 'Resize…', icon: Gauge, disabled: !!busy.value, onSelect: () => { resizing.value = true } },
   { label: 'Delete…', icon: Trash2, danger: true, divider: true, disabled: !!busy.value, onSelect: () => { deleting.value = true } },
 ])
+
+/* ---------- rename, resize: what to tell afterwards stays with the instance ---------- */
+
+const note = computed(() => envs.notes[key.value] ?? null)
+const dismissNote = () => { delete envs.notes[key.value] }
+
+function onRenamed(newName: string, text: string | null) {
+  renaming.value = false
+  const to = instanceKey(props.hostId, newName)
+  if (text) envs.notes[to] = text
+  else delete envs.notes[to]
+  // Its page is keyed by name: show the renamed one, unless the user went elsewhere meanwhile.
+  const sel = envs.selected
+  if (sel?.hostId === props.hostId && sel.instance === props.name) envs.select(props.hostId, newName)
+}
+
+function onResized(text: string | null) {
+  resizing.value = false
+  if (text) envs.notes[key.value] = text
+  else dismissNote()
+}
 
 function onDeleted() {
   deleting.value = false
@@ -239,6 +268,7 @@ const created = computed(() => {
   return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 })
 const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '$1 $2') ?? null)
+const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $2') ?? null)
 </script>
 
 <template>
@@ -363,6 +393,11 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
           <template v-if="inst.image"><span aria-hidden="true">·</span><span class="ip__clip" :title="inst.image">{{ inst.image }}</span></template>
         </p>
         <p v-if="actionError" class="ip__error selectable" role="alert">{{ actionError }}</p>
+        <p v-if="note" class="ip__note" role="status">
+          <Info class="ip__note-icon" aria-hidden="true" />
+          <span class="selectable">{{ note }}</span>
+          <UiIconButton label="Dismiss" size="sm" @click="dismissNote"><X /></UiIconButton>
+        </p>
       </header>
 
       <dl class="ip__facts">
@@ -382,6 +417,10 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
         <div class="ip__fact">
           <dt>Memory</dt>
           <dd class="tabular">{{ memory ?? 'Server default' }}</dd>
+        </div>
+        <div class="ip__fact">
+          <dt>Disk</dt>
+          <dd class="tabular">{{ disk ?? 'Pool default' }}</dd>
         </div>
         <div v-if="created" class="ip__fact">
           <dt>Created</dt>
@@ -517,6 +556,17 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
     </div>
 
     <EnvShareDialog v-if="!direct" :open="sharing" :host-id="hostId" :instance="name" @close="sharing = false" />
+    <template v-if="!direct">
+      <EnvRenameDialog
+        :open="renaming"
+        :host-id="hostId"
+        :name="name"
+        :running="inst?.status === 'running'"
+        @close="renaming = false"
+        @renamed="onRenamed"
+      />
+      <EnvResizeDialog v-if="inst" :open="resizing" :host-id="hostId" :instance="inst" @close="resizing = false" @resized="onResized" />
+    </template>
     <!-- Not gated on `inst`: the list refreshes (and drops it) before the dialog reports back. -->
     <EnvDeleteDialog
       :open="deleting"
@@ -644,10 +694,12 @@ const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '
   animation: ip-turn 0.7s linear infinite;
 }
 .ip__error { margin: 0; font-size: var(--text-xs); color: var(--ripe-error-fg); text-wrap: pretty; }
+.ip__note { display: flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 0 0; font-size: var(--text-xs); color: var(--fg-muted); text-wrap: pretty; }
+.ip__note-icon { flex: none; width: 13px; height: 13px; color: var(--fg-subtle); }
 
 .ip__facts {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: var(--space-3) var(--space-5);
   margin: 0;
   padding: var(--space-4) 0;

@@ -140,6 +140,8 @@ pub fn run() {
             envs::incus::env_instances,
             envs::incus::env_instance_action,
             envs::incus::env_create,
+            envs::incus::env_rename,
+            envs::incus::env_resize,
             envs::server::env_server_setup,
             envs::recipes::env_components,
             envs::recipes::env_install,

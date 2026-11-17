@@ -21,6 +21,16 @@ export function envPath(loc: EnvLocation): string {
   return `${PREFIX}${loc.hostId}/${loc.instance}${dir.replace(/\/+$/, '') || '/'}`
 }
 
+/**
+ * `path` with its instance renamed from `from` to `to` (on server `hostId`), or null when it is
+ * not inside that instance. Used to move projects, chats and prefs along when an instance is renamed.
+ */
+export function movedEnvPath(path: string | null | undefined, hostId: string, from: string, to: string): string | null {
+  const loc = parseEnvPath(path)
+  if (!loc || loc.hostId !== hostId || loc.instance !== from) return null
+  return envPath({ ...loc, instance: to })
+}
+
 /** The parts of an env:// path; null for a local path. */
 export function parseEnvPath(path: string | null | undefined): EnvLocation | null {
   if (!path || !path.startsWith(PREFIX)) return null
