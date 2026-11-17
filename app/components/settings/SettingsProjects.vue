@@ -13,6 +13,8 @@ import SettingsSegmented from './SettingsSegmented.vue'
 import SettingsSelect from './SettingsSelect.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
 import ProjectEnv from './ProjectEnv.vue'
+import McpServerList from './McpServerList.vue'
+import { useMcp } from '~/stores/mcp'
 
 /**
  * Settings > Projects: what one project overrides. Pick the project at the top; every row below applies
@@ -90,6 +92,19 @@ function setAgent(v: string) {
   set({ agent: v === 'default' ? null : v as AgentId, model: null })
 }
 
+/* ---------- MCP servers ---------- */
+const mcpHeadId = useId()
+const mcpEl = ref<HTMLElement | null>(null)
+/* Opened as "Project MCP servers" (palette): bring the block into view. */
+onMounted(() => {
+  if (ws.settingsAnchor !== 'project-mcp') return
+  ws.settingsAnchor = null
+  const reveal = () => mcpEl.value?.scrollIntoView({ block: 'start' })
+  requestAnimationFrame(reveal)
+  // Again once the blocks above have read their files and taken their height.
+  setTimeout(reveal, 400)
+})
+
 /* ---------- archive and remove ---------- */
 function toggleArchive() {
   if (!path.value) return
@@ -104,7 +119,7 @@ function askRemove() {
   if (!p) return
   ws.confirm = {
     title: `Remove ${p.name}?`,
-    body: `${p.name} and all its chats are removed from Mango. The folder on disk is not touched.`,
+    body: `${p.name}, all its chats and its MCP servers are removed from Mango. The folder on disk is not touched.`,
     label: 'Remove project',
     danger: true,
     run: async () => {
@@ -113,6 +128,7 @@ function askRemove() {
       await ws.forgetProject(p.path)
       ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null })
       ws.forgetEnvExtraFiles(p.path)
+      await useMcp().forgetProject(p.path).catch(() => {})
       picked.value = null
     },
   }
@@ -207,6 +223,17 @@ function askRemove() {
 
       <ProjectEnv :key="project.path" :root="project.path" :name="project.name" />
 
+      <section ref="mcpEl" class="block" :aria-labelledby="mcpHeadId">
+        <header class="block__head">
+          <h3 :id="mcpHeadId" class="block__title">MCP servers</h3>
+          <p class="block__desc">
+            <template v-if="isEnvPath(project.path)">Tool servers for chats in {{ project.name }}. They start inside its environment, like its agents.</template>
+            <template v-else>Tool servers for chats in {{ project.name }} only, on top of the ones for all projects. One with the same name takes the place of a server for all projects.</template>
+          </p>
+        </header>
+        <McpServerList :key="project.path" :project="project.path" />
+      </section>
+
       <h3 class="head">Danger</h3>
       <div class="card">
         <SettingsRow label="Remove project" hint="Deletes the project entry and its chats. Files on disk are not touched.">
@@ -255,6 +282,12 @@ function askRemove() {
 .card :deep(.btn svg) { width: 14px; height: 14px; }
 
 .head { margin: var(--space-6) 0 var(--space-3); font-size: var(--text-md); font-weight: 600; }
+
+/* A block with a sentence under its heading, as Environment variables has. */
+.block { scroll-margin-top: var(--space-5); }
+.block__head { margin: var(--space-6) 0 var(--space-3); }
+.block__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.block__desc { margin: var(--space-1) 0 0; max-width: 62ch; font-size: var(--text-sm); color: var(--fg-subtle); text-wrap: pretty; }
 
 .icon { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); }
 .hue {

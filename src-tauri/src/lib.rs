@@ -14,6 +14,7 @@ mod files;
 mod git;
 mod github;
 mod images;
+mod mcp;
 mod plastic;
 mod projects;
 mod pty;
@@ -54,6 +55,7 @@ pub fn run() {
         .manage(envs::join::JoinLinkState::default())
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
+        .manage(mcp::McpState::default())
         .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
@@ -181,6 +183,8 @@ pub fn run() {
             browser::browser_reset,
             browser::browser_screenshot,
             browser_mcp::browser_mcp,
+            mcp::mcp_servers,
+            mcp::mcp_servers_save,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

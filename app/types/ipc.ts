@@ -462,6 +462,36 @@ export interface BrowserMcp {
   readOnlyTools: string[]
 }
 
+/** A name and value of an MCP server: an environment variable of its command, or an HTTP header. Values are secrets. */
+export interface McpPair {
+  name: string
+  value: string
+}
+
+/**
+ * An MCP server the user added for agent chats (`mcp_servers`, kept in `mcp-servers.json` in the app
+ * data folder, readable by its owner only). Global (`project` null: every project on this computer)
+ * or one project's own. Only the transport's own fields are kept.
+ */
+export interface McpServerConfig {
+  /** Assigned by the backend on first save. */
+  id: string
+  /** Tools are called `mcp__<name>__<tool>`; letters, digits, - and _ (see `mcpNameProblem`). */
+  name: string
+  /** Null: all projects on this computer. Otherwise the project's path (`env://…` for a remote one). */
+  project: string | null
+  enabled: boolean
+  /** Which agents get it. */
+  agents: Array<'claude' | 'codex'>
+  /** `stdio`: a command the agent's CLI starts. `http`: a streamable HTTP endpoint. */
+  transport: 'stdio' | 'http'
+  command: string
+  args: string[]
+  env: McpPair[]
+  url: string
+  headers: McpPair[]
+}
+
 /** A picture an agent's reply points at (`chat_image`). */
 export interface ChatImage {
   /** The whole file, base64. */
@@ -1027,6 +1057,14 @@ export interface Commands {
    * For a remote environment the URL is one that works inside it (a reverse SSH forward back to Mango).
    */
   browser_mcp: [{ threadId: string; projectPath: string }, BrowserMcp]
+
+  /** Every MCP server the user added, global and per project. */
+  mcp_servers: [Record<string, never>, McpServerConfig[]]
+  /**
+   * Replaces the saved list after checking it (names, one per scope; transports; header and variable
+   * names). Returns it as saved, new servers with their ids. Errors name the server, never a value.
+   */
+  mcp_servers_save: [{ servers: McpServerConfig[] }, McpServerConfig[]]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]

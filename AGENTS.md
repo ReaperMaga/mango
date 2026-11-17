@@ -26,6 +26,7 @@ pnpm bump patch|minor|major|1.2.3   # set the version everywhere (prints the com
 pnpm version:check                  # every copy of the version agrees (exit 1 if not)
 
 pnpm nuxt prepare && pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json   # typecheck (must be clean)
+pnpm test                                                               # plain Node unit tests in tests/ (must pass)
 cd src-tauri && cargo test && cargo build                               # backend tests, no new warnings
 cd src-tauri && cargo check --target x86_64-pc-windows-msvc             # Windows must keep compiling
 # macOS: CI runs `cargo check` on a Mac runner. From Linux, stub the C compiler (no Apple SDK here):
@@ -82,6 +83,7 @@ src-tauri/src/
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
+  mcp.rs             the user's own MCP servers (`mcp_servers`, `mcp_servers_save`): mcp-servers.json, owner-only, checked on save
   browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
   chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
   chats_remote.rs    remote projects' chats kept inside their environment (`chats_remote_*`), so other computers see them
@@ -146,6 +148,11 @@ scripts/try-agent.ts run an adapter against the real CLI
   and reads skip the login shell (`EnvAt::run_plain`, which falls back to it when a tool is missing); anything that may run
   hooks keeps it. Long commands and the connection check (`ssh::run_alone`) use their own connection. Measure with the ignored
   `files::tests::remote_timing` test.
+- User MCP servers (Settings > MCP servers, `stores/mcp.ts`, `utils/mcpServers.ts`): each run gets the enabled ones for its agent
+  and project (`mcpServersForRun`; a remote project only its own), and `agents/mcp.ts` turns them into the CLI's arguments.
+  Their env values and headers are secrets: never log them or put them on the command line; they go into the CLI's
+  environment and the config names the variable (Claude Code `${VAR}`, Codex `env_vars` / `env_http_headers`). Test with
+  `pnpm test` (plain Node, `tests/`).
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
 
 ### State
@@ -203,7 +210,7 @@ unless asked for them. Ask at most one short batch of product questions, then bu
 
 ## Verifying a change
 
-- **Always:** typecheck, `cargo test`, `cargo build` with no new warnings, and the Windows `cargo check`.
+- **Always:** typecheck, `pnpm test`, `cargo test`, `cargo build` with no new warnings, and the Windows `cargo check`.
 - **UI:** run `pnpm dev` and look at it. The mock backend supplies projects, a git repository and simulated
   agents; "Load demo threads" in the command palette (Ctrl+K) fills the sidebar. Pinia stores are reachable
   for scripted checks: `document.querySelector('#__nuxt').__vue_app__.config.globalProperties.$pinia._s`.

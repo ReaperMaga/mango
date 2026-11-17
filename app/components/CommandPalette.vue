@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun, History,
+  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Plug, Server, SquareTerminal, Sun, History,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -146,8 +146,10 @@ const actions = computed<Item[]>(() => {
     items.push(
       { id: 'project-settings', group: 'Actions', label: 'Project settings', detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure name icon color pin archive agent model permissions env environment variables dotenv', run: () => ws.openSettings('projects') },
       { id: 'project-env', group: 'Actions', label: 'Environment variables', detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
+      { id: 'project-mcp', group: 'Actions', label: 'Project MCP servers', detail: ws.activeProject.name, icon: Plug, keywords: 'mcp model context protocol servers tools project unity', run: () => ws.openProjectMcp() },
     )
   }
+  items.push({ id: 'settings-mcp', group: 'Actions', label: 'MCP servers', icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
   const up = useUpdater()
   items.push(up.update

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Bot, Folder, History, MessageSquareMore, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bot, Folder, History, MessageSquareMore, Mic, Plug, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
@@ -9,6 +9,7 @@ import SettingsChangelog from './SettingsChangelog.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
+import SettingsMcp from './SettingsMcp.vue'
 import SettingsProjects from './SettingsProjects.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
@@ -48,6 +49,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
     items: [
       { id: 'environments', label: 'Environments', icon: Server },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
+      { id: 'mcp', label: 'MCP servers', icon: Plug },
       { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     ],
@@ -259,6 +261,7 @@ onBeforeUnmount(() => {
               </Transition>
               <Transition name="page">
                 <SettingsTerminal v-if="section === 'terminal'" />
+                <SettingsMcp v-else-if="section === 'mcp'" />
                 <SettingsVoice v-else-if="section === 'voice'" />
                 <SettingsAppearance v-else-if="section === 'appearance'" />
                 <SettingsChangelog v-else-if="section === 'changelog'" />

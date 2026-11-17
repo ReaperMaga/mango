@@ -3,7 +3,7 @@
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
- *        [--steer "<text>" [--steer-after ms]] [--task-output-after ms] [--stop-task-after ms] [--raw]
+ *        [--steer "<text>" [--steer-after ms]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
@@ -17,6 +17,8 @@
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --task-output-after reads each background task's output that long after it starts (no quota);
  * --stop-task-after stops each background task that long after it starts.
+ * --mcp hands the run MCP servers as Settings > MCP servers would: a JSON array of AgentMcpServer
+ * (app/agents/types.ts), e.g. [{"name":"x","transport":"stdio","command":"node","args":["s.js"],"env":{}}].
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
  */
 import { spawn } from 'node:child_process'
@@ -96,6 +98,7 @@ const run = adapter.run({
   mode: flag('mode') ?? 'ask',
   effort: flag('effort') ?? null,
   sessionId: flag('session') ?? null,
+  ...(flag('mcp') ? { mcpServers: JSON.parse(readFileSync(resolve(flag('mcp')!), 'utf8')) } : {}),
   spawn: spawnCli,
   emit(event: any) {
     if (event.type === 'text-delta') { pendingText += event.text; return }
