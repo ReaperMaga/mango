@@ -13,7 +13,7 @@ import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
-import { workdirOf } from '~/utils/worktrees'
+import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { call } from '~/composables/useBackend'
 import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
 
@@ -204,11 +204,16 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    /** A new chat; with `worktree`, one that works in that linked worktree (see `createInWorktree`). */
-    create(projectPath: string, agentArg?: AgentId, branch: string | null = null, worktree: string | null = null): Thread {
+    /**
+     * A new chat; with `worktree`, one that works in that linked worktree (see `createInWorktree`);
+     * with `awaitingWorktree`, one whose worktree is made when its first message is sent
+     * (see `createAwaitingWorktree`).
+     */
+    create(projectPath: string, agentArg?: AgentId, branch: string | null = null, worktree: string | null = null, awaitingWorktree = false): Thread {
       const agent = agentArg ?? this.defaultAgent
-      // Reuse an untouched empty chat (in the same folder) instead of piling up "New chat" rows.
-      const blank = this.threads.find(x => x.projectPath === projectPath && (x.worktree ?? null) === worktree && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
+      // Reuse an untouched empty chat (in the same folder, waiting for a worktree or not) instead of piling up "New chat" rows.
+      const blank = this.threads.find(x => x.projectPath === projectPath && (x.worktree ?? null) === worktree && !!x.awaitingWorktree === awaitingWorktree
+        && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
       if (blank) {
         if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id; blank.effort = null }
         this.show(blank.id)
@@ -229,6 +234,7 @@ export const useThreads = defineStore('threads', {
         seen: true,
         branch,
         ...(worktree ? { worktree } : {}),
+        ...(awaitingWorktree && !worktree ? { awaitingWorktree: true as const } : {}),
       }
       this.threads.push(t)
       this.show(t.id)
@@ -256,6 +262,81 @@ export const useThreads = defineStore('threads', {
       const t = this.create(projectPath, opts.agent, branch, folder)
       void useGit().loadWorktrees(projectPath)
       return t
+    },
+
+    /**
+     * "New chat in a worktree": a chat that runs nowhere yet. Its first message names a new branch
+     * and the worktree is added for it before the agent starts (`_addWorktreeFor`). Projects without
+     * git worktrees (no git, Unity VCS) get a plain chat.
+     */
+    createAwaitingWorktree(projectPath: string, agent?: AgentId): Thread {
+      const project = useWorkspace().openProjects.find(p => p.path === projectPath)
+      if (!project?.isGit || project.vcs === 'plastic') return this.create(projectPath, agent)
+      return this.create(projectPath, agent, null, null, true)
+    },
+
+    /**
+     * The chat (its top-level chat, for a sub-agent) now works in `folder`: a linked worktree, or
+     * the project folder itself (the agent left its worktree). `branch` when known; otherwise it is
+     * read from git in that folder. Worktrees Claude Code makes itself (`<repo>/.claude/worktrees/<name>`)
+     * are linked worktrees like any other. Nothing happens when nothing changed.
+     */
+    async moveToWorktree(id: string, folder: string, branch: string | null) {
+      const t = this.rootOf(id)
+      if (!t || !folder) return
+      const worktree = folder === t.projectPath ? null : folder
+      const git = useGit()
+      if (!branch) {
+        await git.refresh(folder).catch(() => {})
+        // The project folder's branch is also known from the project itself.
+        branch = git.status(folder)?.branch ?? (worktree ? null : useWorkspace().openProjects.find(p => p.path === folder)?.branch ?? null)
+      }
+      // The chat may have moved on while git was read.
+      const now = this.byId(t.id)
+      if (!now) return
+      const same = (now.worktree ?? null) === worktree && !now.awaitingWorktree && (!branch || now.branch === branch)
+      if (same) return
+      now.worktree = worktree
+      if (branch) now.branch = branch
+      delete now.awaitingWorktree
+      this.persist(now.id)
+      void git.loadWorktrees(now.projectPath)
+    },
+
+    /**
+     * Add the worktree a chat waits for: a new branch named after its first message (`-2`, `-3` …
+     * when that branch or folder is taken), from the project's HEAD. Rejects with git's reason.
+     */
+    async _addWorktreeFor(id: string) {
+      const t = this.byId(id)
+      if (!t?.awaitingWorktree) return
+      const path = t.projectPath
+      const first = t.messages.find(m => m.role === 'user')
+      const firstText = first?.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ') ?? ''
+      const base = branchFromMessage(firstText || t.title)
+      const [branches, trees] = await Promise.all([
+        call('git_branch_list', { path }).catch(() => null),
+        call('git_worktrees', { path }).catch(() => []),
+      ])
+      const taken = [
+        ...(branches?.local.map(b => b.name) ?? []),
+        ...trees.flatMap(w => [worktreeName(w.path), ...(w.branch ? [w.branch] : [])]),
+      ]
+      let failure: unknown = null
+      // A name taken since the list was read (or one the list missed) is tried again with the next number.
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const branch = untakenName(base, taken)
+        try {
+          const wt = await call('git_worktree_add', { path, branch, from: null, create: true })
+          await this.moveToWorktree(id, wt.path, wt.branch ?? branch)
+          return
+        } catch (e) {
+          failure = e
+          if (!/already (exists|checked out|used)|not empty/i.test(errorText(e))) break
+          taken.push(branch)
+        }
+      }
+      throw failure
     },
 
     /**
@@ -591,6 +672,30 @@ export const useThreads = defineStore('threads', {
       }
       t.status = 'queued'
       this.persist(id)
+      if (t.awaitingWorktree) {
+        // Nothing has run in this chat yet: a message kept from a failed try goes along with this one.
+        const asked = t.messages.filter(m => m.role === 'user')
+        if (asked.length > 1) {
+          text = asked.map(m => m.parts.map(p => (p.type === 'text' ? p.text : '')).join('')).filter(Boolean).join('\n\n')
+          attachments = asked.flatMap(m => m.attachments ?? [])
+        }
+        try {
+          await this._addWorktreeFor(id)
+        } catch (e) {
+          const m = this._pushAgentMessage(id)
+          if (m) {
+            this._pushPart(id, m, {
+              type: 'notice',
+              level: 'error',
+              text: `Could not make a worktree for this chat: ${errorText(e)}. Nothing ran yet; send a message to try again (what you wrote goes along).`,
+            })
+          }
+          this._setStatus(id, 'error', 'error')
+          return
+        }
+        // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
+        if (t.status !== 'queued') { stopFlags.delete(id); return }
+      }
       // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
       await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
     },
@@ -842,7 +947,15 @@ function normalizeLoaded(t: Thread): Thread {
     ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
     : []
   const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree }
+  // Still waiting for its worktree only while it has none (a top-level chat).
+  const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree }
+}
+
+/** The reason in a rejected backend call or a thrown error, without a trailing period. */
+function errorText(e: unknown): string {
+  const text = e instanceof Error ? e.message : typeof e === 'string' ? e : String(e)
+  return text.trim().replace(/\.$/, '') || 'git gave no reason'
 }
 
 function titleFrom(text: string) {

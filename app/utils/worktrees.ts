@@ -13,36 +13,38 @@ export const workdirOf = (t: Pick<Thread, 'projectPath' | 'worktree'>) => t.work
 /** How a worktree folder is named in the chrome: its last folder (`mango.worktrees/fix-login` → `fix-login`). */
 export const worktreeName = (path: string) => baseName(path)
 
-const WORDS = ['pear', 'fig', 'lime', 'plum', 'kiwi', 'yuzu', 'date', 'quince', 'guava', 'lychee', 'papaya', 'cherry']
+/** How long a branch named after a chat's first message may get, before `-2`, `-3` … */
+const SLUG_MAX = 40
 
 /**
- * A branch name for a new worktree chat that is not taken yet: `mango/<word>`, then `mango/<word>-2` …
- * The user can type their own; this only spares them from having to.
+ * A branch name from a chat's first message: lower-case ASCII words joined with `-`, cut on a word
+ * boundary at about 40 characters ("Fix the login redirect!" → `fix-the-login-redirect`). "chat"
+ * when nothing usable is left (a message in another script, or only punctuation).
  */
-export function suggestBranch(taken: Iterable<string>): string {
-  const used = new Set(taken)
-  const start = Math.floor(Math.random() * WORDS.length)
-  for (let n = 1; n < 100; n++) {
-    for (let i = 0; i < WORDS.length; i++) {
-      const name = `mango/${WORDS[(start + i) % WORDS.length]}${n > 1 ? `-${n}` : ''}`
-      if (!used.has(name)) return name
+export function branchFromMessage(text: string): string {
+  const words = text
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // accents go, their letters stay
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean)
+  let slug = ''
+  for (const w of words) {
+    const next = slug ? `${slug}-${w}` : w
+    if (next.length > SLUG_MAX) {
+      // A first word longer than the limit is cut; later ones end the name.
+      if (!slug) slug = w.slice(0, SLUG_MAX)
+      break
     }
+    slug = next
   }
-  return `mango/${Date.now().toString(36)}`
+  return slug || 'chat'
 }
 
-/**
- * Whether `name` would be a usable new branch name, checked the way the user types it (git's own
- * `check-ref-format` rules, the parts that matter in practice). Returns why not, or null.
- */
-export function branchNameProblem(name: string): string | null {
-  const n = name.trim()
-  if (!n) return 'Give the branch a name'
-  if (/\s/.test(n)) return 'Branch names cannot contain spaces'
-  if (/[~^:?*[\\\x00-\x1f\x7f]/.test(n) || n.includes('..') || n.includes('@{')) return 'That name has characters git does not allow'
-  if (n.startsWith('-') || n.startsWith('/') || n.endsWith('/') || n.endsWith('.') || n.endsWith('.lock') || n.includes('//') || n === '@') {
-    return 'That is not a valid branch name'
-  }
-  if (n.split('/').some(part => part.startsWith('.'))) return 'No part of the name may start with a dot'
-  return null
+/** `name`, or `name-2`, `name-3` … whichever is not in `taken` yet. */
+export function untakenName(name: string, taken: Iterable<string>): string {
+  const used = new Set(taken)
+  if (!used.has(name)) return name
+  for (let n = 2; n < 1000; n++) if (!used.has(`${name}-${n}`)) return `${name}-${n}`
+  return `${name}-${Date.now().toString(36)}`
 }

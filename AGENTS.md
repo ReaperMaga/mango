@@ -52,7 +52,7 @@ app/
   assets/css/        tokens.css (the only source of colour/type/space/radius/motion), base.css
   components/        AppTitlebar, AppSidebar (threads), AppToolStrip + AppToolPanel (right tool windows), AppWorkspace, ChatArea, CommandPalette
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
-    git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup, WorktreeDialog (new chat in a worktree)
+    git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
@@ -153,7 +153,9 @@ scripts/try-agent.ts run an adapter against the real CLI
   panes only; mutate a chat without one of them and the change is not saved. Prefs persist to localStorage
   (`workspace.ts`). Loading must tolerate data written by older builds (`normalizeLoaded`).
 - Git is slow and external: all git state goes through `stores/git.ts`, which refreshes after every action.
-- A chat may work in its own linked git worktree (`Thread.worktree`, `utils/worktrees.ts`). Anything that acts on
+- A chat may work in its own linked git worktree (`Thread.worktree`, `utils/worktrees.ts`). "New chat in a worktree"
+  makes a chat with `awaitingWorktree` set: it runs nowhere until its first send, which adds the worktree on a branch
+  named from that message (`threads._addWorktreeFor`) before the agent starts. Anything that acts on
   "the folder the user is looking at" (Changes, Files, branch, new terminal) uses `threads.workdir`, not
   `activeProjectPath`; the agent runs in `threads.workdirFor(id)`. Tabs opened from a worktree carry its folder and
   belong to the chat's project through `threads.ownerOf`.

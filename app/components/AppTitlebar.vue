@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, FolderGit2, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -10,8 +10,6 @@ import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
 import { hasUnreadResult } from '~/types/chat'
 import { isEnvPath } from '~/utils/envPath'
-import { useWorktrees } from '~/composables/useWorktrees'
-import { worktreeName } from '~/utils/worktrees'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -50,7 +48,6 @@ onBeforeUnmount(() => window.removeEventListener('focus', readRemoteBranch))
  * The working copy in view: the active chat's worktree, or the project folder. The branch shown
  * (and switched) is that one's, so a chat working in its own worktree shows its own branch.
  */
-const wts = useWorktrees()
 const workdir = computed(() => threads.workdir ?? ws.activeProjectPath)
 const branch = computed(() => {
   const at = workdir.value
@@ -59,12 +56,6 @@ const branch = computed(() => {
 })
 /* A worktree's status is read when it comes into view, so its branch is right from the start. */
 watch(workdir, (at) => { if (at && at !== ws.activeProjectPath && !git.status(at)) git.poll(at) }, { immediate: true })
-/** The switcher shows when there is more than the project folder to pick from. */
-const showWorktrees = computed(() => wts.supported.value && (wts.linked.value.length > 0 || !!wts.currentLinked.value))
-const worktreeTitle = computed(() => {
-  const w = wts.currentLinked.value
-  return w ? `Worktree: ${w.path}` : `Project folder; ${wts.linked.value.length} other worktree${wts.linked.value.length === 1 ? '' : 's'}`
-})
 
 /* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
 const envs = useEnvironments()
@@ -153,25 +144,6 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <Server aria-hidden="true" />
         <span v-if="!ws.activeProject?.isGit" class="tb__remote-where">{{ remote.where }}</span>
       </button>
-      <!-- Several working copies (linked git worktrees): which one is in view, and a switch between them. -->
-      <UiMenu v-if="showWorktrees" class="tb__wt-menu" :items="wts.menuItems.value" placement="bottom-start" :width="290" label="Working copies">
-        <template #default="{ toggle, open }">
-          <button
-            type="button"
-            class="tb__wt"
-            :class="{ 'is-open': open, 'is-linked': !!wts.currentLinked.value }"
-            aria-haspopup="menu"
-            :aria-expanded="open"
-            :title="open ? undefined : worktreeTitle"
-            :aria-label="wts.currentLinked.value ? `Worktree ${worktreeName(wts.currentLinked.value.path)}` : 'Project folder, other worktrees'"
-            @click="toggle"
-          >
-            <FolderGit2 aria-hidden="true" />
-            <span v-if="wts.currentLinked.value" class="tb__wt-name">{{ worktreeName(wts.currentLinked.value.path) }}</span>
-            <span v-else class="tb__wt-count tabular">{{ wts.linked.value.length }}</span>
-          </button>
-        </template>
-      </UiMenu>
       <GitBranchPopup v-if="ws.activeProject?.isGit" :path="workdir">
         <template #default="{ toggle, open }">
           <button
@@ -283,8 +255,6 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__project:hover, .tb__project.is-open { background: var(--bg-hover); }
 /* The project keeps its width; a long branch (Unity VCS paths such as /main/feature/x) is what gets cut short. */
 .tb__left > :deep(.menu) { flex: none; }
-/* The worktree switcher is the first to give way, down to its icon. */
-.tb__left > :deep(.menu.tb__wt-menu) { flex: 0 3 auto; min-width: 26px; display: flex; }
 .tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
 
@@ -309,7 +279,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  /* Enough for a short branch name: the worktree chip beside it gives way first. */
+  /* Enough for a short branch name. */
   min-width: 72px;
   height: 26px;
   border-radius: var(--radius-sm);
@@ -323,27 +293,6 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__branch svg { width: 13px; height: 13px; flex: none; }
 .tb__branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__branch .tb__branch-path { direction: rtl; text-align: left; }
-
-.tb__wt {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 26px;
-  max-width: min(180px, 100%);
-  height: 26px;
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  color: var(--fg-subtle);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.tb__wt:hover, .tb__wt.is-open { background: var(--bg-hover); color: var(--fg); }
-.tb__wt svg { width: 13px; height: 13px; flex: none; stroke-width: 1.85; }
-/* In a linked worktree the folder is named, in path type, and in the accent ink so it is never mistaken for the project. */
-.tb__wt.is-linked { color: var(--fg-muted); }
-.tb__wt.is-linked svg { color: var(--accent-ink); }
-.tb__wt-name { font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tb__wt-count { font-size: var(--text-2xs); font-weight: 560; }
 
 .tb__search {
   display: flex;

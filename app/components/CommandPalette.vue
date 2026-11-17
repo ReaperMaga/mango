@@ -90,7 +90,7 @@ const actions = computed<Item[]>(() => {
   if (project) {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
-      items.push({ id: 'new-worktree-chat', group: 'Actions', label: 'New chat in a worktree…', detail: 'Its own folder and branch, to work in parallel', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree parallel branch isolated new chat thread git', run: () => ws.openWorktreeDialog() })
+      items.push({ id: 'new-worktree-chat', group: 'Actions', label: 'New chat in a worktree', detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree parallel branch isolated new chat thread git', run: () => threads.createAwaitingWorktree(project) })
       for (const w of wts.linked.value) {
         if (w.prunable) continue
         items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to worktree ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })

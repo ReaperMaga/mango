@@ -13,6 +13,8 @@ import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
 import { holdOverlay } from '~/composables/useOverlay'
 import { worktreeName } from '~/utils/worktrees'
+import { useWorktrees } from '~/composables/useWorktrees'
+import { useGit } from '~/stores/git'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -70,6 +72,32 @@ function newChat(path?: string) {
 
 /** Worktrees are a git feature: offered for git projects only (not Unity VCS). */
 const canWorktree = computed(() => !!ws.activeProject?.isGit && ws.activeProject.vcs !== 'plastic')
+
+/* ---------- the "+" split button: a plain chat, or the menu of where else a new chat can start ---------- */
+const wts = useWorktrees()
+const newChatItems = computed<MenuItem[]>(() => {
+  const path = ws.activeProjectPath
+  if (!path) return []
+  const items: MenuItem[] = [{ label: 'New chat', icon: Plus, kbd: `${mod.value}+N`, onSelect: () => newChat() }]
+  if (!canWorktree.value) return items
+  items.push({ label: 'New chat in a worktree', icon: FolderGit2, kbd: `${mod.value}+Shift+N`, onSelect: () => threads.createAwaitingWorktree(path) })
+  wts.linked.value.forEach((w, i) => items.push({
+    label: worktreeName(w.path),
+    hint: wts.hint(w),
+    icon: FolderGit2,
+    disabled: w.prunable,
+    group: i === 0 ? 'Continue in' : undefined,
+    divider: i === 0,
+    // A new chat there, even when chats already work in it (going to those is the sidebar's job).
+    onSelect: () => void threads.createInWorktree(path, { existing: w.path }).catch(() => {}),
+  }))
+  return items
+})
+function toggleNewChatMenu(toggle: () => void, open: boolean) {
+  // The list of worktrees may be stale (made or removed outside Mango): read it again as the menu opens.
+  if (!open && canWorktree.value && ws.activeProjectPath) void useGit().loadWorktrees(ws.activeProjectPath)
+  toggle()
+}
 
 function open(t: Thread) {
   if (justDragged) return // the click that ends a drag is not a click
@@ -377,8 +405,24 @@ const codeItems = computed<MenuItem[]>(() => [
             <span v-if="!sec.open && sec.unseen" class="sb__unseen" :title="`${sec.unseen} new result${sec.unseen === 1 ? '' : 's'}`" />
           </component>
           <div v-if="sec.id === 'active'" class="sb__group-actions">
-            <UiIconButton v-if="canWorktree" size="sm" :label="`New chat in a worktree (${mod}+Shift+N)`" @click="ws.openWorktreeDialog()"><FolderGit2 /></UiIconButton>
-            <UiIconButton size="sm" label="New chat" @click="newChat()"><Plus /></UiIconButton>
+            <UiMenu :items="newChatItems" placement="bottom-end" :width="260" label="New chat">
+              <template #default="{ open: menuOpen, toggle }">
+                <div class="sb__split" :class="{ 'is-open': menuOpen }">
+                  <button type="button" class="sb__split-main" :aria-label="`New chat (${mod}+N)`" :title="`New chat (${mod}+N)`" @click="newChat()"><Plus /></button>
+                  <button
+                    type="button"
+                    class="sb__split-more"
+                    aria-label="More ways to start a chat"
+                    aria-haspopup="menu"
+                    :aria-expanded="menuOpen"
+                    :title="menuOpen ? undefined : 'More ways to start a chat'"
+                    @click="toggleNewChatMenu(toggle, menuOpen)"
+                  >
+                    <ChevronDown />
+                  </button>
+                </div>
+              </template>
+            </UiMenu>
           </div>
         </div>
 
@@ -434,6 +478,9 @@ const codeItems = computed<MenuItem[]>(() => [
                   <span v-if="t.worktree" class="sb__wt" :title="`Works in its own worktree: ${t.worktree}${t.branch ? `\nBranch: ${t.branch}` : ''}`">
                     <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ t.branch ?? worktreeName(t.worktree) }}</span>
                     <span class="sr-only">, in worktree {{ worktreeName(t.worktree) }}</span>
+                  </span>
+                  <span v-else-if="t.awaitingWorktree" class="sb__wt" title="Gets its own worktree and branch when you send the first message">
+                    <FolderGit2 aria-hidden="true" /><span class="sr-only">, worktree made on the first message</span>
                   </span>
                   <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
                     #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
@@ -615,6 +662,34 @@ const codeItems = computed<MenuItem[]>(() => [
 .sb__count { font-weight: 500; color: var(--fg-faint); margin-left: 2px; }
 .sb__group-actions { display: flex; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 .sb__group-head:hover .sb__group-actions, .sb__group-head:focus-within .sb__group-actions { opacity: 1; }
+/* An open menu keeps its trigger on screen after the pointer leaves the header. */
+.sb__group-actions:has(.is-open) { opacity: 1; }
+/* New chat with a caret beside it: one small icon button's footprint, split in two. Hovering either
+   half washes the whole control and brightens the half under the pointer; pressing it deepens that half. */
+.sb__split {
+  display: inline-flex;
+  align-items: stretch;
+  height: 22px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-subtle);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.sb__split:hover, .sb__split.is-open { background: var(--bg-hover); }
+.sb__split-main, .sb__split-more {
+  display: inline-grid;
+  place-items: center;
+  color: inherit;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.sb__split-main { width: 22px; border-radius: var(--radius-xs) 0 0 var(--radius-xs); }
+.sb__split-more { width: 14px; border-radius: 0 var(--radius-xs) var(--radius-xs) 0; }
+.sb__split-main svg { width: 14px; height: 14px; stroke-width: 1.75; }
+.sb__split-more svg { width: 11px; height: 11px; stroke-width: 2; }
+.sb__split-main:hover, .sb__split-more:hover, .sb__split.is-open .sb__split-more { color: var(--fg); }
+.sb__split-main:active, .sb__split-more:active, .sb__split.is-open .sb__split-more { background: var(--bg-active); }
+/* The seam between the halves shows only while the control is lit. */
+.sb__split-more { border-left: 1px solid transparent; }
+.sb__split:hover .sb__split-more, .sb__split.is-open .sb__split-more { border-left-color: var(--line-soft); }
 
 .sb__list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
 .sb__thread {

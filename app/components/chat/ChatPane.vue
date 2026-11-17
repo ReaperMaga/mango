@@ -110,7 +110,8 @@ function onKey(e: KeyboardEvent) {
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
-            <p v-if="thread.worktree">
+            <p v-if="thread.awaitingWorktree">{{ AGENTS[thread.agent].name }} will start in a new worktree, made when you send your first message. Its branch is named after what you write.</p>
+            <p v-else-if="thread.worktree">
               {{ AGENTS[thread.agent].name }} is ready in its own worktree <code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code><template v-if="thread.branch">
                 on <code>{{ thread.branch }}</code></template>, beside {{ ws.activeProject?.name }}. Other chats keep working undisturbed. Describe the change you want.
             </p>

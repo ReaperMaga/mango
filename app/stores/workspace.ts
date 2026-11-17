@@ -166,7 +166,7 @@ export const useWorkspace = defineStore('workspace', {
        * which dialog is open: a project dialog ('open-env' picks a folder inside an environment),
        * "Get started" (setup) or the usage limits
        */
-      dialog: null as null | 'new' | 'clone' | 'open-env' | 'setup' | 'usage' | 'worktree',
+      dialog: null as null | 'new' | 'clone' | 'open-env' | 'setup' | 'usage',
       /**
        * Where Open folder, New project and Clone put a project: an environment, or null for this
        * computer. The last choice, remembered.
@@ -385,12 +385,6 @@ export const useWorkspace = defineStore('workspace', {
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section
       if (tab) this.agentsTab = tab
-      this.paletteOpen = false
-    },
-    /** "New chat in a worktree" for the active project (a git repository on this computer or in an environment). */
-    openWorktreeDialog() {
-      if (!this.activeProject?.isGit || this.activeProject.vcs === 'plastic') return
-      this.dialog = 'worktree'
       this.paletteOpen = false
     },
     openUsage() {
