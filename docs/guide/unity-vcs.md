@@ -25,6 +25,7 @@ When you open a folder, Mango walks up from it looking for a `.git` or a `.plast
 | Branches | Switch, create, rename, delete and merge, from the branch popup |
 | Code reviews | The branch's reviews and the repository's open ones in the Pull requests tool window; request a review of the branch |
 | Locks | See who holds which file, lock files and release your own locks (see below) |
+| Shelves | Shelve pending changes, apply a shelve back, delete one, from the **Shelves** section of the Changes view |
 
 ## No staging area
 
@@ -79,6 +80,19 @@ Locks come from the server, so Mango reads them at most every 30 seconds, and ri
 The merge result is pending changes in the Changes view, already staged ("Merged /main/task: 5 files changed, check in to finish"). Check them in to finish the merge, or discard them to drop it. If `cm` fails part way, Mango undoes what the merge left so the workspace is as it was.
 
 Private files don't count as pending changes here and are left alone.
+
+## Shelves
+
+A shelve (`sh:12`) parks pending changes on the server so you can bring them back later, the way git's stash does. The **Shelves** section of the Changes view lists your own shelves, newest first, with the comment, the branch they were shelved from and when.
+
+- **Shelve changes**: the archive button on the Shelves header, or **Shelve changes…** in the menu beside **Check in** (which starts from the checkin comment you typed). Give it a comment, then choose:
+  - **Shelve and undo** (the default): the changes go to the shelve and are undone in the workspace, so it is clean, for example before you switch branch.
+  - **Shelve**: switch off "Undo them in the workspace" to keep working on the changes after shelving them.
+- A shelve takes what **Check in** would: the staged files, or every pending change when nothing is staged. Private files (new files not under version control yet) can't be shelved; they stay in the workspace, and the form and the result line say how many.
+- **Apply** (hover a shelve) brings its changes back into the workspace as pending changes. The shelve stays on the server, so you can apply it again or delete it yourself. If the same files have pending changes, Unity VCS reports a conflict: check in or undo those first.
+- **Delete** asks first (two steps, like discard) and removes the shelve from the server for good.
+
+Under the hood these run `cm shelveset create … --all --dependencies -c=<comment>`, `cm undo` for the undo step, `cm shelveset apply sh:<n>`, `cm shelveset delete sh:<n>`, and `cm find shelve "where owner='me'"`.
 
 ## What is not there
 

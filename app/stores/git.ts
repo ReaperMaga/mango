@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
-import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock } from '~/types/ipc'
+import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 
 /** The one action that can run at a time. */
-export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock'
+export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve'
 
 export interface GitDiffEntry {
   /** Unified diff text; null until the first load finishes. */
@@ -41,6 +41,11 @@ export interface GitRepoState {
   vsMain: GitAhead | null
   /** Unity VCS: the repository's locks, by path; null until read (and for git). */
   locks: VcsLock[] | null
+  /** Unity VCS shelves, newest first; null until read. Read when the Shelves section opens and after each shelve action. */
+  shelves: VcsShelve[] | null
+  shelvesOpen: boolean
+  /** Why the last shelves read failed. */
+  shelvesError: string | null
 }
 
 export const HISTORY_LIMIT = 20
@@ -56,7 +61,7 @@ const parseKey = (key: string) => {
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
 const newRepo = (): GitRepoState => ({
-  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null,
+  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null, shelves: null, shelvesOpen: false, shelvesError: null,
 })
 
 /**
@@ -278,6 +283,22 @@ export const useGit = defineStore('git', {
       } catch { /* history stays as it was */ }
     },
 
+    async loadShelves(path: string) {
+      const repo = this.ensure(path)
+      try {
+        const list = await call('vcs_shelves', { path })
+        if (JSON.stringify(list) !== JSON.stringify(repo.shelves)) repo.shelves = list
+        repo.shelvesError = null
+      } catch (e) {
+        repo.shelvesError = reason(e)
+      }
+    },
+    toggleShelves(path: string) {
+      const repo = this.ensure(path)
+      repo.shelvesOpen = !repo.shelvesOpen
+      if (repo.shelvesOpen) void this.loadShelves(path)
+    },
+
     /* ---------- view state ---------- */
 
     isExpanded(path: string, key: string) {
@@ -379,6 +400,33 @@ export const useGit = defineStore('git', {
         repo.logHead = undefined
         if (repo.historyOpen) void this.loadLog(path)
       }
+      return ok
+    },
+
+    /**
+     * Unity VCS: shelve what a checkin would take (the staged files, or every change when none are)
+     * with `comment`. With `undo` the workspace drops those changes afterwards. Opens the Shelves list.
+     */
+    async shelve(path: string, comment: string, undo: boolean) {
+      const repo = this.ensure(path)
+      const ok = await this.run(path, 'shelve', () => call('vcs_shelve', { path, comment, undo }))
+      if (ok) repo.shelvesOpen = true
+      await this.loadShelves(path)
+      return ok
+    },
+    /** Bring a shelve's changes back into the workspace as pending changes; the shelve stays. */
+    async applyShelve(path: string, id: number) {
+      const ok = await this.run(path, 'shelve', () => call('vcs_shelve_apply', { path, id }))
+      await this.loadShelves(path)
+      return ok
+    },
+    /** Delete a shelve from the server. Destroys work: the UI asks first. */
+    async deleteShelve(path: string, id: number) {
+      const ok = await this.run(path, 'shelve', async () => {
+        await call('vcs_shelve_delete', { path, id })
+        return `Deleted sh:${id}.`
+      })
+      await this.loadShelves(path)
       return ok
     },
 

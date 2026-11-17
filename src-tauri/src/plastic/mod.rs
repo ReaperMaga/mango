@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 mod merge;
 pub(crate) mod reviews;
+pub(crate) mod shelves;
 
 pub(crate) use merge::{merge, preview as merge_preview, MergePreview};
 

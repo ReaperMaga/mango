@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
+  Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
   FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
 } from 'lucide-vue-next'
 import type { GitFile, VcsLock } from '~/types/ipc'
@@ -337,6 +337,15 @@ function onMessageKey(e: KeyboardEvent) {
     commit()
   }
 }
+/** Unity VCS: the Shelves section, whose form the commit menu opens with the comment typed so far. */
+const shelvesView = ref<{ start: (comment?: string) => void } | null>(null)
+const shelveMenu = computed<MenuItem[]>(() => [{
+  label: 'Shelve changes…',
+  icon: Archive,
+  hint: 'Park them on the server, with the comment above',
+  disabled: !!git.busy || (!staged.value.length && !changes.value.length),
+  onSelect: () => shelvesView.value?.start(message.value),
+}])
 const commitMenu = computed<MenuItem[]>(() => [{
   label: 'Amend last commit',
   hint: message.value.trim() ? 'Adds what is staged and replaces its message' : 'Adds what is staged, keeps its message',
@@ -601,7 +610,7 @@ function onListKey(e: KeyboardEvent) {
           >
             {{ commitsAll ? terms.commitAll : terms.commit }}
           </UiButton>
-          <UiMenu v-if="terms.amend" :items="commitMenu" placement="bottom-end" :width="264" label="More commit options">
+          <UiMenu v-if="terms.amend || terms.shelves" :items="terms.amend ? commitMenu : shelveMenu" placement="bottom-end" :width="264" label="More commit options">
             <template #default="{ toggle, open: menuOpen }">
               <UiIconButton size="sm" label="More commit options" :active="menuOpen" class="gp__commit-more" @click="toggle"><ChevronDown /></UiIconButton>
             </template>
@@ -738,6 +747,7 @@ function onListKey(e: KeyboardEvent) {
             </li>
           </ul>
         </section>
+        <GitShelves v-if="terms.shelves && path" ref="shelvesView" :path="path" />
 
         <section class="gp__sec gp__sec--history">
           <div class="gp__sec-head">
