@@ -1,4 +1,5 @@
-import type { Message, Part, Thread } from '~/types/chat'
+import type { LinkedItem, Message, Part, Thread } from '~/types/chat'
+import type { GhState } from './github'
 import { demoThreads } from '~/utils/demoThreads'
 
 /**
@@ -44,6 +45,32 @@ function build(projectPath: string, idPrefix: string, now: number, seeds: Seed[]
   })
 }
 
+function mockLink(kind: LinkedItem['kind'], owner: string, repo: string, number: number, source: LinkedItem['source'], title?: string, state?: LinkedItem['state']): LinkedItem {
+  return {
+    key: `github.com/${owner}/${repo}#${number}`,
+    kind,
+    url: `https://github.com/${owner}/${repo}/${kind === 'pr' ? 'pull' : 'issues'}/${number}`,
+    host: 'github.com',
+    owner,
+    repo,
+    number,
+    ...(title ? { title } : {}),
+    ...(state ? { state } : {}),
+    source,
+    linkedAt: Date.UTC(2026, 10, 12),
+  }
+}
+
+/**
+ * What the preview's "GitHub" answers for the linked items above (`backend.ghItem`). An item
+ * missing here reads as gh not being signed in, so that state shows too (the shop-admin draft).
+ */
+export const MOCK_GITHUB: Record<string, GhState> = {
+  'github.com/acme/shop-api#128': { kind: 'pr', title: 'Refund endpoint with idempotency keys', state: 'merged', stateReason: null },
+  'github.com/acme/shop-api#97': { kind: 'issue', title: 'Refunds can run twice when the client retries', state: 'closed', stateReason: 'completed' },
+  'github.com/acme/shop-api#131': { kind: 'issue', title: 'checkout.test.ts > reserves stock is flaky on CI', state: 'open', stateReason: null },
+}
+
 const SEEDS: Record<string, Seed[]> = {
   'shop-api': [
     {
@@ -55,6 +82,10 @@ const SEEDS: Record<string, Seed[]> = {
       status: 'done',
       seen: false,
       branch: 'feat/orders',
+      links: [
+        mockLink('pr', 'acme', 'shop-api', 128, 'agent', 'Refund endpoint with idempotency keys', 'open'),
+        mockLink('issue', 'acme', 'shop-api', 97, 'user', 'Refunds can run twice when the client retries', 'open'),
+      ],
       created: 75,
       updated: 4,
       turns: [[
@@ -88,6 +119,7 @@ const SEEDS: Record<string, Seed[]> = {
       effort: null,
       status: 'error',
       branch: 'feat/orders',
+      links: [mockLink('issue', 'acme', 'shop-api', 131, 'user')],
       created: 5 * 60,
       updated: 4 * 60,
       turns: [[
@@ -210,6 +242,7 @@ const SEEDS: Record<string, Seed[]> = {
       effort: null,
       status: 'working',
       branch: null,
+      links: [mockLink('pr', 'acme', 'shop-admin', 42, 'agent', 'Passkey sign-in plan', 'draft')],
       created: 2 * 24 * 60,
       updated: 2 * 24 * 60 - 30,
       turns: [[

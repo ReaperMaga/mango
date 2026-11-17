@@ -1,6 +1,7 @@
 import type { AgentId, Thread } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
-import { mockChats } from './mockChats'
+import { MOCK_GITHUB, mockChats } from './mockChats'
+import { ghFailure, ghItemArgv } from './github'
 import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
@@ -399,6 +400,15 @@ export function createMockBackend(): RemoteBackend {
       if (added.some(w => w.dir === folder)) throw new Error(`${shown} already exists; pick another branch name`)
       worktrees.set(key, [...added, { dir: folder, branch: name }])
       return { path: shown, branch: name, isMain: false }
+    },
+
+    async ghItem(projectPath, ref) {
+      ghItemArgv(ref) // the same validation as the real one
+      const { instance } = parseProjectPath(projectPath)
+      await wait(300, 700)
+      const found = MOCK_GITHUB[`github.com/${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase()]
+      if (!found) throw new Error(ghFailure(instance, ref, 4, 'To get started with GitHub CLI, please run:  gh auth login'))
+      return { ...found }
     },
 
     spawnFor(agent, projectPath): SpawnFn {

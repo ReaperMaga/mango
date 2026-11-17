@@ -4,11 +4,12 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
-import { AGENTS, type BackgroundTask, type Message, type Thread } from '~/types/chat'
+import { AGENTS, type BackgroundTask, type LinkedItem, type Message, type Thread } from '~/types/chat'
 import { makeStyles, radius, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
 import { ChatComposer, ChatMessage, ChatWorking } from '@/chat'
 import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
+import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
 import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
@@ -16,6 +17,7 @@ import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { useAttachments, type AttachSource } from '@/screens/useAttachments'
 import { placeOf, projectName } from '@/screens/names'
+import { useLinkDetails } from '@/screens/useLinkDetails'
 
 /** How close to the end (pt) still counts as "at the bottom": new output then keeps it in view. */
 const STICK = 80
@@ -36,6 +38,9 @@ export default function ChatScreen() {
   const draft = useThreads(st => st.drafts[id] ?? '')
   const queue = useThreads(st => st.queue[id])
   const live = useThreads(st => st.live[id])
+  // A sub-agent's chat shows the links of the chat that started it, as on the desktop.
+  const root = useThreads(st => (st.threads[id] ? st.rootOf(id) : null))
+  const links = root?.links ?? NO_LINKS
   const at = thread ? envOf(thread.projectPath) : null
   const env = useEnvs(st => (at ? st.envs.find(e => e.id === at.hostId) ?? null : null))
   const conn = useEnvs(st => (at ? st.status[at.hostId] : undefined))
@@ -43,6 +48,8 @@ export default function ChatScreen() {
   const [keyboard, setKeyboard] = useState(false)
   const [attachMenu, setAttachMenu] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
+  const [linksOpen, setLinksOpen] = useState(false)
+  const linkDetails = useLinkDetails(root?.id ?? id, root?.projectPath ?? null, links, linksOpen)
   const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
   const list = useRef<FlatList<Message>>(null)
@@ -128,6 +135,7 @@ export default function ChatScreen() {
       keyboardVerticalOffset={headerHeight}
     >
       {header}
+      <ChatLinksBar links={links} onPress={() => setLinksOpen(true)} />
       <FlatList
         ref={list}
         data={thread.messages}
@@ -212,11 +220,20 @@ export default function ChatScreen() {
         childOf={subagentChat}
         onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
       />
+      <ChatLinksSheet
+        visible={linksOpen}
+        onClose={() => setLinksOpen(false)}
+        links={links}
+        live={linkDetails.live}
+        loading={linkDetails.loading}
+        error={linkDetails.error}
+      />
       <ThreadActions threadId={id} visible={menu} onClose={() => setMenu(false)} onDeleted={() => router.back()} />
     </KeyboardAvoidingView>
   )
 }
 
+const NO_LINKS: LinkedItem[] = []
 const NO_TASKS: BackgroundTask[] = []
 
 /** The chat a background sub-agent writes, if it has one. */

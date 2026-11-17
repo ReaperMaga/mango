@@ -1,6 +1,7 @@
 import type { AgentId } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { SshEndpoint } from '@/ssh/types'
+import type { GhRef, GhState } from './github'
 
 /**
  * The contract between the app's state/screens and a remote environment. Implemented over SSH
@@ -162,6 +163,13 @@ export interface RemoteBackend {
    * Rejects with git's reason; a taken name says "already exists".
    */
   gitWorktreeAdd(projectPath: string, branch: string): Promise<GitWorktree>
+
+  /**
+   * A linked pull request's or issue's title and state, read with the GitHub CLI inside the
+   * project's environment (`github.ts`). Rejects with a message a person can act on when gh is
+   * missing or signed out there, or the item is not on github.com.
+   */
+  ghItem(projectPath: string, ref: GhRef): Promise<GhState>
 
   /**
    * The adapters' process bridge for one agent CLI in a project folder (or the agent's home

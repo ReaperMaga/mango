@@ -14,6 +14,7 @@ import {
   AGENT_HOME, asAgent, asAgentPlain, inInstance, line, remotePrefix, utcText,
   validEnvKey, validInstance, validInstanceDir,
 } from './shell'
+import { GH_ENV, ghFailure, ghItemArgv, parseGhItem } from './github'
 import type {
   Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
@@ -907,6 +908,17 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       const r = await exec(at, true, GIT_ENV, ['git', ...GIT_OPTS, ...worktreeAddArgs(name, folder)], { timeoutMs: SLOW_TIMEOUT })
       if (r.code !== 0) throw new Error(explainWorktreeAdd(failure(r, 'git worktree add'), name, shown))
       return { path: shown, branch: name, isMain: false }
+    },
+
+    async ghItem(projectPath, ref) {
+      const argv = ghItemArgv(ref)
+      const { hostId, instance } = parseProjectPath(projectPath)
+      // From the agent's home: the project folder may be gone, and gh needs no repository here.
+      const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: 30_000 })
+      if (r.code !== 0) throw new Error(ghFailure(instance, ref, r.code, r.stderr))
+      const item = parseGhItem(r.stdout)
+      if (!item) throw new Error(`Could not read GitHub's answer from ${instance}.`)
+      return item
     },
 
     spawnFor(agent, projectPath): SpawnFn {
