@@ -1,4 +1,4 @@
-import type { ChatImage, EnvFile, FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
@@ -90,10 +90,26 @@ function listDir(root: string, dir: string): FsListing {
   return { entries, truncated: false }
 }
 
-function readFile(root: string, file: string): FileContent {
+/** `fs_list_dir` with `ahead`: whole listings of the first subfolders not ignored, within the backend's caps. */
+function listAhead(root: string, listing: FsListing): FsListing {
+  const ahead: FsAhead[] = []
+  let left = 2000
+  for (const e of listing.entries) {
+    if (ahead.length === 24) break
+    if (!e.isDir || e.ignored || e.name === 'node_modules') continue
+    const sub = listDir(root, e.path).entries
+    if (sub.length > left) continue
+    left -= sub.length
+    ahead.push({ dir: e.path, entries: sub })
+  }
+  return { ...listing, ahead }
+}
+
+function readFile(root: string, file: string, limit?: number): FileContent {
   const f = filesOf(root).get(clean(file))
   if (!f) throw new Error(`${file} no longer exists`)
   const size = f.size ?? new TextEncoder().encode(f.text ?? '').length
+  if (limit !== undefined && size > limit) return { text: null, binary: false, tooLarge: true, size, bom: false, modifiedMs: f.modifiedMs }
   return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs }
 }
 
@@ -217,10 +233,14 @@ function gitignoreAdd(root: string, name: string) {
 }
 
 export async function mockFiles(cmd: string, args: any): Promise<any> {
-  await wait(40)
+  // A remote project answers over SSH: slow enough here to see what a round trip costs.
+  await wait(String(args.root ?? '').startsWith('env://') ? 350 : 40)
   switch (cmd) {
-    case 'fs_list_dir': return listDir(args.root, args.dir)
-    case 'fs_read_file': return readFile(args.root, args.file)
+    case 'fs_list_dir': {
+      const listing = listDir(args.root, args.dir)
+      return args.ahead ? listAhead(args.root, listing) : listing
+    }
+    case 'fs_read_file': return readFile(args.root, args.file, args.limit)
     case 'fs_read_bytes': return readBytes(args.root, args.file)
     case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
     case 'fs_create_file': return createFile(args.root, args.file, args.text)

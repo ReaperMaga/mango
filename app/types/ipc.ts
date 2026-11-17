@@ -408,6 +408,18 @@ export interface FsListing {
   entries: FsEntry[]
   /** The folder holds more than 5000 entries; the rest are left out. */
   truncated: boolean
+  /**
+   * Asked for with `ahead`: whole listings of some subfolders, read in the same call so opening
+   * one needs no round trip. Up to 24 folders and 2000 entries between them; folders git ignores,
+   * `node_modules` and any that would not fit whole are left out.
+   */
+  ahead?: FsAhead[]
+}
+
+/** A subfolder's listing read ahead with its parent; never cut short. */
+export interface FsAhead {
+  dir: string
+  entries: FsEntry[]
 }
 
 /* ---------- the browser: native webviews laid over browser tabs (src-tauri/src/browser.rs) ---------- */
@@ -924,8 +936,10 @@ export interface Commands {
    */
   plastic_review_create: [{ path: string; title: string; reviewers: string | null }, number]
 
-  fs_list_dir: [{ root: string; dir: string }, FsListing]
-  fs_read_file: [{ root: string; file: string }, FileContent]
+  /** `ahead`: also return some subfolders' listings (`FsListing.ahead`), one round trip for two levels. */
+  fs_list_dir: [{ root: string; dir: string; ahead?: boolean }, FsListing]
+  /** `limit` (bytes) lowers the 5 MB limit, for reading a file ahead of opening it: a larger one comes back `tooLarge`. */
+  fs_read_file: [{ root: string; file: string; limit?: number }, FileContent]
   /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
   fs_read_bytes: [{ root: string; file: string }, FileBytes]
   /**
