@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind, VcsLock } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -31,6 +31,8 @@ interface Repo {
   renames: { from: string; to: string; change: Change }[]
   /** Unity VCS: branches that have changesets of their own (and so can't be deleted). */
   used?: Set<string>
+  /** Unity VCS: locks in the repository, mine and other people's. */
+  locks?: VcsLock[]
 }
 
 const MIN = 60_000
@@ -439,6 +441,20 @@ function unityRepo(): Repo {
       },
     },
     {
+      path: 'Assets/Prefabs/Player.prefab',
+      staged: null,
+      unstaged: {
+        status: 'M',
+        diff: `${head('Assets/Prefabs/Player.prefab')}@@ -88,7 +88,7 @@ MonoBehaviour:
+   m_Script: {fileID: 11500000, guid: 5f1c2a9e0b7d4c3a8e6f1b2c3d4e5f60, type: 3}
+   moveSpeed: 4.5
+-  carryCapacity: 12
++  carryCapacity: 16
+   pickupRadius: 1.2
+`,
+      },
+    },
+    {
       path: 'Assets/Prefabs/Crate.prefab',
       staged: null,
       unstaged: {
@@ -486,7 +502,59 @@ function unityRepo(): Repo {
     // Changesets a teammate checked in on this branch since the workspace was updated.
     incoming: ['Inventory: tooltips show the stack total', 'Fix the crate falling through the barn floor'],
     renames: [],
+    locks: [
+      { path: 'Assets/Art/Barn.psd', owner: 'sam@orchard.studio', workspace: 'sam-art', branch: '/main/art-pass', status: 'retained', time: Date.now() - 26 * 60 * MIN, mine: false },
+      { path: 'Assets/Prefabs/Player.prefab', owner: ME, workspace: 'fruit-stand', branch: '/main/feature/inventory', status: 'locked', time: Date.now() - 40 * MIN, mine: true },
+      { path: 'Assets/Scenes/Farm.unity', owner: 'priya@orchard.studio', workspace: 'priya-desktop', branch: '/main/feature/weather', status: 'locked', time: Date.now() - 95 * MIN, mine: false },
+      { path: 'Assets/Scenes/Market.unity', owner: 'priya@orchard.studio', workspace: 'priya-desktop', branch: '/main/feature/weather', status: 'locked', time: Date.now() - 3 * 60 * MIN, mine: false },
+    ],
   }
+}
+
+/** Unity VCS: the signed-in user, and the files the server's lock rules cover. */
+const ME = 'you@orchard.studio'
+const LOCK_RULES = /\.(unity|prefab|psd|png|fbx|asset)$/i
+const fileName = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+const heldBy = (l: VcsLock) => `${l.owner} (workspace ${l.workspace})`
+
+/** Unity VCS: lock by checking out, as `vcs_lock` does. */
+async function lockFiles(r: Repo, files: string[]): Promise<string> {
+  if (!files.length) throw new Error('Pick the files to lock or unlock')
+  await wait(400)
+  const locks = r.locks ??= []
+  for (const f of files) {
+    const other = locks.find(l => l.path === f && !l.mine)
+    if (other) throw new Error(`${fileName(f)} is locked by ${heldBy(other)}. Ask them to check it in or release the lock.`)
+    const change = r.files.find(x => x.path === f)
+    const code = change?.unstaged?.status ?? change?.staged?.status
+    if (code === '?' || code === 'A') throw new Error(`cm checkout failed\n\nThe item ${f} is not under source control. Check it in first.`)
+  }
+  const skipped: string[] = []
+  for (const f of files) {
+    if (!LOCK_RULES.test(f)) { skipped.push(fileName(f)); continue }
+    const at = locks.findIndex(l => l.path === f)
+    const lock: VcsLock = { path: f, owner: ME, workspace: 'fruit-stand', branch: r.branch, status: 'locked', time: Date.now(), mine: true }
+    if (at >= 0) locks[at] = lock
+    else locks.push(lock)
+  }
+  locks.sort((a, b) => a.path.localeCompare(b.path))
+  if (!skipped.length) return ''
+  const rules = "An administrator sets them in the Unity Cloud dashboard (or the server's lock.conf)."
+  return skipped.length === 1
+    ? `Checked out ${skipped[0]}, but it isn't locked.\nThe server's lock rules don't cover this file. ${rules}`
+    : `Checked out ${files.length} files, but ${skipped.length} of them aren't locked: ${skipped.join(', ')}.\nThe server's lock rules don't cover them. ${rules}`
+}
+
+async function unlockFiles(r: Repo, files: string[]) {
+  if (!files.length) throw new Error('Pick the files to lock or unlock')
+  await wait(300)
+  const locks = r.locks ?? []
+  for (const f of files) {
+    const l = locks.find(x => x.path === f)
+    if (!l) throw new Error(`${fileName(f)} isn't locked.`)
+    if (!l.mine) throw new Error(`${fileName(f)} is locked by ${heldBy(l)}. Only they, or a server administrator, can release it.`)
+  }
+  r.locks = locks.filter(l => !files.includes(l.path))
 }
 
 const UNITY_ONLY = (what: string) => new Error(`${what} isn't part of Unity Version Control. Checkins go straight to the server.`)
@@ -620,6 +688,8 @@ function discard(r: Repo, files: string[]) {
     }
   }
   prune(r)
+  // Unity VCS: undoing a checkout releases the lock it took.
+  if (r.locks) r.locks = r.locks.filter(l => !(l.mine && l.status === 'locked' && !r.files.some(f => f.path === l.path)))
 }
 
 function checkin(r: Repo, message: string, amend: boolean): string {
@@ -629,6 +699,14 @@ function checkin(r: Repo, message: string, amend: boolean): string {
   if (!r.files.some(f => f.staged)) throw new Error('Nothing is staged. Stage the changes you want in this checkin first.')
   if (r.incoming.length) {
     throw new Error(`The branch has changesets your workspace doesn't have yet. Update the workspace, then check in again.\n\nMERGE_NEEDED A merge is needed from changeset 'cs:${nextChangeset + r.incoming.length - 1}' to changeset '${r.log[0]?.shortHash}' in order to checkin.`)
+  }
+  const taken = r.files.filter(f => f.staged).map(f => f.path)
+  const blocked = r.locks?.find(l => !l.mine && taken.includes(l.path))
+  if (blocked) throw new Error(`The checkin was refused.\n\nThe item ${blocked.path} is locked by ${heldBy(blocked)}.`)
+  if (r.locks) {
+    r.locks = r.branch === '/main'
+      ? r.locks.filter(l => !(l.mine && taken.includes(l.path)))
+      : r.locks.map(l => (l.mine && taken.includes(l.path) ? { ...l, status: 'retained' as const } : l))
   }
   for (const f of r.files) f.staged = null
   prune(r)
@@ -779,6 +857,16 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
   }
   if (cmd === 'git_worktree_remove') return worktreeRemove(path, String(args.worktree ?? ''), !!args.force)
   if (cmd === 'git_status') return statusOf(r, path)
+  if (cmd.startsWith('vcs_')) {
+    if (cmd === 'vcs_locks') {
+      if (r.vcs !== 'plastic') return []
+      await wait(150)
+      return (r.locks ?? []).map(l => ({ ...l }))
+    }
+    if (r.vcs !== 'plastic') throw new Error('Locks are a Unity Version Control feature; git has no file locks.')
+    if (cmd === 'vcs_lock') return lockFiles(r, args.files ?? [])
+    if (cmd === 'vcs_unlock') return unlockFiles(r, args.files ?? [])
+  }
   if (cmd === 'git_ahead') {
     if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
     if (r.vcs === 'plastic') throw new Error("Worktrees are a git feature; Unity Version Control workspaces don't have them.")

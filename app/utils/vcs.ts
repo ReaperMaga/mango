@@ -1,4 +1,4 @@
-import type { VcsKind } from '~/types/ipc'
+import type { VcsKind, VcsLock } from '~/types/ipc'
 
 /**
  * What differs between git and Unity Version Control in the shared source
@@ -28,6 +28,8 @@ export interface VcsTerms {
   mergeRebase: boolean
   /** Branch names are paths from the root (`/main/task`), and a new one is a child of its base. */
   pathBranches: boolean
+  /** Files can be locked (exclusive checkout), and other people's locks are shown. */
+  locks: boolean
   /** Periodic refresh. Unity VCS scans the whole workspace, which can take seconds on a big project. */
   pollMs: number
 }
@@ -35,11 +37,11 @@ export interface VcsTerms {
 const TERMS: Record<VcsKind, VcsTerms> = {
   git: {
     name: 'git', commit: 'Commit', commitAll: 'Commit all', committed: 'Committed', message: 'Commit message', unit: 'commit',
-    pull: 'Pull', remotes: true, amend: true, mergeRebase: true, pathBranches: false, pollMs: 4000,
+    pull: 'Pull', remotes: true, amend: true, mergeRebase: true, pathBranches: false, locks: false, pollMs: 4000,
   },
   plastic: {
     name: 'Unity VCS', commit: 'Check in', commitAll: 'Check in all', committed: 'Checked in', message: 'Checkin comment', unit: 'changeset',
-    pull: 'Update', remotes: false, amend: false, mergeRebase: false, pathBranches: true, pollMs: 15000,
+    pull: 'Update', remotes: false, amend: false, mergeRebase: false, pathBranches: true, locks: true, pollMs: 15000,
   },
 }
 
@@ -50,6 +52,19 @@ export function vcsTerms(kind: VcsKind | null | undefined): VcsTerms {
 /** "n changesets" / "1 commit". */
 export function units(n: number, t: VcsTerms): string {
   return `${n} ${t.unit}${n === 1 ? '' : 's'}`
+}
+
+/** Who holds a lock, short: "you", or the user name without its email domain. */
+export function lockHolder(lock: VcsLock): string {
+  return lock.mine ? 'you' : lock.owner.split('@')[0] || lock.owner
+}
+
+/** One line on a lock, for tooltips and screen readers. */
+export function lockSummary(lock: VcsLock): string {
+  const who = lock.mine ? 'you' : lock.owner
+  if (lock.status === 'retained') return `Lock kept for ${who} until ${lock.branch || 'their branch'} is merged`
+  const ws = lock.workspace ? ` in workspace ${lock.workspace}` : ''
+  return `Locked by ${who}${ws}${lock.branch ? `, on ${lock.branch}` : ''}`
 }
 
 /**

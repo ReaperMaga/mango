@@ -190,6 +190,28 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/**
+ * A Unity VCS lock (exclusive checkout) in the workspace's repository (`vcs_locks`).
+ * Unity scenes, prefabs and binary assets can't be merged, so the server's lock rules
+ * make a checkout lock them; nobody else can check them out until it is released.
+ */
+export interface VcsLock {
+  /** Relative to the workspace root, forward slashes. */
+  path: string
+  /** Who holds it, as the server names them (often an email address). */
+  owner: string
+  /** The workspace it was taken from. */
+  workspace: string
+  /** The branch it was taken on. */
+  branch: string
+  /** `locked`: checked out now. `retained`: checked in on a task branch, held until it reaches the destination branch. */
+  status: 'locked' | 'retained'
+  /** When it was taken, unix ms; null when unknown. */
+  time: number | null
+  /** Held by the signed-in user (in any workspace). */
+  mine: boolean
+}
+
 /* ---------- pull requests and issues (linked to chats, read through the GitHub CLI) ---------- */
 
 export interface GhLabel {
@@ -766,6 +788,16 @@ export interface Commands {
    * that is detached. Git only.
    */
   git_ahead: [{ path: string; base: string | null }, GitAhead]
+  /** Unity VCS: every lock in the workspace's repository. Empty for git. */
+  vcs_locks: [{ path: string }, VcsLock[]]
+  /**
+   * Unity VCS: lock files (paths relative to the root) by checking them out; the server's lock rules decide
+   * whether a checkout locks. Refuses files someone else holds. Returns a note naming the files that were
+   * checked out but not locked; empty when all are locked. Git: an error.
+   */
+  vcs_lock: [{ path: string; files: string[] }, string]
+  /** Unity VCS: release the user's own locks on files (the files stay as they are). Refuses other people's. */
+  vcs_unlock: [{ path: string; files: string[] }, void]
 
   /** One folder of a project (`dir` "" for the top). */
   /**
