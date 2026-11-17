@@ -36,6 +36,11 @@ pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
 
 # Drive an agent adapter against the real CLI, outside the app
 node scripts/try-agent.ts claude /path/to/scratch-project "say hi" --mode ask --raw
+
+# The iOS app (its own package; see mobile/AGENTS.md)
+cd mobile && pnpm install && pnpm typecheck && pnpm test   # must be clean
+cd mobile && pnpm web                                      # UI in a browser, simulated environment
+cd mobile && pnpm ios                                      # development build (needs Xcode 16.3+)
 ```
 
 **Versioning:** semver, with `package.json` as the single source. `tauri.conf.json` reads it (`"version":
@@ -95,6 +100,7 @@ src-tauri/src/
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
+mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its own package, see mobile/AGENTS.md
 ```
 
 ## Rules that keep the app working
@@ -147,6 +153,15 @@ scripts/try-agent.ts run an adapter against the real CLI
   hooks keeps it. Long commands and the connection check (`ssh::run_alone`) use their own connection. Measure with the ignored
   `files::tests::remote_timing` test.
 - The browser preview has no backend to run CLIs; it simulates replies and labels them "Simulated".
+
+### The mobile app (`mobile/`)
+- It is one more computer opening a remote environment: it runs the same commands inside the instance as the
+  desktop (ported in `mobile/src/remote/`) and syncs chats through the same files (`chats_remote.rs`). Change one
+  side's scripts, chat JSON or revision rules and the other must follow; the desktop's `app/agents/` adapters and
+  `app/types/chat.ts` are shared with it directly (`~/…`), so keep them free of Vue, Pinia and Tauri.
+- The phone speaks SSH itself (`mobile/modules/mango-ssh`, SwiftNIO SSH): Ed25519 keys stay in the Keychain, every
+  connection pins the host key. Values from the UI, a link or a chat file reach the remote shell only through
+  `quote` (`mobile/src/remote/shell.ts`), after the same validators as `envs/mod.rs`.
 
 ### State
 - Chat statuses are defined in `types/chat.ts` (`ThreadStatus`, `displayStatus`): Idle, Working, Settled,

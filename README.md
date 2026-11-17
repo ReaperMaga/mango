@@ -87,6 +87,27 @@ To try an agent adapter against the real CLI without the app:
 node scripts/try-agent.ts claude /path/to/project "say hi" --mode ask
 ```
 
+## Mobile (iOS)
+
+`mobile/` is a separate Expo / React Native app for the iPhone and iPad: your chats in Mango's remote
+environments, on the go. Join an environment by scanning its share code (on the desktop: the environment's page,
+**Share…**) or opening a `mango://join/…` link, or add a server by putting the phone's own key
+in its `authorized_keys` (both under Settings). Home lists your chats; New chat starts one in any project of any
+environment, or any folder in it. Read and continue chats with Claude Code and Codex (approvals, questions,
+permission mode, model), attach photos, camera shots and files (they are put into the environment, so the agent reads
+every kind, and pictures are shown to it directly), and review, commit and push the changes. The phone speaks SSH itself
+(SwiftNIO SSH, keys in the Keychain, host keys pinned) and runs the same commands in the environment as the
+desktop, so chats sync both ways with every computer that opens it.
+
+```bash
+cd mobile
+pnpm install
+pnpm web             # the UI in a browser with a simulated environment (no SSH there)
+pnpm ios             # a development build on the iOS simulator or a connected iPhone (needs Xcode 16.3+)
+pnpm typecheck && pnpm test
+npx eas-cli@latest build --profile development --platform ios   # or build it in the cloud with EAS
+```
+
 ## Shortcuts
 
 | Keys | Action |
@@ -134,6 +155,7 @@ src-tauri/src/        Rust backend
   updater.rs          self-update from GitHub releases
   voice.rs            voice input: Whisper model download and local speech-to-text
   envs/               remote environments: ssh + incus (hosts, instances, component recipes, remote shells and agents, desktop tunnel)
+mobile/               the iOS app (Expo, React Native): remote environments over SSH, chats, changes
 scripts/try-agent.ts  run an adapter against the real CLI from a terminal
 PRODUCT.md            product context
 DESIGN.md             design system
