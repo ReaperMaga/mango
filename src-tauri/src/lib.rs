@@ -7,6 +7,7 @@ mod browser;
 mod browser_mcp;
 mod browser_remote;
 mod chats;
+mod chats_remote;
 mod env_files;
 mod envs;
 mod files;
@@ -86,6 +87,10 @@ pub fn run() {
             images::chat_image,
             chats::chats_load,
             chats::chats_save,
+            chats_remote::chats_remote_list,
+            chats_remote::chats_remote_fetch,
+            chats_remote::chats_remote_put,
+            chats_remote::chats_remote_remove,
             auth::agent_auth_status,
             auth::agent_logout,
             setup::setup_check,

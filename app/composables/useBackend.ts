@@ -118,6 +118,16 @@ export const appWindow = {
 /* ------------------------------------------------------------------ */
 
 const MOCK_CHATS = 'mango.preview.chats'
+/** The chats environments keep (`chats_remote_*`): `{ "<hostId>/<instance>": { id: { at, data } | { gone } } }`. */
+const MOCK_ENV_CHATS = 'mango.preview.envChats'
+type MockEnvChat = { at: number; data: string } | { gone: true }
+function mockEnvChats(args: { hostId: string; instance: string }, change?: (chats: Record<string, MockEnvChat>) => void): Record<string, MockEnvChat> {
+  const all: Record<string, Record<string, MockEnvChat>> = JSON.parse(localStorage.getItem(MOCK_ENV_CHATS) || 'null') ?? {}
+  const key = `${args.hostId}/${args.instance}`
+  const chats = all[key] ??= {}
+  if (change) { change(chats); localStorage.setItem(MOCK_ENV_CHATS, JSON.stringify(all)) }
+  return chats
+}
 
 const mock = (() => {
   const listeners = new Map<string, Set<(p: unknown) => void>>()
@@ -263,6 +273,25 @@ const mock = (() => {
         localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
         return
       }
+      case 'chats_remote_list':
+        return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
+      case 'chats_remote_fetch': {
+        const chats = mockEnvChats(args)
+        return (args.ids as string[]).flatMap(id => { const c = chats[id]; return c && !('gone' in c) ? [c.data] : [] })
+      }
+      case 'chats_remote_put': {
+        let answer: 'ok' | 'stale' | 'gone' = 'ok'
+        mockEnvChats(args, chats => {
+          const c = chats[args.id]
+          if (c && 'gone' in c) answer = 'gone'
+          else if (c && c.at > args.base) answer = 'stale'
+          else chats[args.id] = { at: args.rev, data: args.data }
+        })
+        return answer
+      }
+      case 'chats_remote_remove':
+        mockEnvChats(args, chats => { for (const id of args.ids) chats[id] = { gone: true } })
+        return
       case 'open_project': {
         const existing = recent.find(r => r.path === args.path)
         return remember({ ...(existing ?? { path: args.path, name: basename(args.path), isGit: true, branch: 'main' }), lastOpened: Date.now() })

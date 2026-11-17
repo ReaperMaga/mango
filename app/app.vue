@@ -10,6 +10,8 @@ const ws = useWorkspace()
 const threads = useThreads()
 const updater = useUpdater()
 const ready = ref(false)
+// Remote projects' chats, kept in their environments: looked at once the chats and projects are loaded.
+useRemoteChatSync(ready)
 
 onMounted(async () => {
   await threads.load()

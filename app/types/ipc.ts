@@ -763,6 +763,12 @@ export interface ChatRow { id: string; projectPath: string; updatedAt: number; d
 /** The saved chat history (`chats_load`): every chat's JSON, and the layout's (null before the first save). */
 export interface ChatSnapshot { threads: string[]; ui: string | null }
 
+/** A chat saved inside an environment (`chats_remote_list`): its revision (when it was saved there, ms), null once deleted. */
+export interface RemoteChatEntry { id: string; rev: number | null }
+
+/** What `chats_remote_put` did: saved, refused because the copy there changed since `base`, or because it was deleted there. */
+export type RemotePut = 'ok' | 'stale' | 'gone'
+
 /** Commands: name -> [args, result] */
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
@@ -982,6 +988,14 @@ export interface Commands {
   chats_load: [Record<string, never>, ChatSnapshot]
   /** Save the chats that changed and delete the removed ones, in one transaction; `ui` only when it changed. */
   chats_save: [{ upsert: ChatRow[]; remove: string[]; ui: string | null }, void]
+  /** The chats a remote project's environment keeps (`chats_remote.rs`), so every computer sees them. */
+  chats_remote_list: [EnvRemote, RemoteChatEntry[]]
+  /** These chats' JSON from the environment (missing ones left out). */
+  chats_remote_fetch: [EnvRemote & { ids: string[] }, string[]]
+  /** Save one chat in the environment as revision `rev`, unless the copy there changed since `base` or it was deleted there. */
+  chats_remote_put: [EnvRemote & { id: string; base: number; rev: number; data: string }, RemotePut]
+  /** Delete chats from the environment (other computers drop them too). */
+  chats_remote_remove: [EnvRemote & { ids: string[] }, void]
 
   /*
    * The browser. Each browser is a native webview, its own label `browser-<id>` (`id`: letters,
