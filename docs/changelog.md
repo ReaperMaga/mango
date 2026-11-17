@@ -2,11 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
-## Unreleased
+## 0.1.11
 
 ### Agents and chats
 
 - **Queued messages:** a message written while an agent works waits in a queue above the input and goes out as the next turn, so the run is not disturbed. **Send now** hands it to the running turn instead; the agent reads it at its next step. Stop keeps the queue but sends nothing.
+- **Worktree chats:** a chat can work in its own git worktree (`Ctrl/⌘ Shift N`), so several agents change one project at once without touching each other's files. The titlebar, Changes, Files and new terminals follow the chat in front.
 - Chats are saved in a SQLite database.
 
 ### Settings
