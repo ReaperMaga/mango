@@ -236,8 +236,8 @@ onBeforeUnmount(() => {
 
       <section class="recent" aria-labelledby="hub-recent">
         <h2 id="hub-recent" class="recent__label">Recent</h2>
-        <ul v-if="ws.recent.length" class="recent__list">
-          <li v-for="p in ws.recent" :key="p.path" class="recent__item">
+        <ul v-if="ws.listedRecent.length" class="recent__list">
+          <li v-for="p in ws.listedRecent" :key="p.path" class="recent__item">
             <button
               type="button"
               class="row recent__row"
@@ -248,6 +248,7 @@ onBeforeUnmount(() => {
               :aria-label="`Open ${p.name}, ${remotePlace(p.path) ? `in ${remotePlace(p.path)!.where}, ` : ''}${shownPath(p.path)}${p.branch ? `, branch ${p.branch}` : ''}, opened ${ago(p.lastOpened)}`"
               @click="open(p)"
             >
+              <UiProjectBadge :name="p.name" :path="p.path" :hue="ws.projectPrefs[p.path]?.color" />
               <span class="recent__text">
                 <span class="recent__line">
                   <span class="recent__name">{{ p.name }}</span>
@@ -446,7 +447,7 @@ ul { list-style: none; margin: 0; padding: 0; }
 .recent__list { display: grid; gap: 1px; }
 .recent__item { position: relative; }
 .recent__row {
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto;
   gap: var(--space-4);
   padding: 7px var(--space-3);
 }

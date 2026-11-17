@@ -65,7 +65,7 @@ Before you send, check the three pickers under the message box:
 
 1. **Agent**: Claude Code or Codex. An agent that is not installed is marked so.
 2. **Model**: **Default** lets the CLI use whatever it is configured with; the others pick a specific model.
-3. **Permissions**: how much the agent may do without asking. New chats start with the default from **Settings > General**. See [permission modes](./chats#permission-modes).
+3. **Permissions**: how much the agent may do without asking. New chats start with the default from **Settings > Preferences**. See [permission modes](./chats#permission-modes).
 
 Type your request and press <kbd>Enter</kbd> to send (<kbd>Shift</kbd> <kbd>Enter</kbd> adds a line). The chat gets its title from your first message, and the agent's reply streams in: text, thinking, the files it reads and edits (with diffs), and the commands it runs (with their output).
 

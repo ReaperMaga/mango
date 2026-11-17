@@ -4,7 +4,7 @@ import { call, on } from '~/composables/useBackend'
 
 /**
  * Self-update from GitHub releases. Checks shortly after launch and then every
- * hour (unless turned off in Settings > General); installing restarts Mango.
+ * hour (unless turned off in Settings > Maintenance); installing restarts Mango.
  * The backend (src-tauri/src/updater.rs) reads the latest release's latest.json.
  */
 

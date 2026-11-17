@@ -3,7 +3,7 @@
 Mango uses [semantic versioning](https://semver.org). The root `package.json` is the single source of the version:
 
 - `src-tauri/tauri.conf.json` reads it (`"version": "../package.json"`).
-- The frontend bakes it in at build time together with the git commit (`nuxt.config.ts`); it shows in **Settings > General**.
+- The frontend bakes it in at build time together with the git commit (`nuxt.config.ts`); it shows in **Settings > Preferences**.
 - `pnpm bump` keeps the copies in `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` in step.
 - This documentation reads it at build time for the download links and the version in the navigation.
 

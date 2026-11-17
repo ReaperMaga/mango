@@ -7,9 +7,11 @@ import { openImage } from '~/utils/imageViewer'
 import { AGENTS } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
 import { createdBy } from '~/utils/githubLinks'
+import { useWorkspace } from '~/stores/workspace'
 
 const props = defineProps<{ message: Message; thread: Thread; last: boolean }>()
 const threads = useThreads()
+const ws = useWorkspace()
 
 /** Still being written. Not while the run only waits on background tasks: this answer is complete. */
 const live = computed(() => props.last && ['running', 'queued', 'waiting'].includes(props.thread.status) && !threads.live[props.thread.id]?.idle)
@@ -33,18 +35,31 @@ const isStep = (p: Part): p is Step =>
 /** Runs of two or more thinking/tool rows fold into one ChatSteps; everything else renders on its own. */
 const segments = computed<Segment[]>(() => {
   const parts = props.message.parts
+  // Which rows Settings > Behaviour shows. Approvals, questions and errors always show.
+  const mode = ws.toolCalls
+  const lastText = parts.map(p => p.type).lastIndexOf('text')
+  const shown = parts.map((p, i) => i).filter((i) => {
+    const p = parts[i]!
+    if (mode === 'zen') return p.type === 'approval' || p.type === 'notice' || i === lastText
+    if (p.type === 'tool' && !p.childId && !createdBy(p).length) {
+      if (mode === 'hide') return false
+      if (mode === 'hide-ok') return p.status !== 'ok'
+    }
+    return true
+  })
   const out: Segment[] = []
-  for (let i = 0; i < parts.length;) {
-    let end = i
-    while (isStep(parts[i]!) && end + 1 < parts.length && isStep(parts[end + 1]!)) end++
-    if (end > i) {
-      const steps = parts.slice(i, end + 1) as Step[]
-      out.push({ kind: 'steps', key: `s:${steps[0]!.id ?? i}`, steps, end })
+  for (let n = 0; n < shown.length;) {
+    let last = n
+    while (isStep(parts[shown[n]!]!) && last + 1 < shown.length && isStep(parts[shown[last + 1]!]!)) last++
+    const i = shown[n]!
+    if (last > n) {
+      const steps = shown.slice(n, last + 1).map(k => parts[k]) as Step[]
+      out.push({ kind: 'steps', key: `s:${steps[0]!.id ?? i}`, steps, end: shown[last]! })
     } else {
       const part = parts[i]!
       out.push({ kind: 'part', key: `p:${('id' in part && part.id) || i}`, part, i })
     }
-    i = end + 1
+    n = last + 1
   }
   return out
 })

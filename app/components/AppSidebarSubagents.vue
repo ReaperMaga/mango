@@ -49,7 +49,7 @@ function menu(t: Thread): MenuItem[] {
   const busy = t.status === 'running' || t.status === 'queued'
   return [
     { label: 'Open to the side', icon: Columns2, onSelect: () => { ws.setActiveProject(t.projectPath); threads.split(t.id) } },
-    { label: 'Delete sub-agent chat', icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => threads.remove(t.id) },
+    { label: 'Delete sub-agent chat', icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => ws.confirmThen('delete', { title: 'Delete sub-agent chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
   ]
 }
 </script>

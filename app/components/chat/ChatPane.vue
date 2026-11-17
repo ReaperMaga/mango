@@ -2,6 +2,7 @@
 import { MessageSquareText, Bug, GitPullRequestDraft, CornerLeftUp, Square } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
+import { useModels } from '~/stores/models'
 import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
 import { worktreeName } from '~/utils/worktrees'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
@@ -18,8 +19,14 @@ const parent = computed(() => (thread.value?.parentId ? threads.byId(thread.valu
 /* ---------- empty pane: draft settings live here until the first send ---------- */
 const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[threads.defaultAgent].models[0]!.id, mode: ws.defaultMode as Thread['mode'], effort: null as string | null })
 /* The agent is chosen in the sidebar (Code settings); an empty pane follows the default. */
-watch(() => threads.defaultAgent, (a) => { draft.agent = a })
-watch(() => draft.agent, (a) => { draft.model = AGENTS[a].models[0]!.id; draft.effort = null })
+/* ...and a project can set its own agent and permission mode (Settings > Projects). */
+const projectPref = computed(() => (ws.activeProjectPath ? ws.projectPrefs[ws.activeProjectPath] : undefined))
+watch([() => threads.defaultAgent, () => projectPref.value?.agent], ([a, own]) => { draft.agent = own ?? a }, { immediate: true })
+watch([() => ws.defaultMode, () => projectPref.value?.mode], ([m, own]) => { draft.mode = own ?? m }, { immediate: true })
+watch([() => draft.agent, () => projectPref.value?.model], ([a, own]) => {
+  draft.model = own && useModels().find(a, own) ? own : AGENTS[a].models[0]!.id
+  draft.effort = null
+}, { immediate: true })
 const draftText = ref('')
 const draftFiles = ref<Attachment[]>([])
 
@@ -139,8 +146,8 @@ function onKey(e: KeyboardEvent) {
       </div>
 
       <div v-else class="pane__composer">
-        <ChatTasks :thread="thread" />
         <ChatQueue :thread="thread" />
+        <ChatTasks :thread="thread" />
         <ChatComposer
           ref="composer"
           v-model:text="text"
@@ -151,7 +158,7 @@ function onKey(e: KeyboardEvent) {
           :effort="thread.effort ?? null"
           :busy="busy"
           :autofocus="active"
-          @send="(text, attachments) => threads.send(thread!.id, text, attachments)"
+          @send="(text, attachments, opposite) => threads.send(thread!.id, text, attachments, opposite)"
           @stop="threads.stop(thread!.id)"
           @update:model="m => threads.setModel(thread!.id, m)"
           @update:mode="m => threads.setMode(thread!.id, m)"

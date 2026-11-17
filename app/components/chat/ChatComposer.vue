@@ -32,7 +32,8 @@ const props = withDefaults(defineProps<{
 }>(), { effort: null, busy: false, autofocus: false, large: false })
 
 const emit = defineEmits<{
-  send: [text: string, attachments: Attachment[]]
+  /** `opposite`: the other follow-up behaviour, for this message only. */
+  send: [text: string, attachments: Attachment[], opposite: boolean]
   stop: []
   'update:model': [model: string]
   'update:effort': [effort: string | null]
@@ -54,9 +55,9 @@ watch(text, () => nextTick(autosize))
 const canSend = computed(() => !!(text.value.trim() || attachments.value.length) && !pending.value.length)
 
 /** While the agent works, the message is queued (see ChatQueue): it goes out when the turn ends. */
-function submit() {
+function submit(opposite = false) {
   if (!canSend.value) return
-  emit('send', text.value, attachments.value)
+  emit('send', text.value, attachments.value, opposite)
   text.value = ''
   attachments.value = []
 }
@@ -75,9 +76,13 @@ function onKey(e: KeyboardEvent) {
     dictation.cancel()
     return
   }
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.isComposing) {
+    // Send key "Enter": Enter sends, Shift+Enter breaks the line, Ctrl/Cmd+Enter sends the other way (see Settings > Behaviour).
+    // Send key "Ctrl/Cmd+Enter": that sends, Ctrl/Cmd+Shift+Enter sends the other way, Enter breaks the line.
+    const mod = isMod(e)
+    if (ws.sendKey === 'enter' ? e.shiftKey && !mod : !mod) return
     e.preventDefault()
-    submit()
+    submit(ws.sendKey === 'enter' ? mod : e.shiftKey)
   }
 }
 
@@ -437,9 +442,16 @@ const modeItems = computed<MenuItem[]>(() => (Object.keys(modes) as Thread['mode
 })))
 
 const ph = computed(() => props.placeholder ?? (props.busy
-  ? `Write the next message: it is sent when ${AGENTS[props.agent].name} is done…`
+  ? ws.followUp === 'steer'
+    ? `Steer ${AGENTS[props.agent].name}: it reads your message at its next step…`
+    : `Write the next message: it is sent when ${AGENTS[props.agent].name} is done…`
   : `Ask ${AGENTS[props.agent].name} to build, fix or explain, or type / for commands…`))
-const sendTitle = computed(() => (props.busy ? `Queue it: sent when ${AGENTS[props.agent].name} is done (Enter)` : 'Send (Enter)'))
+const sendKeyName = computed(() => (ws.sendKey === 'enter' ? 'Enter' : `${modLabel()}+Enter`))
+const sendTitle = computed(() => (props.busy
+  ? ws.followUp === 'steer'
+    ? `Steer: ${AGENTS[props.agent].name} reads it at its next step (${sendKeyName.value})`
+    : `Queue it: sent when ${AGENTS[props.agent].name} is done (${sendKeyName.value})`
+  : `Send (${sendKeyName.value})`))
 </script>
 
 <template>
@@ -447,7 +459,7 @@ const sendTitle = computed(() => (props.busy ? `Queue it: sent when ${AGENTS[pro
     ref="formEl"
     class="cp"
     :class="{ 'cp--large': large, 'is-busy': busy, 'is-dropping': dropping }"
-    @submit.prevent="submit"
+    @submit.prevent="submit()"
     @click.self="ta?.focus()"
   >
     <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">

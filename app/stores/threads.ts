@@ -1,8 +1,9 @@
 import { defineStore } from 'pinia'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
-import { interruptRun, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
+import { interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
+import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
@@ -210,7 +211,8 @@ export const useThreads = defineStore('threads', {
      * (see `createAwaitingWorktree`).
      */
     create(projectPath: string, agentArg?: AgentId, branch: string | null = null, worktree: string | null = null, awaitingWorktree = false): Thread {
-      const agent = agentArg ?? this.defaultAgent
+      const project = useWorkspace().projectPrefs[projectPath]
+      const agent = agentArg ?? project?.agent ?? this.defaultAgent
       // Reuse an untouched empty chat (in the same folder, waiting for a worktree or not) instead of piling up "New chat" rows.
       const blank = this.threads.find(x => x.projectPath === projectPath && (x.worktree ?? null) === worktree && !!x.awaitingWorktree === awaitingWorktree
         && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
@@ -224,8 +226,8 @@ export const useThreads = defineStore('threads', {
         projectPath,
         title: 'New chat',
         agent,
-        model: AGENTS[agent].models[0]!.id,
-        mode: useWorkspace().defaultMode,
+        model: !agentArg && project?.model && useModels().find(agent, project.model) ? project.model : AGENTS[agent].models[0]!.id,
+        mode: project?.mode ?? useWorkspace().defaultMode,
         effort: null,
         status: 'working',
         messages: [],
@@ -595,13 +597,20 @@ export const useThreads = defineStore('threads', {
      * is working the message waits in the chat's queue and goes out as the next turn, so the run
      * is not disturbed; `sendNow` hands it to the running turn instead.
      */
-    async send(id: string, text: string, attachments: Attachment[] = []) {
+    async send(id: string, text: string, attachments: Attachment[] = [], opposite = false) {
       const t = this.byId(id)
       // A sub-agent's chat is written by its parent's run only.
       if (!t || t.parentId || (!text.trim() && !attachments.length)) return
       t.archived = false // writing in an archived chat brings it back
       if (isBusy(t)) {
-        (this.queue[id] ??= []).push({ id: uid('q'), text: text.trim(), attachments })
+        const queued = { id: uid('q'), text: text.trim(), attachments }
+        ;(this.queue[id] ??= []).push(queued)
+        // Steer: hand it to the running turn now. Queue: it waits for the turn to end. `opposite` flips the
+        // setting for this one message. When the agent has answered and only background tasks (a dev server)
+        // keep the run open there is nothing to disturb, so it goes straight in unless queueing was asked for.
+        const ws = useWorkspace()
+        const steer = (ws.followUp === 'steer') !== opposite
+        if ((steer || (this.live[id]?.idle && !opposite)) && !isCommand(queued.text)) await this.sendNow(id, queued.id)
         return
       }
       held.delete(id)
@@ -619,6 +628,8 @@ export const useThreads = defineStore('threads', {
       const list = this.queue[id]
       const i = list?.findIndex(q => q.id === queuedId) ?? -1
       if (!t || !list || i < 0) return
+      // No run to hand it to (between turns, or the simulated agent of the browser preview): it stays queued.
+      if (!isRunning(id)) return
       const [q] = list.splice(i, 1) as [QueuedMessage]
       if (!list.length) delete this.queue[id]
       held.delete(id)

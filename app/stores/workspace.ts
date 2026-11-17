@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types/ipc'
 import type { PermissionMode } from '~/agents/types'
+import type { AgentId } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { baseName } from '~/utils/paths'
 import { shortVersion } from '~/utils/agentCli'
@@ -10,8 +11,15 @@ import { useThreads } from '~/stores/threads'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
-export const COLOR_SCHEMES = ['mango', 'blue', 'purple', 'pink', 'graphite'] as const
+export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite'] as const
 export type ColorScheme = typeof COLOR_SCHEMES[number]
+/** Interface text size, corner roundness and animation (scales in tokens.css). */
+export const TEXT_SIZES = ['small', 'default', 'large', 'xlarge'] as const
+export type TextSize = typeof TEXT_SIZES[number]
+export const CORNERS = ['sharp', 'default', 'round'] as const
+export type Corners = typeof CORNERS[number]
+export const MOTIONS = ['system', 'full', 'reduced'] as const
+export type Motion = typeof MOTIONS[number]
 
 export interface TerminalTab {
   id: string
@@ -31,9 +39,40 @@ export interface TerminalTab {
  * the project's files, source control, and the chat's pull requests and issues.
  */
 export type ToolView = 'env' | 'files' | 'changes' | 'links'
+/** Enter sends (Shift+Enter breaks the line), or Ctrl/Cmd+Enter sends (Enter breaks the line). */
+/** Interface and code fonts (see tokens.css). */
+export const UI_FONTS = ['inter', 'geist', 'dm-sans', 'manrope', 'system'] as const
+export type UiFont = typeof UI_FONTS[number]
+export const MONO_FONTS = ['jetbrains-mono', 'fira-code', 'source-code-pro', 'geist-mono', 'system'] as const
+export type MonoFont = typeof MONO_FONTS[number]
+export type SendKey = 'enter' | 'mod-enter'
+/** A message written while the agent works: wait for the turn to end, or hand it to the running turn. */
+export type FollowUp = 'queue' | 'steer'
+/** Tool calls in a chat: all, only the failed ones, none, or only the final answers (Zen). */
+export type ToolCalls = 'all' | 'hide-ok' | 'hide' | 'zen'
 export type CursorStyle = 'bar' | 'block' | 'underline'
+/** What one project overrides (Settings > Projects). Anything missing follows the global default. */
+export interface ProjectPrefs {
+  /** Shown instead of the folder name. */
+  name?: string
+  /** Sorts first in the project lists. */
+  pinned?: boolean
+  /** Agent and permission mode new chats of this project start with. */
+  agent?: AgentId
+  mode?: PermissionMode
+  /** The model new chats start with (for the agent they start with). */
+  model?: string
+  /** A hue (0 to 360) for the project's badge; automatic when missing. */
+  color?: number
+  /** Hidden from the Recent list; its chats are kept. Opening the project again brings it back. */
+  archived?: boolean
+}
+const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
+
+/** A yes/no question before something is archived or deleted. */
+export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'changelog'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
 
 const LS_KEY = 'mango.workspace.v1'
 
@@ -91,9 +130,19 @@ function saveEnvProjects(list: ProjectInfo[]) {
   } catch { /* storage unavailable: remote projects just aren't remembered */ }
 }
 
-/** The backend's recent folders and the remote projects, most recent first. */
-const mergeRecent = (local: ProjectInfo[]) =>
-  [...local.filter(p => !isEnvPath(p.path)), ...loadEnvProjects()].sort((a, b) => b.lastOpened - a.lastOpened)
+/** A project under the name the user gave it in Settings > Projects. */
+const named = (p: ProjectInfo, prefs: Record<string, ProjectPrefs>): ProjectInfo =>
+  prefs[p.path]?.name ? { ...p, name: prefs[p.path]!.name! } : p
+
+/** Pinned projects first, then the most recently opened. */
+const byPinned = (prefs: Record<string, ProjectPrefs>) => (a: ProjectInfo, b: ProjectInfo) =>
+  Number(!!prefs[b.path]?.pinned) - Number(!!prefs[a.path]?.pinned) || b.lastOpened - a.lastOpened
+
+/** The backend's recent folders and the remote projects, pinned first, then most recent first. */
+const mergeRecent = (local: ProjectInfo[]) => {
+  const prefs = projectPrefsOf()
+  return [...local.filter(p => !isEnvPath(p.path)), ...loadEnvProjects()].map(p => named(p, prefs)).sort(byPinned(prefs))
+}
 
 /** Server names label remote projects: read the saved servers once one is around. */
 function loadHostsFor(projects: ProjectInfo[]) {
@@ -127,6 +176,11 @@ export const useWorkspace = defineStore('workspace', {
 
       theme: (prefs.theme ?? 'dark') as Theme,
       scheme: (COLOR_SCHEMES.includes(prefs.scheme) ? prefs.scheme : 'mango') as ColorScheme,
+      textSize: (TEXT_SIZES.includes(prefs.textSize) ? prefs.textSize : 'default') as TextSize,
+      corners: (CORNERS.includes(prefs.corners) ? prefs.corners : 'default') as Corners,
+      fontUi: (UI_FONTS.includes(prefs.fontUi) ? prefs.fontUi : 'inter') as UiFont,
+      fontMono: (MONO_FONTS.includes(prefs.fontMono) ? prefs.fontMono : 'jetbrains-mono') as MonoFont,
+      motion: (MOTIONS.includes(prefs.motion) ? prefs.motion : 'system') as Motion,
       sidebarOpen: prefs.sidebarOpen ?? true,
       sidebarWidth: (prefs.sidebarWidth ?? 264) as number,
 
@@ -155,6 +209,16 @@ export const useWorkspace = defineStore('workspace', {
 
       /** Permission mode new chats start in. */
       defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
+      sendKey: (prefs.sendKey === 'mod-enter' ? 'mod-enter' : 'enter') as SendKey,
+      followUp: (prefs.followUp === 'steer' ? 'steer' : 'queue') as FollowUp,
+      toolCalls: (['all', 'hide-ok', 'hide', 'zen'].includes(prefs.toolCalls) ? prefs.toolCalls : 'all') as ToolCalls,
+      /** Per-project overrides, by project path (Settings > Projects). */
+      projectPrefs: projectPrefsOf(),
+      /** Ask before archiving / deleting a chat (Settings > Preferences). */
+      confirmArchive: (prefs.confirmArchive ?? false) as boolean,
+      confirmDelete: (prefs.confirmDelete ?? true) as boolean,
+      /** The question on screen (ConfirmDialog); null when none. Not persisted. */
+      confirm: null as null | ConfirmAsk,
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
@@ -181,6 +245,8 @@ export const useWorkspace = defineStore('workspace', {
   },
 
   getters: {
+    /** The recent projects the lists show: archived ones are left out. */
+    listedRecent: s => s.recent.filter(p => !s.projectPrefs[p.path]?.archived),
     activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
     hasProject: s => s.openProjects.length > 0,
     /** The shell a plain "new terminal" starts: the user's choice if it still exists, else the system default. */
@@ -197,6 +263,11 @@ export const useWorkspace = defineStore('workspace', {
         localStorage.setItem(LS_KEY, JSON.stringify({
           theme: this.theme,
           scheme: this.scheme,
+          textSize: this.textSize,
+          corners: this.corners,
+          motion: this.motion,
+          fontUi: this.fontUi,
+          fontMono: this.fontMono,
           sidebarOpen: this.sidebarOpen,
           sidebarWidth: this.sidebarWidth,
           terminalOpen: this.terminalOpen,
@@ -209,6 +280,12 @@ export const useWorkspace = defineStore('workspace', {
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
           defaultMode: this.defaultMode,
+          projectPrefs: this.projectPrefs,
+          sendKey: this.sendKey,
+          followUp: this.followUp,
+          toolCalls: this.toolCalls,
+          confirmArchive: this.confirmArchive,
+          confirmDelete: this.confirmDelete,
           setupSeen: this.setupSeen,
           where: this.where,
           openProjects: this.openProjects.map(p => p.path),
@@ -221,6 +298,7 @@ export const useWorkspace = defineStore('workspace', {
       this.applyTheme()
       // "System" follows the OS while the app is open.
       window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
+      window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => this.applyTheme())
       const [recent, agents] = await Promise.all([
         call('recent_projects').catch(() => [] as ProjectInfo[]),
         call('detect_agents').catch(() => [] as AgentInfo[]),
@@ -255,6 +333,8 @@ export const useWorkspace = defineStore('workspace', {
 
     /** Add a project (already validated by the backend) to the window and focus it. */
     adopt(info: ProjectInfo) {
+      if (this.projectPrefs[info.path]?.archived) this.setProjectPref(info.path, { archived: null })
+      info = named(info, this.projectPrefs)
       const i = this.openProjects.findIndex(p => p.path === info.path)
       if (i === -1) this.openProjects.push(info)
       else this.openProjects[i] = info
@@ -327,6 +407,27 @@ export const useWorkspace = defineStore('workspace', {
       this.applyTheme()
       this.persist()
     },
+    setTextSize(textSize: TextSize) {
+      this.textSize = textSize
+      this.applyTheme()
+      this.persist()
+    },
+    setCorners(corners: Corners) {
+      this.corners = corners
+      this.applyTheme()
+      this.persist()
+    },
+    setFonts(patch: { ui?: UiFont; mono?: MonoFont }) {
+      if (patch.ui) this.fontUi = patch.ui
+      if (patch.mono) this.fontMono = patch.mono
+      this.applyTheme()
+      this.persist()
+    },
+    setMotion(motion: Motion) {
+      this.motion = motion
+      this.applyTheme()
+      this.persist()
+    },
     cycleTheme() {
       this.setTheme(this.resolvedTheme() === 'dark' ? 'light' : 'dark')
     },
@@ -335,8 +436,16 @@ export const useWorkspace = defineStore('workspace', {
       return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
     },
     applyTheme() {
-      document.documentElement.dataset.theme = this.resolvedTheme()
-      document.documentElement.dataset.scheme = this.scheme
+      const root = document.documentElement.dataset
+      root.theme = this.resolvedTheme()
+      root.scheme = this.scheme
+      root.textSize = this.textSize
+      root.corners = this.corners
+      root.fontUi = this.fontUi === 'inter' ? '' : this.fontUi
+      root.fontMono = this.fontMono === 'jetbrains-mono' ? '' : this.fontMono
+      root.motion = this.motion === 'system'
+        ? (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full')
+        : this.motion
     },
 
     /* ---------- layout ---------- */
@@ -381,6 +490,27 @@ export const useWorkspace = defineStore('workspace', {
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {
       this.toggleTool('files', force)
+    },
+    /**
+     * Change what one project overrides. An empty or missing value goes back to the default; a name
+     * that equals the folder's is no override.
+     */
+    setProjectPref(path: string, patch: Partial<Record<keyof ProjectPrefs, ProjectPrefs[keyof ProjectPrefs] | null>>) {
+      const next: Record<string, unknown> = { ...this.projectPrefs[path], ...patch }
+      for (const k of Object.keys(next)) if (next[k] === null || next[k] === undefined || next[k] === '' || next[k] === false) delete next[k]
+      if (Object.keys(next).length) this.projectPrefs[path] = next as ProjectPrefs
+      else delete this.projectPrefs[path]
+      this.persist()
+      // Names are baked into the project lists: refresh them (the folder's own name comes from the recent list's source).
+      const folder = (p: ProjectInfo) => (isEnvPath(p.path) ? envProjectName(parseEnvPath(p.path)!) : baseName(p.path))
+      const rename = (p: ProjectInfo) => (p.path === path ? { ...p, name: this.projectPrefs[path]?.name ?? folder(p) } : p)
+      this.openProjects = this.openProjects.map(rename)
+      this.recent = this.recent.map(rename).sort(byPinned(this.projectPrefs))
+    },
+    /** Run `run` now, or after the user agrees when that kind of action is set to ask first. */
+    confirmThen(kind: 'archive' | 'delete', ask: Omit<ConfirmAsk, 'run'>, run: () => void) {
+      if (!(kind === 'archive' ? this.confirmArchive : this.confirmDelete)) return run()
+      this.confirm = { ...ask, run }
     },
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section
