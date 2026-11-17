@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import {
   ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
-  FolderGit2, GitBranch, Minus, Plus, RefreshCw, Undo2, X,
+  FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
 } from 'lucide-vue-next'
 import type { GitFile } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { useWorkspace } from '~/stores/workspace'
 import { gitFileKey, useGit, type GitAction } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
+import { useLinks } from '~/stores/links'
+import { call } from '~/composables/useBackend'
+import { linkFromItem } from '~/utils/githubLinks'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
@@ -45,6 +48,7 @@ const running = (action: GitAction) => git.isBusy(path.value, action)
 const waiting = computed(() => !!git.busy && !['stage', 'unstage', 'discard'].includes(git.busy))
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
+const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim()
 
 /* ---------- keeping it fresh ---------- */
 
@@ -150,6 +154,108 @@ watch(path, () => {
   creating.value = false
   void refresh()
 }, { immediate: true })
+
+/* ---------- worktree strip: a linked worktree against the project's main folder ---------- */
+
+const threads = useThreads()
+/** Shown for a linked git worktree only (Unity VCS has none). */
+const showStrip = computed(() => !!linkedWorktree.value && isRepo.value && status.value?.vcs === 'git')
+/** The main working tree's folder, in the form the backend takes (an `env://` path for a remote project). */
+const mainFolder = computed(() => git.worktrees(path.value).find(w => w.isMain)?.path
+  ?? (path.value !== ws.activeProjectPath ? ws.activeProjectPath : null))
+const wtBranch = computed(() => status.value?.branch ?? null)
+/** The branch checked out in the main folder: what this worktree merges into. */
+const base = computed(() => repo.value?.vsMain?.base ?? git.worktrees(path.value).find(w => w.isMain)?.branch ?? null)
+/** Commits here that the base lacks; null when it can't be read. */
+const aheadOfBase = computed(() => repo.value?.vsMain?.ahead ?? null)
+const vsLabel = computed(() => (aheadOfBase.value === null || !base.value ? null
+  : aheadOfBase.value === 0 ? 'up to date with' : `${plural(aheadOfBase.value, 'commit')} ahead of`))
+
+const mergeBlocked = computed(() => {
+  if (!wtBranch.value) return 'HEAD is detached: switch to a branch to merge it'
+  if (!base.value || !mainFolder.value) return "The project's main folder is not on a branch"
+  if (wtBranch.value === base.value) return `This worktree is on ${base.value} itself`
+  if (!clean.value) return 'Commit or discard the changes in this worktree first'
+  if (aheadOfBase.value === 0) return `Nothing to merge: ${base.value} already has every commit`
+  return null
+})
+const mergeTitle = computed(() => mergeBlocked.value ?? `Merge ${wtBranch.value} into ${base.value}, in the project folder`)
+function mergeIntoBase() {
+  if (mergeBlocked.value || !path.value || !mainFolder.value || !wtBranch.value) return
+  void git.mergeWorktree(path.value, mainFolder.value, wtBranch.value)
+}
+
+const prBlocked = computed(() => {
+  if (!terms.value.remotes) return 'Pull requests need a git remote'
+  if (!wtBranch.value) return 'HEAD is detached: switch to a branch first'
+  if (!base.value) return "The project's main folder is not on a branch"
+  if (wtBranch.value === base.value) return `This worktree is on ${base.value} itself`
+  if (aheadOfBase.value === 0) return `No commits to propose: ${base.value} already has them all`
+  return null
+})
+const prTitle = computed(() => prBlocked.value ?? `Push ${wtBranch.value} and open a pull request into ${base.value} on GitHub`)
+/** Open the pull request and link it to the chats that work in this worktree. */
+async function openPullRequest() {
+  const folder = path.value
+  if (prBlocked.value || !folder || !base.value) return
+  const item = await git.openPullRequest(folder, base.value)
+  if (!item) return
+  const users = threads.threads.filter(t => t.worktree === folder && !t.parentId)
+  if (!users.length) return
+  const links = useLinks()
+  const link = linkFromItem(item, 'user')
+  links.details[link.key] = { item, loading: false, quiet: false, error: null, fetchedAt: Date.now(), bodyAt: Date.now() }
+  for (const t of users) threads.link(t.id, link)
+  links.show(link.key)
+}
+
+const stripMenu = computed<MenuItem[]>(() => [
+  { label: 'Reveal in Files', icon: FolderOpen, onSelect: () => ws.openTool('files') },
+  { label: 'Open terminal here', icon: SquareTerminal, onSelect: () => { if (path.value) ws.newTerminal(path.value) } },
+  { label: 'Remove worktree…', icon: FolderMinus, danger: true, divider: true, disabled: !!git.busy, onSelect: askRemove },
+])
+
+/* Remove: asks first, then once more when the worktree has uncommitted work (as the sidebar does). */
+/** The worktree folder being asked about. */
+const removing = ref<string | null>(null)
+const removeBusy = ref(false)
+const removeError = ref('')
+/** The worktree has changes git would throw away: the next press removes it anyway. */
+const removeForce = ref(false)
+/** The chats that work in the folder; they go back to the project folder. */
+const removeUsers = computed(() => threads.threads.filter(t => t.worktree === removing.value && !t.parentId))
+watch(path, () => { if (!removeBusy.value) removing.value = null })
+function askRemove() {
+  removing.value = linkedWorktree.value
+  removeError.value = ''
+  removeForce.value = false
+}
+async function removeWorktree() {
+  const folder = removing.value
+  if (!folder || removeBusy.value) return
+  removeBusy.value = true
+  removeError.value = ''
+  try {
+    const user = removeUsers.value[0]
+    if (user) {
+      await threads.removeWorktree(user.id, removeForce.value)
+    } else {
+      const main = mainFolder.value
+      if (!main) throw new Error("Couldn't find the project's main folder")
+      await call('git_worktree_remove', { path: main, worktree: folder, force: removeForce.value })
+      delete git.repos[folder]
+      await git.loadWorktrees(main)
+    }
+    removing.value = null
+  } catch (err) {
+    const why = reason(err).replace(/\.$/, '')
+    removeError.value = `${why}.`
+    // Uncommitted work: offer the destructive version, as a second, explicit step.
+    if (/uncommitted|untracked|modified|changes/i.test(why)) removeForce.value = true
+  } finally {
+    removeBusy.value = false
+  }
+}
 
 /* ---------- sync ---------- */
 
@@ -317,6 +423,44 @@ function onListKey(e: KeyboardEvent) {
         <UiIconButton label="Refresh" :class="{ 'is-spun': spun }" @click="manualRefresh"><RefreshCw /></UiIconButton>
       </div>
     </header>
+
+    <div v-if="showStrip" class="gp__wtstrip" role="group" :aria-label="`Worktree ${worktreeName(linkedWorktree!)}`">
+      <!-- The branch is in the row below; this line only says how it stands against the base. -->
+      <p v-if="vsLabel" class="gp__wtline" :title="`${wtBranch ?? 'This worktree'}: ${vsLabel} ${base}`">
+        <GitCompareArrows aria-hidden="true" />
+        <span class="tabular">{{ vsLabel }}</span> <code class="gp__wtbase">{{ base }}</code>
+      </p>
+      <div class="gp__wtbtns">
+        <UiButton
+          size="sm"
+          :variant="showCommit ? 'secondary' : 'primary'"
+          class="gp__wtmerge"
+          :loading="running('merge')"
+          :disabled="waiting || !!mergeBlocked"
+          :title="mergeTitle"
+          @click="mergeIntoBase"
+        >
+          <GitMerge v-if="!running('merge')" /><span class="gp__wtmerge-label">Merge into <span class="gp__wtmerge-base">{{ base ?? 'base' }}</span></span>
+        </UiButton>
+        <UiButton
+          size="sm"
+          class="gp__wtpr"
+          :loading="running('pr')"
+          :disabled="waiting || !!prBlocked"
+          :title="prTitle"
+          aria-label="Pull request"
+          @click="openPullRequest"
+        >
+          <GitPullRequestArrow v-if="!running('pr')" /><span class="gp__wtpr-label">Pull request</span>
+        </UiButton>
+        <span class="gp__wtgap" />
+        <UiMenu :items="stripMenu" placement="bottom-end" :width="220" label="More worktree actions">
+          <template #default="{ toggle: toggleMenu, open: menuOpen }">
+            <UiIconButton size="sm" label="More worktree actions" :active="menuOpen" @click="toggleMenu"><MoreHorizontal /></UiIconButton>
+          </template>
+        </UiMenu>
+      </div>
+    </div>
 
     <div v-if="isRepo" class="gp__branch">
       <template v-if="true">
@@ -522,6 +666,25 @@ function onListKey(e: KeyboardEvent) {
       <p v-else-if="path" class="gp__quiet">Reading repository…</p>
     </div>
 
+    <UiDialog :open="!!removing" title="Remove worktree" :width="440" :dismissible="!removeBusy" @close="removing = null">
+      <template v-if="removing">
+        <p class="gp__dlg">
+          Remove the worktree folder <code class="gp__code selectable">{{ removing }}</code>?
+          The branch{{ wtBranch ? ' ' : '' }}<code v-if="wtBranch" class="gp__code">{{ wtBranch }}</code> and its commits stay.
+          <template v-if="removeUsers.length">
+            {{ removeUsers.length === 1 ? 'The chat that worked there' : `The ${removeUsers.length} chats that worked there` }}
+            will work in the project folder from then on.
+          </template>
+        </p>
+        <p v-if="removeError" class="gp__dlg gp__dlg--error selectable" role="alert">
+          {{ removeError }}<template v-if="removeForce"> Removing it anyway throws those changes away.</template>
+        </p>
+      </template>
+      <template #footer>
+        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">Cancel</UiButton>
+        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : 'Remove worktree' }}</UiButton>
+      </template>
+    </UiDialog>
   </section>
 </template>
 
@@ -599,6 +762,49 @@ function onListKey(e: KeyboardEvent) {
 }
 @keyframes gp-spin { to { transform: rotate(360deg); } }
 .is-spun :deep(svg) { animation: gp-spin 0.45s var(--ease-out); }
+
+/* ---------- worktree strip ---------- */
+.gp__wtstrip {
+  flex: none;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+  margin: 0 var(--space-2) var(--space-2) var(--space-3);
+  container-type: inline-size;
+  padding: 6px var(--space-2) var(--space-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+}
+.gp__wtline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+}
+.gp__wtline > svg { width: 13px; height: 13px; flex: none; stroke-width: 1.75; color: var(--fg-subtle); }
+.gp__wtbase { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-muted); }
+.gp__wtbtns { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.gp__wtbtns :deep(svg) { flex: none; }
+/* At narrow widths the base name truncates; the buttons keep their row. */
+.gp__wtmerge { flex: 0 1 auto; min-width: 0; }
+.gp__wtmerge-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp__wtmerge-base { font-family: var(--font-mono); font-size: var(--text-xs); }
+.gp__wtpr { flex: none; }
+.gp__wtgap { flex: 1 1 0; min-width: 0; }
+/* A narrow tool window: Pull request gives up its words first, then Merge's base name truncates. */
+@container (max-width: 270px) {
+  .gp__wtpr-label { display: none; }
+}
+
+.gp__dlg { margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--fg-muted); }
+.gp__dlg + .gp__dlg { margin-top: var(--space-3); }
+.gp__dlg--error { color: var(--ripe-error-fg); }
+.gp__code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg); word-break: break-all; }
 
 /* ---------- branch row ---------- */
 .gp__branch {
