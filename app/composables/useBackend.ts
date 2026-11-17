@@ -367,7 +367,7 @@ const mock = (() => {
     }
     // Project env files, not remote environments: the in-memory project answers them.
     if (cmd === 'env_files' || cmd === 'env_gitignore_add') return mockFiles(cmd, args)
-    if (cmd.startsWith('git_')) return mockGit(cmd, args)
+    if (cmd.startsWith('git_') || cmd.startsWith('vcs_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)
     throw new Error(`mock: unknown command ${cmd}`)

@@ -35,6 +35,8 @@ const MISS_TTL: Duration = Duration::from_secs(60);
 /// Windows caps a command line at 32k characters; stay well below.
 const MAX_ARGS_BYTES: usize = 24_000;
 
+pub(crate) mod locks;
+
 const NOT_INSTALLED: &str = "Unity Version Control's `cm` command isn't installed or isn't on PATH. Install Unity VCS (or the Plastic SCM client), then reopen Mango.";
 
 // ---------------------------------------------------------------------------

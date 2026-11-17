@@ -208,6 +208,27 @@ pub async fn git_init(app: AppHandle, path: String) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::init(&at), plastic(_root) => Ok(()))
 }
 
+const NO_GIT_LOCKS: &str = "Locks are a Unity Version Control feature; git has no file locks.";
+
+/// Unity VCS: the locks in the workspace's repository. Empty for git.
+#[tauri::command]
+pub async fn vcs_locks(app: AppHandle, path: String) -> Result<Vec<plastic::locks::VcsLock>, String> {
+    dispatch!(app, path, git(_at) => Ok(Vec::new()), plastic(root) => plastic::locks::locks(&root))
+}
+
+/// Unity VCS: lock files by checking them out. Returns a note when the server's
+/// lock rules left some of them unlocked; empty when all are locked.
+#[tauri::command]
+pub async fn vcs_lock(app: AppHandle, path: String, files: Vec<String>) -> Result<String, String> {
+    dispatch!(app, path, git(_at) => Err(NO_GIT_LOCKS.into()), plastic(root) => plastic::locks::lock(&root, &files))
+}
+
+/// Unity VCS: release the user's own locks on files.
+#[tauri::command]
+pub async fn vcs_unlock(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
+    dispatch!(app, path, git(_at) => Err(NO_GIT_LOCKS.into()), plastic(root) => plastic::locks::unlock(&root, &files))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

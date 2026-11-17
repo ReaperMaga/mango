@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { Minus, Plus, Undo2, X } from 'lucide-vue-next'
-import type { GitFile } from '~/types/ipc'
+import { Lock, Minus, Plus, Undo2, X } from 'lucide-vue-next'
+import type { GitFile, VcsLock } from '~/types/ipc'
+import type { MenuItem } from '~/types/ui'
 import type { GitDiffEntry } from '~/stores/git'
+import { lockHolder, lockSummary } from '~/utils/vcs'
 
 const props = defineProps<{
   file: GitFile
@@ -13,6 +15,10 @@ const props = defineProps<{
   confirming: boolean
   /** An action is running: row actions wait. */
   disabled: boolean
+  /** Unity VCS: the lock on this file, if any. */
+  lock?: VcsLock | null
+  /** Items of the row's context menu (right-click, or the context-menu key); none: no menu. */
+  menu?: MenuItem[] | null
 }>()
 
 const emit = defineEmits<{
@@ -49,6 +55,24 @@ const parts = computed(() => {
 })
 
 const removes = computed(() => state.value.kind === 'untracked')
+
+/** Someone else holds the file: checking in this change will be refused until they let go. */
+const blocked = computed(() => !!props.lock && !props.lock.mine)
+const lockText = computed(() => (props.lock ? lockSummary(props.lock) : ''))
+
+const menuRef = ref<{ showAt: (x: number, y: number) => void } | null>(null)
+function openMenu(e: MouseEvent) {
+  if (!props.menu?.length) return
+  e.preventDefault()
+  menuRef.value?.showAt(e.clientX, e.clientY)
+}
+/** The context-menu key or Shift+F10 on the focused row opens the menu under it. */
+function onMainKey(e: KeyboardEvent) {
+  if (!props.menu?.length || !(e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey))) return
+  e.preventDefault()
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  menuRef.value?.showAt(r.left + 24, r.bottom)
+}
 const diffId = useId()
 
 /* Leaving the question unanswered withdraws it: a click elsewhere, Tab away, or Escape. */
@@ -75,18 +99,23 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
 
 <template>
   <li class="gf" :class="[`gf--${state.kind}`, { 'is-open': expanded, 'is-confirming': confirming }]">
-    <div class="gf__row">
+    <div class="gf__row" @contextmenu="openMenu">
       <button
         type="button"
         class="gf__main"
         :aria-current="expanded ? 'true' : undefined"
-        :title="`${file.path} · ${state.word}. Opens the diff`"
+        :aria-haspopup="menu?.length ? 'menu' : undefined"
+        :title="`${file.path} · ${state.word}${lock ? `\n${lockText}` : ''}\nOpens the diff`"
         @click="emit('toggle')"
+        @keydown="onMainKey"
       >
         <span class="gf__chip" aria-hidden="true">{{ state.letter }}</span>
         <span class="gf__name">{{ parts.name }}</span>
         <span v-if="parts.dir" class="gf__dir"><bdi>{{ parts.dir }}</bdi></span>
-        <span class="sr-only">{{ state.word }}</span>
+        <span v-if="lock" class="gf__lock" :class="{ 'is-mine': lock.mine, 'is-blocked': blocked }" aria-hidden="true">
+          <Lock /><span v-if="blocked" class="gf__holder">{{ lockHolder(lock) }}</span>
+        </span>
+        <span class="sr-only">{{ state.word }}<template v-if="lock">. {{ lockText }}</template></span>
       </button>
 
       <div v-if="confirming" ref="confirmBox" class="gf__confirm" @focusout="onConfirmBlur" @keydown.esc.stop.prevent="emit('cancel')">
@@ -121,12 +150,13 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
         </template>
       </div>
     </div>
-
+    <UiMenu v-if="menu?.length" ref="menuRef" :items="menu" :width="232" :label="`${parts.name} actions`" />
   </li>
 </template>
 
 <style scoped>
-.gf { min-width: 0; }
+/* A grid, so the context menu's empty anchor adds no line box under the row. */
+.gf { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .gf__row {
   display: flex;
   align-items: center;
@@ -196,6 +226,30 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* Lock mark: mine in mango ink; someone else's in blush (it needs a word with them), with who holds it. */
+.gf__lock {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 45%;
+  min-width: 0;
+  color: var(--fg-subtle);
+}
+.gf__lock svg { width: 12px; height: 12px; flex: none; stroke-width: 1.85; }
+.gf__lock.is-mine { color: var(--accent-ink); }
+.gf__lock.is-blocked { color: var(--ripe-waiting-fg); }
+.gf__holder {
+  min-width: 0;
+  font-size: var(--text-2xs);
+  font-weight: 560;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The row's actions need the room while they show; the tooltip still names the holder. */
+.gf__row:hover .gf__holder, .gf__row:has(:focus-visible) .gf__holder { display: none; }
 
 .gf__actions { flex: none; display: none; align-items: center; gap: 1px; }
 .gf__row:hover .gf__actions, .gf__row:has(:focus-visible) .gf__actions { display: flex; }

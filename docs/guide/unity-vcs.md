@@ -24,6 +24,7 @@ When you open a folder, Mango walks up from it looking for a `.git` or a `.plast
 | History | Recent changesets of the branch |
 | Branches | Switch, create, rename and delete, from the branch popup |
 | Code reviews | The branch's reviews and the repository's open ones in the Pull requests tool window; request a review of the branch |
+| Locks | See who holds which file, lock files and release your own locks (see below) |
 
 ## No staging area
 
@@ -53,6 +54,19 @@ For a Unity VCS workspace, the **Pull requests** tool window on the right (`Ctrl
 Each review shows its title, status, number, who asked for it and when, the number of unresolved change requests and questions when your client reports them, and each reviewer with their own verdict (older reviews have a single assignee instead). Statuses use the same colours as chats: under review is ripening, rework required needs you, reviewed is ripe. Mango reads the list when the window opens and when you press **Refresh** (`cm find review`); it does not poll.
 
 **Request a review** (the speech-bubble button, or the button in an empty list) asks Unity VCS for a review of the current branch (`cm codereview br:/main/… "title"`), with optional reviewers: users or groups, separated by commas (`--users`). Commenting, approving and asking for rework happen in the Unity Version Control app or Unity Cloud; Mango only reads them. There is no "open in Unity VCS" link, because Unity documents no stable address for a review.
+
+## Locks
+
+Scenes, prefabs and binary assets can't be merged, so Unity VCS teams lock them: while one person has such a file checked out, nobody else can check it out. Which files lock is decided by lock rules on the server (the Unity Cloud dashboard, or `lock.conf` on your own server); only an administrator can change them.
+
+- **Lock marks.** A file in the Changes list that is locked shows a lock: in the accent colour when you hold it, and with the holder's name when someone else does. Hover the row for who, from which workspace and on which branch.
+- **Locks section.** Below the changes, **Locks** lists every lock in the workspace's repository, other people's first, including files you haven't touched. A lock marked **kept** was checked in on a task branch and stays until that branch is merged.
+- **Lock a file.** Right-click a changed file (or press the context-menu key or Shift+F10 on it) and choose **Lock**. Mango checks the file out (`cm checkout`); if the server's lock rules cover it, that takes the lock. If they don't, the file is checked out but not locked, and the result line says so. New and deleted files can't be locked.
+- **Release a lock.** Choose **Release lock** in the same menu, or hover your lock in the Locks section and press the open-lock button. The file stays as it is. Only the holder, or a server administrator, can release a lock, so Mango doesn't offer it for other people's.
+- **Undo and checkin.** Undoing a checked-out file releases its lock. Checking it in releases it too, or keeps it (**kept**) until a task branch is merged.
+- **Warning before a checkin.** When the next checkin would take a file someone else has locked, the line under the checkin comment says so. Mango doesn't stop you, but the server will likely refuse the checkin until the lock is released.
+
+Locks come from the server, so Mango reads them at most every 30 seconds, and right away after a lock, release, undo, checkin or branch switch, or when you press refresh.
 
 ## What is not there
 
