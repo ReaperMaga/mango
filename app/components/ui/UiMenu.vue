@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check } from 'lucide-vue-next'
+import { Check, X } from 'lucide-vue-next'
 import type { MenuItem } from '~/types/ui'
 import { useOverlay } from '~/composables/useOverlay'
 
@@ -13,6 +13,8 @@ const props = withDefaults(defineProps<{
   placement?: 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end'
   width?: number
   label?: string
+  /** Cap on the list's height; longer lists scroll. Without it the menu may fill the space to the window edge. */
+  maxHeight?: number
 }>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
 
 const open = ref(false)
@@ -46,15 +48,18 @@ function place() {
   const spaceBelow = vh - r.bottom - GAP - MARGIN
   const spaceAbove = r.top - GAP - MARGIN
   // Flip when the preferred side is cramped and the other side has more room.
-  const estimated = Math.min(list.value?.scrollHeight ?? props.items.length * 34 + 8, 420)
+  const cap = props.maxHeight ?? 420
+  const estimated = Math.min(list.value?.scrollHeight ?? props.items.length * 34 + 8, cap)
   const top = wantTop && !point ? (spaceAbove >= estimated || spaceAbove >= spaceBelow) : !(spaceBelow >= estimated || spaceBelow >= spaceAbove)
   // A context menu grows down and to the right of the pointer, like every other one.
   const alignRight = alignEnd && !point
   let left = alignRight ? r.right - width : r.left
   left = Math.max(MARGIN, Math.min(left, vw - width - MARGIN))
+  const room = Math.max(120, top ? spaceAbove : spaceBelow)
+  const maxHeight = props.maxHeight ? Math.min(props.maxHeight, room) : room
   pos.value = top
-    ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight: Math.max(120, spaceAbove) }
-    : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight: Math.max(120, spaceBelow) }
+    ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight }
+    : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight }
 }
 
 function toggle() {
@@ -73,7 +78,13 @@ async function show(at: { x: number; y: number } | null = null) {
   await nextTick()
   place()
   list.value?.focus({ preventScroll: true })
+  revealActive()
 }
+/** Keep the highlighted row in view when the list scrolls (the checked one on open, then the keyboard's). */
+function revealActive() {
+  list.value?.querySelector<HTMLElement>('.menu__item.is-active')?.scrollIntoView({ block: 'nearest' })
+}
+
 function close(refocus = false) {
   if (!open.value) return
   open.value = false
@@ -85,7 +96,19 @@ function select(i: number) {
   close()
   it.onSelect?.()
 }
+/** The row's own second action (UiMenu keeps the menu open so several can be run in a row). */
+function runRemove(i: number) {
+  const it = props.items[i]
+  if (!it?.remove) return
+  it.remove.onSelect()
+  nextTick(() => {
+    if (!open.value) return
+    if (!enabled.value.includes(active.value)) active.value = enabled.value[Math.min(i, enabled.value.length - 1)] ?? -1
+    list.value?.focus({ preventScroll: true })
+  })
+}
 function onKey(e: KeyboardEvent) {
+  if ((e.key === 'Delete' || e.key === 'Backspace') && props.items[active.value]?.remove) { e.preventDefault(); runRemove(active.value); return }
   const at = enabled.value.indexOf(active.value)
   if (e.key === 'ArrowDown') { e.preventDefault(); active.value = enabled.value[(at + 1) % enabled.value.length] ?? -1 }
   else if (e.key === 'ArrowUp') { e.preventDefault(); active.value = enabled.value[(at - 1 + enabled.value.length) % enabled.value.length] ?? -1 }
@@ -94,6 +117,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(active.value) }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true) }
   else if (e.key === 'Tab') { e.preventDefault(); close(true) }
+  if (open.value) nextTick(revealActive)
 }
 
 function onDocDown(e: MouseEvent) {
@@ -166,8 +190,17 @@ defineExpose({ show: () => show(), showAt, close, toggle })
                 <span class="menu__label">{{ it.label }}</span>
                 <span v-if="it.hint" class="menu__hint">{{ it.hint }}</span>
               </span>
+              <span v-if="it.aside" class="menu__aside" :class="{ 'is-mono': it.asideMono }">{{ it.aside }}</span>
               <Check v-if="it.checked" class="menu__check" />
               <span v-else-if="it.kbd" class="menu__kbd">{{ it.kbd }}</span>
+              <!-- Not a nested <button> (invalid inside the row); the keyboard reaches it with Delete. -->
+              <span
+                v-if="it.remove"
+                class="menu__remove"
+                :title="`${it.remove.label} (Delete)`"
+                :aria-label="it.remove.label"
+                @click.stop="runRemove(i)"
+              ><X /></span>
             </button>
           </template>
         </div>
@@ -221,12 +254,28 @@ defineExpose({ show: () => show(), showAt, close, toggle })
 .menu__item.is-active { background: var(--bg-hover); }
 .menu__item:disabled { color: var(--fg-faint); }
 .menu__item.is-danger { color: var(--ripe-error-fg); }
-.menu__icon { width: 16px; display: grid; place-items: center; color: var(--fg-subtle); flex: none; }
+.menu__icon { width: 20px; display: grid; place-items: center; color: var(--fg-subtle); flex: none; }
 .menu__icon svg { width: 15px; height: 15px; stroke-width: 1.75; }
 .menu__item.is-danger .menu__icon { color: inherit; }
 .menu__text { flex: 1; min-width: 0; display: grid; }
 .menu__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu__hint { font-size: var(--text-xs); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu__aside { flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
+.menu__aside.is-mono { font-family: var(--font-mono); }
+.menu__remove {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: -4px;
+  border-radius: var(--radius-xs);
+  color: var(--fg-subtle);
+  visibility: hidden;
+}
+.menu__remove svg { width: 13px; height: 13px; stroke-width: 2; }
+.menu__item.is-active .menu__remove { visibility: visible; }
+.menu__remove:hover { background: var(--bg-active); color: var(--fg); }
 .menu__check { width: 14px; height: 14px; color: var(--accent-ink); flex: none; }
 .menu__kbd { font-size: var(--text-xs); color: var(--fg-faint); flex: none; }
 

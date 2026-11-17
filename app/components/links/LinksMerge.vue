@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, CircleAlert, CircleCheck, CircleDashed, CircleX, GitMerge } from 'lucide-vue-next'
+import { ChevronDown, CircleAlert, CircleCheck, CircleDashed, CircleX, GitMerge, LoaderCircle } from 'lucide-vue-next'
 import type { LinkedItem } from '~/types/chat'
 import type { GhItem, GhMergeMethod } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
@@ -33,25 +33,28 @@ const menu = computed<MenuItem[]>(() => allowed.value.map(m => ({
   onSelect: () => { method.value = m },
 })))
 
-type Tone = 'done' | 'running' | 'queued' | 'error' | 'idle'
-/** What GitHub says about merging it now, and whether the button may be pressed at all. */
-const status = computed<{ tone: Tone; text: string; ready: boolean }>(() => {
+type Tone = 'done' | 'running' | 'queued' | 'error' | 'idle' | 'checking'
+/**
+ * What GitHub says about merging it now: a short title, the detail under it, and whether the button
+ * may be pressed at all.
+ */
+const status = computed<{ tone: Tone; title: string; detail?: string; ready: boolean }>(() => {
   const it = props.item
   const base = it.baseRef ?? 'the base branch'
   const running = it.checkRuns.some(c => c.state === 'pending') || (!it.checkRuns.length && it.checks === 'pending')
-  if (it.state === 'draft') return { tone: 'idle', text: 'Still a draft. Mark it ready for review on GitHub to merge it.', ready: false }
-  if (it.mergeable === 'conflicting' || it.mergeState === 'dirty') return { tone: 'error', text: `Conflicts with ${base}. Resolve them before merging.`, ready: false }
-  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'running', text: 'GitHub is working out whether it can be merged.', ready: false }
-  if (it.mergeState === 'blocked') return { tone: 'error', text: running ? 'Blocked until required checks pass.' : 'Blocked by branch protection: it needs approvals or passing required checks.', ready: true }
-  if (it.mergeState === 'behind') return { tone: 'queued', text: `Behind ${base}, but it can still be merged.`, ready: true }
+  if (it.state === 'draft') return { tone: 'idle', title: 'Draft', detail: 'Mark it ready for review on GitHub to merge it.', ready: false }
+  if (it.mergeable === 'conflicting' || it.mergeState === 'dirty') return { tone: 'error', title: `Conflicts with ${base}`, detail: 'Resolve them before merging.', ready: false }
+  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'checking', title: 'Checking whether it can merge', detail: 'GitHub is still working it out.', ready: false }
+  if (it.mergeState === 'blocked') return { tone: 'error', title: 'Blocked', detail: running ? 'Required checks have not passed yet.' : 'Branch protection wants approvals or passing checks.', ready: true }
+  if (it.mergeState === 'behind') return { tone: 'queued', title: `Behind ${base}`, detail: 'It can still be merged.', ready: true }
   if (it.mergeState === 'unstable') {
     return running
-      ? { tone: 'running', text: 'Checks are still running. It can be merged anyway.', ready: true }
-      : { tone: 'error', text: 'Some checks failed. It can still be merged.', ready: true }
+      ? { tone: 'running', title: 'Checks are running', detail: 'It can be merged anyway.', ready: true }
+      : { tone: 'error', title: 'Some checks failed', detail: 'It can still be merged.', ready: true }
   }
-  return { tone: 'done', text: 'Ready to merge.', ready: true }
+  return { tone: 'done', title: 'Ready to merge', detail: `Into ${base}.`, ready: true }
 })
-const ICON = { done: CircleCheck, running: CircleDashed, queued: CircleAlert, error: CircleX, idle: CircleAlert }
+const ICON = { done: CircleCheck, running: CircleDashed, queued: CircleAlert, error: CircleX, idle: CircleAlert, checking: LoaderCircle }
 
 const failing = computed(() => props.item.checkRuns.filter(c => c.state === 'failure' || c.state === 'cancelled').length)
 const asking = ref(false)
@@ -85,10 +88,41 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
 
 <template>
   <section class="lm" aria-label="Merge">
-    <p class="lm__status" :class="`is-${status.tone}`">
-      <component :is="ICON[status.tone]" class="lm__icon" aria-hidden="true" />
-      <span>{{ status.text }}</span>
-    </p>
+    <div class="lm__bar">
+      <p class="lm__status" :class="`is-${status.tone}`" role="status">
+        <component :is="ICON[status.tone]" class="lm__icon" aria-hidden="true" />
+        <span class="lm__words">
+          <span class="lm__title">{{ status.title }}</span>
+          <span v-if="status.detail" class="lm__detail">{{ status.detail }}</span>
+        </span>
+      </p>
+
+      <!-- One control: the action, and the method beside it when the repository allows more than one. -->
+      <div v-if="item.canMerge && allowed.length && !asking" class="lm__split" :class="{ 'is-ready': status.ready, 'is-single': allowed.length < 2 }">
+        <button
+          type="button"
+          class="lm__go"
+          :disabled="!status.ready || undefined"
+          :title="status.ready ? METHODS[method].hint : status.title"
+          @click="ask"
+        >
+          <GitMerge aria-hidden="true" />{{ METHODS[method].action }}
+        </button>
+        <UiMenu v-if="allowed.length > 1" :items="menu" placement="top-end" :width="280" label="Merge method">
+          <template #default="{ toggle, open: menuOpen }">
+            <button
+              type="button"
+              class="lm__method"
+              :class="{ 'is-open': menuOpen }"
+              aria-label="Choose the merge method"
+              title="Choose the merge method"
+              :aria-expanded="menuOpen"
+              @click="toggle"
+            ><ChevronDown aria-hidden="true" /></button>
+          </template>
+        </UiMenu>
+      </div>
+    </div>
 
     <p v-if="!item.canMerge" class="lm__note">The account gh is signed in with cannot merge pull requests in {{ item.owner }}/{{ item.repo }}.</p>
     <p v-else-if="!allowed.length" class="lm__note">GitHub did not say which merge methods this repository allows; merge it on GitHub.</p>
@@ -110,17 +144,6 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
       </div>
     </div>
 
-    <div v-else class="lm__btns">
-      <UiButton size="sm" variant="primary" :disabled="!status.ready || undefined" :title="METHODS[method].hint" @click="ask">
-        <GitMerge aria-hidden="true" />{{ METHODS[method].action }}
-      </UiButton>
-      <UiMenu v-if="allowed.length > 1" :items="menu" placement="top-end" :width="280" label="Merge method">
-        <template #default="{ toggle, open: menuOpen }">
-          <UiIconButton size="sm" label="Choose the merge method" :active="menuOpen" class="lm__more" @click="toggle"><ChevronDown /></UiIconButton>
-        </template>
-      </UiMenu>
-    </div>
-
     <p v-if="error" class="lm__error selectable" role="alert">{{ error }}</p>
   </section>
 </template>
@@ -130,24 +153,63 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
   flex: none;
   display: grid;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-3);
   border-top: 1px solid var(--line-soft);
 }
-.lm__status { display: flex; align-items: flex-start; gap: 6px; margin: 0; font-size: var(--text-xs); line-height: 18px; color: var(--fg-muted); }
-.lm__icon { flex: none; width: 13px; height: 13px; margin-top: 2.5px; stroke-width: 2; }
+.lm__bar { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2) var(--space-3); }
+
+.lm__status { flex: 1 1 160px; min-width: 0; display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; }
+.lm__icon { flex: none; width: 15px; height: 15px; margin-top: 1px; stroke-width: 2; color: var(--fg-subtle); }
+.lm__words { display: grid; min-width: 0; }
+.lm__title { font-size: var(--text-sm); font-weight: 550; line-height: 18px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lm__detail { font-size: var(--text-xs); line-height: 16px; color: var(--fg-subtle); }
 .lm__status.is-done .lm__icon { color: var(--ripe-done); }
-.lm__status.is-running .lm__icon { color: var(--ripe-running); animation: lm-turn 2.4s linear infinite; }
+.lm__status.is-running .lm__icon { color: var(--ripe-running); }
 .lm__status.is-queued .lm__icon { color: var(--ripe-queued); }
 .lm__status.is-error .lm__icon { color: var(--ripe-error); }
-.lm__status.is-idle .lm__icon { color: var(--fg-faint); }
+.lm__status.is-checking .lm__icon { animation: lm-turn 1.1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .lm__status.is-checking .lm__icon { animation: none; } }
 @keyframes lm-turn { to { transform: rotate(360deg); } }
+
+/* The split button: neutral until GitHub says it can merge, then the accent fill. */
+.lm__split {
+  flex: none;
+  display: flex;
+  margin-left: auto;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+.lm__go, .lm__method {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 550;
+  white-space: nowrap;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.lm__go { padding: 0 var(--space-3) 0 10px; }
+.lm__method { padding: 0 7px; border-left: 1px solid var(--line); }
+.lm__go svg { width: 14px; height: 14px; stroke-width: 1.85; }
+.lm__method svg { width: 14px; height: 14px; stroke-width: 2; }
+.lm__go:hover:not(:disabled), .lm__method:hover, .lm__method.is-open { background: var(--bg-hover); }
+.lm__go:disabled { color: var(--fg-faint); cursor: default; }
+.lm__go:focus-visible, .lm__method:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: 0; }
+
+.lm__split.is-ready { border-color: transparent; background: var(--accent); }
+.lm__split.is-ready .lm__go, .lm__split.is-ready .lm__method { color: var(--accent-fg); }
+.lm__split.is-ready .lm__method { border-left-color: color-mix(in oklch, var(--accent-fg) 22%, transparent); }
+.lm__split.is-ready .lm__go:hover, .lm__split.is-ready .lm__method:hover, .lm__split.is-ready .lm__method.is-open { background: var(--accent-strong); }
 
 .lm__note { margin: 0; font-size: var(--text-xs); color: var(--fg-subtle); }
 
-.lm__btns { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.lm__btns { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-1); margin-top: var(--space-2); }
 .lm__btns :deep(svg) { width: 14px; height: 14px; stroke-width: 1.85; }
-.lm__ask .lm__btns { gap: var(--space-1); margin-top: var(--space-2); }
-.lm__more { height: 26px; }
 
 .lm__ask {
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);

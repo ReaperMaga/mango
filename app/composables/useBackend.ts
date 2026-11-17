@@ -14,8 +14,18 @@ import { isEnvPath } from '~/utils/envPath'
  * mock so the UI can be developed and screenshotted on its own.
  */
 
-export const isTauri = (): boolean =>
-  typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+/**
+ * Running as Mango's own window. Tauri injects its internals into every webview, browser tabs included
+ * (`browser-<id>`, which get no IPC): a page there, such as the dev server opened by an agent, is a plain
+ * browser and uses the mock.
+ */
+export const isTauri = (): boolean => {
+  if (typeof window === 'undefined') return false
+  const internals = (window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } }).__TAURI_INTERNALS__
+  if (!internals) return false
+  const label = internals.metadata?.currentWebview?.label
+  return label === undefined || label === 'main'
+}
 
 type Args<K extends keyof Commands> = Commands[K][0]
 type Result<K extends keyof Commands> = Commands[K][1]
