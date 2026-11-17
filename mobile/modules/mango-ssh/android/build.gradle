@@ -1,0 +1,15 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'dev.mango.ssh'
+version = '0.1.0'
+
+android {
+  namespace "dev.mango.ssh"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}

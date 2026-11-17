@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "Mango",
+    "slug": "mango",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "dev.mango.mobile",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#16171a",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "dev.mango.mobile"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "output": "single",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-status-bar",
+      "expo-secure-store",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 120,
+          "resizeMode": "contain",
+          "backgroundColor": "#fafafa",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#16171a"
+          }
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4"
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Mango uses the camera to scan an environment share code and to attach photos to a message.",
+          "microphonePermission": "Mango uses the microphone while you dictate a message.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Mango attaches the photos you pick to a message for your coding agent.",
+          "cameraPermission": "Mango uses the camera to scan an environment share code and to attach photos to a message.",
+          "microphonePermission": "Mango uses the microphone while you dictate a message."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Mango uses the microphone while you dictate a message.",
+          "speechRecognitionPermission": "Mango turns what you dictate into text, on this iPhone where iOS supports it."
+        }
+      ]
+    ],
+    "scheme": "mango",
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

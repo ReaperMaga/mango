@@ -1,0 +1,13 @@
+/** Chat components: presentational, fed the desktop's own types (`~/types/chat`) and callbacks. */
+export { ChatMessage, type ChatMessageProps, type ToolCallsMode } from './ChatMessage'
+export { ChatMarkdown, type ChatMarkdownProps } from './ChatMarkdown'
+export { ChatTool, type ChatToolProps, type ToolPart } from './ChatTool'
+export { ChatSteps, ChatThinking, stepsSummary, type Step } from './ChatSteps'
+export { ChatDiff, type ChatDiffProps } from './ChatDiff'
+export { ChatApproval, type ChatApprovalProps, type ApprovalPart } from './ChatApproval'
+export { ChatQuestion, type ChatQuestionProps, type QuestionPart } from './ChatQuestion'
+export { ChatWorking, workingActivity, type ChatWorkingProps } from './ChatWorking'
+export { ChatComposer, PERMISSION_MODES, type ChatComposerProps } from './ChatComposer'
+export { ThreadRow, threadSubtitle, type ThreadRowProps } from './ThreadRow'
+export { ChangeRow, type ChangeRowProps, type ChangeRowFile, type ChangeKind } from './ChangeRow'
+export { shortAgo, formatDuration, useNow } from './time'
