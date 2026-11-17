@@ -1,14 +1,32 @@
 import { useEffect, useState } from 'react'
 import { View } from 'react-native'
-import { Archive, ArchiveRestore, Trash2 } from 'lucide-react-native'
+import { Trash2 } from 'lucide-react-native'
+import { displayStatus, type Thread } from '~/types/chat'
 import { isBusy } from '@/state/threadModel'
 import { makeStyles, radius, space, useTheme } from '@/theme'
-import { Button, ButtonRow, ListRow, ListSection, Sheet, Text, TextField, haptic } from '@/ui'
+import { Button, ButtonRow, ListRow, ListSection, RipenessDot, Sheet, Text, TextField, haptic } from '@/ui'
 import { useThreads } from '@/state/threads'
 
+/** The statuses a person can pick, as the desktop's chat menu offers them; the others belong to runs. */
+type Pickable = 'working' | 'done' | 'archived'
+const CHOICES: { status: Pickable; label: string; subtitle?: string }[] = [
+  { status: 'working', label: 'Working' },
+  { status: 'done', label: 'Settled' },
+  { status: 'archived', label: 'Archived', subtitle: 'Leaves the list; nothing is deleted' },
+]
+
+/** Why the status rows are locked, or what the current one means when no row is it. */
+function statusNote(th: Thread): string | undefined {
+  if (th.status === 'waiting') return 'The agent needs you. Answer it or stop the run to change the status.'
+  if (isBusy(th)) return 'The agent is working. Its run sets the status until it stops.'
+  if (th.status === 'error' && !th.archived) return 'The last run failed. Pick a status to move on.'
+  return undefined
+}
+
 /**
- * A chat's actions (the chat's "more" button, a long press on its row): rename, archive or bring
- * back, delete. Deleting asks twice, and also deletes it in the environment, on every computer.
+ * A chat's actions (the chat's "more" button, a long press on its row): rename, its status
+ * (Working, Settled, Archived: picking Working or Settled brings an archived chat back), delete.
+ * Deleting asks twice, and also deletes it in the environment, on every computer.
  */
 export function ThreadActions({ threadId, visible, onClose, onDeleted }: {
   threadId: string
@@ -30,12 +48,23 @@ export function ThreadActions({ threadId, visible, onClose, onDeleted }: {
 
   if (!thread) return null
   const busy = isBusy(thread)
+  const shown = displayStatus(thread)
   const changed = !!title.trim() && title.trim() !== thread.title
 
   const save = () => {
     if (!changed) return
     useThreads.getState().rename(threadId, title)
     haptic('success')
+    onClose()
+  }
+
+  const pick = (status: Pickable) => {
+    if (status !== shown) {
+      const store = useThreads.getState()
+      if (status === 'archived') store.archive(threadId)
+      else store.setStatus(threadId, status)
+      haptic('select')
+    }
     onClose()
   }
 
@@ -53,26 +82,20 @@ export function ThreadActions({ threadId, visible, onClose, onDeleted }: {
           />
           <Button label="Save" size="sm" disabled={!changed} onPress={save} style={s.save} />
         </View>
-        <ListSection footer={busy ? 'A chat can be put away once its agent has stopped.' : undefined}>
-          {thread.archived
-            ? (
-                <ListRow
-                  title="Bring back"
-                  leading={<ArchiveRestore size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
-                  accessory="none"
-                  onPress={() => { useThreads.getState().unarchive(threadId); onClose() }}
-                />
-              )
-            : (
-                <ListRow
-                  title="Archive"
-                  subtitle="Leaves the list; nothing is deleted"
-                  leading={<Archive size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
-                  accessory="none"
-                  disabled={busy}
-                  onPress={() => { useThreads.getState().archive(threadId); haptic('light'); onClose() }}
-                />
-              )}
+        <ListSection title="Status" footer={statusNote(thread)}>
+          {CHOICES.map(c => (
+            <ListRow
+              key={c.status}
+              title={c.label}
+              subtitle={c.subtitle}
+              leading={<RipenessDot status={c.status} size={14} />}
+              accessory={shown === c.status ? 'check' : 'none'}
+              disabled={busy}
+              onPress={() => pick(c.status)}
+            />
+          ))}
+        </ListSection>
+        <ListSection footer={busy ? 'A chat can be deleted once its agent has stopped.' : undefined}>
           <ListRow
             title="Delete"
             destructive

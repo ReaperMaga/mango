@@ -141,6 +141,41 @@ describe('the chat store', () => {
     expect(store().archivedFor(PROJECT).map(t => t.id)).toEqual([a.id])
   })
 
+  it('sets a chat working or settled as the desktop does, and leaves a run its status', async () => {
+    const files = memoryChatFiles()
+    await store().load(files)
+    const a = store().create({ projectPath: PROJECT, agent: 'claude' })
+    store().edit(a.id, (d) => { d.seen = false })
+    await store().flush()
+    vi.mocked(chatSync.noteSaved).mockClear()
+
+    store().setStatus(a.id, 'done')
+    expect(store().byId(a.id)).toMatchObject({ status: 'done', seen: true })
+    await store().flush()
+    expect(JSON.parse(files.data.get(a.id)!)).toMatchObject({ status: 'done' })
+    expect(vi.mocked(chatSync.noteSaved)).toHaveBeenCalledWith([store().byId(a.id)], [])
+
+    // Picking a status brings an archived chat back.
+    store().archive(a.id)
+    store().setStatus(a.id, 'working')
+    expect(store().byId(a.id)).toMatchObject({ status: 'working', archived: false })
+    expect(store().byProject(PROJECT).map(t => t.id)).toEqual([a.id])
+
+    // While a run is active (or waits for the user) it owns the status.
+    for (const busy of ['queued', 'running', 'waiting'] as const) {
+      store().edit(a.id, (d) => { d.status = busy })
+      store().setStatus(a.id, 'done')
+      expect(store().byId(a.id)!.status).toBe(busy)
+    }
+    // A failed run can be moved on from.
+    store().edit(a.id, (d) => { d.status = 'error' })
+    store().setStatus(a.id, 'done')
+    expect(store().byId(a.id)!.status).toBe('done')
+    // An unknown chat is ignored.
+    expect(() => store().setStatus('t-nope', 'done')).not.toThrow()
+    expect(store().byId('t-nope')).toBeNull()
+  })
+
   it('answers a question, keeping secret answers out of the chat', async () => {
     await store().load(memoryChatFiles())
     const t = store().create({ projectPath: PROJECT, agent: 'claude' })

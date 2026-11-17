@@ -98,7 +98,7 @@ export default function ChatScreen() {
           <Pressable
             onLongPress={() => { haptic('select'); setMenu(true) }}
             accessibilityRole="header"
-            accessibilityHint="Long press for rename, archive and delete"
+            accessibilityHint="Long press to rename, change the status or delete"
             style={s.title}
           >
             <Text variant="label" numberOfLines={1} maxFontSizeMultiplier={1.2}>{thread.title}</Text>
