@@ -50,6 +50,14 @@ interface Scoped { agent?: string }
 export type AgentEvent =
   /** The CLI's own session/thread id. Persisted on the thread and passed back as `sessionId` to resume. */
   | { type: 'session'; sessionId: string }
+  /**
+   * The agent moved its session to another folder (it entered a git worktree, or left one for
+   * the folder it came from); later turns must run there. `path` is absolute, as the CLI
+   * reports it; `branch` is the worktree's branch when the CLI names it, null when it does not
+   * (or when going back to the original folder). Only ever taken from the CLI's own tool
+   * results and session messages, never from what the model writes.
+   */
+  | { type: 'workdir'; path: string; branch?: string | null }
   /** Append to (or create) the text block `id`. */
   | ({ type: 'text-delta'; id: string; text: string } & Scoped)
   /** Authoritative full text of block `id` (replaces what deltas built). */

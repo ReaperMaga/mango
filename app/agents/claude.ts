@@ -23,6 +23,13 @@ import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions, AgentTranspor
  * and task_notification. Claude Code answers each finished task by itself, with a turn of its
  * own, so the run stays open after `result` until no background task is left.
  *
+ * Worktrees: the EnterWorktree tool moves the session into a git worktree (its result's
+ * `tool_use_result` carries `worktreePath` and `worktreeBranch`), ExitWorktree moves it back.
+ * Either is reported as a `workdir` event. Claude Code relocates the session's transcript to the
+ * new folder's project, yet `--resume` still finds it from the old one and restores the
+ * session's folder: the `cwd` of system/init then differs from the one we spawned in, which is
+ * reported as `workdir` too.
+ *
  * Permission modes: plan → plan, ask → default, edits → acceptEdits,
  * auto → bypassPermissions. With `--permission-prompt-tool stdio` the CLI asks
  * us before any tool call its mode does not already allow.
@@ -36,6 +43,22 @@ const MODES: Record<PermissionMode, string> = {
 }
 
 const MAX_OUTPUT = 20_000
+
+/** A path to compare: no trailing separator; a Windows path also in one case and with one kind of separator. */
+const comparable = (p: string) => {
+  const t = p.replace(/(?<=.)[\\/]+$/, '')
+  return /^[a-z]:/i.test(t) ? t.replace(/\//g, '\\').toLowerCase() : t
+}
+
+/**
+ * Whether Claude Code's `cwd` is another folder than `spawned`, not just another spelling of it
+ * (a trailing separator, a Windows drive letter's case, or macOS's /private/tmp for /tmp).
+ */
+function movedFrom(spawned: string, cwd: string): boolean {
+  const a = comparable(spawned)
+  const b = comparable(cwd)
+  return a !== b && b !== `/private${a}`
+}
 
 interface ToolShape { tool: ToolKind; label?: string; target: string; summary?: string; diff?: DiffLine[] }
 
@@ -273,6 +296,13 @@ function userContent(options: SteerInput): unknown[] {
 
 function run(options: AgentRunOptions): AgentRun {
   const { cwd, emit } = options
+  /** The folder the session works in now: `cwd` until it enters (or leaves) a worktree. */
+  let workdir = cwd
+  const moveTo = (path: string, branch: string | null) => {
+    if (!path || !movedFrom(workdir, path)) return
+    workdir = path
+    emit({ type: 'workdir', path, branch })
+  }
   let transport: AgentTransport | null = null
   let ended = false
   let interrupted = false
@@ -498,10 +528,24 @@ function run(options: AgentRunOptions): AgentRun {
       const sub = subagents.get(b.tool_use_id)
       if (sub && !isError && (sub.background || extra?.status === 'async_launched')) summary = 'in background'
       emit({ type: 'tool-end', id: b.tool_use_id, status: isError ? 'error' : 'ok', summary, output, diff, ...(images.length ? { images } : {}), ...scoped(t?.scope) })
+      // The main session changed folders. A sub-agent's switch moves only that sub-agent.
+      if (!isError && !t?.scope && extra && typeof extra === 'object') worktreeMove(t?.name, extra)
       // A sub-agent that was waited for is done when its result is in; one in the background reports later.
       if (sub && (isError || !(sub.background || extra?.status === 'async_launched'))) {
         endSubagent(b.tool_use_id, isError ? (interrupted ? 'stopped' : 'error') : 'done')
       }
+    }
+  }
+
+  /** EnterWorktree / ExitWorktree finished: their structured result says where the session is now. */
+  function worktreeMove(name: string | undefined, extra: any) {
+    const str = (v: unknown) => (typeof v === 'string' && v ? v : null)
+    if (name === 'EnterWorktree') {
+      const path = str(extra.worktreePath)
+      if (path) moveTo(path, str(extra.worktreeBranch))
+    } else if (name === 'ExitWorktree') {
+      const path = str(extra.restoredCwd) ?? str(extra.originalCwd)
+      if (path) moveTo(path, null)
     }
   }
 
@@ -536,6 +580,8 @@ function run(options: AgentRunOptions): AgentRun {
     switch (m.subtype) {
       case 'init':
         if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        // A resumed session that had moved into a worktree goes on there, wherever it was started.
+        if (options.sessionId && typeof m.cwd === 'string') moveTo(m.cwd, null)
         onTurnActivity()
         break
       case 'task_started': {
