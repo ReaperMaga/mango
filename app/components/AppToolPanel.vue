@@ -34,10 +34,13 @@ function endResize() {
 
 <template>
   <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
-    <AppToolEnv v-if="ws.toolPanel === 'env'" />
-    <FilesPanel v-else-if="ws.toolPanel === 'files'" />
-    <LinksPanel v-else-if="ws.toolPanel === 'links'" />
-    <GitPanel v-else />
+    <!-- Switching tools: the old one goes at once, the new one settles in. Not on open: the window itself slides then. -->
+    <Transition name="tp-swap">
+      <AppToolEnv v-if="ws.toolPanel === 'env'" />
+      <FilesPanel v-else-if="ws.toolPanel === 'files'" />
+      <LinksPanel v-else-if="ws.toolPanel === 'links'" />
+      <GitPanel v-else />
+    </Transition>
     <div
       class="tp__resize"
       role="separator"
@@ -63,6 +66,8 @@ function endResize() {
   min-height: 0;
   background: var(--bg-app);
 }
+.tp-swap-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.tp-swap-enter-from { opacity: 0; transform: translateY(4px); }
 .tp__resize {
   position: absolute;
   top: 0;
