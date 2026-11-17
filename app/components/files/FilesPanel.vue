@@ -112,10 +112,27 @@ const currentFile = computed(() => {
 
 /* ---------- actions ---------- */
 
+/**
+ * The folder the user just opened: its rows fade in as they appear (at once, or when the folder has
+ * been read). Only an expand by hand sets it, so loading, refreshes and the watcher never animate.
+ */
+const revealing = ref<string | null>(null)
+const isRevealed = (row: Row) => !!revealing.value && row.type === 'entry' && row.key.startsWith(`${revealing.value}/`)
+function expand(dir: string, open: boolean) {
+  if (!path.value) return
+  revealing.value = open ? dir : null
+  files.toggleDir(path.value, dir, open)
+}
+/** The reveal has played: rows that turn up later (a refresh) just appear. */
+function onAnimationEnd(e: AnimationEvent) {
+  if ((e.target as HTMLElement).classList?.contains('is-revealed')) revealing.value = null
+}
+watch(path, () => (revealing.value = null))
+
 function activate(row: Row, pin: boolean) {
   if (row.type !== 'entry' || !path.value) return
   select(row.entry.path)
-  if (row.entry.isDir) files.toggleDir(path.value, row.entry.path)
+  if (row.entry.isDir) expand(row.entry.path, !row.open)
   else void files.openFile(path.value, row.entry.path, pin)
 }
 
@@ -177,12 +194,12 @@ function onKey(e: KeyboardEvent) {
     case 'End': e.preventDefault(); if (all.length) focusRow(all[all.length - 1]!.key); break
     case 'ArrowRight':
       e.preventDefault()
-      if (row.entry.isDir && !row.open) files.toggleDir(path.value, row.key, true)
+      if (row.entry.isDir && !row.open) expand(row.key, true)
       else if (row.entry.isDir && all[i + 1]?.parent === row.key) focusRow(all[i + 1]!.key)
       break
     case 'ArrowLeft':
       e.preventDefault()
-      if (row.entry.isDir && row.open) files.toggleDir(path.value, row.key, false)
+      if (row.entry.isDir && row.open) expand(row.key, false)
       else if (row.parent) focusRow(row.parent)
       break
     case 'Enter': e.preventDefault(); activate(row, true); break
@@ -223,7 +240,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
     </div>
     <div v-else-if="!top.entries.length" class="fp__quiet">This folder is empty.</div>
 
-    <div v-else ref="list" class="fp__scroll" role="tree" aria-label="Project files" @keydown="onKey">
+    <div v-else ref="list" class="fp__scroll" role="tree" aria-label="Project files" @keydown="onKey" @animationend="onAnimationEnd">
       <template v-for="row in rows" :key="row.key">
         <div
           v-if="row.type === 'entry'"
@@ -236,6 +253,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
               'is-selected': tree?.selected === row.key,
               'is-shown': shownFiles.has(row.key),
               'is-current': currentFile === row.key,
+              'is-revealed': isRevealed(row),
             },
           ]"
           :style="{ '--depth': row.depth }"
@@ -326,6 +344,9 @@ function tintFor(entry: FsEntry, ignored: boolean) {
 .fp__row.is-shown { background: var(--bg-hover); color: var(--fg); }
 .fp__row.is-current { background: var(--bg-active); color: var(--fg); }
 .fp__row:focus-visible { outline-offset: -2px; }
+/* A folder opened by hand: its rows settle in from just above. */
+.fp__row.is-revealed { animation: fp-reveal var(--dur-med) var(--ease-out) both; }
+@keyframes fp-reveal { from { opacity: 0; transform: translateY(-3px); } }
 .fp__caret { flex: none; width: 13px; height: 13px; color: var(--fg-faint); transition: transform var(--dur-fast) var(--ease-out); }
 .fp__caret.is-open { transform: rotate(90deg); }
 .fp__icon { flex: none; width: 14px; height: 14px; stroke-width: 1.75; color: var(--fg-subtle); }

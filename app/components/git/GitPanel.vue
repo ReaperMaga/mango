@@ -329,7 +329,7 @@ const commitTitle = computed(() => {
 const showCommit = computed(() => isRepo.value && (!clean.value || !!message.value))
 
 function commit() {
-  if (canCommit.value && path.value) void git.commit(path.value)
+  if (canCommit.value && path.value) animated(git.commit(path.value))
 }
 function onMessageKey(e: KeyboardEvent) {
   if (e.key === 'Enter' && isMod(e)) {
@@ -350,12 +350,28 @@ const commitMenu = computed<MenuItem[]>(() => [{
   label: 'Amend last commit',
   hint: message.value.trim() ? 'Adds what is staged and replaces its message' : 'Adds what is staged, keeps its message',
   disabled: !status.value?.head || !!git.busy || conflicts.value > 0,
-  onSelect: () => { if (path.value) void git.commit(path.value, { amend: true }) },
+  onSelect: () => { if (path.value) animated(git.commit(path.value, { amend: true })) },
 }])
 
 /* ---------- files ---------- */
 
 const open = reactive({ staged: true, changes: true, locks: true })
+
+/**
+ * File rows animate (fade out, the rest sliding up) only while an action started here is running and
+ * its refresh lands: polling, focus refreshes and switching chats change the lists without motion.
+ */
+const acting = ref(new Set<Promise<unknown>>())
+const listMotion = computed(() => (acting.value.size ? 'gp-row' : 'gp-still'))
+function animated(work: Promise<unknown>) {
+  acting.value.add(work)
+  void work.finally(async () => {
+    await nextTick() // the refreshed lists are on screen, their transitions under way
+    acting.value.delete(work)
+  })
+}
+/* Another chat's folder: its lists replace these without motion. */
+watch(path, () => acting.value.clear(), { flush: 'sync' })
 
 /** Show the file's diff as a tab in the main pane. */
 function toggle(file: GitFile, isStaged: boolean) {
@@ -370,30 +386,30 @@ function toggle(file: GitFile, isStaged: boolean) {
   else threads.show(id)
 }
 function stage(file: GitFile) {
-  if (path.value) void git.stage(path.value, [file.path])
+  if (path.value) animated(git.stage(path.value, [file.path]))
 }
 function unstage(file: GitFile) {
-  if (path.value) void git.unstage(path.value, [file.path])
+  if (path.value) animated(git.unstage(path.value, [file.path]))
 }
 function stageAll() {
   if (!path.value) return
   // Staging a conflicted file marks it resolved, so "all" leaves those for a deliberate click.
   if (conflicts.value) {
-    if (discardable.value.length) void git.stage(path.value, discardable.value.map(f => f.path))
+    if (discardable.value.length) animated(git.stage(path.value, discardable.value.map(f => f.path)))
   } else {
-    void git.stage(path.value)
+    animated(git.stage(path.value))
   }
 }
 function unstageAll() {
-  if (path.value) void git.unstage(path.value)
+  if (path.value) animated(git.unstage(path.value))
 }
 function discard(file: GitFile) {
   confirming.value = null
-  if (path.value) void git.discard(path.value, [file.path])
+  if (path.value) animated(git.discard(path.value, [file.path]))
 }
 function discardAll() {
   confirming.value = null
-  if (path.value) void git.discard(path.value)
+  if (path.value) animated(git.discard(path.value))
 }
 
 /* ---------- locks (Unity VCS) ---------- */
@@ -632,7 +648,7 @@ function onListKey(e: KeyboardEvent) {
               <UiIconButton size="sm" label="Unstage all" :disabled="waiting" @click="unstageAll"><Minus /></UiIconButton>
             </div>
           </div>
-          <ul v-show="open.staged" class="gp__list" role="list">
+          <TransitionGroup v-show="open.staged" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
             <GitFileRow
               v-for="f in staged"
               :key="f.path"
@@ -647,7 +663,7 @@ function onListKey(e: KeyboardEvent) {
               @toggle="toggle(f, true)"
               @unstage="unstage(f)"
             />
-          </ul>
+          </TransitionGroup>
         </section>
 
         <section v-if="changes.length" class="gp__sec">
@@ -684,7 +700,7 @@ function onListKey(e: KeyboardEvent) {
             </div>
           </div>
 
-          <ul v-show="open.changes" class="gp__list" role="list">
+          <TransitionGroup v-show="open.changes" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
             <GitFileRow
               v-for="f in changes"
               :key="f.path"
@@ -702,7 +718,7 @@ function onListKey(e: KeyboardEvent) {
               @cancel="confirming === gitFileKey(f.path, false) && (confirming = null)"
               @discard="discard(f)"
             />
-          </ul>
+          </TransitionGroup>
         </section>
 
         <p v-if="clean" class="gp__quiet">No changes</p>
@@ -1094,6 +1110,18 @@ function onListKey(e: KeyboardEvent) {
 .gp__count { margin-left: 2px; font-weight: 500; color: var(--fg-faint); }
 .gp__sec-actions { flex: none; display: flex; align-items: center; gap: 1px; }
 .gp__list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
+/* Staged, unstaged, discarded or committed from here: the row folds away in place while its new row
+   unfolds in the other list, so the lists trade the height and nothing below jumps. */
+.gp__files { display: block; }
+.gp__files > .gf + .gf { margin-top: 1px; }
+.gp-row-enter-active, .gp-row-leave-active {
+  overflow: hidden;
+  transition: height var(--dur-med) var(--ease-out), margin-top var(--dur-med) var(--ease-out), opacity var(--dur-med) var(--ease-out);
+}
+.gp-row-leave-active { pointer-events: none; }
+.gp__files > .gp-row-enter-from, .gp__files > .gp-row-leave-to { height: 0; margin-top: 0; opacity: 0; }
+.gp-row-enter-to, .gp-row-leave-from { height: var(--gf-row-h); }
+.gp-row-move { transition: transform var(--dur-med) var(--ease-out); }
 
 /* ---------- locks ---------- */
 .gp__lock {

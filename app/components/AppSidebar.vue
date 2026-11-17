@@ -435,7 +435,16 @@ const codeItems = computed<MenuItem[]>(() => [
           </div>
         </div>
 
-        <ul v-show="sec.open" class="sb__list" role="list">
+        <!-- Keyed by project, so switching projects swaps the list outright instead of animating every row;
+             the move transition is off while a row is being dragged, then the rows ease into place on drop. -->
+        <TransitionGroup
+          v-show="sec.open"
+          :key="ws.activeProjectPath ?? ''"
+          tag="ul"
+          :name="drag.id ? 'sb-still' : 'sb-row'"
+          class="sb__list"
+          role="list"
+        >
           <li v-for="t in sec.threads" :key="t.id">
             <div
               class="sb__thread"
@@ -533,12 +542,12 @@ const codeItems = computed<MenuItem[]>(() => [
               <AppSidebarSubagents v-if="subsOpen(t)" :parent-id="t.id" />
             </template>
           </li>
-          <li v-if="sec.id === 'active' && !sec.threads.length">
+          <li v-if="sec.id === 'active' && !sec.threads.length" key="sb-empty">
             <button type="button" class="sb__empty" @click="newChat()">
               <Plus /> {{ threads.forProject(ws.activeProjectPath ?? '').length || threads.archivedFor(ws.activeProjectPath ?? '').length ? 'Start a new chat' : 'Start the first chat' }}
             </button>
           </li>
-        </ul>
+        </TransitionGroup>
       </section>
     </nav>
 
@@ -700,7 +709,15 @@ const codeItems = computed<MenuItem[]>(() => [
 .sb__split-more { border-left: 1px solid transparent; }
 .sb__split:hover .sb__split-more, .sb__split.is-open .sb__split-more { border-left-color: var(--line-soft); }
 
-.sb__list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
+/* Block flow, not grid: a leaving row is taken out of flow (absolute) and must stay where it was. */
+.sb__list { position: relative; list-style: none; margin: 2px 0 0; padding: 0; }
+.sb__list > li + li { margin-top: 1px; }
+/* Chats arriving, leaving (archived, deleted, settled) and the rest closing up behind them. */
+.sb-row-move { transition: transform var(--dur-med) var(--ease-out); }
+.sb-row-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.sb-row-leave-active { position: absolute; left: 0; right: 0; pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out); }
+.sb-row-enter-from { opacity: 0; transform: translateY(-4px); }
+.sb-row-leave-to { opacity: 0; }
 .sb__thread {
   position: relative;
   display: grid;
