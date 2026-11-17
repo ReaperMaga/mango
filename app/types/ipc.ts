@@ -584,6 +584,8 @@ export interface EnvInstance {
   cpus: number | null
   /** e.g. "8GiB" */
   memory: string | null
+  /** The root disk's size, e.g. "40GiB"; null is the storage pool's default (or unknown). */
+  disk: string | null
   /** Unix ms */
   createdAt: number
 }
@@ -613,6 +615,13 @@ export interface EnvCreateInput {
   memoryGib: number | null
   diskGib: number | null
   components: EnvComponentId[]
+}
+
+/** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
+export interface EnvResizeInput {
+  cpus: number | null
+  memoryGib: number | null
+  diskGib: number | null
 }
 
 /** A folder inside an environment, for picking where a project lives. */
@@ -896,6 +905,13 @@ export interface Commands {
   env_instance_action: [{ hostId: string; instance: string; action: EnvInstanceAction }, void]
   /** Launch an instance and install `components`, in a terminal; returns the pty id. */
   env_create: [{ input: EnvCreateInput; cols: number; rows: number }, string]
+  /**
+   * Rename an instance (Incus renames only stopped ones: a running one is stopped and started again).
+   * Returns a note when the rename worked but something after it did not.
+   */
+  env_rename: [{ hostId: string; instance: string; newName: string }, string | null]
+  /** Change an instance's CPUs, memory and root disk. Returns a note to show (e.g. a VM grows its disk on its next start). */
+  env_resize: [{ hostId: string; instance: string; input: EnvResizeInput }, string | null]
   /** Which components are installed, with versions (runs a probe inside the instance). */
   env_components: [{ hostId: string; instance: string }, EnvComponent[]]
   /** Install or update components (with what they require), in a terminal; returns the pty id. */

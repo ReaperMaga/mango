@@ -29,6 +29,8 @@ pub struct EnvInstance {
     pub cpus: Option<u32>,
     /// e.g. "8GiB", as `limits.memory` says
     pub memory: Option<String>,
+    /// The root disk's size, e.g. "40GiB", as its `root` device says; `None` is the pool's default.
+    pub disk: Option<String>,
     /// Unix ms
     pub created_at: u64,
 }
@@ -128,6 +130,15 @@ fn config_str<'a>(inst: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// The `size` of the instance's `root` disk device (its own, or the one its profiles give it).
+fn root_size(inst: &Value) -> Option<String> {
+    ["expanded_devices", "devices"]
+        .iter()
+        .find_map(|d| inst.get(d)?.get("root")?.get("size")?.as_str())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+}
+
 /// One instance from `incus list --format json` (which includes its state).
 fn parse_instance(inst: &Value) -> Option<EnvInstance> {
     let name = inst.get("name")?.as_str()?.to_string();
@@ -187,6 +198,7 @@ fn parse_instance(inst: &Value) -> Option<EnvInstance> {
         tailscale_ip,
         cpus: config_str(inst, "limits.cpu").and_then(cpu_count),
         memory: config_str(inst, "limits.memory").map(String::from),
+        disk: root_size(inst),
         created_at,
     })
 }
@@ -258,6 +270,7 @@ pub(crate) fn direct_instance(name: &str, out: Option<&str>) -> EnvInstance {
         tailscale_ip,
         cpus: facts.get("cpus").and_then(|n| n.parse().ok()),
         memory: facts.get("mem").and_then(|n| n.parse().ok()).map(memory_text),
+        disk: None,
         created_at: 0,
     }
 }
@@ -362,6 +375,168 @@ pub async fn env_instance_action(app: AppHandle, host_id: String, instance: Stri
     .await
 }
 
+/* ---------- rename ---------- */
+
+/// `Status: RUNNING` from `incus info`, as an instance status.
+fn info_status(info: &str) -> &'static str {
+    info.lines()
+        .find_map(|l| l.trim().strip_prefix("Status:"))
+        .map_or("unknown", |s| status_of(s.trim()))
+}
+
+/// Renames `instance` to `new_name`. Incus only renames a stopped instance, so a running
+/// one is stopped first and started again under its new name. `Some(note)` when the
+/// rename worked but something after it did not (it did not start again).
+fn rename(host: &EnvHost, instance: &str, new_name: &str) -> Result<Option<String>, String> {
+    let (from, to) = (ssh::target(host, instance), ssh::target(host, new_name));
+    if incus(host, &["info", &to], 30).is_ok() {
+        return Err(format!("{} already has an instance called {new_name}.", host.name));
+    }
+    let info = incus(host, &["info", &from], 30)
+        .map_err(|e| action_error(host, instance, "rename", e).unwrap_or_else(|| format!("Could not rename {instance}.")))?;
+    let was_running = matches!(info_status(&info), "running" | "starting");
+    if was_running {
+        act(host, instance, "stop")?;
+    }
+    // `move` with the remote on both sides renames in place (no remote on the target would move it to the master).
+    if let Err(e) = incus(host, &["move", &from, &to], 120) {
+        if was_running {
+            let _ = act(host, instance, "start");
+        }
+        return Err(action_error(host, instance, "rename", e).unwrap_or_else(|| format!("Could not rename {instance}.")));
+    }
+    if was_running {
+        if let Err(e) = act(host, new_name, "start") {
+            return Ok(Some(format!("It is renamed, but didn't start again. {e}")));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn env_rename(app: AppHandle, host_id: String, instance: String, new_name: String) -> Result<Option<String>, String> {
+    super::blocking(move || {
+        valid_instance(&instance)?;
+        let new_name = new_name.trim().to_string();
+        valid_instance(&new_name)?;
+        let host = hosts::get(&app, &host_id)?;
+        super::owner_only(&host, "rename this environment")?;
+        if new_name == instance {
+            return Ok(None);
+        }
+        rename(&host, &instance, &new_name)
+    })
+    .await
+}
+
+/* ---------- resize ---------- */
+
+/// New limits for an instance; `None` leaves that one as it is.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvResizeInput {
+    pub cpus: Option<u32>,
+    pub memory_gib: Option<u32>,
+    pub disk_gib: Option<u32>,
+}
+
+/// `Pick 1 to 64 CPUs.` for a value outside its range. Shared by create and resize.
+fn check_size(v: Option<u32>, lo: u32, hi: u32, what: &str) -> Result<(), String> {
+    match v {
+        Some(n) if !(lo..=hi).contains(&n) => Err(format!("Pick {lo} to {hi} {what}.")),
+        _ => Ok(()),
+    }
+}
+
+fn check_sizes(cpus: Option<u32>, memory_gib: Option<u32>, disk_gib: Option<u32>) -> Result<(), String> {
+    check_size(cpus, 1, 64, "CPUs")?;
+    check_size(memory_gib, 1, 512, "GiB of memory")?;
+    check_size(disk_gib, 4, 2048, "GiB of disk")
+}
+
+/// The `incus` argument lists a resize runs: the limits in one `config set`, then the
+/// root disk. A disk that comes from a profile can't be `set` on the instance; it is
+/// overridden instead (see [`resize`]).
+#[derive(Debug, Clone, PartialEq)]
+struct ResizePlan {
+    limits: Option<Vec<String>>,
+    disk: Option<String>,
+}
+
+fn resize_plan(host: &EnvHost, instance: &str, input: &EnvResizeInput) -> Result<ResizePlan, String> {
+    valid_instance(instance)?;
+    check_sizes(input.cpus, input.memory_gib, input.disk_gib)?;
+    let mut keys = Vec::new();
+    if let Some(n) = input.cpus {
+        keys.push(format!("limits.cpu={n}"));
+    }
+    if let Some(n) = input.memory_gib {
+        keys.push(format!("limits.memory={n}GiB"));
+    }
+    let limits = (!keys.is_empty()).then(|| {
+        let mut a = vec!["config".to_string(), "set".into(), ssh::target(host, instance)];
+        a.extend(keys);
+        a
+    });
+    let disk = input.disk_gib.map(|n| format!("size={n}GiB"));
+    if limits.is_none() && disk.is_none() {
+        return Err("Nothing to change.".into());
+    }
+    Ok(ResizePlan { limits, disk })
+}
+
+/// The failure of a resize step, readable.
+fn resize_error(host: &EnvHost, instance: &str, what: &str, e: String) -> String {
+    let l = e.to_lowercase();
+    if l.contains("not found") {
+        return format!("{instance} no longer exists on {}.", host.name);
+    }
+    let msg = e.strip_prefix("Error: ").unwrap_or(&e);
+    if l.contains("shrink") || l.contains("smaller") {
+        return format!("Could not change the {what} of {instance}: a disk can only grow. ({msg})");
+    }
+    format!("Could not change the {what} of {instance}: {msg}")
+}
+
+fn resize(host: &EnvHost, instance: &str, kind: Option<&str>, plan: &ResizePlan) -> Result<Option<String>, String> {
+    if let Some(args) = &plan.limits {
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        incus(host, &args, 60).map_err(|e| resize_error(host, instance, "CPUs and memory", e))?;
+    }
+    if let Some(size) = &plan.disk {
+        let t = ssh::target(host, instance);
+        incus(host, &["config", "device", "set", &t, "root", size], 120)
+            .or_else(|e| {
+                let l = e.to_lowercase();
+                if l.contains("profile") || l.contains("doesn't exist") || l.contains("does not exist") {
+                    incus(host, &["config", "device", "override", &t, "root", size], 120)
+                } else {
+                    Err(e)
+                }
+            })
+            .map_err(|e| resize_error(host, instance, "disk size", e))?;
+        if kind == Some("vm") {
+            return Ok(Some("The VM's file system grows to the new disk size when it next starts.".into()));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+pub async fn env_resize(app: AppHandle, host_id: String, instance: String, input: EnvResizeInput) -> Result<Option<String>, String> {
+    super::blocking(move || {
+        let host = hosts::get(&app, &host_id)?;
+        super::owner_only(&host, "resize this environment")?;
+        let plan = resize_plan(&host, &instance, &input)?;
+        let info = incus(&host, &["info", &ssh::target(&host, &instance)], 30).unwrap_or_default();
+        let kind = info.lines().find_map(|l| l.trim().strip_prefix("Type:")).map(|t| {
+            if t.trim().starts_with("virtual-machine") { "vm" } else { "container" }
+        });
+        resize(&host, &instance, kind, &plan)
+    })
+    .await
+}
+
 /* ---------- create ---------- */
 
 /// Launches `$T` (`incus launch "$@"`), waits for it to answer and reach the network,
@@ -420,13 +595,7 @@ fn create_plan(host: &EnvHost, input: &EnvCreateInput, now_ms: u64) -> Result<Cr
         "vm" => true,
         other => return Err(format!("\"{other}\" is not an instance type. Pick a container or a VM.")),
     };
-    let check = |v: Option<u32>, lo: u32, hi: u32, what: &str| match v {
-        Some(n) if !(lo..=hi).contains(&n) => Err(format!("Pick {lo} to {hi} {what}.")),
-        _ => Ok(()),
-    };
-    check(input.cpus, 1, 64, "CPUs")?;
-    check(input.memory_gib, 1, 512, "GiB of memory")?;
-    check(input.disk_gib, 4, 2048, "GiB of disk")?;
+    check_sizes(input.cpus, input.memory_gib, input.disk_gib)?;
 
     let install = if input.components.is_empty() {
         None
@@ -511,7 +680,7 @@ mod tests {
           "limits.cpu": "4",
           "limits.memory": "8GiB"
         },
-        "expanded_devices": {},
+        "expanded_devices": {"root": {"path": "/", "pool": "default", "type": "disk", "size": "40GiB"}},
         "name": "dev",
         "status": "Running",
         "status_code": 103,
@@ -584,6 +753,7 @@ mod tests {
         assert_eq!(dev.tailscale_ip.as_deref(), Some("100.101.7.8"));
         assert_eq!(dev.cpus, Some(4));
         assert_eq!(dev.memory.as_deref(), Some("8GiB"));
+        assert_eq!(dev.disk.as_deref(), Some("40GiB"));
         assert_eq!(dev.created_at, 1_793_518_930_123);
 
         let vm = &v[1];
@@ -591,6 +761,7 @@ mod tests {
         assert!(vm.ipv4.is_empty() && vm.tailscale_ip.is_none());
         assert_eq!(vm.cpus, Some(3));
         assert_eq!(vm.memory, None);
+        assert_eq!(vm.disk, None);
         assert_eq!(vm.created_at, 1_793_610_000_000);
 
         let odd = &v[2];
@@ -764,5 +935,41 @@ mem=524288
         );
         assert!(final_error("Could not connect to Lab over SSH."));
         assert!(!final_error("Error: Failed shutting down instance: context deadline exceeded"));
+    }
+
+    #[test]
+    fn rename_reads_status() {
+        assert_eq!(info_status("Name: dev\nStatus: RUNNING\nType: container\n"), "running");
+        assert_eq!(info_status("Name: dev\nStatus: STOPPED\n"), "stopped");
+        assert_eq!(info_status("garbage"), "unknown");
+        assert_eq!(
+            action_error(&host(), "dev", "rename", "Error: Name \"web\" already in use".into()).as_deref(),
+            Some("Could not rename dev: Name \"web\" already in use")
+        );
+    }
+
+    #[test]
+    fn resize_plans() {
+        let h = host();
+        let p = resize_plan(&h, "dev", &EnvResizeInput { cpus: Some(6), memory_gib: Some(16), disk_gib: Some(80) }).unwrap();
+        assert_eq!(p.limits.unwrap(), ["config", "set", "os1:dev", "limits.cpu=6", "limits.memory=16GiB"]);
+        assert_eq!(p.disk.as_deref(), Some("size=80GiB"));
+
+        let p = resize_plan(&h, "dev", &EnvResizeInput { cpus: Some(2), ..Default::default() }).unwrap();
+        assert_eq!(p.limits.unwrap(), ["config", "set", "os1:dev", "limits.cpu=2"]);
+        assert_eq!(p.disk, None);
+
+        let p = resize_plan(&h, "dev", &EnvResizeInput { disk_gib: Some(20), ..Default::default() }).unwrap();
+        assert_eq!((p.limits, p.disk.as_deref()), (None, Some("size=20GiB")));
+
+        assert!(resize_plan(&h, "dev", &EnvResizeInput::default()).is_err());
+        assert!(resize_plan(&h, "dev", &EnvResizeInput { cpus: Some(0), ..Default::default() }).is_err());
+        assert!(resize_plan(&h, "dev", &EnvResizeInput { memory_gib: Some(513), ..Default::default() }).is_err());
+        assert!(resize_plan(&h, "dev", &EnvResizeInput { disk_gib: Some(3), ..Default::default() }).is_err());
+        assert!(resize_plan(&h, "dev; rm", &EnvResizeInput { cpus: Some(2), ..Default::default() }).is_err());
+        assert_eq!(
+            resize_error(&h, "dev", "disk size", "Error: Volume cannot shrink".into()),
+            "Could not change the disk size of dev: a disk can only grow. (Volume cannot shrink)"
+        );
     }
 }

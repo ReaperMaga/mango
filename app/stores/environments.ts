@@ -1,13 +1,17 @@
 import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvDirListing, EnvProbe, EnvShare, EnvShareVia,
+  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
+import { useThreads } from '~/stores/threads'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
+
+/** What Mango is doing to an instance right now: a power action, or renaming or resizing it. */
+export type EnvBusy = EnvInstanceAction | 'rename' | 'resize'
 
 /** Images offered when creating an instance (any other `remote:alias` can be typed). */
 export const ENV_IMAGES = [
@@ -127,6 +131,7 @@ const directInstance = (host: EnvHost, reachable: boolean): EnvInstance => ({
   tailscaleIp: null,
   cpus: null,
   memory: null,
+  disk: null,
   createdAt: 0,
 })
 
@@ -152,7 +157,7 @@ export const useEnvironments = defineStore('environments', {
     loadingComponents: {} as Record<string, boolean>,
     componentErrors: {} as Record<string, string | null>,
     /** Instances with an action in flight, and which. */
-    busy: {} as Record<string, EnvInstanceAction | null>,
+    busy: {} as Record<string, EnvBusy | null>,
     desktops: {} as Record<string, EnvDesktop>,
     /** Who an instance is shared with, per instance (see `instanceKey`). */
     shares: {} as Record<string, EnvShare[]>,
@@ -160,6 +165,8 @@ export const useEnvironments = defineStore('environments', {
     shareErrors: {} as Record<string, string | null>,
     /** Shares being revoked, by share id. */
     revoking: {} as Record<string, boolean>,
+    /** Per instance: something to tell about the last rename or resize (e.g. it didn't start again). */
+    notes: {} as Record<string, string>,
 
     /* ---- UI (Settings > Environments) ---- */
     /** The page showing: null is the list of servers. */
@@ -299,6 +306,51 @@ export const useEnvironments = defineStore('environments', {
           delete this.components[key]
           await this.closeDesktop(hostId, instance)
         }
+      } finally {
+        this.busy[key] = null
+        await this.refreshInstances(hostId)
+      }
+    },
+
+    /**
+     * Rename an instance. A running one is stopped and started again (Incus renames only stopped
+     * instances). Mango's own references move along: what is kept per instance here, and the
+     * projects, chats and prefs in it (`env://<host>/<instance>/…`). Its page is the caller's to
+     * switch to (`select`). Returns a note to show, or null.
+     * Throws with a readable message.
+     */
+    async rename(hostId: string, instance: string, newName: string) {
+      const name = newName.trim()
+      if (name === instance) return null
+      const key = instanceKey(hostId, instance)
+      this.busy[key] = 'rename'
+      // Its desktop tunnel points at the old name and dies with the stop anyway.
+      await this.closeDesktop(hostId, instance)
+      let note: string | null
+      try {
+        note = await call('env_rename', { hostId, instance, newName: name })
+      } catch (e) {
+        this.busy[key] = null
+        await this.refreshInstances(hostId)
+        throw e
+      }
+      const to = instanceKey(hostId, name)
+      for (const map of [this.components, this.componentErrors, this.shares, this.shareErrors, this.intents, this.notes] as Array<Record<string, unknown>>) {
+        if (key in map) { map[to] = map[key]; delete map[key] }
+      }
+      this.busy[key] = null
+      useWorkspace().moveEnvInstance(hostId, instance, name)
+      useThreads().moveEnvInstance(hostId, instance, name)
+      await this.refreshInstances(hostId)
+      return note
+    },
+
+    /** Change CPUs, memory and the root disk; the list refreshes afterwards. Returns a note to show, or null. Throws on failure. */
+    async resize(hostId: string, instance: string, input: EnvResizeInput) {
+      const key = instanceKey(hostId, instance)
+      this.busy[key] = 'resize'
+      try {
+        return await call('env_resize', { hostId, instance, input })
       } finally {
         this.busy[key] = null
         await this.refreshInstances(hostId)
