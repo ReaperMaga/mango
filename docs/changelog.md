@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.13
+
+### Environments
+
+- **Rename and resize:** an environment's ⋯ menu gains **Rename…** and **Resize…**. Renaming a running environment stops and restarts it, and its projects, chats, worktrees and terminals move along. Resize sets CPUs and memory and grows the root disk (a disk only grows; a VM's file system grows on its next start).
+- An environment's page shows its root disk size.
+
 ## 0.1.12
 
 ### Agents and chats
