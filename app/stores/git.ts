@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
+import type { GhItem, GitAhead, GitBranches, GitBranchList, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
@@ -78,6 +78,14 @@ const LOCK_ACTIONS: GitAction[] = ['lock', 'discard', 'commit', 'checkout']
 const running = new Map<string, Promise<void>>()
 const queued = new Map<string, Promise<void>>()
 
+/*
+ * Branch list reads (`loadBranchList`), per project: the newest one started, and the number of the
+ * newest one whose answer was kept, so a slow older answer never replaces a newer one.
+ */
+let branchReadSeq = 0
+const branchReads = new Map<string, { seq: number; started: number; promise: Promise<GitBranchList> }>()
+const branchApplied = new Map<string, number>()
+
 export const useGit = defineStore('git', {
   state: () => ({
     /** Repository state by project path. */
@@ -92,6 +100,13 @@ export const useGit = defineStore('git', {
     noticePath: null as string | null,
     /** Key of the row that was last opened or acted on. */
     selected: null as string | null,
+    /**
+     * The branch popup's list by project path: the last one read, shown at once while a fresh one
+     * loads. Only projects whose popup was opened (or about to be) have one.
+     */
+    branchLists: {} as Record<string, GitBranchList>,
+    /** Branch list reads in flight, by project path. */
+    branchListReads: {} as Record<string, number>,
   }),
 
   getters: {
@@ -114,6 +129,8 @@ export const useGit = defineStore('git', {
     /** Unity VCS: the lock on one file (a path relative to the root), if any. */
     lockOf: s => (path: string | null | undefined, file: string): VcsLock | null =>
       (path ? s.repos[path]?.locks?.find(l => l.path === file) ?? null : null),
+    /** Whether the branch list of `path` is being read. */
+    readingBranchList: s => (path: string | null | undefined): boolean => !!path && (s.branchListReads[path] ?? 0) > 0,
     isBusy: s => (path: string | null | undefined, action?: GitAction) =>
       !!s.busy && s.busyPath === path && (!action || s.busy === action),
   },
@@ -157,6 +174,7 @@ export const useGit = defineStore('git', {
     async read(path: string) {
       const repo = this.ensure(path)
       if (!repo.status) repo.loading = true
+      const started = Date.now()
       try {
         const status = await call('git_status', { path })
         const before = repo.status
@@ -166,8 +184,13 @@ export const useGit = defineStore('git', {
         this.syncProject(path, status)
         if (!status.isRepo) {
           Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null })
+          delete this.branchLists[path]
           return
         }
+        // A kept branch list follows what status says moved (branch, HEAD, upstream counts), in the
+        // background. Unchanged polls cost nothing extra; a read started since this one began is enough.
+        const tracking = (st: GitStatus | null | undefined) => st && [st.branch, st.head, st.upstream, st.ahead, st.behind].join('\u0000')
+        if (this.branchLists[path] && tracking(before) !== tracking(status)) this.loadBranchList(path, started).catch(() => {})
         this.reconcileDiffs(path)
         const moved = before?.branch !== status.branch || before?.head !== status.head
         await Promise.all([
@@ -235,6 +258,36 @@ export const useGit = defineStore('git', {
       try {
         repo.branches = await call('git_branches', { path })
       } catch { /* the switcher falls back to the current branch */ }
+    },
+
+    /**
+     * Read the branch list of `path` into `branchLists`. A read started at `since` or later (in flight
+     * or done) is reused rather than repeated; the default asks for a fresh one. Rejects with git's reason.
+     */
+    loadBranchList(path: string, since = Date.now()): Promise<GitBranchList> {
+      const last = branchReads.get(path)
+      if (last && last.started >= since) return last.promise
+      const seq = ++branchReadSeq
+      const started = Date.now()
+      this.branchListReads[path] = (this.branchListReads[path] ?? 0) + 1
+      const promise = call('git_branch_list', { path })
+        .then((list) => {
+          if (seq > (branchApplied.get(path) ?? 0)) {
+            branchApplied.set(path, seq)
+            if (JSON.stringify(list) !== JSON.stringify(this.branchLists[path])) this.branchLists[path] = list
+          }
+          return list
+        })
+        .catch((e) => {
+          // A failed read is never reused.
+          if (branchReads.get(path)?.seq === seq) branchReads.delete(path)
+          throw e
+        })
+        .finally(() => {
+          this.branchListReads[path] = Math.max(0, (this.branchListReads[path] ?? 1) - 1)
+        })
+      branchReads.set(path, { seq, started, promise })
+      return promise
     },
 
     async loadWorktrees(path: string) {

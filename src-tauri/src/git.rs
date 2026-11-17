@@ -1608,8 +1608,15 @@ pub(crate) fn commit(at: &At, message: &str, amend: bool) -> Result<String, Stri
 }
 
 fn remotes(root: &At) -> Result<Vec<String>, String> {
-    let out = git(root).read_only().arg("remote").run_ok("git remote")?;
-    Ok(out.text().lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect())
+    Ok(parse_remotes(&remotes_cmd(root).run_ok("git remote")?))
+}
+
+fn remotes_cmd(root: &At) -> Git<'_> {
+    git(root).read_only().arg("remote")
+}
+
+fn parse_remotes(out: &Output) -> Vec<String> {
+    out.text().lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
 /// `git remote -v` in `at` (URLs with `insteadOf` applied), for finding which GitHub repository
@@ -1944,19 +1951,32 @@ pub(crate) fn checkout(at: &At, branch: &str, create: bool) -> Result<(), String
 
 pub(crate) fn branch_list(at: &At) -> Result<GitBranchList, String> {
     let root = require_root(at)?;
-    let head = git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]).run()?;
-    let current = Some(head.line()).filter(|b| head.ok() && !b.is_empty());
     let format = [
         "%(refname)", "%(refname:short)", "%(upstream:short)", "%(upstream:track,nobracket)",
         "%(committerdate:unix)", "%(contents:subject)",
     ]
     .join("%1f");
-    let out = git(&root)
+    let refs = git(&root)
         .read_only()
         .args(["for-each-ref", "--sort=-committerdate"])
         .arg(format!("--format={format}"))
-        .args(["refs/heads", "refs/remotes"])
-        .run_ok("git for-each-ref")?;
+        .args(["refs/heads", "refs/remotes"]);
+    // One round trip in an environment: HEAD, the refs and the remotes together.
+    let [head, out, names]: [Output; 3] = run_all(vec![
+        git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]),
+        refs,
+        remotes_cmd(&root),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    // Fails on a detached HEAD: then no branch is current.
+    let current = Some(head.line()).filter(|b| head.ok() && !b.is_empty());
+    if !out.ok() {
+        return Err(out.error("git for-each-ref"));
+    }
+    if !names.ok() {
+        return Err(names.error("git remote"));
+    }
     let (mut local, remote) = parse_refs(&out.text(), current.as_deref());
     // A branch with no commits yet has no ref, but it is still where you are.
     if let Some(cur) = &current {
@@ -1967,7 +1987,7 @@ pub(crate) fn branch_list(at: &At) -> Result<GitBranchList, String> {
             });
         }
     }
-    Ok(GitBranchList { current, local, remote, remotes: remotes(&root)? })
+    Ok(GitBranchList { current, local, remote, remotes: parse_remotes(&names) })
 }
 
 fn valid_new_branch(root: &At, name: &str) -> Result<(), String> {
@@ -2622,6 +2642,13 @@ mod tests {
         branch_delete(path, "spike-2", true).unwrap();
         assert!(!branch_list(path).unwrap().local.iter().any(|b| b.name == "spike-2"));
         assert!(branch_delete(path, "-D", false).is_err());
+
+        // A detached HEAD lists the branches with none current.
+        sh(&work, &["switch", "-q", "--detach", "main"]);
+        let list = branch_list(path).unwrap();
+        assert_eq!(list.current, None);
+        assert!(list.local.iter().any(|b| b.name == "main") && !list.local.iter().any(|b| b.is_current));
+        assert_eq!(list.remotes, ["origin"]);
 
         let _ = std::fs::remove_dir_all(&base);
     }

@@ -41,8 +41,9 @@ const subEl = ref<HTMLElement | null>(null)
 const search = ref<HTMLInputElement | null>(null)
 const pos = ref({ left: 0, top: 0, maxHeight: 520 })
 
-const list = ref<GitBranchList | null>(null)
-const loading = ref(false)
+/* The last list read for this folder, shown at once; a fresh one replaces it when it arrives. */
+const list = computed<GitBranchList | null>(() => (props.path ? git.branchLists[props.path] ?? null : null))
+const loading = computed(() => git.readingBranchList(props.path))
 const query = ref('')
 const busy = ref<string | null>(null)
 const message = ref<{ error: boolean; text: string } | null>(null)
@@ -68,15 +69,29 @@ const matches = (text: string) => !q.value || text.toLowerCase().includes(q.valu
 /* ---------- actions for the current branch ---------- */
 
 interface Action { id: string; label: string; icon: Component; count?: number; disabled: boolean; title?: string; divider?: boolean; run: () => unknown }
-const actions = computed<Action[]>(() => {
+/*
+ * Where the current branch tracks, and how far apart they are. Git status knows this for the branch
+ * checked out, and is kept fresh while the list is still being read; the list is the fallback.
+ * Unknown (neither read yet) leaves the actions on: git says why when one can't run.
+ */
+const tracking = computed(() => {
+  const st = status.value
+  if (st?.isRepo) return { known: true, upstream: st.upstream, ahead: st.ahead, behind: st.behind }
   const cb = currentBranch.value
-  const remotes = !!list.value?.remotes.length
+  if (cb) return { known: true, upstream: cb.upstream, ahead: cb.ahead, behind: cb.behind }
+  return { known: false, upstream: null, ahead: 0, behind: 0 }
+})
+const actions = computed<Action[]>(() => {
+  const tr = tracking.value
+  // No remote at all: only known once the list is read (a branch with an upstream implies one).
+  const noRemote = !!list.value && !list.value.remotes.length && !tr.upstream
   const t = terms.value
   const all: Action[] = [
     t.remotes
       ? {
-          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: cb?.behind, disabled: !!busy.value || !cb?.upstream,
-          title: cb?.upstream ? `Pull ${cb.upstream} into ${current.value}` : 'This branch tracks no remote branch yet', run: () => update(),
+          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: tr.behind, disabled: !!busy.value || (tr.known && !tr.upstream),
+          title: tr.upstream ? `Pull ${tr.upstream} into ${current.value ?? 'this branch'}` : tr.known ? 'This branch tracks no remote branch yet' : 'Pull the remote branch into this one',
+          run: () => update(),
         }
       : {
           id: 'pull', label: 'Update', icon: ArrowDownToLine, count: status.value?.behind, disabled: !!busy.value,
@@ -87,10 +102,10 @@ const actions = computed<Action[]>(() => {
         },
     { id: 'commit', label: `${t.commit}…`, icon: ListCheck, disabled: !!busy.value, title: `Open the Changes view to ${t.commit.toLowerCase()}`, run: commitView },
     {
-      id: 'push', label: cb?.upstream ? 'Push' : 'Publish', icon: CloudUpload, count: cb?.ahead, disabled: !!busy.value || !remotes,
-      title: cb?.upstream ? `Push ${current.value} to ${cb.upstream}` : `Publish ${current.value ?? 'this branch'} to the remote`, run: () => push(),
+      id: 'push', label: tr.upstream ? 'Push' : 'Publish', icon: CloudUpload, count: tr.ahead, disabled: !!busy.value || noRemote,
+      title: tr.upstream ? `Push ${current.value ?? 'this branch'} to ${tr.upstream}` : `Publish ${current.value ?? 'this branch'} to the remote`, run: () => push(),
     },
-    { id: 'fetch', label: 'Fetch', icon: CloudDownload, disabled: !!busy.value || !remotes, title: 'Fetch from the remote', run: () => fetchAll() },
+    { id: 'fetch', label: 'Fetch', icon: CloudDownload, disabled: !!busy.value || noRemote, title: 'Fetch from the remote', run: () => fetchAll() },
     { id: 'new', label: 'New branch…', icon: GitBranchPlus, divider: true, disabled: !!busy.value, title: current.value ? `New branch from ${current.value}` : undefined, run: () => startName('new', null) },
   ]
   // Unity VCS checkins go straight to the server: nothing to push or fetch.
@@ -187,17 +202,31 @@ function place() {
   }
 }
 
-async function load() {
+/** Read the list again; one started `since` or later is reused. A failure shows in the popup. */
+async function load(since?: number) {
   if (!props.path) return
-  loading.value = true
   try {
-    list.value = await call('git_branch_list', { path: props.path })
+    await git.loadBranchList(props.path, since)
   } catch (e) {
-    message.value = { error: true, text: reason(e) }
-  } finally {
-    loading.value = false
+    if (open.value) message.value = { error: true, text: reason(e) }
   }
 }
+
+/* Hovering or focusing the trigger reads the list ahead, so it is (nearly) there when the popup opens. */
+const PREFETCH_DELAY_MS = 120
+/** A list read this recently is fresh enough for a prefetch (or for opening right after one). */
+const FRESH_MS = 4000
+let prefetchTimer: ReturnType<typeof setTimeout> | undefined
+function prefetch() {
+  const path = props.path
+  if (!path || open.value) return
+  git.loadBranchList(path, Date.now() - FRESH_MS).catch(() => {})
+}
+function onTriggerEnter() {
+  clearTimeout(prefetchTimer)
+  prefetchTimer = setTimeout(prefetch, PREFETCH_DELAY_MS)
+}
+function onTriggerLeave() { clearTimeout(prefetchTimer) }
 
 async function show() {
   if (!props.path) return
@@ -208,7 +237,8 @@ async function show() {
   view.value = 'list'
   sub.value = null
   active.value = null
-  void load()
+  // The kept list shows at once; a read the hover started moments ago is fresh enough.
+  void load(Date.now() - FRESH_MS)
   await nextTick()
   place()
   search.value?.focus()
@@ -233,6 +263,7 @@ onMounted(() => {
   window.addEventListener('resize', onResize)
 })
 onBeforeUnmount(() => {
+  clearTimeout(prefetchTimer)
   document.removeEventListener('mousedown', onDocDown, true)
   window.removeEventListener('resize', onResize)
 })
@@ -284,7 +315,9 @@ async function run<T>(id: string, action: () => Promise<T>, done?: (result: T) =
     return false
   } finally {
     busy.value = null
-    await Promise.all([load(), git.refresh(props.path).catch(() => {})])
+    // Status first: its read then reuses this list read instead of starting another.
+    const refreshed = git.refresh(p()).catch(() => {})
+    await Promise.all([load(), refreshed])
   }
 }
 
@@ -513,7 +546,7 @@ defineExpose({ show, close })
 </script>
 
 <template>
-  <div ref="root" class="bp-anchor">
+  <div ref="root" class="bp-anchor" @pointerenter="onTriggerEnter" @pointerleave="onTriggerLeave" @focusin="prefetch">
     <slot :open="open" :toggle="toggle" />
     <Teleport to="body">
       <Transition name="bp">
