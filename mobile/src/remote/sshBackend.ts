@@ -5,16 +5,17 @@ import type { ExecProcess, RunResult, SshApi } from '@/ssh/types'
 import { fromBase64, splitNul, utf8Decode } from './bytes'
 import {
   BATCH, COMMIT, DIFF_CAP, GIT_ENV, GIT_OPTS, UNTRACKED_DIFF,
-  addNumstats, batchArgs, cleanRel, count, errorOf, explainSyncFailure, finishDiff, gitRead,
-  lineOf, ok, parseBatch, parseNumstat, parseStatus, text, tidyOutput, toChanges,
-  type BatchCmd, type GitFile, type Numstat, type Output,
+  addNumstats, batchArgs, cleanRel, count, errorOf, explainSyncFailure, explainWorktreeAdd, finishDiff, gitRead,
+  lineOf, ok, parseBatch, parseBranchRefs, parseNumstat, parseStatus, parseWorktrees, safeRef, text, tidyOutput, toChanges,
+  worktreeAddArgs, worktreeFolder,
+  type BatchCmd, type GitFile, type Numstat, type Output, type RawWorktree,
 } from './git'
 import {
   AGENT_HOME, asAgent, asAgentPlain, inInstance, line, remotePrefix, utcText,
   validEnvKey, validInstance, validInstanceDir,
 } from './shell'
 import type {
-  Env, EnvRemote, GitState, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
+  Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
 
 /**
@@ -621,6 +622,24 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     cap: 16 * 1024 * 1024,
   })
 
+  const worktreeListCmd = (z: boolean): BatchCmd => ({ argv: gitRead(['worktree', 'list', '--porcelain', ...(z ? ['-z'] : [])]), cap: 4 * 1024 * 1024 })
+
+  /**
+   * The worktrees from a `worktree list -z` output. Git before 2.36 has no `-z` there; it gets
+   * the line form in one more round trip (the desktop's `worktree_list`).
+   */
+  async function worktreesFrom(p: Place, out: Output): Promise<RawWorktree[]> {
+    if (ok(out)) return parseWorktrees(text(out), '\0')
+    if (!utf8Decode(out.stderr).includes('unknown switch')) throw new Error(errorOf(out, 'git worktree list'))
+    const [plain] = await runAll(p, [worktreeListCmd(false)])
+    if (!ok(plain!)) throw new Error(errorOf(plain!, 'git worktree list'))
+    return parseWorktrees(text(plain!), '\n')
+  }
+
+  /** A worktree folder inside the instance as the `env://` path the chats use. */
+  const worktreeOf = (p: Place, w: RawWorktree, isMain: boolean): GitWorktree =>
+    ({ path: envPath({ hostId: p.env.id, instance: p.instance, dir: w.path }), branch: w.branch, isMain })
+
   const backend: RemoteBackend = {
     real: true,
 
@@ -843,6 +862,51 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
           : `Pushed ${count(s.ahead, 'commit', 'commits')} to ${s.upstream}.`
       }
       return `Published ${s.branch} to ${remote}/${s.branch}.`
+    },
+
+    async gitWorktrees(projectPath): Promise<GitWorktreeList> {
+      const p = placeOf(projectPath)
+      const [where, list, heads] = await runAll(p, [
+        { argv: gitRead(['rev-parse', '--show-toplevel']), cap: 64 * 1024 },
+        worktreeListCmd(true),
+        { argv: gitRead(['for-each-ref', '--format=%(refname)', 'refs/heads']), cap: 4 * 1024 * 1024 },
+      ])
+      const root = located(where!)
+      if (!root) throw new Error(`${p.dir} in ${p.instance} is not inside a git repository`)
+      roots.set(folderKey(p), root)
+      const raw = await worktreesFrom({ ...p, dir: root }, list!)
+      if (!ok(heads!)) throw new Error(errorOf(heads!, 'git for-each-ref'))
+      return {
+        worktrees: raw.map((w, i) => ({ w, i })).filter(({ w }) => !w.bare).map(({ w, i }) => worktreeOf(p, w, i === 0)),
+        branches: parseBranchRefs(text(heads!)),
+      }
+    },
+
+    async gitWorktreeAdd(projectPath, branch): Promise<GitWorktree> {
+      const name = safeRef(branch)
+      const p = placeOf(projectPath)
+      // Where, the worktrees, and whether the name is free and valid: one round trip.
+      const [where, list, valid, taken] = await runAll(p, [
+        { argv: gitRead(['rev-parse', '--show-toplevel']), cap: 64 * 1024 },
+        worktreeListCmd(true),
+        { argv: gitRead(['check-ref-format', '--branch', name]), cap: 4096 },
+        { argv: gitRead(['show-ref', '--verify', '--quiet', `refs/heads/${name}`]), cap: 4096 },
+      ])
+      const root = located(where!)
+      if (!root) throw new Error(`${p.dir} in ${p.instance} is not inside a git repository`)
+      roots.set(folderKey(p), root)
+      const at = { ...p, dir: root }
+      const main = (await worktreesFrom(at, list!))[0]
+      if (!main || main.bare) throw new Error('This repository has no main working tree to put worktrees beside')
+      const folder = worktreeFolder(main.path, name)
+      validInstanceDir(folder)
+      const shown = envPath({ hostId: p.env.id, instance: p.instance, dir: folder })
+      if (!ok(valid!)) throw new Error(`"${name}" is not a valid branch name`)
+      if (ok(taken!)) throw new Error(`A branch named "${name}" already exists`)
+      // It may run hooks (post-checkout), so the login shell, as the desktop's `git worktree add`.
+      const r = await exec(at, true, GIT_ENV, ['git', ...GIT_OPTS, ...worktreeAddArgs(name, folder)], { timeoutMs: SLOW_TIMEOUT })
+      if (r.code !== 0) throw new Error(explainWorktreeAdd(failure(r, 'git worktree add'), name, shown))
+      return { path: shown, branch: name, isMain: false }
     },
 
     spawnFor(agent, projectPath): SpawnFn {

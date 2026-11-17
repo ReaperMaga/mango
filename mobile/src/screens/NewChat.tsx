@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { View } from 'react-native'
-import { ArrowLeft, Folder, FolderPlus } from 'lucide-react-native'
+import { Switch, View } from 'react-native'
+import { ArrowLeft, Folder, FolderGit2, FolderPlus } from 'lucide-react-native'
 import { AGENTS, type AgentId } from '~/types/chat'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { space, useTheme } from '@/theme'
-import { AgentIcon, Banner, Button, ListRow, ListSection, Sheet, Spinner, TextField } from '@/ui'
+import { AgentIcon, Banner, Button, ListRow, ListSection, Sheet, Spinner, TextField, haptic } from '@/ui'
 import { backend } from '@/remote'
 import { AGENT_HOME, validInstanceDir } from '@/remote/shell'
-import { useEnvs } from '@/state/envs'
+import { projectsKey, useEnvs } from '@/state/envs'
 import { useThreads } from '@/state/threads'
 import { messageOf, placeOf, projectName } from './names'
 import { knownProjects, placesOf, type Place } from './places'
@@ -29,7 +29,8 @@ export interface NewChatSheetProps {
 /**
  * Starting a chat from anywhere: pick the project (every project of every environment on this
  * phone, recently used first, or any folder in an instance), then the agent among those installed
- * there. Opened from a project, it skips straight to the agent.
+ * there, and for a git repository whether the chat gets a worktree of its own. Opened from a
+ * project, it skips straight to the agent.
  */
 export function NewChatSheet({ visible, onClose, onCreated, path: fixed, envId, instance }: NewChatSheetProps) {
   const t = useTheme()
@@ -178,13 +179,32 @@ function FolderStep({ places, several, onPick }: { places: Place[]; several: boo
   )
 }
 
-/** Pick the agent: the ones installed in the project's environment, each with its default model. */
+/**
+ * Pick the agent: the ones installed in the project's environment, each with its default model.
+ * In a git repository the chat can also start in a new worktree (the desktop's "New chat in a
+ * worktree"): its own folder and branch, made inside the environment when the first message goes.
+ */
 function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) => void }) {
   const t = useTheme()
   const [installed, setInstalled] = useState<AgentId[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const envId = parseEnvPath(path)?.hostId
+  const [inWorktree, setInWorktree] = useState(false)
+  const loc = parseEnvPath(path)
+  const envId = loc?.hostId
   const env = useEnvs(st => st.envs.find(e => e.id === envId) ?? null)
+  // The scan finds only git repositories; a folder typed by hand is asked.
+  const scanned = useEnvs(st => (loc ? st.projects[projectsKey(loc.hostId, loc.instance)]?.some(p => p.path === path) ?? false : false))
+  const [checked, setChecked] = useState<boolean | null>(null)
+  const repo = scanned || checked === true
+
+  useEffect(() => {
+    setChecked(null)
+    setInWorktree(false)
+    if (scanned) return
+    let alive = true
+    backend.gitState(path).then(s => { if (alive) setChecked(s.repo) }, () => { if (alive) setChecked(false) })
+    return () => { alive = false }
+  }, [path, scanned])
 
   useEffect(() => {
     const loc = parseEnvPath(path)
@@ -210,6 +230,26 @@ function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) 
           accessory="none"
         />
       </ListSection>
+      {repo
+        ? (
+            <ListSection footer="The branch is named from your first message. Other chats keep working in the project folder.">
+              <ListRow
+                title="New worktree"
+                subtitle="Its own folder and branch"
+                leading={<FolderGit2 size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+                trailing={(
+                  <Switch
+                    value={inWorktree}
+                    onValueChange={(on) => { haptic('select'); setInWorktree(on) }}
+                    trackColor={{ false: t.colors.lineStrong, true: t.colors.accent }}
+                    ios_backgroundColor={t.colors.lineStrong}
+                    accessibilityLabel="Start in a new worktree"
+                  />
+                )}
+              />
+            </ListSection>
+          )
+        : null}
       {error
         ? <Banner tone="error" title="Could not check the agents" message={error} />
         : !installed
@@ -226,7 +266,7 @@ function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) 
                         subtitleTone={ok ? 'subtle' : 'faint'}
                         leading={<AgentIcon agent={a} size={20} color={t.colors.fgMuted} />}
                         disabled={!ok}
-                        onPress={ok ? () => onCreated(useThreads.getState().create({ projectPath: path, agent: a }).id) : undefined}
+                        onPress={ok ? () => onCreated(useThreads.getState().create({ projectPath: path, agent: a, inWorktree: inWorktree && repo }).id) : undefined}
                       />
                     )
                   })}

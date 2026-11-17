@@ -5,9 +5,10 @@ import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
 import { parseProjectPath } from './sshBackend'
-import { validInstance } from './shell'
+import { validInstance, validInstanceDir } from './shell'
+import { safeRef, worktreeFolder } from './git'
 import type {
-  Env, EnvRemote, GitChange, GitState, Instance, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
+  Env, EnvRemote, GitChange, GitState, GitWorktree, Instance, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
 
 /**
@@ -165,6 +166,8 @@ index 0000000..e69de29
 export function createMockBackend(): RemoteBackend {
   let lookup: (hostId: string) => Env | null = id => MOCK_ENVS.find(e => e.id === id) ?? null
   const repos = new Map<string, MockRepo>()
+  /** Linked worktrees added here, per repository key (`<envId>/<instance><dir>`): folder and branch. */
+  const worktrees = new Map<string, { dir: string; branch: string }[]>()
   /** Chats "in the environment", per `<hostId>/<instance>`: revision and shared JSON, or a tombstone. */
   const kept = new Map<string, Map<string, { rev: number; json: string } | { rev: null }>>()
 
@@ -190,6 +193,16 @@ export function createMockBackend(): RemoteBackend {
     const loc = parseProjectPath(projectPath)
     const env = envOf(loc.hostId)
     running(env, loc.instance)
+    // A linked worktree is a clean checkout of its own branch.
+    for (const [key, list] of worktrees) {
+      if (!key.startsWith(`${env.id}/${loc.instance}/`)) continue
+      const wt = list.find(w => loc.dir === w.dir || loc.dir.startsWith(`${w.dir}/`))
+      if (!wt) continue
+      const k = `${env.id}/${loc.instance}${wt.dir}`
+      let repo = repos.get(k)
+      if (!repo) repos.set(k, repo = { branch: wt.branch, ahead: 0, behind: 0, upstream: false, changes: [], diffs: {} })
+      return repo
+    }
     const project = projectsOf(env, loc.instance).find(([dir]) => loc.dir === dir || loc.dir.startsWith(`${dir}/`))
     if (!project) return null
     const key = `${env.id}/${loc.instance}${project[0]}`
@@ -208,6 +221,22 @@ export function createMockBackend(): RemoteBackend {
       repos.set(key, repo)
     }
     return repo
+  }
+
+  /** The main working tree of the repository `projectPath` is in (a worktree's too); throws outside one. */
+  function mainOf(projectPath: string) {
+    const loc = parseProjectPath(projectPath)
+    const env = envOf(loc.hostId)
+    running(env, loc.instance)
+    const inside = (root: string) => loc.dir === root || loc.dir.startsWith(`${root}/`)
+    for (const [key, list] of worktrees) {
+      if (key.startsWith(`${env.id}/${loc.instance}/`) && list.some(w => inside(w.dir))) {
+        return { key, loc, dir: key.slice(`${env.id}/${loc.instance}`.length) }
+      }
+    }
+    const project = projectsOf(env, loc.instance).find(([dir]) => inside(dir))
+    if (!project) throw new Error(`${loc.dir} in ${loc.instance} is not inside a git repository`)
+    return { key: `${env.id}/${loc.instance}${project[0]}`, loc, dir: project[0] }
   }
 
   /** The chats kept in an instance, seeded on first use with a few chats about each of its projects. */
@@ -342,6 +371,34 @@ export function createMockBackend(): RemoteBackend {
       const n = repo.ahead
       repo.ahead = 0
       return n === 0 ? `Nothing to push. origin/${repo.branch} already has every commit.` : `Pushed ${n} commit${n === 1 ? '' : 's'} to origin/${repo.branch}.`
+    },
+
+    async gitWorktrees(projectPath) {
+      await wait(120, 300)
+      const { key, loc, dir } = mainOf(projectPath)
+      const repo = repoOf(envPath({ ...loc, dir }))!
+      const added = worktrees.get(key) ?? []
+      const path = (d: string) => envPath({ hostId: loc.hostId, instance: loc.instance, dir: d })
+      return {
+        worktrees: [{ path: path(dir), branch: repo.branch, isMain: true }, ...added.map(w => ({ path: path(w.dir), branch: w.branch, isMain: false }))],
+        branches: [...new Set([...(repo.branch ? [repo.branch] : []), 'main', ...added.map(w => w.branch)])],
+      }
+    },
+
+    async gitWorktreeAdd(projectPath, branch): Promise<GitWorktree> {
+      const name = safeRef(branch)
+      // Checking out a branch into a new folder takes a moment.
+      await wait(700, 1400)
+      const { key, loc, dir } = mainOf(projectPath)
+      const repo = repoOf(envPath({ ...loc, dir }))!
+      const added = worktrees.get(key) ?? []
+      if (repo.branch === name || added.some(w => w.branch === name)) throw new Error(`A branch named "${name}" already exists`)
+      const folder = worktreeFolder(dir, name)
+      validInstanceDir(folder)
+      const shown = envPath({ hostId: loc.hostId, instance: loc.instance, dir: folder })
+      if (added.some(w => w.dir === folder)) throw new Error(`${shown} already exists; pick another branch name`)
+      worktrees.set(key, [...added, { dir: folder, branch: name }])
+      return { path: shown, branch: name, isMain: false }
     },
 
     spawnFor(agent, projectPath): SpawnFn {

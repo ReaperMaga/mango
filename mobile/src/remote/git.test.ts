@@ -3,7 +3,9 @@ import { utf8Encode } from './bytes'
 import {
   addNumstats, cleanRel, explainSyncFailure, finishDiff, isNewFileDiff, parseBatch, parseNumstat, parseStatus,
   safeRef, tidyOutput, toChanges, type GitFile,
+  explainWorktreeAdd, parseBranchRefs, parseWorktrees, worktreeAddArgs, worktreeFolder,
 } from './git'
+import { branchFromMessage, untakenName } from '~/utils/worktrees'
 
 /** Ported from the tests of `src-tauri/src/git.rs`. */
 
@@ -141,5 +143,56 @@ describe('git helpers', () => {
     expect(parseBatch('', [10])).toBeNull()
     expect(parseBatch('MANGO-RUN 0 2 0\nYQ==\n', [10])).toBeNull()
     expect(parseBatch('MANGO-RUN 0 1 0\n!!\n\n', [10])).toBeNull()
+  })
+})
+
+describe('worktrees', () => {
+  it('reads `git worktree list --porcelain`, with -z and without', () => {
+    const z = `worktree /r/app\0HEAD ${H}\0branch refs/heads/main\0\0`
+      + `worktree /r/app.worktrees/feat-x\0HEAD ${Z}\0branch refs/heads/feat/x\0locked\0\0`
+      + 'worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0detached\0locked because\0prunable gitdir file points to non-existent location\0\0'
+    const list = parseWorktrees(z, '\0')
+    expect(list.map(w => [w.path, w.branch, w.head !== null, w.locked, w.prunable])).toEqual([
+      ['/r/app', 'main', true, false, false],
+      ['/r/app.worktrees/feat-x', 'feat/x', false, true, false],
+      ['/r/app.worktrees/d y', null, true, true, true],
+    ])
+    const lines = parseWorktrees(`worktree /srv/bare\r\nbare\r\n\r\nworktree /srv/w\nHEAD ${H}\nbranch refs/heads/dev\n`, '\n')
+    expect(lines).toMatchObject([{ path: '/srv/bare', bare: true }, { path: '/srv/w', branch: 'dev' }])
+  })
+
+  it('puts a worktree beside the repository, as the desktop does', () => {
+    expect(worktreeFolder('/home/me/shop', 'feat/new-ui')).toBe('/home/me/shop.worktrees/feat-new-ui')
+    expect(worktreeFolder('/home/me/shop/', 'fix')).toBe('/home/me/shop.worktrees/fix')
+    expect(worktreeFolder('/shop', 'x')).toBe('/shop.worktrees/x')
+    expect(worktreeFolder('/home/agent/work/my shop', 'a/b\\c')).toBe('/home/agent/work/my shop.worktrees/a-b-c')
+    expect(() => worktreeFolder('/', 'x')).toThrow(/no parent folder/)
+    expect(() => worktreeFolder('shop', 'x')).toThrow(/no parent folder/)
+  })
+
+  it('builds `git worktree add` with the folder after `--`, refusing unsafe names', () => {
+    expect(worktreeAddArgs('fix-login', '/r/app.worktrees/fix-login')).toEqual(['worktree', 'add', '-b', 'fix-login', '--', '/r/app.worktrees/fix-login'])
+    for (const bad of ['', ' ', '-f', '--force', 'a b', 'a..b', 'x\ny']) expect(() => worktreeAddArgs(bad, '/r/x'), bad).toThrow()
+  })
+
+  it('names branches from the first message, and steps past taken ones', () => {
+    expect(branchFromMessage('Fix the login redirect!')).toBe('fix-the-login-redirect')
+    expect(branchFromMessage('Réparer la page')).toBe('reparer-la-page')
+    expect(branchFromMessage('-- rm -rf / ..')).toBe('rm-rf')
+    expect(branchFromMessage('日本語だけ')).toBe('chat')
+    expect(branchFromMessage('a'.repeat(60))).toHaveLength(40)
+    expect(branchFromMessage('add a settings screen for the voice input and its languages')).toBe('add-a-settings-screen-for-the-voice')
+    // Every name it makes passes the ref check.
+    for (const m of ['Fix the login redirect!', '-- rm -rf / ..', '日本語だけ', '../../etc', 'a b\tc']) expect(() => safeRef(branchFromMessage(m))).not.toThrow()
+    expect(untakenName('fix', [])).toBe('fix')
+    expect(untakenName('fix', ['fix', 'fix-2'])).toBe('fix-3')
+  })
+
+  it('reads local branches, and words worktree failures like the desktop', () => {
+    expect(parseBranchRefs('refs/heads/main\nrefs/heads/feat/x\n\n')).toEqual(['main', 'feat/x'])
+    expect(explainWorktreeAdd("fatal: '/r/app.worktrees/x' already exists", 'x', 'env://h/dev/r/app.worktrees/x'))
+      .toBe('env://h/dev/r/app.worktrees/x already exists; pick another branch name')
+    expect(explainWorktreeAdd("fatal: 'x' is already checked out at '/r/app'", 'x', 'f')).toBe("x is already checked out in another worktree ('x' is already checked out at '/r/app')")
+    expect(explainWorktreeAdd('fatal: something else', 'x', 'f')).toBe('fatal: something else')
   })
 })

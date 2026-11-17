@@ -98,6 +98,22 @@ export interface GitState {
   changes: GitChange[]
 }
 
+/** A git worktree of a project (the desktop's `GitWorktree`, without what the phone doesn't show). */
+export interface GitWorktree {
+  /** Its folder, as an `env://` path in the same environment. */
+  path: string
+  /** Checked-out branch; null when detached. */
+  branch: string | null
+  /** The repository's main working tree (listed first). */
+  isMain: boolean
+}
+
+/** What naming a new worktree's branch must avoid: the worktrees there are, and the local branches. */
+export interface GitWorktreeList {
+  worktrees: GitWorktree[]
+  branches: string[]
+}
+
 export interface RemoteBackend {
   /** True for SSH; false for the simulation (its replies are labelled "Simulated"). */
   readonly real: boolean
@@ -138,6 +154,14 @@ export interface RemoteBackend {
   gitCommit(projectPath: string, message: string, files?: string[]): Promise<string>
   /** Push the current branch (publishing it on the first push); resolves with what happened, in a sentence. */
   gitPush(projectPath: string): Promise<string>
+  /** The repository's worktrees (main first) and local branches, in one round trip. */
+  gitWorktrees(projectPath: string): Promise<GitWorktreeList>
+  /**
+   * Add a linked worktree on a new branch `branch` from HEAD, beside the repository
+   * (`<parent>/<repo>.worktrees/<branch>`, the desktop's `git_worktree_add` with `create`).
+   * Rejects with git's reason; a taken name says "already exists".
+   */
+  gitWorktreeAdd(projectPath: string, branch: string): Promise<GitWorktree>
 
   /**
    * The adapters' process bridge for one agent CLI in a project folder (or the agent's home

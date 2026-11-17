@@ -294,4 +294,51 @@ describe('ssh backend', () => {
     expect(calls.filter(c => c.command.endsWith(' mango-stop run-1'))).toHaveLength(2)
     await expect(b.spawnFor('claude', 'env://gone/dev')([], { onLine() {} })).rejects.toThrow(/no longer in Mango's list/)
   })
+
+  it('adds a worktree beside the repository: one read, then `git worktree add` in the login shell', async () => {
+    const list = `worktree /home/agent/work/shop\0HEAD ${H}\0branch refs/heads/main\0\0`
+    const { b, calls } = backendWith((_c, n) => {
+      if (n === 1) return { code: 0, stdout: batchOut([{ code: 0, stdout: '/home/agent/work/shop\n' }, { code: 0, stdout: list }, { code: 0, stdout: 'fix-login\n' }, { code: 1 }]), stderr: '' }
+      return { code: 0, stdout: '', stderr: "Preparing worktree (new branch 'fix-login')" }
+    })
+    const wt = await b.gitWorktreeAdd('env://h/dev/home/agent/work/shop/src', 'fix-login')
+    expect(wt).toEqual({ path: 'env://h/dev/home/agent/work/shop.worktrees/fix-login', branch: 'fix-login', isMain: false })
+    expect(calls).toHaveLength(2)
+    expect(calls[0]!.command).toContain(' check-ref-format --branch fix-login ')
+    expect(calls[0]!.command).toContain(' show-ref --verify --quiet refs/heads/fix-login')
+    const add = calls[1]!.command
+    expect(add.startsWith('incus exec os1:dev -T -- runuser -u agent -- env HOME=/home/agent')).toBe(true)
+    expect(add).toContain(' bash -lc ')
+    expect(add).toContain(' GIT_TERMINAL_PROMPT=0 GIT_LITERAL_PATHSPECS=1 ')
+    expect(add.endsWith(' mango /home/agent/work/shop git --no-pager -c core.quotepath=off -c color.ui=never worktree add -b fix-login -- /home/agent/work/shop.worktrees/fix-login')).toBe(true)
+  })
+
+  it('refuses a taken or unsafe branch before adding anything, and words git\'s refusal', async () => {
+    const list = `worktree /home/agent/work/my shop\0HEAD ${H}\0branch refs/heads/main\0\0`
+    const read = (taken: boolean) => ({ code: 0, stdout: batchOut([{ code: 0, stdout: '/home/agent/work/my shop\n' }, { code: 0, stdout: list }, { code: 0 }, { code: taken ? 0 : 1 }]), stderr: '' })
+    let { b, calls } = backendWith(() => read(true))
+    await expect(b.gitWorktreeAdd('env://h/dev/home/agent/work/my shop', 'main')).rejects.toThrow('A branch named "main" already exists')
+    expect(calls).toHaveLength(1)
+    await expect(b.gitWorktreeAdd('env://h/dev/home/agent/work/my shop', '--force')).rejects.toThrow(/not a valid branch name/)
+    await expect(b.gitWorktreeAdd('env://h/dev/home/agent/work/my shop', 'a b')).rejects.toThrow(/not a valid branch name/)
+    expect(calls).toHaveLength(1);
+
+    ({ b, calls } = backendWith((_c, n) => (n === 1 ? read(false) : { code: 128, stdout: '', stderr: "fatal: '/home/agent/work/my shop.worktrees/x' already exists\n" })))
+    await expect(b.gitWorktreeAdd('env://h/dev/home/agent/work/my shop', 'x')).rejects.toThrow('env://h/dev/home/agent/work/my shop.worktrees/x already exists; pick another branch name')
+    // The folder with a space reaches the shell as one quoted word.
+    expect(calls[1]!.command).toContain(" -- '/home/agent/work/my shop.worktrees/x'")
+  })
+
+  it('lists worktrees and local branches in one round trip', async () => {
+    const list = `worktree /home/agent/work/shop\0HEAD ${H}\0branch refs/heads/main\0\0worktree /home/agent/work/shop.worktrees/fix\0HEAD ${H}\0branch refs/heads/fix\0\0`
+    const { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: '/home/agent/work/shop\n' }, { code: 0, stdout: list }, { code: 0, stdout: 'refs/heads/fix\nrefs/heads/main\n' }]), stderr: '' }))
+    expect(await b.gitWorktrees('env://h/dev/home/agent/work/shop')).toEqual({
+      worktrees: [
+        { path: 'env://h/dev/home/agent/work/shop', branch: 'main', isMain: true },
+        { path: 'env://h/dev/home/agent/work/shop.worktrees/fix', branch: 'fix', isMain: false },
+      ],
+      branches: ['fix', 'main'],
+    })
+    expect(calls).toHaveLength(1)
+  })
 })

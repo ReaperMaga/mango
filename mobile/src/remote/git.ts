@@ -366,3 +366,88 @@ shift
 if [ "$what" = all ]; then g add -A || exit 3; else g add -A -- "$@" || exit 3; fi
 g commit -q -F - || exit 4
 g rev-parse --short HEAD`
+
+/* ---------- worktrees ---------- */
+
+/** One entry of `git worktree list --porcelain` (the desktop's `RawWorktree`). */
+export interface RawWorktree {
+  path: string
+  head: string | null
+  /** Without `refs/heads/`; null when detached. */
+  branch: string | null
+  bare: boolean
+  locked: boolean
+  prunable: boolean
+}
+
+/**
+ * Parse `git worktree list --porcelain`, with `-z` (`sep` NUL) or without (`sep` newline):
+ * attribute lines, each entry ended by an empty one. The main working tree comes first.
+ */
+export function parseWorktrees(text: string, sep: '\0' | '\n'): RawWorktree[] {
+  const out: RawWorktree[] = []
+  let cur: RawWorktree | null = null
+  for (const raw of text.split(sep)) {
+    const l = sep === '\n' ? raw.replace(/\r+$/, '') : raw
+    const at = l.indexOf(' ')
+    const key = at < 0 ? l : l.slice(0, at)
+    const value = at < 0 ? '' : l.slice(at + 1)
+    if (key === '') {
+      if (cur) out.push(cur)
+      cur = null
+    } else if (key === 'worktree') {
+      if (cur) out.push(cur)
+      cur = { path: value, head: null, branch: null, bare: false, locked: false, prunable: false }
+    } else if (cur) {
+      if (key === 'HEAD') cur.head = value && /[^0]/.test(value) ? value : null
+      else if (key === 'branch') cur.branch = value.startsWith('refs/heads/') ? value.slice('refs/heads/'.length) : value
+      else if (key === 'bare') cur.bare = true
+      else if (key === 'locked') cur.locked = true
+      else if (key === 'prunable') cur.prunable = true
+    }
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** The folder above `p` (`/x` → `/`); null for the root itself. The desktop's `parent_path`. */
+function parentPath(p: string): string | null {
+  const trimmed = p.replace(/\/+$/, '')
+  const at = trimmed.lastIndexOf('/')
+  if (at < 0) return null
+  const parent = trimmed.slice(0, at)
+  return parent === '' ? trimmed.slice(0, at + 1) : parent
+}
+
+/**
+ * Where a new worktree for `branch` goes: `<parent>/<repo>.worktrees/<branch, '/' as '-'>` beside
+ * the main working tree (the desktop's `worktree_folder`), so either app finds the other's.
+ */
+export function worktreeFolder(mainRoot: string, branch: string): string {
+  const main = mainRoot.replace(/\\/g, '/').replace(/\/+$/, '')
+  const parent = parentPath(main)
+  const name = main.slice(main.lastIndexOf('/') + 1)
+  if (parent === null || !name) throw new Error(`${mainRoot} has no parent folder to put worktrees in`)
+  return `${parent.replace(/\/+$/, '')}/${name}.worktrees/${branch.replace(/[/\\]/g, '-')}`
+}
+
+/** `git worktree add` for a new branch from HEAD, in `folder` (after `safeRef` and `check-ref-format`). */
+export function worktreeAddArgs(branch: string, folder: string): string[] {
+  return ['worktree', 'add', '-b', safeRef(branch), '--', folder]
+}
+
+/** Local branch names from `git for-each-ref --format=%(refname) refs/heads`. */
+export function parseBranchRefs(text: string): string[] {
+  return text.split('\n').map(l => l.trim()).filter(l => l.startsWith('refs/heads/')).map(l => l.slice('refs/heads/'.length))
+}
+
+/**
+ * Why `git worktree add` failed, as the desktop words it: a folder or branch already there reads
+ * "already exists" or "already checked out", which the caller retries with the next name.
+ */
+export function explainWorktreeAdd(detail: string, branch: string, shownFolder: string): string {
+  if (detail.includes('already exists') || detail.includes('already registered')) return `${shownFolder} already exists; pick another branch name`
+  const l = detail.split('\n').find(x => x.includes('is already used by worktree at') || x.includes('is already checked out at'))
+  if (l) return `${branch} is already checked out in another worktree (${l.replace(/^fatal: /, '')})`
+  return detail
+}

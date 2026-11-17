@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Thread } from '~/types/chat'
 
-vi.mock('@/remote', () => ({ backend: { real: true, spawnFor: () => { throw new Error('no spawning here') }, gitState: async () => ({ branch: null }) } }))
+const remote = vi.hoisted(() => ({
+  gitWorktrees: vi.fn(async (_path: string): Promise<{ worktrees: { path: string; branch: string | null; isMain: boolean }[]; branches: string[] }> => ({ worktrees: [], branches: [] })),
+  gitWorktreeAdd: vi.fn(async (_path: string, branch: string): Promise<{ path: string; branch: string | null; isMain: boolean }> => ({ path: `env://h1/dev/home/agent/shop.worktrees/${branch}`, branch, isMain: false })),
+}))
+vi.mock('@/remote', () => ({ backend: { real: true, spawnFor: () => { throw new Error('no spawning here') }, gitState: async () => ({ branch: null }), ...remote } }))
 vi.mock('@/remote/chatSync', () => ({ attachRemoteChats: vi.fn(), noteSaved: vi.fn() }))
 
 const { useThreads } = await import('@/state/threads')
@@ -191,5 +195,86 @@ describe('the chat store', () => {
     const part = store().byId(t.id)!.messages[0]!.parts[0]!
     expect(part).toMatchObject({ state: 'answered', answers: [['A'], ['••••••']] })
     expect(store().byId(t.id)!.status).toBe('running')
+  })
+
+  describe('a new chat in a worktree', () => {
+    beforeEach(() => {
+      remote.gitWorktrees.mockClear()
+      remote.gitWorktreeAdd.mockClear()
+    })
+
+    it('is its own blank chat, waiting for the worktree', async () => {
+      await store().load(memoryChatFiles())
+      const plain = store().create({ projectPath: PROJECT, agent: 'claude' })
+      const wt = store().create({ projectPath: PROJECT, agent: 'claude', inWorktree: true })
+      expect(wt.id).not.toBe(plain.id)
+      expect(wt.awaitingWorktree).toBe(true)
+      expect(store().create({ projectPath: PROJECT, agent: 'codex', inWorktree: true }).id).toBe(wt.id)
+      expect(plain.awaitingWorktree).toBeUndefined()
+    })
+
+    it('adds the worktree on a branch named from the first message, skipping taken names, then runs there', async () => {
+      await store().load(memoryChatFiles())
+      remote.gitWorktrees.mockResolvedValueOnce({
+        worktrees: [
+          { path: 'env://h1/dev/home/agent/shop', branch: 'main', isMain: true },
+          { path: 'env://h1/dev/home/agent/shop.worktrees/fix-the-login-redirect', branch: 'other', isMain: false },
+        ],
+        branches: ['main', 'fix-the-login-redirect-2'],
+      })
+      // Taken since the list was read: the next number is tried.
+      remote.gitWorktreeAdd.mockRejectedValueOnce(new Error('env://h1/dev/home/agent/shop.worktrees/fix-the-login-redirect-3 already exists; pick another branch name'))
+      const t = store().create({ projectPath: PROJECT, agent: 'claude', inWorktree: true })
+      await store().send(t.id, 'Fix the login redirect!')
+      expect(remote.gitWorktreeAdd.mock.calls.map(c => c[1])).toEqual(['fix-the-login-redirect-3', 'fix-the-login-redirect-4'])
+      const after = store().byId(t.id)!
+      expect(after).toMatchObject({ worktree: 'env://h1/dev/home/agent/shop.worktrees/fix-the-login-redirect-4', branch: 'fix-the-login-redirect-4' })
+      expect(after.awaitingWorktree).toBeUndefined()
+      expect(store().workdirFor(t.id)).toBe(after.worktree)
+      // The (fake) agent then ran and ended: the chat is not left working.
+      expect(['queued', 'running', 'waiting']).not.toContain(after.status)
+    })
+
+    it('ends cleanly with the reason when the worktree cannot be made, and tries again on the next message', async () => {
+      await store().load(memoryChatFiles())
+      remote.gitWorktreeAdd.mockRejectedValueOnce(new Error('/home/agent/notes in dev is not inside a git repository'))
+      const t = store().create({ projectPath: PROJECT, agent: 'claude', inWorktree: true })
+      await store().send(t.id, 'Tidy up')
+      let now = store().byId(t.id)!
+      expect(now.status).toBe('error')
+      expect(now.awaitingWorktree).toBe(true)
+      const notice = now.messages.at(-1)!.parts[0]!
+      expect(notice).toMatchObject({ type: 'notice', level: 'error' })
+      expect((notice as { text: string }).text).toBe('Could not make a worktree for this chat: /home/agent/notes in dev is not inside a git repository. Nothing ran yet; send a message to try again (what you wrote goes along).')
+      // Other failures are not retried under another name.
+      expect(remote.gitWorktreeAdd).toHaveBeenCalledOnce()
+
+      await store().send(t.id, 'and the tests')
+      now = store().byId(t.id)!
+      // Named from the first message still.
+      expect(remote.gitWorktreeAdd.mock.calls.at(-1)![1]).toBe('tidy-up')
+      expect(now.worktree).toBe('env://h1/dev/home/agent/shop.worktrees/tidy-up')
+    })
+
+    it('does not start the agent when stopped while the worktree is made', async () => {
+      await store().load(memoryChatFiles())
+      let release!: () => void
+      remote.gitWorktreeAdd.mockImplementationOnce(async (_p, branch) => {
+        await new Promise<void>((r) => { release = r })
+        return { path: `env://h1/dev/home/agent/shop.worktrees/${branch}`, branch, isMain: false }
+      })
+      const t = store().create({ projectPath: PROJECT, agent: 'claude', inWorktree: true })
+      const sending = store().send(t.id, 'Slow one')
+      await vi.waitFor(() => expect(remote.gitWorktreeAdd).toHaveBeenCalled())
+      expect(store().byId(t.id)!.status).toBe('queued')
+      store().stop(t.id)
+      expect(store().byId(t.id)!.status).toBe('working')
+      release()
+      await sending
+      const now = store().byId(t.id)!
+      expect(now).toMatchObject({ status: 'working', worktree: 'env://h1/dev/home/agent/shop.worktrees/slow-one' })
+      // Only the user's message: no agent turn was started.
+      expect(now.messages.map(m => m.role)).toEqual(['user'])
+    })
   })
 })

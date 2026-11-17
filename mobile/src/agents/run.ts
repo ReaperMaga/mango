@@ -14,8 +14,8 @@ import { agentInput, inlineFor } from '@/attachments/input'
  * preview). What a turn does to its chat is in `turn.ts`.
  *
  * Left out against the desktop, because a phone has none of it: the browser tools (MCP), pictures
- * tools produce (no attachment store), and making worktrees (a chat waiting for one runs in the
- * project folder). Attachments go further than on the desktop: they are put into the environment
+ * tools produce (no attachment store). A chat started in a new worktree gets it from the store
+ * (`_addWorktreeFor`) before its first turn runs here. Attachments go further than on the desktop: they are put into the environment
  * when picked (`@/attachments`), so every file reaches the agent, not only pictures.
  */
 

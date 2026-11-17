@@ -42,4 +42,14 @@ describe('mock backend', () => {
     expect(await b.gitPush(path)).toMatch(/^Pushed 3 commits/)
     expect((await b.gitState('env://mock-forge/dev/home/agent/work/shop-api')).changes).toEqual([])
   })
+
+  it('adds a worktree beside the project, which then has its own clean branch', async () => {
+    const b = createMockBackend()
+    const path = 'env://mock-forge/dev/home/agent/work/mango'
+    const wt = await b.gitWorktreeAdd(path, 'fix-login')
+    expect(wt).toEqual({ path: 'env://mock-forge/dev/home/agent/work/mango.worktrees/fix-login', branch: 'fix-login', isMain: false })
+    expect(await b.gitState(wt.path)).toMatchObject({ repo: true, branch: 'fix-login', changes: [] })
+    expect((await b.gitWorktrees(path)).worktrees.map(w => w.branch)).toEqual(['main', 'fix-login'])
+    await expect(b.gitWorktreeAdd(path, 'fix-login')).rejects.toThrow(/already exists/)
+  })
 })

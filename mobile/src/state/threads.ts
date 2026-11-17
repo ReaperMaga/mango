@@ -3,17 +3,18 @@ import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, Pe
 import { AGENTS, awaitsUser } from '~/types/chat'
 import { createdBy } from '~/utils/githubLinks'
 import { createPrPrompt } from '~/utils/createPr'
-import { workdirOf } from '~/utils/worktrees'
+import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
 import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
 import { answerQuestion as answerRun, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
 import { chatFiles } from '@/state/chatFiles'
-import { byListOrder, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
+import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
 
 /**
  * The phone's chats: a zustand port of the desktop's `app/stores/threads.ts`, without what only a
- * desktop has (tabs, panes, local worktrees, the links panel). A chat is the desktop's `Thread`,
+ * desktop has (tabs, panes, the links panel). "New chat in a worktree" works as on the desktop: the
+ * worktree is added inside the environment on the first send (`_addWorktreeFor`). A chat is the desktop's `Thread`,
  * stored and shaped the same, so either app shows and continues what the other wrote.
  *
  * Chats are immutable snapshots: change one only through `edit` (or the actions), which replaces
@@ -54,6 +55,11 @@ export interface NewChat {
   mode?: PermissionMode
   effort?: string | null
   branch?: string | null
+  /**
+   * "New chat in a worktree": the chat runs nowhere until its first message, which names a new
+   * branch and adds a linked worktree for it (inside the environment) before the agent starts.
+   */
+  inWorktree?: boolean
 }
 
 export interface ThreadsState {
@@ -149,6 +155,11 @@ export interface ThreadsState {
    */
   edit<R>(id: string, fn: (draft: Thread) => R, msgIds?: readonly string[] | 'all'): R | undefined
   moveToWorktree(id: string, folder: string, branch: string | null): Promise<void>
+  /**
+   * Add the worktree a chat waits for: a new branch named after its first message (`-2`, `-3` …
+   * when that branch or folder is taken), from the project's HEAD. Rejects with git's reason.
+   */
+  _addWorktreeFor(id: string): Promise<void>
   _adoptRemote(incoming: Thread[]): Thread[]
   _appendUser(id: string, text: string, attachments: Attachment[]): void
   _runTurn(id: string, text: string, attachments: Attachment[]): Promise<void>
@@ -264,10 +275,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     return adopted.map(t => get().byId(t.id)!)
   },
 
-  create({ projectPath, agent, model, mode, effort, branch }) {
+  create({ projectPath, agent, model, mode, effort, branch, inWorktree = false }) {
     const pick = model ?? AGENTS[agent].models[0]!.id
-    // Reuse an untouched empty chat of the project instead of piling up "New chat" rows.
-    const blank = Object.values(get().threads).find(x => x.projectPath === projectPath && !x.worktree && !x.awaitingWorktree
+    // Reuse an untouched empty chat of the project (waiting for a worktree or not, as asked) instead of piling up "New chat" rows.
+    const blank = Object.values(get().threads).find(x => x.projectPath === projectPath && !x.worktree && !!x.awaitingWorktree === inWorktree
       && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
     if (blank) {
       get().edit(blank.id, (d) => {
@@ -295,6 +306,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       updatedAt: now,
       seen: true,
       branch: branch ?? null,
+      ...(inWorktree ? { awaitingWorktree: true as const } : {}),
     }
     set(s => ({ threads: { ...s.threads, [t.id]: t } }))
     get().persist(t.id)
@@ -509,12 +521,32 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       get().persist(id)
       return
     }
-    get().edit(id, (d) => {
-      d.status = 'queued'
-      // A desktop chat still waiting for its worktree: the phone cannot make one, so it works in the project folder.
-      delete d.awaitingWorktree
-    })
+    get().edit(id, (d) => { d.status = 'queued' })
     get().persist(id)
+    if (t.awaitingWorktree) {
+      // Nothing has run in this chat yet: a message kept from a failed try goes along with this one.
+      const asked = t.messages.filter(m => m.role === 'user')
+      if (asked.length > 1) {
+        text = asked.map(m => m.parts.map(p => (p.type === 'text' ? p.text : '')).join('')).filter(Boolean).join('\n\n')
+        attachments = asked.flatMap(m => m.attachments ?? [])
+      }
+      try {
+        await get()._addWorktreeFor(id)
+      } catch (e) {
+        const m = get()._pushAgentMessage(id)
+        if (m) {
+          get()._pushPart(id, m.id, {
+            type: 'notice',
+            level: 'error',
+            text: `Could not make a worktree for this chat: ${errorText(e)}. Nothing ran yet; send a message to try again (what you wrote goes along).`,
+          })
+        }
+        get()._setStatus(id, 'error', 'error')
+        return
+      }
+      // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
+      if (get().byId(id)?.status !== 'queued') return
+    }
     // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
     await runAgentTurn(id, createPrPrompt(text) ?? text, attachments)
   },
@@ -620,6 +652,36 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       delete d.awaitingWorktree
     })
     get().persist(now.id)
+  },
+
+  async _addWorktreeFor(id) {
+    const t = get().byId(id)
+    if (!t?.awaitingWorktree) return
+    const path = t.projectPath
+    const first = t.messages.find(m => m.role === 'user')
+    const firstText = first?.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ') ?? ''
+    const base = branchFromMessage(firstText || t.title)
+    // Unreadable is not fatal: the add itself says when a name is taken, and the next one is tried.
+    const known = await backend.gitWorktrees(path).catch(() => null)
+    const taken = [
+      ...(known?.branches ?? []),
+      ...(known?.worktrees ?? []).flatMap(w => [worktreeName(w.path), ...(w.branch ? [w.branch] : [])]),
+    ]
+    let failure: unknown = null
+    // A name taken since the list was read (or one the list missed) is tried again with the next number.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const branch = untakenName(base, taken)
+      try {
+        const wt = await backend.gitWorktreeAdd(path, branch)
+        await get().moveToWorktree(id, wt.path, wt.branch ?? branch)
+        return
+      } catch (e) {
+        failure = e
+        if (!/already (exists|checked out|used)|not empty/i.test(errorText(e))) break
+        taken.push(branch)
+      }
+    }
+    throw failure
   },
 
   _createSubagent(parentId, opts) {
