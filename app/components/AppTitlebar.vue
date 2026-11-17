@@ -15,6 +15,8 @@ const threads = useThreads()
 const usage = useUsage()
 const mod = ref('Ctrl')
 const native = ref(false)
+/* macOS draws its own traffic lights over the left of the titlebar (tauri.macos.conf.json). */
+const mac = ref(false)
 
 /* Limits are read now and then in the background (it spends no quota), so an early reset is noticed
    while you work, not only when you open Usage. */
@@ -24,6 +26,7 @@ let usageFirst: ReturnType<typeof setTimeout> | undefined
 onMounted(() => {
   mod.value = modLabel()
   native.value = isTauri()
+  mac.value = native.value && /Mac/.test(navigator.platform)
   usageFirst = setTimeout(() => void usage.refreshReadable(), 4000)
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
@@ -110,7 +113,7 @@ const branchTitle = computed(() => {
 </script>
 
 <template>
-  <header class="tb" data-tauri-drag-region @dblclick.self="appWindow.toggleMaximize()">
+  <header class="tb" :class="{ 'tb--mac': mac }" data-tauri-drag-region @dblclick.self="appWindow.toggleMaximize()">
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
 
@@ -189,7 +192,7 @@ const branchTitle = computed(() => {
         <Settings />
       </UiIconButton>
 
-      <div v-if="native" class="tb__win">
+      <div v-if="native && !mac" class="tb__win">
         <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
         <button type="button" class="tb__win-btn" aria-label="Maximize" @click="appWindow.toggleMaximize()"><Square class="tb__sq" /></button>
         <button type="button" class="tb__win-btn tb__win-btn--close" aria-label="Close" @click="appWindow.close()"><X /></button>
@@ -210,6 +213,8 @@ const branchTitle = computed(() => {
   z-index: 20;
 }
 .tb:not(:has(.tb__win)) { padding-right: var(--space-3); }
+/* Room for the native traffic lights (three 12px buttons from x 14). */
+.tb--mac { padding-left: 76px; }
 .tb__left, .tb__grp { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .tb__left { flex: 0 1 auto; }
 .tb__right { display: flex; align-items: center; gap: var(--space-4); flex: none; align-self: stretch; }
