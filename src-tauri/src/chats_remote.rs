@@ -221,7 +221,6 @@ pub async fn chats_remote_remove(app: AppHandle, host_id: String, instance: Stri
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
     #[test]
     fn checks_ids() {
@@ -253,6 +252,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn scripts_round_trip() {
+        use std::process::Command;
         let home = std::env::temp_dir().join(format!("mango-remote-chats-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let run = |script: &str, args: &[&str], stdin: &str| -> String {
