@@ -1277,6 +1277,28 @@ pub(crate) fn diff_of(at: &At, file: &str, staged: bool) -> Result<String, Strin
     Ok(text)
 }
 
+/// The editor opens text files up to this size; a larger committed version gets no change markers.
+pub(crate) const BASE_CAP: usize = 5 * 1024 * 1024;
+
+/// What `file` (relative to the folder `at`, not the repository root) holds in HEAD, for the
+/// editor's change markers. `None` when there is no committed version to compare with (a new or
+/// untracked file, an unborn branch, a folder outside any repository) or it is binary or too large.
+pub(crate) fn base_of(at: &At, file: &str) -> Result<Option<String>, String> {
+    let file = clean_rel(file)?.replace('\\', "/");
+    at.check()?;
+    // `HEAD:./x` is relative to the folder git runs in; `cat-file blob` applies no filters or textconv.
+    let out = git(at)
+        .read_only()
+        .cap(BASE_CAP + 1)
+        .args(["cat-file", "blob"])
+        .arg(format!("HEAD:./{file}"))
+        .run()?;
+    if !out.ok() || out.truncated || out.stdout.len() > BASE_CAP || out.stdout.contains(&0) {
+        return Ok(None);
+    }
+    Ok(String::from_utf8(out.stdout).ok())
+}
+
 /// An untracked file as an added one.
 fn untracked_diff(root: &At, file: &str) -> Result<String, String> {
     if !matches!(entry(root, file), Ok(Entry::File)) {
@@ -3188,6 +3210,31 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         assert_eq!(history[0].short_hash, hash);
         assert_eq!(history[0].author, "Mango Test");
         assert!(history[0].time > 1_600_000_000_000);
+    }
+
+    #[test]
+    fn base_is_the_committed_version() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        // Unborn branch: nothing committed yet.
+        s.write("src/a.rs", "one\r\ntwo\n");
+        assert_eq!(base_of(&s.at(), "src/a.rs").unwrap(), None);
+        s.write("pic.bin", "a\0b");
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+
+        s.write("src/a.rs", "changed\n");
+        // Relative to the folder asked about, which may be below the repository root.
+        assert_eq!(base_of(&s.at(), "src/a.rs").unwrap().as_deref(), Some("one\r\ntwo\n"));
+        assert_eq!(base_of(&At::local(s.0.join("src")), "a.rs").unwrap().as_deref(), Some("one\r\ntwo\n"));
+        // Untracked, binary, missing, outside the folder: nothing to compare with, or refused.
+        s.write("new.rs", "x\n");
+        assert_eq!(base_of(&s.at(), "new.rs").unwrap(), None);
+        assert_eq!(base_of(&s.at(), "pic.bin").unwrap(), None);
+        assert_eq!(base_of(&s.at(), "gone.rs").unwrap(), None);
+        assert!(base_of(&s.at(), "../a.rs").is_err());
     }
 
     #[test]

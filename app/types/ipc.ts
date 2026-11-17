@@ -708,6 +708,11 @@ export interface Commands {
   git_status: [{ path: string }, GitStatus]
   /** Unified diff of one file. Untracked files come back as an all-added diff. */
   git_diff: [{ path: string; file: string; staged: boolean }, string]
+  /**
+   * A file as of the last commit (Unity VCS: the loaded revision), for the editor's change markers. `file` is
+   * relative to `path`. Null when there is nothing to compare with: new, untracked, binary, too large, no repository.
+   */
+  git_base: [{ path: string; file: string }, string | null]
   /** Empty `files` means everything. */
   git_stage: [{ path: string; files: string[] }, void]
   git_unstage: [{ path: string; files: string[] }, void]

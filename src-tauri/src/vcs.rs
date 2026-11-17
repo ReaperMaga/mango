@@ -82,6 +82,14 @@ pub async fn git_diff(app: AppHandle, path: String, file: String, staged: bool) 
     dispatch!(app, path, git(at) => git::diff_of(&at, &file, staged), plastic(root) => plastic::diff(&root, &file))
 }
 
+/// What a file holds in the last commit (Unity VCS: the loaded revision), for the editor's
+/// change markers; `file` is relative to `path`. `None` when there is nothing to compare with.
+#[tauri::command]
+pub async fn git_base(app: AppHandle, path: String, file: String) -> Result<Option<String>, String> {
+    let dir = PathBuf::from(path.trim());
+    dispatch!(app, path, git(at) => git::base_of(&at, &file), plastic(root) => plastic::base(&root, &dir, &file))
+}
+
 #[tauri::command]
 pub async fn git_stage(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::stage(&at, &files), plastic(root) => plastic::stage(&root, &files))

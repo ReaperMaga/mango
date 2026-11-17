@@ -142,6 +142,7 @@ ${a.path}`"
         />
       </template>
     </template>
+    <ChatChanges v-if="!live" :message="message" :thread="thread" />
     <p v-if="message.elapsedMs !== undefined && !live" class="msg__ran tabular">
       {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}
     </p>
