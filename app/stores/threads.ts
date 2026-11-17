@@ -27,6 +27,15 @@ const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 
 export interface Pane { id: string; threadId: string | null }
 
+/** A message written while the agent works: it waits for the turn to end unless the user sends it now. */
+export interface QueuedMessage {
+  id: string
+  text: string
+  attachments: Attachment[]
+  /** Already in the chat (sent now, but the run could not take it): only its turn is still due. */
+  shown?: boolean
+}
+
 /** What a running chat has going on besides its reply. Not saved: it dies with the run. */
 export interface LiveState {
   /** Background commands and sub-agents of the run, finished ones included until it ends. */
@@ -47,6 +56,8 @@ export const useThreads = defineStore('threads', {
     defaultAgent: 'claude' as AgentId,
     /** Per chat id, while its run has background work (see LiveState). */
     live: {} as Record<string, LiveState>,
+    /** Per chat id: messages waiting for the running turn to end. Not saved: it dies with the app. */
+    queue: {} as Record<string, QueuedMessage[]>,
   }),
 
   getters: {
@@ -449,7 +460,7 @@ export const useThreads = defineStore('threads', {
         grew = false
         for (const t of this.threads) if (t.parentId && doomed.has(t.parentId) && !doomed.has(t.id)) { doomed.add(t.id); grew = true }
       }
-      for (const x of doomed) this.closeTab(x)
+      for (const x of doomed) { this.closeTab(x); delete this.queue[x]; held.delete(x) }
       this.threads = this.threads.filter(t => !doomed.has(t.id))
       for (const p of this.panes) if (p.threadId && doomed.has(p.threadId)) p.threadId = null
       this.persist()
@@ -500,18 +511,63 @@ export const useThreads = defineStore('threads', {
 
     /**
      * Append a user message (text, attachments or both) and start the agent. While the agent
-     * is working the message steers it: the run reads it at its next step. When the run
-     * cannot take it, it waits and goes out as the next turn.
+     * is working the message waits in the chat's queue and goes out as the next turn, so the run
+     * is not disturbed; `sendNow` hands it to the running turn instead.
      */
     async send(id: string, text: string, attachments: Attachment[] = []) {
       const t = this.byId(id)
       // A sub-agent's chat is written by its parent's run only.
       if (!t || t.parentId || (!text.trim() && !attachments.length)) return
       t.archived = false // writing in an archived chat brings it back
+      if (isBusy(t)) {
+        (this.queue[id] ??= []).push({ id: uid('q'), text: text.trim(), attachments })
+        return
+      }
+      held.delete(id)
+      this._appendUser(t, text.trim(), attachments)
+      await this._runTurn(t.id, text.trim(), attachments)
+      await this._sendFollowUps(t.id)
+    },
+
+    /**
+     * Give a waiting message to the running turn now: the agent reads it at its next step. A turn
+     * that cannot take it (or none running) answers it as the next turn.
+     */
+    async sendNow(id: string, queuedId: string) {
+      const t = this.byId(id)
+      const list = this.queue[id]
+      const i = list?.findIndex(q => q.id === queuedId) ?? -1
+      if (!t || !list || i < 0) return
+      const [q] = list.splice(i, 1) as [QueuedMessage]
+      if (!list.length) delete this.queue[id]
+      held.delete(id)
+      this._appendUser(t, q.text, q.attachments)
+      if (!isBusy(t)) {
+        await this._runTurn(id, q.text, q.attachments)
+        await this._sendFollowUps(id)
+        return
+      }
+      // A command waits for the turn to end and then runs on its own; anything else steers.
+      if (!isCommand(q.text) && await steerRun(id, q.text, q.attachments)) return
+      const waiting = this.queue[id] ?? (this.queue[id] = [])
+      waiting.unshift({ ...q, shown: true })
+      // The turn may have ended while the steer was being tried: nothing else would send it then.
+      if (!isBusy(t)) await this._sendFollowUps(id)
+    },
+
+    /** Take a waiting message back without sending it. */
+    dropQueued(id: string, queuedId: string) {
+      const rest = (this.queue[id] ?? []).filter(q => q.id !== queuedId)
+      if (rest.length) this.queue[id] = rest
+      else delete this.queue[id]
+    },
+
+    /** A user message into the chat (the title follows the first one). */
+    _appendUser(t: Thread, text: string, attachments: Attachment[]) {
       const msg: Message = {
         id: uid('m'),
         role: 'user',
-        parts: text.trim() ? [{ type: 'text', text: text.trim() }] : [],
+        parts: text ? [{ type: 'text', text }] : [],
         createdAt: Date.now(),
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
@@ -519,18 +575,6 @@ export const useThreads = defineStore('threads', {
       if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist(t.id)
-      if (isBusy(t)) {
-        // A command waits for the turn to end and then runs on its own; anything else steers.
-        if (!isCommand(text) && await steerRun(t.id, text.trim(), attachments)) return
-        const waiting = followUps.get(t.id) ?? []
-        waiting.push({ text: text.trim(), attachments })
-        followUps.set(t.id, waiting)
-        // The turn may have ended while the steer was being tried: nothing else would send it then.
-        if (!isBusy(t)) await this._sendFollowUps(t.id)
-        return
-      }
-      await this._runTurn(t.id, text.trim(), attachments)
-      await this._sendFollowUps(t.id)
     },
 
     /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
@@ -551,17 +595,18 @@ export const useThreads = defineStore('threads', {
       await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
     },
 
-    /** Messages written while the last turn ran that it could not take: one turn answers them all. */
+    /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
     async _sendFollowUps(id: string) {
       for (;;) {
         const t = this.byId(id)
-        const waiting = followUps.get(id)
-        if (!t || !waiting?.length || isBusy(t)) return
+        const waiting = this.queue[id]
+        if (!t || !waiting?.length || isBusy(t) || held.has(id)) return
         // A command goes out on its own; plain messages written in a row go out together.
         let n = 1
         if (!isCommand(waiting[0]!.text)) while (n < waiting.length && !isCommand(waiting[n]!.text)) n++
         const batch = waiting.splice(0, n)
-        if (!waiting.length) followUps.delete(id)
+        if (!waiting.length) delete this.queue[id]
+        for (const w of batch) if (!w.shown) this._appendUser(t, w.text, w.attachments)
         await this._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
       }
     },
@@ -589,8 +634,8 @@ export const useThreads = defineStore('threads', {
         if (root && t.toolId) stopTask(root.id, t.toolId)
         return
       }
-      // Stop means stop: messages waiting for the next turn stay in the chat but are not sent.
-      followUps.delete(id)
+      // Stop means stop: messages waiting for the next turn stay in the queue but are not sent.
+      held.add(id)
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
@@ -769,8 +814,8 @@ function byListOrder(a: Thread, b: Thread) {
 export const isBusy = (t: Thread) => t.status === 'running' || t.status === 'queued' || t.status === 'waiting'
 
 export const approvalWaiters = new Map<string, (allow: boolean) => void>()
-/** Per thread: messages sent while a turn ran that it could not take, sent together as the next turn. */
-const followUps = new Map<string, Array<{ text: string; attachments: Attachment[] }>>()
+/** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
+const held = new Set<string>()
 export const stopFlags = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */

@@ -127,7 +127,7 @@ const heading = computed(() => HEADINGS[ws.agentsTab])
       v-model="ws.agentsTab"
       class="tabs"
       label="Agent settings"
-      :options="[{ value: 'agents', label: 'Agents' }, { value: 'subscription', label: 'Subscription' }, { value: 'usage', label: 'Usage & resets' }]"
+      :options="[{ value: 'agents', label: 'Agents' }, { value: 'subscription', label: 'Subscription' }, { value: 'usage', label: 'Usage' }]"
     />
 
     <SettingsSubscription v-if="ws.agentsTab === 'subscription'" :ids="ids" :auth="auth" :info-of="infoOf" />

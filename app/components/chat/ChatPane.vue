@@ -139,6 +139,7 @@ function onKey(e: KeyboardEvent) {
 
       <div v-else class="pane__composer">
         <ChatTasks :thread="thread" />
+        <ChatQueue :thread="thread" />
         <ChatComposer
           ref="composer"
           v-model:text="text"

@@ -53,7 +53,7 @@ watch(text, () => nextTick(autosize))
 
 const canSend = computed(() => !!(text.value.trim() || attachments.value.length) && !pending.value.length)
 
-/** While the agent works, sending steers it: it reads the message at its next step. */
+/** While the agent works, the message is queued (see ChatQueue): it goes out when the turn ends. */
 function submit() {
   if (!canSend.value) return
   emit('send', text.value, attachments.value)
@@ -437,9 +437,9 @@ const modeItems = computed<MenuItem[]>(() => (Object.keys(modes) as Thread['mode
 })))
 
 const ph = computed(() => props.placeholder ?? (props.busy
-  ? `Steer ${AGENTS[props.agent].name}: it reads this at its next step…`
+  ? `Write the next message: it is sent when ${AGENTS[props.agent].name} is done…`
   : `Ask ${AGENTS[props.agent].name} to build, fix or explain, or type / for commands…`))
-const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].name} reads it at its next step (Enter)` : 'Send (Enter)'))
+const sendTitle = computed(() => (props.busy ? `Queue it: sent when ${AGENTS[props.agent].name} is done (Enter)` : 'Send (Enter)'))
 </script>
 
 <template>
@@ -610,7 +610,7 @@ const sendTitle = computed(() => (props.busy ? `Send now: ${AGENTS[props.agent].
         type="submit"
         class="cp__send"
         :disabled="!canSend"
-        :aria-label="busy ? 'Send to the working agent' : 'Send'"
+        :aria-label="busy ? 'Add to the queue' : 'Send'"
         :title="sendTitle"
       >
         <ArrowUp />

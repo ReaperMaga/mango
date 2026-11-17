@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call } from '~/composables/useBackend'
 import { isEnvPath } from '~/utils/envPath'
@@ -300,6 +300,7 @@ const noAgentInstalled = computed(() => ws.agents.length > 0 && ws.agents.every(
 const settingsItems = computed<MenuItem[]>(() => [
   { label: 'Settings', icon: Settings, kbd: `${mod.value}+,`, onSelect: () => ws.openSettings() },
   { label: 'Get started…', icon: Rocket, onSelect: () => ws.openSetup() },
+  { label: 'Changelog', icon: History, onSelect: () => ws.openSettings('changelog') },
   { label: 'Log out', icon: LogOut, divider: true, onSelect: askLogout },
 ])
 

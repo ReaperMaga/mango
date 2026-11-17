@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Bot, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
+import { Bot, History, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
+import SettingsChangelog from './SettingsChangelog.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
@@ -30,6 +31,7 @@ const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
   { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
   { id: 'voice', label: 'Voice', icon: Mic },
   { id: 'appearance', label: 'Appearance', icon: SunMoon },
+  { id: 'changelog', label: 'Changelog', icon: History },
 ]
 
 const open = computed(() => ws.settings !== null)
@@ -172,6 +174,7 @@ onBeforeUnmount(() => {
               <SettingsTerminal v-if="section === 'terminal'" />
               <SettingsVoice v-else-if="section === 'voice'" />
               <SettingsAppearance v-else-if="section === 'appearance'" />
+              <SettingsChangelog v-else-if="section === 'changelog'" />
               <SettingsGeneral v-else-if="section === 'general'" />
             </template>
             <SettingsEnvironments
