@@ -71,22 +71,23 @@ function chooseWhere() {
 const projectItems = computed<MenuItem[]>(() => [
   ...ws.openProjects.map(p => ({
     label: p.name,
-    // A remote project says where it runs instead of a branch.
-    hint: remotePlace(p.path)?.where ?? (p.branch ? p.branch : undefined),
+    // One line each: the branch beside the name, or for a remote project where it runs.
+    aside: remotePlace(p.path)?.where ?? (p.branch || undefined),
+    asideMono: !remotePlace(p.path) && !!p.branch,
     icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
     checked: p.path === ws.activeProjectPath,
     onSelect: () => ws.setActiveProject(p.path),
+    remove: { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) },
   })),
   { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: ws.openProjects.length > 0, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
-    ? [{ label: 'Projects go to…', hint: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
+    ? [{ label: 'Projects go to…', aside: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
     : []),
   ...(ws.activeProject
     ? [
         { label: 'Project settings…', icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
-        { label: `Close ${ws.activeProject.name}`, icon: X, onSelect: () => ws.closeProject(ws.activeProject!.path) },
       ]
     : []),
 ])

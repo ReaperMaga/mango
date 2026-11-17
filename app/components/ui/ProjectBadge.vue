@@ -27,16 +27,16 @@ const tint = computed(() => props.hue ?? autoHue.value)
   flex: none;
   display: inline-grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  font-size: var(--text-2xs);
+  width: 24px;
+  height: 24px;
+  font-size: calc(10px * var(--text-scale));
   font-weight: 640;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.01em;
   color: oklch(0.82 0.12 var(--badge-hue));
   background: oklch(0.6 0.12 var(--badge-hue) / 0.22);
   border-radius: var(--radius-xs);
 }
-.badge--sm { width: 16px; height: 16px; font-size: var(--text-2xs); letter-spacing: -0.02em; border-radius: var(--radius-xs); }
+.badge--sm { width: 20px; height: 20px; font-size: calc(9px * var(--text-scale)); letter-spacing: -0.01em; border-radius: var(--radius-xs); }
 :root[data-theme='light'] .badge {
   color: oklch(0.42 0.14 var(--badge-hue));
   background: oklch(0.7 0.12 var(--badge-hue) / 0.25);
