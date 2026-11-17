@@ -1,6 +1,7 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
+import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
 
 /**
  * Claude Code adapter.
@@ -85,8 +86,6 @@ const counts = (diff: DiffLine[]) => {
   return `+${add} −${del}`
 }
 
-/** The name Mango registers its browser tools under (`browser_mcp`, src-tauri/src/browser_mcp.rs). */
-const BROWSER_SERVER = 'mango-browser'
 
 /** What one of Mango's browser tools does, for its row: `navigate http://localhost:3000`. */
 function browserTarget(tool: string, input: any): string {
@@ -823,12 +822,10 @@ function run(options: AgentRunOptions): AgentRun {
   if (options.sessionId) args.push('--resume', options.sessionId)
   // Attachments live outside the project: let Claude Code read them without asking.
   for (const dir of options.readDirs ?? []) args.push('--add-dir', dir)
-  // Mango's browser for this chat. Tools that only read the page run without asking.
-  const browser = options.browserMcp
-  if (browser) {
-    args.push('--mcp-config', JSON.stringify({ mcpServers: { [browser.name]: { type: 'http', url: browser.url } } }))
-    if (browser.readOnlyTools.length) args.push('--allowedTools', browser.readOnlyTools.map(t => `mcp__${browser.name}__${t}`).join(','))
-  }
+  // Mango's browser for this chat (tools that only read the page run without asking) and the user's
+  // MCP servers, for this session only. Their secrets travel in the environment, not in `args`.
+  const mcp = claudeMcp(options.mcpServers ?? [], options.browserMcp)
+  args.push(...mcp.args)
 
   options.spawn(args, {
     onLine,
@@ -839,7 +836,7 @@ function run(options: AgentRunOptions): AgentRun {
       else if (idle && code === 0) end('done')
       else end('error', friendlyError(lastStderr || `Claude Code exited with code ${code ?? 'unknown'} before finishing.`))
     },
-  }).then((t) => {
+  }, Object.keys(mcp.env).length ? mcp.env : undefined).then((t) => {
     transport = t
     if (ended) { t.kill().catch(() => {}); return }
     // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know

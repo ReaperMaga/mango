@@ -6,6 +6,7 @@ import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
 import { forAgent, makeThumb } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
+import { mcpServersForRun } from '~/utils/mcpServers'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -253,6 +254,19 @@ async function browserToolsFor(store: Store, threadId: string) {
   }
 }
 
+/**
+ * The MCP servers the user added that apply to a run of `agent` in `projectPath` (a worktree's
+ * chat counts as its project's). Read fresh each turn, so a change in Settings reaches the next
+ * message. A list that can't be read leaves them out: the run goes on without.
+ */
+async function userMcpFor(agent: AgentId, projectPath: string) {
+  try {
+    return mcpServersForRun(await call('mcp_servers'), agent, projectPath)
+  } catch {
+    return []
+  }
+}
+
 /** `attachments`: files sent with `text`, already in the attachment store. */
 export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
   const thread = store.byId(threadId)
@@ -488,7 +502,10 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     if (place.remote && !input.prompt.trim() && !input.images.length) {
       throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
     }
-    const browserMcp = await browserToolsFor(store, threadId)
+    const [browserMcp, mcpServers] = await Promise.all([
+      browserToolsFor(store, threadId),
+      userMcpFor(thread.agent, (store.rootOf(threadId) ?? thread).projectPath),
+    ])
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
@@ -498,6 +515,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       effort: thread.effort ?? null,
       sessionId: thread.sessionId ?? null,
       ...(browserMcp ? { browserMcp } : {}),
+      ...(mcpServers.length ? { mcpServers } : {}),
       spawn: spawnFor(thread.agent, workdir),
       emit,
     })
