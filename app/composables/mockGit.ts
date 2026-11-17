@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind, VcsLock } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -33,6 +33,8 @@ interface Repo {
   used?: Set<string>
   /** Unity VCS: locks in the repository, mine and other people's. */
   locks?: VcsLock[]
+  /** Unity VCS: branches already merged into the workspace's branch. */
+  merged?: Set<string>
 }
 
 const MIN = 60_000
@@ -557,6 +559,66 @@ async function unlockFiles(r: Repo, files: string[]) {
   r.locks = locks.filter(l => !files.includes(l.path))
 }
 
+/**
+ * Unity VCS: what merging each branch into fruit-stand brings ([path, status]), and what clashes.
+ * `/main/feature/weather` changed two files the workspace's branch changed too: Mango refuses it.
+ */
+const UNITY_MERGES: Record<string, { files: [string, 'M' | 'A' | 'D'][]; conflicts?: string[] }> = {
+  '/main': {
+    files: [
+      ['Assets/Scripts/Save/SaveSystem.cs', 'M'],
+      ['Assets/Scripts/Save/SaveV2.cs', 'A'],
+      ['Assets/Scenes/Title.unity', 'M'],
+      ['Packages/manifest.json', 'M'],
+      ['ProjectSettings/ProjectVersion.txt', 'M'],
+    ],
+  },
+  '/main/feature/weather': {
+    files: [['Assets/Scripts/Weather/RainSystem.cs', 'A'], ['Assets/Scripts/Weather/RainSystem.cs.meta', 'A']],
+    conflicts: ['Assets/Scenes/Farm.unity', 'Assets/Scripts/Inventory/InventoryGrid.cs'],
+  },
+  '/main/fix/crate-physics': {
+    files: [['Assets/Scripts/Physics/CrateBody.cs', 'M'], ['Assets/Physics/Crate.physicMaterial', 'M']],
+  },
+}
+
+function mergePreview(r: Repo, branch: string): MergePreview {
+  const base = { branch, into: r.branch, files: [] as string[], conflicts: [] as string[], blocker: null as string | null }
+  if (branch === r.branch) return { ...base, blocker: `The workspace is already on ${branch}. Switch to the branch to merge into first.` }
+  const pending = r.files.filter(f => f.staged || (f.unstaged && f.unstaged.status !== '?')).length
+  if (pending) {
+    return { ...base, blocker: `The workspace has ${pending} file${pending === 1 ? '' : 's'} pending. Check in or undo them first, so the merge result is all that's left to check in.` }
+  }
+  if (r.incoming.length) {
+    const n = r.incoming.length
+    return { ...base, blocker: `${r.branch} has ${n} changeset${n === 1 ? '' : 's'} your workspace doesn't have yet. Update first, then merge.` }
+  }
+  const m = r.merged?.has(branch) ? undefined : UNITY_MERGES[branch]
+  if (!m) return base
+  const conflicts = m.conflicts ?? []
+  return { ...base, files: m.files.map(f => f[0]).filter(p => !conflicts.includes(p)), conflicts }
+}
+
+async function plasticMerge(r: Repo, branch: string): Promise<string> {
+  await wait(700)
+  const p = mergePreview(r, branch)
+  if (p.blocker) throw new Error(p.blocker)
+  if (p.conflicts.length) {
+    const n = p.conflicts.length
+    throw new Error(`${n} file${n === 1 ? '' : 's'} changed on both branches need resolving by hand, so Mango didn't merge ${branch}. Merge it in the Unity Version Control app, which resolves conflicts, then check in from here.\n\n${p.conflicts.join('\n')}`)
+  }
+  if (!p.files.length) return `Nothing to merge: ${r.branch} already has everything from ${branch}.`
+  for (const [path, status] of UNITY_MERGES[branch]!.files) {
+    const diff = status === 'A'
+      ? added(path, ['// Merged from ' + branch, 'public class ' + (baseName(path).split('.')[0] || 'Merged') + ' { }'])
+      : `${head(path)}@@ -1,3 +1,3 @@\n // ${baseName(path)}\n-// before the merge\n+// merged from ${branch}\n \n`
+    r.files.push({ path, staged: { status, diff }, unstaged: null })
+  }
+  ;(r.merged ??= new Set()).add(branch)
+  const n = p.files.length
+  return `Merged ${branch}: ${n} file${n === 1 ? '' : 's'} changed, check in to finish.\nThe merge into ${r.branch} is pending changes until you check it in.`
+}
+
 const UNITY_ONLY = (what: string) => new Error(`${what} isn't part of Unity Version Control. Checkins go straight to the server.`)
 
 /** Unity VCS: add a branch and switch to it. */
@@ -895,7 +957,8 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       case 'git_fetch': throw UNITY_ONLY('Fetch')
       case 'git_push': throw UNITY_ONLY('Push')
       case 'git_pull': return update(r)
-      case 'git_merge': throw UNITY_ONLY('Merging from Mango')
+      case 'git_merge': return plasticMerge(r, String(args.branch ?? ''))
+      case 'git_merge_preview': await wait(450); return mergePreview(r, String(args.branch ?? ''))
       case 'git_rebase': throw UNITY_ONLY('Rebase')
       case 'git_checkout_remote': throw UNITY_ONLY('Remote branches')
       case 'git_checkout':
@@ -992,6 +1055,7 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       if (t.upstream) t.ahead += fresh.length
       return `Merged ${commits(fresh.length)} from ${branch} into ${r.branch}.\n${fresh.length + 2} files changed, +${fresh.length * 17} −${fresh.length * 4}`
     }
+    case 'git_merge_preview': throw new Error('Merge previews are for Unity VCS workspaces.')
     case 'git_rebase': return `Rebased ${r.branch} onto ${String(args.onto)}.\nPicked up 2 commits from ${String(args.onto)}.`
     case 'git_branch_rename': {
       const from = String(args.from); const to = String(args.to).trim()

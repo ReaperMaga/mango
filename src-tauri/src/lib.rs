@@ -107,6 +107,7 @@ pub fn run() {
             vcs::git_branch_create,
             vcs::git_checkout_remote,
             vcs::git_merge,
+            vcs::git_merge_preview,
             vcs::git_rebase,
             vcs::git_branch_rename,
             vcs::git_branch_delete,
