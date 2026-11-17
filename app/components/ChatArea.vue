@@ -335,8 +335,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   display: flex;
   align-items: stretch;
   height: var(--tabbar-h);
-  border-bottom: 1px solid var(--line-soft);
-  background: color-mix(in oklch, var(--bg-app) 35%, var(--bg-canvas));
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-app);
   flex: none;
 }
 .ca__strip {
@@ -358,21 +358,21 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   gap: 6px;
   min-width: 0;
   max-width: 220px;
-  height: 26px;
-  padding: 0 3px 0 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  height: 28px;
+  padding: 0 6px 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
   font-size: var(--text-sm);
   color: var(--fg-subtle);
   cursor: pointer;
   flex: 0 1 auto;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .ca__tab:hover { color: var(--fg-muted); background: var(--bg-hover); }
 .ca__tab:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -1px; }
 /* Shown in the other split pane: a quiet ring, no fill. */
-.ca__tab.is-shown { color: var(--fg-muted); border-color: var(--line); }
-.ca__tab.is-active { color: var(--fg); background: var(--bg-raised); border-color: var(--accent-line); }
+.ca__tab.is-shown { color: var(--fg-muted); box-shadow: inset 0 0 0 1px var(--line); }
+.ca__tab.is-active { color: var(--fg); background: var(--bg-canvas); box-shadow: inset 0 0 0 1px var(--line); }
 .ca__tab-icon { width: 14px; height: 14px; flex: none; stroke-width: 1.75; color: var(--fg-subtle); }
 .ca__tab-note { flex: none; font-size: var(--text-2xs); color: var(--fg-faint); }
 /* A browser tab while its page loads: a small ring in ripening mango where the globe was. */
@@ -392,19 +392,20 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 .ca__tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* A file opened with a single click: the next one replaces it until it is edited or double-clicked. */
 .ca__tab-title.is-preview { font-style: italic; }
-/* The close button is always there, faint, so every tab has the same width whether hovered or not. */
+/* The close button always takes its room (every tab keeps its width) but shows on hover and on the active tab. */
 .ca__tab-x {
   display: grid;
   place-items: center;
   width: 18px;
   height: 18px;
   border-radius: var(--radius-xs);
-  color: var(--fg-faint);
+  color: var(--fg-subtle);
+  opacity: 0;
   flex: none;
-  transition: color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
 }
 .ca__tab-x svg { width: 12px; height: 12px; }
-.ca__tab:hover .ca__tab-x, .ca__tab.is-active .ca__tab-x { color: var(--fg-subtle); }
+.ca__tab:hover .ca__tab-x, .ca__tab.is-active .ca__tab-x, .ca__tab-x:focus-visible, .ca__tab-x.is-dirty { opacity: 1; }
 .ca__tab-x:hover { background: var(--bg-active); color: var(--fg); }
 /* Unsaved edits: a dot in place of the close button, which comes back on hover. */
 .ca__tab-x.is-dirty svg, .ca__tab-x.is-dirty:hover .ca__tab-dot, .ca__tab-x.is-dirty:focus-visible .ca__tab-dot { display: none; }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, FolderCog, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -8,7 +8,6 @@ import { useGit } from '~/stores/git'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
-import { hasUnreadResult } from '~/types/chat'
 import { isEnvPath } from '~/utils/envPath'
 
 const ws = useWorkspace()
@@ -92,39 +91,34 @@ const projectItems = computed<MenuItem[]>(() => [
     : []),
 ])
 
-/** Threads that want the user: waiting for approval or finished and unread. */
-const attention = computed(() => threads.threads.filter(t => (!t.archived && t.status === 'waiting') || hasUnreadResult(t)))
-function jumpToAttention() {
-  const t = attention.value.find(x => x.status === 'waiting') ?? attention.value[0]
-  if (!t) return
-  if (t.projectPath !== ws.activeProjectPath) ws.setActiveProject(t.projectPath)
-  threads.show(t.id)
-}
-
-const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'light')
+/* The quiet sync part of the branch widget: commits to push / pull and changed files of the working copy in view. */
+const gitStatus = computed(() => git.status(workdir.value))
+const ahead = computed(() => gitStatus.value?.ahead ?? 0)
+const behind = computed(() => gitStatus.value?.behind ?? 0)
+const changed = computed(() => gitStatus.value?.files.length ?? 0)
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
+const branchTitle = computed(() => {
+  const bits = [
+    ahead.value ? `${plural(ahead.value, 'commit')} to push` : '',
+    behind.value ? `${plural(behind.value, 'commit')} to pull` : '',
+    changed.value ? `${plural(changed.value, 'changed file')}` : '',
+  ].filter(Boolean)
+  const name = branch.value ? `Branch: ${branch.value}` : 'Branches'
+  return bits.length ? `${name} (${bits.join(', ')})` : name
+})
 </script>
 
 <template>
   <header class="tb" data-tauri-drag-region @dblclick.self="appWindow.toggleMaximize()">
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
-      <UiIconButton
-        v-if="ws.hasProject"
-        label="Toggle sidebar"
-        :shortcut="`${mod}+B`"
-        :active="ws.sidebarOpen"
-        size="sm"
-        @click="ws.toggleSidebar()"
-      >
-        <PanelLeft />
-      </UiIconButton>
 
       <UiMenu :items="projectItems" :width="280" label="Projects">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
             <template #default>
-              <button type="button" class="tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+              <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
                 <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
                 <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
                 <ChevronDown class="tb__chev" />
@@ -139,7 +133,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
       <button
         v-if="remote"
         type="button"
-        class="tb__remote"
+        class="tb__widget tb__remote"
         :class="{ 'is-open': ws.toolPanel === 'env', 'is-compact': ws.activeProject?.isGit }"
         :title="`Remote environment: ${remote.where}, folder ${remote.dir}`"
         :aria-label="`Remote environment: ${remote.where}`"
@@ -152,16 +146,21 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
         <template #default="{ toggle, open }">
           <button
             type="button"
-            class="tb__branch"
+            class="tb__widget tb__branch"
             :class="{ 'is-open': open }"
             aria-haspopup="dialog"
             :aria-expanded="open"
-            :title="open ? undefined : branch ? `Branch: ${branch}` : 'Branches'"
+            :title="open ? undefined : branchTitle"
             @click="toggle"
           >
-            <GitBranch />
+            <GitBranch class="tb__branch-icon" />
             <!-- Unity VCS branches are paths: when space runs out, keep the end (…/feature/x) in view. -->
-            <span :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? 'detached' }}</bdi></span>
+            <span class="tb__branch-name" :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? 'detached' }}</bdi></span>
+            <span v-if="ahead || behind || changed" class="tb__sync tabular">
+              <span v-if="ahead">↑{{ ahead }}</span>
+              <span v-if="behind">↓{{ behind }}</span>
+              <span v-if="changed">• {{ changed }}</span>
+            </span>
             <ChevronDown class="tb__chev" />
           </button>
         </template>
@@ -171,49 +170,26 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
     <div class="tb__center" data-tauri-drag-region>
       <button type="button" class="tb__search" @click="ws.paletteOpen = true">
         <Search />
-        <span>Search threads or run a command</span>
-        <kbd>{{ mod }}</kbd><kbd>K</kbd>
+        <span class="tb__ph">Search threads or run a command</span>
+        <span v-if="threads.activeThread" class="tb__ctx">
+          <UiRipenessDot :status="threads.activeThread.archived ? 'archived' : threads.activeThread.status" :size="10" />
+          <span class="tb__ctx-title">{{ threads.activeThread.title }}</span>
+        </span>
+        <span class="tb__keys"><kbd>{{ mod }}</kbd><kbd>K</kbd></span>
       </button>
     </div>
 
     <div class="tb__right" data-tauri-drag-region>
-      <UpdateIndicator />
-      <button
-        v-if="attention.length"
-        type="button"
-        class="tb__attention"
-        :title="`${attention.length} thread${attention.length === 1 ? '' : 's'} need you`"
-        @click="jumpToAttention"
-      >
-        <UiRipenessDot :status="attention.some(t => t.status === 'waiting') ? 'waiting' : 'done'" :size="9" />
-        <span class="tabular">{{ attention.length }}</span>
-      </button>
-
-      <UiIconButton
-        :label="usage.hasReset ? 'Usage limits: a limit was reset' : 'Usage limits'"
-        :shortcut="`${mod}+Shift+U`"
-        :active="ws.dialog === 'usage'"
-        size="sm"
-        @click="ws.openUsage()"
-      >
-        <span class="tb__gauge">
-          <Gauge />
-          <span v-if="usage.hasReset" class="tb__gauge-dot" aria-hidden="true" />
-        </span>
-      </UiIconButton>
-      <UiIconButton
-        v-if="ws.hasProject"
-        label="Toggle terminal"
-        :shortcut="`${mod}+\``"
-        :active="ws.terminalOpen"
-        size="sm"
-        @click="ws.toggleTerminal()"
-      >
-        <PanelBottom />
-      </UiIconButton>
-      <UiIconButton :label="isDark ? 'Switch to light theme' : 'Switch to dark theme'" size="sm" @click="ws.cycleTheme()">
-        <Moon v-if="isDark" />
-        <Sun v-else />
+      <div class="tb__grp"><UpdateIndicator /></div>
+      <div class="tb__grp"><AppActivity /></div>
+      <div class="tb__grp"><AppUsageMeter /></div>
+      <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
+        <button type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
+        <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="`Toggle terminal (${mod}+\`)`" @click="ws.toggleTerminal()"><PanelBottom /></button>
+        <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="`Toggle tool panel (${mod}+Alt+B)`" @click="ws.toggleToolPanel()"><PanelRight /></button>
+      </div>
+      <UiIconButton label="Settings" :shortcut="`${mod}+,`" :active="!!ws.settings" size="sm" @click="ws.openSettings()">
+        <Settings />
       </UiIconButton>
 
       <div v-if="native" class="tb__win">
@@ -227,134 +203,143 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 
 <style scoped>
 .tb {
-  display: grid;
-  grid-template-columns: 1fr minmax(240px, 460px) 1fr;
+  display: flex;
   align-items: center;
-  gap: var(--space-3);
+  gap: var(--space-4);
   height: var(--titlebar-h);
   padding-left: var(--space-3);
   background: var(--bg-app);
   position: relative;
   z-index: 20;
 }
-.tb__left, .tb__right { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
-/* Full bar height, so the window controls' hover fills the titlebar top to bottom. */
-.tb__right { justify-content: flex-end; align-self: stretch; }
-.tb__mark { margin-right: var(--space-2); }
-
-.tb__project {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  margin-left: var(--space-1);
-  padding: 0 6px 0 8px;
-  border-radius: var(--radius-sm);
-  font-weight: 600;
-  font-size: var(--text-sm);
-  color: var(--fg);
-  max-width: 240px;
-  transition: background var(--dur-fast) var(--ease-out);
-}
-.tb__project:hover, .tb__project.is-open { background: var(--bg-hover); }
+.tb:not(:has(.tb__win)) { padding-right: var(--space-3); }
+.tb__left, .tb__grp { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+.tb__left { flex: 0 1 auto; }
+.tb__right { display: flex; align-items: center; gap: var(--space-4); flex: none; align-self: stretch; }
+.tb__center { flex: 1; display: flex; justify-content: center; min-width: 0; }
+.tb__mark { margin: 0 var(--space-2) 0 var(--space-1); flex: none; }
 /* The project keeps its width; a long branch (Unity VCS paths such as /main/feature/x) is what gets cut short. */
 .tb__left > :deep(.menu) { flex: none; }
-.tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Project, remote and branch share one widget: 28px tall, quiet until hovered. */
+.tb__widget {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  min-width: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.tb__widget:hover, .tb__widget.is-open { background: var(--bg-hover); }
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
 
-.tb__remote {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  height: 26px;
-  padding: 0 6px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-xs);
-  color: var(--fg-subtle);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.tb__remote:hover, .tb__remote.is-open { background: var(--bg-hover); color: var(--fg); }
-.tb__remote svg { width: 13px; height: 13px; flex: none; stroke-width: 1.85; }
-.tb__remote.is-compact { padding: 0 5px; }
+.tb__project { font-weight: 500; max-width: 240px; }
+.tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tb__remote { font-size: var(--text-xs); color: var(--fg-subtle); }
+.tb__remote:hover, .tb__remote.is-open { color: var(--fg); }
+.tb__remote svg { width: 14px; height: 14px; flex: none; stroke-width: 1.85; }
+.tb__remote.is-compact { padding: 0 var(--space-2); }
 .tb__remote-where { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.tb__branch {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  /* Enough for a short branch name. */
-  min-width: 72px;
-  height: 26px;
-  border-radius: var(--radius-sm);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-  padding: 0 4px 0 6px;
-  font-size: var(--text-xs);
-  color: var(--fg-subtle);
+.tb__branch { min-width: 72px; font-size: var(--text-xs); }
+.tb__branch-icon { width: 14px; height: 14px; flex: none; color: var(--fg-muted); }
+.tb__branch-name {
   font-family: var(--font-mono);
+  min-width: 0;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.tb__branch:hover, .tb__branch.is-open { background: var(--bg-hover); color: var(--fg); }
-.tb__branch svg { width: 13px; height: 13px; flex: none; }
-.tb__branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__branch .tb__branch-path { direction: rtl; text-align: left; }
+.tb__sync { display: flex; gap: 6px; flex: none; color: var(--fg-muted); white-space: nowrap; }
 
 .tb__search {
   display: flex;
   align-items: center;
   gap: var(--space-2);
   width: 100%;
+  max-width: 480px;
+  min-width: 0;
   height: 28px;
-  padding: 0 6px 0 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
   border: 1px solid var(--line-soft);
-  color: var(--fg-faint);
+  color: var(--fg-subtle);
   font-size: var(--text-sm);
   transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
-.tb__search:hover { border-color: var(--line-strong); color: var(--fg-subtle); }
+.tb__search:hover { border-color: var(--line-strong); color: var(--fg-muted); }
 .tb__search svg { width: 14px; height: 14px; flex: none; }
-.tb__search span { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tb__search kbd + kbd { margin-left: -4px; }
-
-.tb__attention {
-  display: inline-flex;
+.tb__ph { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tb__ctx {
+  display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
-  padding: 0 8px;
-  margin-right: var(--space-1);
-  border-radius: var(--radius-pill);
-  font-size: var(--text-xs);
-  font-weight: 600;
+  min-width: 0;
+  max-width: 55%;
+  margin-left: auto;
+  padding-left: var(--space-2);
+  border-left: 1px solid var(--line);
   color: var(--fg-muted);
-  background: var(--bg-hover);
+  font-size: var(--text-xs);
+  white-space: nowrap;
 }
-.tb__attention:hover { color: var(--fg); background: var(--bg-active); }
+.tb__ctx-title { overflow: hidden; text-overflow: ellipsis; }
+.tb__keys { display: flex; align-items: center; gap: 2px; flex: none; }
+.tb__ctx + .tb__keys { margin-left: var(--space-1); }
 
-.tb__win { display: flex; margin-left: var(--space-2); align-self: stretch; }
+/* Layout cluster: one connected segmented group of panel toggles. */
+.tb__cluster {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg-inset);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+}
+.tb__cluster button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 24px;
+  border-radius: var(--radius-sm);
+  color: var(--fg-subtle);
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.tb__cluster button:hover { background: var(--bg-hover); color: var(--fg); }
+.tb__cluster button[aria-pressed='true'] { background: var(--bg-raised); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
+.tb__cluster svg { width: 16px; height: 16px; }
+
+.tb__win { display: flex; align-self: stretch; margin-left: var(--space-1); }
 .tb__win-btn {
   width: 44px;
   display: grid;
   place-items: center;
-  color: var(--fg-subtle);
+  color: var(--fg-muted);
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .tb__win-btn svg { width: 15px; height: 15px; stroke-width: 1.5; }
 .tb__win-btn .tb__sq { width: 12px; height: 12px; }
 .tb__win-btn:hover { background: var(--bg-hover); color: var(--fg); }
 .tb__win-btn--close:hover { background: var(--ripe-error); color: white; }
-.tb:not(:has(.tb__win)) { padding-right: var(--space-3); }
-.tb__gauge { position: relative; display: inline-grid; place-items: center; }
-/* A limit was reset early: a mark on the gauge, until it is dismissed in Usage. */
-.tb__gauge-dot {
-  position: absolute;
-  top: -3px;
-  right: -4px;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ripe-queued);
-  box-shadow: 0 0 0 2px var(--bg-app);
+
+@media (max-width: 1180px) {
+  .tb__ctx { display: none; }
+  .tb__branch-name { max-width: 130px; }
+  .tb__right, .tb { gap: var(--space-3); }
+}
+@media (max-width: 1000px) {
+  .tb__sync { display: none; }
+  .tb__branch-name { max-width: 96px; }
+  .tb__ph { display: none; }
+  .tb__keys { margin-left: auto; }
+  .tb__search { max-width: 200px; }
 }
 </style>

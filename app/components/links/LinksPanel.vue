@@ -253,6 +253,7 @@ watch(() => chat.value?.id, cancelAdd)
   align-items: center;
   gap: var(--space-1);
   height: var(--tabbar-h);
+  border-bottom: 1px solid var(--line);
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 .lp__head:has(> .icon-btn:first-child) { padding-left: var(--space-2); }

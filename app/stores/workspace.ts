@@ -223,6 +223,8 @@ export const useWorkspace = defineStore('workspace', {
        */
       toolPanel: toolView(prefs.toolPanel !== undefined ? prefs.toolPanel : prefs.sidebarView),
       toolWidth: (prefs.toolWidth ?? 340) as number,
+      /** The tool window shown last: what the titlebar's panel toggle brings back. */
+      lastToolPanel: (toolView(prefs.lastToolPanel) ?? toolView(prefs.toolPanel) ?? 'changes') as ToolView,
 
       /** Settings > Projects > Environment variables: rows or plain text. */
       envEditMode: (prefs.envEditMode === 'raw' ? 'raw' : 'fields') as EnvEditMode,
@@ -298,6 +300,7 @@ export const useWorkspace = defineStore('workspace', {
           terminalHeight: this.terminalHeight,
           toolPanel: this.toolPanel,
           toolWidth: this.toolWidth,
+          lastToolPanel: this.lastToolPanel,
           diffView: this.diffView,
           terminalProfileId: this.terminalProfileId,
           terminalFontSize: this.terminalFontSize,
@@ -540,12 +543,21 @@ export const useWorkspace = defineStore('workspace', {
     /** Open a tool window on the right. */
     openTool(view: ToolView) {
       this.toolPanel = view
+      this.lastToolPanel = view
       this.persist()
     },
     /** Show a tool window; again (or `force` false) to close it. */
     toggleTool(view: ToolView, force?: boolean) {
       const showing = this.toolPanel === view
       this.toolPanel = (force ?? !showing) ? view : null
+      if (this.toolPanel) this.lastToolPanel = this.toolPanel
+      this.persist()
+    },
+    /** Show the tool window used last, or put the open one away. */
+    toggleToolPanel(force?: boolean) {
+      const show = force ?? !this.toolPanel
+      this.toolPanel = show ? (this.toolPanel ?? this.lastToolPanel) : null
+      if (this.toolPanel) this.lastToolPanel = this.toolPanel
       this.persist()
     },
     closeTool() {

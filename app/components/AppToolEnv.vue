@@ -346,6 +346,7 @@ function openInEnv() {
   align-items: center;
   gap: 2px;
   height: var(--tabbar-h);
+  border-bottom: 1px solid var(--line);
   padding: 0 var(--space-2) 0 var(--space-3);
 }
 .te__title {
