@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind, VcsShelve } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -31,7 +31,10 @@ interface Repo {
   renames: { from: string; to: string; change: Change }[]
   /** Unity VCS: branches that have changesets of their own (and so can't be deleted). */
   used?: Set<string>
+  /** Unity VCS: shelves on the server, with the changes each one holds. */
+  shelves?: MockShelve[]
 }
+interface MockShelve extends VcsShelve { files: MockFile[] }
 
 const MIN = 60_000
 const hex = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('')
@@ -483,6 +486,22 @@ function unityRepo(): Repo {
     used: new Set(['/main', '/main/feature/inventory', '/main/feature/weather', '/main/fix/crate-physics', '/main/release-1.2']),
     files,
     log,
+    shelves: [
+      {
+        id: 41, comment: 'Weather: rain particles, half done', owner: 'you@orchard.studio', time: Date.now() - 26 * 60 * MIN, branch: '/main/feature/weather',
+        files: [{
+          path: 'Assets/Scripts/Weather/RainEmitter.cs', staged: null,
+          unstaged: { status: 'M', diff: `${head('Assets/Scripts/Weather/RainEmitter.cs')}@@ -12,6 +12,8 @@ public class RainEmitter : MonoBehaviour\n     [SerializeField] ParticleSystem drops;\n+    [SerializeField, Range(0, 1)] float intensity = 0.4f;\n+    [SerializeField] AnimationCurve windByHour;\n     void Update()\n     {\n` },
+        }],
+      },
+      {
+        id: 38, comment: 'Try a lighter crate mass', owner: 'you@orchard.studio', time: Date.now() - 4 * 24 * 60 * MIN, branch: '/main/fix/crate-physics',
+        files: [{
+          path: 'Assets/Prefabs/Barrel.prefab', staged: null,
+          unstaged: { status: 'M', diff: `${head('Assets/Prefabs/Barrel.prefab')}@@ -40,7 +40,7 @@ Rigidbody:\n   m_ObjectHideFlags: 0\n-  m_Mass: 12\n+  m_Mass: 4.5\n   m_Drag: 0\n` },
+        }],
+      },
+    ],
     // Changesets a teammate checked in on this branch since the workspace was updated.
     incoming: ['Inventory: tooltips show the stack total', 'Fix the crate falling through the barn floor'],
     renames: [],
@@ -504,6 +523,49 @@ function childBranch(name: string, parent: string): string {
   if (!n) throw new Error('Enter a branch name')
   if (/[\s"'@#:;*?<>|\\$`]|\.\.|\/\/|^-|\/$/.test(n)) throw new Error(`"${n}" is not a valid branch name`)
   return n.startsWith('/') ? n : `${parent.replace(/\/+$/, '')}/${n}`
+}
+
+/* ---------- Unity VCS shelves ---------- */
+
+let nextShelve = 42
+const listShelves = (r: Repo): VcsShelve[] =>
+  (r.shelves ?? []).map(({ files: _files, ...s }) => s).sort((a, b) => b.time - a.time)
+
+/** Shelve what a checkin would take (the staged files, or all); private files can't be shelved. */
+async function shelve(r: Repo, comment: string, undo: boolean): Promise<string> {
+  if (!comment.trim()) throw new Error('Write a comment for the shelve first')
+  const chosen = r.files.some(f => f.staged) ? r.files.filter(f => f.staged) : r.files
+  // A staged new file is only picked for the checkin: to Unity VCS it is still private.
+  const isPrivate = (f: MockFile) => (f.unstaged ?? f.staged)?.status === '?' || (!f.unstaged && f.staged?.status === 'A')
+  const take = chosen.filter(f => !isPrivate(f))
+  const privates = chosen.length - take.length
+  if (!take.length) {
+    throw new Error(privates
+      ? "Only new files are pending, and Unity VCS can't shelve a file until it is under version control. Check them in, or add them with cm add first."
+      : 'There are no changes to shelve.')
+  }
+  await wait(700)
+  const id = nextShelve++
+  // As pending changes again: Unity VCS has no staging area to restore.
+  const files = take.map(f => {
+    const c = (f.unstaged ?? f.staged)!
+    return { path: f.path, staged: null, unstaged: { ...c } }
+  })
+  ;(r.shelves ??= []).push({ id, comment: comment.trim(), owner: 'you@orchard.studio', time: Date.now(), branch: r.branch, files })
+  if (undo) r.files = r.files.filter(f => !take.includes(f))
+  const n = take.length
+  return `Shelved ${n} change${n === 1 ? '' : 's'} as sh:${id}${undo ? ' and undid them in the workspace' : ''}.`
+    + (privates ? `\n${privates} new file${privates === 1 ? '' : 's'} not under version control stay${privates === 1 ? 's' : ''} in the workspace.` : '')
+}
+
+async function applyShelve(r: Repo, id: number): Promise<string> {
+  const s = r.shelves?.find(x => x.id === id)
+  if (!s) throw new Error(`The shelve sh:${id} does not exist.`)
+  const clash = s.files.find(f => r.files.some(p => p.path === f.path))
+  if (clash) throw new Error(`Shelve sh:${id} conflicts with changes in the workspace. Check in or undo those files, then apply it again.\n\n${clash.path} has pending changes.`)
+  await wait(600)
+  r.files.push(...s.files.map(f => ({ ...f, unstaged: f.unstaged && { ...f.unstaged } })))
+  return `Applied sh:${id} to the workspace. Its changes are pending again; the shelve stays on the server.`
 }
 
 const repos = new Map<string, Repo>()
@@ -802,6 +864,15 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     return
   }
   if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
+  if (cmd.startsWith('vcs_shelve')) {
+    if (r.vcs !== 'plastic') throw new Error('Shelves are a Unity Version Control feature. In a git repository, use git stash in a terminal.')
+    switch (cmd) {
+      case 'vcs_shelves': await wait(250); return listShelves(r)
+      case 'vcs_shelve': return shelve(r, String(args.comment ?? ''), !!args.undo)
+      case 'vcs_shelve_apply': return applyShelve(r, Number(args.id))
+      case 'vcs_shelve_delete': r.shelves = r.shelves?.filter(x => x.id !== Number(args.id)); return
+    }
+  }
   if (r.vcs === 'plastic') {
     switch (cmd) {
       case 'git_fetch': throw UNITY_ONLY('Fetch')

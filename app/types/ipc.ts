@@ -190,6 +190,18 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/** A Unity VCS shelve (`sh:12`): pending changes parked on the server (`vcs_shelves`). */
+export interface VcsShelve {
+  /** The number in `sh:12`. */
+  id: number
+  comment: string
+  owner: string
+  /** Unix ms. */
+  time: number
+  /** Branch of the changeset it was shelved from, when known. */
+  branch: string | null
+}
+
 /* ---------- pull requests and issues (linked to chats, read through the GitHub CLI) ---------- */
 
 export interface GhLabel {
@@ -766,6 +778,17 @@ export interface Commands {
    * that is detached. Git only.
    */
   git_ahead: [{ path: string; base: string | null }, GitAhead]
+  /**
+   * Shelves, Unity VCS only (a git folder is refused: git has stash). `vcs_shelves` lists the
+   * signed-in user's, newest first. `vcs_shelve` takes what the next checkin would (the staged
+   * files, or every change when none are; private files can't be shelved and stay) and returns a
+   * result line; with `undo` the workspace drops those changes afterwards. Apply brings one back as
+   * pending changes and keeps it; delete removes it from the server for good.
+   */
+  vcs_shelves: [{ path: string }, VcsShelve[]]
+  vcs_shelve: [{ path: string; comment: string; undo: boolean }, string]
+  vcs_shelve_apply: [{ path: string; id: number }, string]
+  vcs_shelve_delete: [{ path: string; id: number }, void]
 
   /** One folder of a project (`dir` "" for the top). */
   /**

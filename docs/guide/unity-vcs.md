@@ -23,6 +23,7 @@ When you open a folder, Mango walks up from it looking for a `.git` or a `.plast
 | Update | **Update** brings the workspace to the newest changeset on its branch (`cm update`), with a count of newer changesets |
 | History | Recent changesets of the branch |
 | Branches | Switch, create, rename and delete, from the branch popup |
+| Shelves | Shelve pending changes, apply a shelve back, delete one, from the **Shelves** section of the Changes view |
 
 ## No staging area
 
@@ -41,6 +42,19 @@ Unity VCS branches are paths from the root, such as `/main` or `/main/task-12`, 
 - **Switch** keeps your pending changes: `cm` shelves and reapplies them instead of stopping at a prompt.
 - **Rename** keeps the branch under its parent; only the last part of the name changes.
 - **Delete** removes the branch from the repository for everyone. Unity VCS only deletes a branch that has no changesets and no child branches.
+
+## Shelves
+
+A shelve (`sh:12`) parks pending changes on the server so you can bring them back later, the way git's stash does. The **Shelves** section of the Changes view lists your own shelves, newest first, with the comment, the branch they were shelved from and when.
+
+- **Shelve changes**: the archive button on the Shelves header, or **Shelve changes…** in the menu beside **Check in** (which starts from the checkin comment you typed). Give it a comment, then choose:
+  - **Shelve and undo** (the default): the changes go to the shelve and are undone in the workspace, so it is clean, for example before you switch branch.
+  - **Shelve**: switch off "Undo them in the workspace" to keep working on the changes after shelving them.
+- A shelve takes what **Check in** would: the staged files, or every pending change when nothing is staged. Private files (new files not under version control yet) can't be shelved; they stay in the workspace, and the form and the result line say how many.
+- **Apply** (hover a shelve) brings its changes back into the workspace as pending changes. The shelve stays on the server, so you can apply it again or delete it yourself. If the same files have pending changes, Unity VCS reports a conflict: check in or undo those first.
+- **Delete** asks first (two steps, like discard) and removes the shelve from the server for good.
+
+Under the hood these run `cm shelveset create … --all --dependencies -c=<comment>`, `cm undo` for the undo step, `cm shelveset apply sh:<n>`, `cm shelveset delete sh:<n>`, and `cm find shelve "where owner='me'"`.
 
 ## What is not there
 
