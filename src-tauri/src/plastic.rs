@@ -584,6 +584,7 @@ pub(crate) fn status(root: &Path) -> Result<GitStatus, String> {
         repository: info.repository.clone(),
         is_repo: true,
         root: Some(root.to_string_lossy().into_owned()),
+        main_root: None,
         branch: info.branch.clone(),
         head: info.changeset.map(|c| c.to_string()),
         upstream: None,

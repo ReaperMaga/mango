@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::envs::ssh::{self, Mode};
-use crate::envs::EnvHost;
+use crate::envs::{self, EnvHost};
 
 /// Local commands finish in milliseconds; this only catches a stuck process.
 pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
@@ -62,12 +62,32 @@ pub struct GitStatus {
     pub repository: Option<String>,
     pub is_repo: bool,
     pub root: Option<String>,
+    /// Set when the folder is a linked worktree: the root of the repository's main
+    /// working tree, in the same form as `root`.
+    pub main_root: Option<String>,
     pub branch: Option<String>,
     pub head: Option<String>,
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
     pub files: Vec<GitFile>,
+}
+
+/// One working tree of a repository, from `git worktree list`.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorktree {
+    /// Its folder: as git prints it on this computer, an `env://` path for a remote project.
+    pub path: String,
+    /// Checked-out branch; None when detached.
+    pub branch: Option<String>,
+    /// Short hash of its HEAD; None when unborn.
+    pub head: Option<String>,
+    pub is_main: bool,
+    pub is_current: bool,
+    pub locked: bool,
+    /// Its folder is gone; `git worktree prune` would drop it.
+    pub prunable: bool,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -991,18 +1011,29 @@ pub(crate) fn existing_dir(path: &str) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// The work tree containing `dir` and the short hash of its HEAD (when it
-/// has a commit). `None` when `dir` is not inside a work tree.
-fn locate(dir: &At) -> Result<Option<(String, Option<String>)>, String> {
-    located(&locate_cmd(dir).run()?)
+/// Where a folder sits in its repository, from one `git rev-parse`.
+struct Located {
+    /// The work tree root, as git prints it.
+    root: String,
+    /// Short hash of HEAD; None on an unborn branch.
+    head: Option<String>,
+    /// For a linked worktree, the main working tree's root.
+    main_root: Option<String>,
+}
+
+/// The work tree containing `dir`, the short hash of its HEAD (when it has a
+/// commit) and, for a linked worktree, the main one's root. `None` when `dir`
+/// is not inside a work tree.
+fn locate(dir: &At) -> Result<Option<Located>, String> {
+    located(dir, &locate_cmd(dir).run()?)
 }
 
 fn locate_cmd(dir: &At) -> Git<'_> {
-    git(dir).read_only().args(["rev-parse", "--show-toplevel", "--short", "HEAD"])
+    git(dir).read_only().args(["rev-parse", "--show-toplevel", "--git-common-dir", "--git-dir", "--short", "HEAD"])
 }
 
-/// What [`locate_cmd`] found.
-fn located(out: &Output) -> Result<Option<(String, Option<String>)>, String> {
+/// What [`locate_cmd`] found, run in `dir`.
+fn located(dir: &At, out: &Output) -> Result<Option<Located>, String> {
     let text = out.text();
     let mut lines = text.lines();
     let Some(root) = lines.next().filter(|l| !l.is_empty()) else {
@@ -1013,12 +1044,82 @@ fn located(out: &Output) -> Result<Option<(String, Option<String>)>, String> {
         }
         return Ok(None);
     };
-    // On an unborn branch the command fails after printing the root.
+    let (common, git_dir) = (lines.next().unwrap_or_default(), lines.next().unwrap_or_default());
+    // On an unborn branch the command fails after printing the paths.
     let head = lines
         .next()
         .filter(|h| out.ok() && !h.is_empty() && h.bytes().all(|b| b.is_ascii_hexdigit()))
         .map(str::to_string);
-    Ok(Some((root.to_string(), head)))
+    let cwd = match dir {
+        At::Local(p) => p.to_string_lossy().into_owned(),
+        At::Env(e) => e.dir.clone(),
+    };
+    Ok(Some(Located { root: root.to_string(), head, main_root: main_root_of(&cwd, common, git_dir) }))
+}
+
+/// Whether a path git printed is absolute (`/x`, `C:/x`, `\\server\x`).
+fn is_absolute_path(p: &str) -> bool {
+    let b = p.as_bytes();
+    p.starts_with(['/', '\\']) || (b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && matches!(b[2], b'/' | b'\\'))
+}
+
+/// `p` made absolute against `cwd` (when relative) with `.` and `..` folded away,
+/// forward slashes throughout. Purely textual: nothing is looked up on disk.
+fn resolve_path(cwd: &str, p: &str) -> String {
+    let joined = if is_absolute_path(p) { p.replace('\\', "/") } else { format!("{}/{}", cwd.replace('\\', "/"), p.replace('\\', "/")) };
+    let mut prefix = String::new();
+    let mut rest = joined.as_str();
+    if let Some(r) = rest.strip_prefix("//") {
+        prefix.push_str("//");
+        rest = r;
+    } else if let Some(r) = rest.strip_prefix('/') {
+        prefix.push('/');
+        rest = r;
+    } else if rest.len() >= 2 && rest.as_bytes()[1] == b':' {
+        prefix.push_str(&rest[..2]);
+        prefix.push('/');
+        rest = rest[2..].trim_start_matches('/');
+    }
+    let mut parts: Vec<&str> = Vec::new();
+    for part in rest.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            _ => parts.push(part),
+        }
+    }
+    prefix + &parts.join("/")
+}
+
+/// The parent folder of a `/`-separated path; None at the top.
+fn parent_path(p: &str) -> Option<&str> {
+    let p = p.trim_end_matches('/');
+    let at = p.rfind('/')?;
+    let parent = &p[..at];
+    // Keep the root itself: "/x" -> "/", "C:/x" -> "C:/".
+    if parent.is_empty() || parent.ends_with(':') {
+        return Some(&p[..=at]);
+    }
+    Some(parent)
+}
+
+/// The main working tree's root when `git_dir` is a linked worktree's (git keeps those in
+/// `<common dir>/worktrees/<name>`). None for the main one, and when the main one has no
+/// working tree of its own (a bare repository) or keeps its `.git` elsewhere.
+fn main_root_of(cwd: &str, common: &str, git_dir: &str) -> Option<String> {
+    if common.is_empty() || git_dir.is_empty() {
+        return None;
+    }
+    let common = resolve_path(cwd, common);
+    let git_dir = resolve_path(cwd, git_dir);
+    let name = git_dir.strip_prefix(&format!("{}/worktrees/", common.trim_end_matches('/')))?;
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    let (parent, last) = common.rsplit_once('/')?;
+    (last == ".git" && !parent.is_empty() && !parent.ends_with(':')).then(|| parent.to_string())
 }
 
 /// Repository root for a command that needs one.
@@ -1029,9 +1130,9 @@ fn require_root(at: &At) -> Result<At, String> {
         return Ok(at.moved(root));
     }
     match locate(at)? {
-        Some((root, _)) => {
-            remember_root(at, Some(&root));
-            Ok(at.moved(root))
+        Some(found) => {
+            remember_root(at, Some(&found.root));
+            Ok(at.moved(found.root))
         }
         None => Err(format!("{} is not inside a git repository", at.shown())),
     }
@@ -1086,9 +1187,9 @@ pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
     // Both at once: one round trip to an environment. Outside a work tree status just fails.
     let [where_, status]: [Output; 2] =
         run_all(vec![locate_cmd(at), status_cmd(at, true)])?.try_into().map_err(|_| "git gave no answer")?;
-    let found = located(&where_)?;
-    remember_root(at, found.as_ref().map(|(root, _)| root.as_str()));
-    let Some((root, head)) = found else {
+    let found = located(at, &where_)?;
+    remember_root(at, found.as_ref().map(|f| f.root.as_str()));
+    let Some(Located { root, head, main_root }) = found else {
         return Ok(GitStatus::default());
     };
     if !status.ok() {
@@ -1100,6 +1201,7 @@ pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
         repository: None,
         is_repo: true,
         root: Some(root),
+        main_root,
         branch: parsed.branch,
         head: match (&parsed.oid, head) {
             (None, _) => None,
@@ -1972,6 +2074,255 @@ pub(crate) fn branch_delete(at: &At, branch: &str, force: bool) -> Result<(), St
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Worktrees
+// ---------------------------------------------------------------------------
+
+/// One entry of `git worktree list --porcelain`, as git printed it.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct RawWorktree {
+    pub path: String,
+    /// Full hash; None for an unborn branch.
+    pub head: Option<String>,
+    pub branch: Option<String>,
+    pub bare: bool,
+    pub locked: bool,
+    pub prunable: bool,
+}
+
+/// Parse `git worktree list --porcelain`, with `-z` (`sep` NUL) or without (`sep` newline):
+/// attribute lines, each entry ended by an empty one. The main working tree comes first.
+pub(crate) fn parse_worktrees(text: &str, sep: char) -> Vec<RawWorktree> {
+    let mut out = Vec::new();
+    let mut cur: Option<RawWorktree> = None;
+    for line in text.split(sep) {
+        let line = if sep == '\n' { line.trim_end_matches('\r') } else { line };
+        let (key, value) = line.split_once(' ').unwrap_or((line, ""));
+        match key {
+            "" => out.extend(cur.take()),
+            "worktree" => {
+                out.extend(cur.take());
+                cur = Some(RawWorktree { path: value.to_string(), ..Default::default() });
+            }
+            _ => {
+                let Some(w) = cur.as_mut() else { continue };
+                match key {
+                    "HEAD" => w.head = Some(value.to_string()).filter(|h| !h.is_empty() && h.bytes().any(|b| b != b'0')),
+                    "branch" => w.branch = Some(value.strip_prefix("refs/heads/").unwrap_or(value).to_string()),
+                    "bare" => w.bare = true,
+                    "locked" => w.locked = true,
+                    "prunable" => w.prunable = true,
+                    _ => {}
+                }
+            }
+        }
+    }
+    out.extend(cur);
+    out
+}
+
+/// The repository's worktrees, main first. Git before 2.36 has no `-z` here; it gets the
+/// line form (only a folder name with a line break in it would read wrong).
+fn worktree_list(root: &At) -> Result<Vec<RawWorktree>, String> {
+    let out = git(root).read_only().args(["worktree", "list", "--porcelain", "-z"]).run()?;
+    if out.ok() {
+        return Ok(parse_worktrees(&out.text(), '\0'));
+    }
+    if !lossy(&out.stderr).contains("unknown switch") {
+        return Err(out.error("git worktree list"));
+    }
+    let out = git(root).read_only().args(["worktree", "list", "--porcelain"]).run_ok("git worktree list")?;
+    Ok(parse_worktrees(&out.text(), '\n'))
+}
+
+/// A folder path reduced for comparing: the real path when it exists on this computer,
+/// forward slashes, no trailing one. Remote folders compare as given.
+fn folder_key(at: &At, dir: &str) -> String {
+    let dir = match at {
+        At::Local(_) => fs::canonicalize(dir).map_or_else(|_| dir.to_string(), |p| p.to_string_lossy().into_owned()),
+        At::Env(_) => dir.to_string(),
+    };
+    let dir = dir.replace('\\', "/");
+    let trimmed = dir.trim_end_matches('/');
+    let key = if trimmed.is_empty() { "/" } else { trimmed };
+    if cfg!(windows) { key.to_lowercase() } else { key.to_string() }
+}
+
+/// A worktree folder in the form the frontend uses: as is on this computer,
+/// `env://<hostId>/<instance>/<dir>` inside an environment (see `envs::parse_env_path`).
+fn worktree_path(at: &At, dir: &str) -> String {
+    match at {
+        At::Local(_) => dir.to_string(),
+        At::Env(e) => {
+            let dir = dir.trim_end_matches('/');
+            format!("env://{}/{}{}", e.host.id, e.instance, if dir.is_empty() { "/" } else { dir })
+        }
+    }
+}
+
+fn to_worktree(at: &At, current: &str, raw: RawWorktree, is_main: bool) -> GitWorktree {
+    GitWorktree {
+        is_current: folder_key(at, &raw.path) == current,
+        path: worktree_path(at, &raw.path),
+        branch: raw.branch,
+        head: raw.head.map(|h| h.chars().take(7).collect()),
+        is_main,
+        locked: raw.locked,
+        prunable: raw.prunable,
+    }
+}
+
+/// The worktrees of the repository `at` is in: the main one first, bare entries left out.
+pub(crate) fn worktrees(at: &At) -> Result<Vec<GitWorktree>, String> {
+    let root = require_root(at)?;
+    let current = folder_key(&root, &root_dir(&root));
+    Ok(worktree_list(&root)?
+        .into_iter()
+        .enumerate()
+        .filter(|(_, w)| !w.bare)
+        .map(|(i, w)| to_worktree(&root, &current, w, i == 0))
+        .collect())
+}
+
+/// The folder an `At` points at, as a string.
+fn root_dir(at: &At) -> String {
+    match at {
+        At::Local(p) => p.to_string_lossy().into_owned(),
+        At::Env(e) => e.dir.clone(),
+    }
+}
+
+/// Where a new worktree for `branch` goes: `<parent>/<repo>.worktrees/<branch, '/' as '-'>`
+/// beside the main working tree.
+pub(crate) fn worktree_folder(main_root: &str, branch: &str) -> Result<String, String> {
+    let main = main_root.replace('\\', "/");
+    let main = main.trim_end_matches('/');
+    let parent = parent_path(main).ok_or_else(|| format!("{main_root} has no parent folder to put worktrees in"))?;
+    let name = &main[main.rfind('/').map_or(0, |i| i + 1)..];
+    if name.is_empty() || name.ends_with(':') {
+        return Err(format!("{main_root} has no parent folder to put worktrees in"));
+    }
+    let leaf = branch.replace(['/', '\\'], "-");
+    Ok(format!("{}/{name}.worktrees/{leaf}", parent.trim_end_matches('/')))
+}
+
+/// Add a linked worktree for `branch` beside the repository (see [`worktree_folder`]).
+/// `create`: a new branch from `from` (HEAD when None); otherwise an existing local
+/// branch that no other worktree has checked out.
+pub(crate) fn worktree_add(at: &At, branch: &str, from: Option<&str>, create: bool) -> Result<GitWorktree, String> {
+    let root = require_root(at)?;
+    let branch = safe_ref(branch)?;
+    let list = worktree_list(&root)?;
+    let main = list.first().filter(|w| !w.bare).ok_or("This repository has no main working tree to put worktrees beside")?;
+    let folder = worktree_folder(&main.path, branch)?;
+    if let At::Local(_) = root {
+        if Path::new(&folder).exists() {
+            return Err(format!("{folder} already exists; pick another branch name"));
+        }
+    }
+    let local_branch = git(&root)
+        .read_only()
+        .args(["show-ref", "--verify", "--quiet"])
+        .arg(format!("refs/heads/{branch}"))
+        .run()?
+        .ok();
+    let mut cmd = git(&root).args(["worktree", "add"]);
+    if create {
+        valid_new_branch(&root, branch)?;
+        if local_branch {
+            return Err(format!("A branch named \"{branch}\" already exists"));
+        }
+        cmd = cmd.arg("-b").arg(branch).arg("--").arg(&folder);
+        if let Some(from) = from.map(str::trim).filter(|f| !f.is_empty()) {
+            cmd = cmd.arg(safe_ref(from)?);
+        }
+    } else {
+        if !local_branch {
+            return Err(format!("There is no local branch named \"{branch}\""));
+        }
+        if let Some(other) = list.iter().find(|w| w.branch.as_deref() == Some(branch)) {
+            return Err(format!("{branch} is already checked out in {}", worktree_path(&root, &other.path)));
+        }
+        cmd = cmd.arg("--").arg(&folder).arg(branch);
+    }
+    let out = cmd.run()?;
+    if !out.ok() {
+        let detail = out.error("git worktree add");
+        if detail.contains("already exists") || detail.contains("already registered") {
+            return Err(format!("{} already exists; pick another branch name", worktree_path(&root, &folder)));
+        }
+        if let Some(line) = detail.lines().find(|l| l.contains("is already used by worktree at") || l.contains("is already checked out at")) {
+            return Err(format!("{branch} is already checked out in another worktree ({})", line.trim_start_matches("fatal: ")));
+        }
+        return Err(detail);
+    }
+    let current = folder_key(&root, &root_dir(&root));
+    worktree_list(&root)?
+        .into_iter()
+        .enumerate()
+        .find(|(_, w)| !w.bare && w.branch.as_deref() == Some(branch))
+        .map(|(i, w)| to_worktree(&root, &current, w, i == 0))
+        .ok_or_else(|| format!("git added the worktree, but it is not in `git worktree list`; look in {folder}"))
+}
+
+/// Remove the linked worktree whose folder is `worktree` (same form as [`worktrees`] gives);
+/// its branch is kept. Refuses the main one, and one with uncommitted or untracked
+/// changes unless `force`. A worktree whose folder is already gone is only pruned.
+pub(crate) fn worktree_remove(at: &At, worktree: &str, force: bool) -> Result<(), String> {
+    let root = require_root(at)?;
+    let dir = match (&root, envs::parse_env_path(worktree)) {
+        (At::Local(_), None) => worktree.trim().to_string(),
+        (At::Env(e), Some(Ok(folder))) if folder.host_id == e.host.id && folder.instance == e.instance => folder.dir,
+        (_, Some(Err(e))) => return Err(e),
+        _ => return Err(format!("{worktree} is not a worktree of this repository")),
+    };
+    if dir.is_empty() {
+        return Err("No worktree folder given".into());
+    }
+    let key = folder_key(&root, &dir);
+    let list = worktree_list(&root)?;
+    let (index, entry) = list
+        .iter()
+        .enumerate()
+        .find(|(_, w)| folder_key(&root, &w.path) == key)
+        .ok_or_else(|| format!("{worktree} is not a worktree of this repository"))?;
+    if index == 0 {
+        return Err("The main worktree can't be removed; it is the repository itself".into());
+    }
+    // Run from the main working tree: never from inside the folder being removed.
+    let main = root.moved(list[0].path.clone());
+    let prune = || git(&main).args(["worktree", "prune"]).run_ok("git worktree prune").map(|_| ());
+    if entry.prunable {
+        return prune();
+    }
+    let name = entry.branch.clone().unwrap_or_else(|| "This worktree".into());
+    let place = root.moved(entry.path.clone());
+    if !force {
+        // Its folder may be gone without git knowing yet (older git, or a lock): let git say.
+        if let Ok(status) = git(&place).read_only().args(["status", "--porcelain", "-z"]).run() {
+            if status.ok() && !status.stdout.is_empty() {
+                return Err(format!("{name} has uncommitted changes; commit or discard them first"));
+            }
+        }
+    }
+    let mut cmd = git(&main).args(["worktree", "remove"]);
+    if force {
+        cmd = cmd.arg("--force");
+    }
+    let out = cmd.arg("--").arg(&entry.path).run()?;
+    if !out.ok() {
+        let detail = out.error("git worktree remove");
+        if detail.contains("contains modified or untracked files") {
+            return Err(format!("{name} has uncommitted changes; commit or discard them first"));
+        }
+        if detail.contains("locked working tree") {
+            return Err(format!("{name} is locked (`git worktree lock`); unlock it first with `git worktree unlock`"));
+        }
+        return Err(detail);
+    }
+    prune()
+}
+
 pub(crate) fn init(at: &At) -> Result<(), String> {
     at.check()?;
     if locate(at)?.is_some() {
@@ -2420,6 +2771,55 @@ mod tests {
         );
     }
 
+    #[test]
+    fn parses_worktree_lists() {
+        let z = "worktree /r/app\0HEAD 1234567890abcdef1234567890abcdef12345678\0branch refs/heads/main\0\0\
+worktree /r/app.worktrees/feat-x\0HEAD 0000000000000000000000000000000000000000\0branch refs/heads/feat/x\0locked\0\0\
+worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0detached\0locked because\0prunable gitdir file points to non-existent location\0\0";
+        let list = parse_worktrees(z, '\0');
+        assert_eq!(list.len(), 3);
+        assert_eq!(list[0], RawWorktree {
+            path: "/r/app".into(),
+            head: Some("1234567890abcdef1234567890abcdef12345678".into()),
+            branch: Some("main".into()),
+            ..Default::default()
+        });
+        assert_eq!((list[1].head.as_deref(), list[1].branch.as_deref(), list[1].locked), (None, Some("feat/x"), true));
+        assert_eq!((list[2].path.as_str(), list[2].branch.as_deref(), list[2].locked, list[2].prunable), ("/r/app.worktrees/d y", None, true, true));
+
+        // Older git: lines, and a bare main entry.
+        let lines = "worktree /r/app.git\r\nbare\r\n\r\nworktree /r/w\r\nHEAD 1234567890abcdef1234567890abcdef12345678\r\nbranch refs/heads/w\r\n";
+        let list = parse_worktrees(lines, '\n');
+        assert_eq!(list.len(), 2);
+        assert!(list[0].bare && !list[1].bare);
+        assert_eq!(list[1].branch.as_deref(), Some("w"));
+        assert!(parse_worktrees("", '\0').is_empty());
+    }
+
+    #[test]
+    fn worktree_folders_and_main_roots() {
+        assert_eq!(worktree_folder("/home/me/shop", "feat/new-ui").unwrap(), "/home/me/shop.worktrees/feat-new-ui");
+        assert_eq!(worktree_folder("/home/me/shop/", "fix").unwrap(), "/home/me/shop.worktrees/fix");
+        assert_eq!(worktree_folder("C:/Users/me/shop", "a/b/c").unwrap(), "C:/Users/me/shop.worktrees/a-b-c");
+        assert_eq!(worktree_folder(r"C:\Users\me\shop", "x").unwrap(), "C:/Users/me/shop.worktrees/x");
+        assert_eq!(worktree_folder("/shop", "x").unwrap(), "/shop.worktrees/x");
+        assert!(worktree_folder("/", "x").is_err());
+
+        assert_eq!(resolve_path("/a/b/sub", "../.git"), "/a/b/.git");
+        assert_eq!(resolve_path(r"C:\a\sub", "../.git"), "C:/a/.git");
+        assert_eq!(resolve_path("/x", "/a/./b/../c/"), "/a/c");
+        // Main working tree (from a subfolder: a relative common dir).
+        assert_eq!(main_root_of("/r/app/sub", "../.git", "/r/app/.git"), None);
+        assert_eq!(main_root_of("/r/app", ".git", ".git"), None);
+        // A main folder that happens to be called "worktrees".
+        assert_eq!(main_root_of("/r/worktrees", ".git", ".git"), None);
+        // Linked.
+        assert_eq!(main_root_of("/r/app.worktrees/x/s", "/r/app/.git", "/r/app/.git/worktrees/x").as_deref(), Some("/r/app"));
+        assert_eq!(main_root_of("C:/r/w", "C:/r/app/.git", "C:/r/app/.git/worktrees/w").as_deref(), Some("C:/r/app"));
+        // A bare repository's worktree has no main working tree.
+        assert_eq!(main_root_of("/r/w", "/r/app.git", "/r/app.git/worktrees/w"), None);
+    }
+
     // -- against a real repository ------------------------------------------
 
     struct Scratch(PathBuf);
@@ -2477,6 +2877,76 @@ mod tests {
 
     fn have_git() -> bool {
         git(&At::local(std::env::temp_dir())).arg("--version").run().map(|o| o.ok()).unwrap_or(false)
+    }
+
+    #[test]
+    fn worktrees_add_list_and_remove() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        // Worktrees land beside the repository; clean them up with it.
+        struct Gone(PathBuf);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let beside = Gone(PathBuf::from(format!("{}.worktrees", s.path())));
+        s.write("a.txt", "base\n");
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+        let main_branch = status_of(&s.at()).unwrap().branch.unwrap();
+        assert_eq!(status_of(&s.at()).unwrap().main_root, None);
+
+        let only = worktrees(&s.at()).unwrap();
+        assert_eq!(only.len(), 1);
+        assert!(only[0].is_main && only[0].is_current);
+        assert_eq!(only[0].path, s.path());
+
+        // A new branch, in a folder named after it.
+        let added = worktree_add(&s.at(), "feat/side", None, true).unwrap();
+        let folder = beside.0.join("feat-side");
+        assert_eq!(PathBuf::from(&added.path), folder);
+        assert_eq!(added.branch.as_deref(), Some("feat/side"));
+        assert_eq!(added.head.as_ref().map(String::len), Some(7));
+        assert!(!added.is_main && !added.is_current && !added.locked && !added.prunable);
+        assert!(worktree_add(&s.at(), "feat/side", None, true).unwrap_err().contains("already exists"));
+        assert!(worktree_add(&s.at(), &main_branch, None, false).unwrap_err().contains("already checked out"));
+        assert!(worktree_add(&s.at(), "nope", None, false).unwrap_err().contains("no local branch"));
+
+        // Seen from inside the linked one (a subfolder, even).
+        let inside = At::local(folder.join("sub"));
+        fs::create_dir_all(folder.join("sub")).unwrap();
+        let status = status_of(&inside).unwrap();
+        assert_eq!(status.main_root.as_deref(), Some(s.path()));
+        assert_eq!(status.branch.as_deref(), Some("feat/side"));
+        let list = worktrees(&inside).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list[0].is_main && !list[0].is_current);
+        assert!(!list[1].is_main && list[1].is_current);
+
+        // An existing branch.
+        checkout(&s.at(), "other", true).unwrap();
+        checkout(&s.at(), &main_branch, false).unwrap();
+        let other = worktree_add(&s.at(), "other", None, false).unwrap();
+        assert_eq!(PathBuf::from(&other.path), beside.0.join("other"));
+
+        // Dirty: refused unless forced; the main one never.
+        fs::write(folder.join("new.txt"), "x").unwrap();
+        let err = worktree_remove(&s.at(), &added.path, false).unwrap_err();
+        assert_eq!(err, "feat/side has uncommitted changes; commit or discard them first");
+        assert!(worktree_remove(&s.at(), s.path(), true).unwrap_err().contains("main worktree"));
+        assert!(worktree_remove(&s.at(), "/nowhere/at/all", true).unwrap_err().contains("not a worktree"));
+        worktree_remove(&s.at(), &added.path, true).unwrap();
+        assert!(!folder.exists());
+        // The branch stays.
+        assert!(branches(&s.at()).unwrap().local.contains(&"feat/side".to_string()));
+
+        // A folder that is already gone is just pruned.
+        fs::remove_dir_all(beside.0.join("other")).unwrap();
+        worktree_remove(&s.at(), &other.path, false).unwrap();
+        assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
     }
 
     #[test]

@@ -20,7 +20,8 @@ const threads = useThreads()
 const files = useFiles()
 const git = useGit()
 
-const path = computed(() => ws.activeProjectPath)
+/** The working copy in view: the active chat's worktree, or the project. */
+const path = computed(() => threads.workdir ?? ws.activeProjectPath)
 const tree = computed(() => files.tree(path.value))
 
 watch(path, (p) => { if (p) files.ensureTree(p) }, { immediate: true })
