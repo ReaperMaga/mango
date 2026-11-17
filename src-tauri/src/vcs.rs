@@ -9,7 +9,7 @@ use tauri::AppHandle;
 
 use crate::envs::{self, hosts};
 use crate::git::{self, blocking, At, EnvAt, GitAhead, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
-use crate::plastic;
+use crate::plastic::{self, MergePreview};
 
 /// Where a folder's version control lives.
 #[derive(Debug, Clone)]
@@ -154,9 +154,18 @@ pub async fn git_checkout_remote(app: AppHandle, path: String, branch: String) -
     dispatch!(app, path, git(at) => git::checkout_remote(&at, &branch), plastic(_root) => plastic::unsupported("Remote branches"))
 }
 
+/// Git merge, or a Unity VCS merge into the workspace (pending changes to check in).
 #[tauri::command]
 pub async fn git_merge(app: AppHandle, path: String, branch: String) -> Result<String, String> {
-    dispatch!(app, path, git(at) => git::merge(&at, &branch), plastic(_root) => plastic::unsupported("Merging from Mango"))
+    dispatch!(app, path, git(at) => git::merge(&at, &branch), plastic(root) => plastic::merge(&root, &branch))
+}
+
+/// What merging `branch` would change, before anything does. Unity VCS only:
+/// git merges straight away and stops on its own conflicts.
+#[tauri::command]
+pub async fn git_merge_preview(app: AppHandle, path: String, branch: String) -> Result<MergePreview, String> {
+    dispatch!(app, path, git(_at) => Err("Merge previews are for Unity VCS workspaces.".into()),
+        plastic(root) => plastic::merge_preview(&root, &branch))
 }
 
 #[tauri::command]

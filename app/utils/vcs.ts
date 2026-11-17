@@ -24,8 +24,15 @@ export interface VcsTerms {
   remotes: boolean
   /** Amend the last commit. */
   amend: boolean
-  /** Merge and rebase from the branch popup. */
-  mergeRebase: boolean
+  /** Merge another branch into the current one from the branch popup. */
+  merge: boolean
+  /**
+   * Merge asks first, showing what it brings and any conflicts (`git_merge_preview`). Unity VCS: the
+   * result is pending changes to check in, and conflicts are left to the Unity VCS app.
+   */
+  mergePreview: boolean
+  /** Rebase the current branch onto another from the branch popup. */
+  rebase: boolean
   /** Branch names are paths from the root (`/main/task`), and a new one is a child of its base. */
   pathBranches: boolean
   /** Periodic refresh. Unity VCS scans the whole workspace, which can take seconds on a big project. */
@@ -35,11 +42,11 @@ export interface VcsTerms {
 const TERMS: Record<VcsKind, VcsTerms> = {
   git: {
     name: 'git', commit: 'Commit', commitAll: 'Commit all', committed: 'Committed', message: 'Commit message', unit: 'commit',
-    pull: 'Pull', remotes: true, amend: true, mergeRebase: true, pathBranches: false, pollMs: 4000,
+    pull: 'Pull', remotes: true, amend: true, merge: true, mergePreview: false, rebase: true, pathBranches: false, pollMs: 4000,
   },
   plastic: {
     name: 'Unity VCS', commit: 'Check in', commitAll: 'Check in all', committed: 'Checked in', message: 'Checkin comment', unit: 'changeset',
-    pull: 'Update', remotes: false, amend: false, mergeRebase: false, pathBranches: true, pollMs: 15000,
+    pull: 'Update', remotes: false, amend: false, merge: true, mergePreview: true, rebase: false, pathBranches: true, pollMs: 15000,
   },
 }
 

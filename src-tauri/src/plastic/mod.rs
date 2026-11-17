@@ -9,6 +9,8 @@
 //!   which files the next checkin takes (nothing selected means everything);
 //! - commit is `cm checkin`, a commit is a changeset (`cs:12`);
 //! - pull is `cm update`; there is no fetch, push, rebase or remote branch;
+//! - merge is `cm merge` into the workspace (`merge.rs`): its result is
+//!   pending changes that a checkin finishes;
 //! - branches are paths such as `/main/task-12`, and a new branch is a child
 //!   of the branch it starts from.
 
@@ -17,6 +19,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
+
+mod merge;
+
+pub(crate) use merge::{merge, preview as merge_preview, MergePreview};
 
 use crate::git::{
     chunks, clean_rel, finish_diff, lossy, remove_untracked, run_process, tidy_output, GitBranchList,

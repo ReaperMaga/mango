@@ -190,6 +190,20 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/** Unity VCS: what merging a branch into the workspace would do, read before anything changes. */
+export interface MergePreview {
+  /** The branch merged from (`/main/task`). */
+  branch: string
+  /** The branch the workspace is on, which the merge goes into. */
+  into: string | null
+  /** Items the merge changes, relative to the workspace root. Empty with no conflicts: nothing to merge. */
+  files: string[]
+  /** Items changed on both branches. Mango doesn't merge these; the Unity VCS app resolves them. */
+  conflicts: string[]
+  /** Why the merge can't run from Mango right now (pending changes, not up to date). */
+  blocker: string | null
+}
+
 /* ---------- pull requests and issues (linked to chats, read through the GitHub CLI) ---------- */
 
 export interface GhLabel {
@@ -737,14 +751,20 @@ export interface Commands {
   git_branch_create: [{ path: string; name: string; from: string | null; checkout: boolean }, void]
   /** Check out a remote branch as a local tracking branch. Returns the local branch name. */
   git_checkout_remote: [{ path: string; branch: string }, string]
-  /** Merge `branch` into the current branch. Returns git's output. */
+  /**
+   * Merge `branch` into the current branch. Returns git's output.
+   * Unity VCS: merges into the workspace, leaving pending changes (picked for the checkin) that a checkin
+   * finishes; refused when the workspace has pending changes, is not up to date, or the merge has conflicts.
+   */
   git_merge: [{ path: string; branch: string }, string]
+  /** Unity VCS only: what `git_merge` would change, and whether it can run. Fails for git. */
+  git_merge_preview: [{ path: string; branch: string }, MergePreview]
   /** Rebase the current branch onto `onto`. Returns git's output. */
   git_rebase: [{ path: string; onto: string }, string]
   git_branch_rename: [{ path: string; from: string; to: string }, void]
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
-   * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
+   * Unity VCS refuses branches with changesets or children; rebase and remote checkout are git only.
    */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
   /** The repository's working trees, the main one first. Empty for Unity VCS or no repository. */
