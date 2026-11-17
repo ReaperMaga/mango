@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ChevronRight, ChevronsDownUp, File, FileBraces, FileCode, FileImage, FileText, Folder, FolderOpen, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, ChevronsDownUp, Folder, FolderOpen, RefreshCw } from 'lucide-vue-next'
+import { fileIcon } from '~/utils/fileIcons'
 import type { FsEntry } from '~/types/ipc'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
@@ -171,17 +172,12 @@ function onKey(e: KeyboardEvent) {
 
 /* ---------- icons ---------- */
 
-const CODE = /\.(ts|tsx|js|jsx|mjs|cjs|vue|svelte|rs|go|py|rb|java|kt|cs|c|h|cpp|hpp|swift|php|sh|ps1|lua|sql|html|css|scss|less)$/i
-const DATA = /\.(json|jsonc|json5|yaml|yml|toml|lock|xml)$/i
-const IMAGE = /\.(png|jpe?g|gif|webp|svg|ico|bmp|avif)$/i
-const TEXT = /\.(md|mdx|txt|rst|log)$/i
 function iconFor(entry: FsEntry, open: boolean) {
-  if (entry.isDir) return open ? FolderOpen : Folder
-  if (CODE.test(entry.name)) return FileCode
-  if (DATA.test(entry.name)) return FileBraces
-  if (IMAGE.test(entry.name)) return FileImage
-  if (TEXT.test(entry.name)) return FileText
-  return File
+  return entry.isDir ? open ? FolderOpen : Folder : fileIcon(entry.name).icon
+}
+/** A file's language tint; folders and ignored files keep the plain ink. */
+function tintFor(entry: FsEntry, ignored: boolean) {
+  return entry.isDir || ignored ? undefined : { color: fileIcon(entry.name).tint }
 }
 </script>
 
@@ -235,7 +231,7 @@ function iconFor(entry: FsEntry, open: boolean) {
         >
           <ChevronRight v-if="row.entry.isDir" class="fp__caret" :class="{ 'is-open': row.open }" aria-hidden="true" />
           <span v-else class="fp__caret" aria-hidden="true" />
-          <component :is="iconFor(row.entry, row.open)" class="fp__icon" aria-hidden="true" />
+          <component :is="iconFor(row.entry, row.open)" class="fp__icon" :style="tintFor(row.entry, !!row.ignored)" aria-hidden="true" />
           <span class="fp__name">{{ row.entry.name }}</span>
           <span v-if="row.kind && row.entry.isDir" class="fp__dot" aria-hidden="true" />
           <span v-else-if="row.kind" class="fp__letter" aria-hidden="true">{{ KIND_LETTER[row.kind] }}</span>
