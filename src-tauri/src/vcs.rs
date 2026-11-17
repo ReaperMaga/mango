@@ -1,6 +1,6 @@
 //! The source-control commands behind the Changes view, diffs and branch
 //! popup. Each one works out which version control the folder is under and
-//! hands the call to git (`git.rs`) or Unity VCS (`plastic.rs`), so the
+//! hands the call to git (`git.rs`) or Unity VCS (`plastic/`), so the
 //! frontend makes the same calls and gets the same shapes either way.
 
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use tauri::AppHandle;
 
 use crate::envs::{self, hosts};
 use crate::git::{self, blocking, At, EnvAt, GitAhead, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
-use crate::plastic;
+use crate::plastic::{self, MergePreview};
 
 /// Where a folder's version control lives.
 #[derive(Debug, Clone)]
@@ -162,9 +162,18 @@ pub async fn git_checkout_remote(app: AppHandle, path: String, branch: String) -
     dispatch!(app, path, git(at) => git::checkout_remote(&at, &branch), plastic(_root) => plastic::unsupported("Remote branches"))
 }
 
+/// Git merge, or a Unity VCS merge into the workspace (pending changes to check in).
 #[tauri::command]
 pub async fn git_merge(app: AppHandle, path: String, branch: String) -> Result<String, String> {
-    dispatch!(app, path, git(at) => git::merge(&at, &branch), plastic(_root) => plastic::unsupported("Merging from Mango"))
+    dispatch!(app, path, git(at) => git::merge(&at, &branch), plastic(root) => plastic::merge(&root, &branch))
+}
+
+/// What merging `branch` would change, before anything does. Unity VCS only:
+/// git merges straight away and stops on its own conflicts.
+#[tauri::command]
+pub async fn git_merge_preview(app: AppHandle, path: String, branch: String) -> Result<MergePreview, String> {
+    dispatch!(app, path, git(_at) => Err("Merge previews are for Unity VCS workspaces.".into()),
+        plastic(root) => plastic::merge_preview(&root, &branch))
 }
 
 #[tauri::command]
@@ -182,38 +191,62 @@ pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, for
     dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
 }
 
-const NO_PLASTIC_WORKTREES: &str = "Worktrees are a git feature; Unity Version Control workspaces don't have them.";
-
-/// The repository's worktrees, the main one first. Unity VCS has none.
+/// The repository's worktrees, the main one first. For Unity VCS: the project's workspace and
+/// the chat workspaces Mango made beside it (`plastic::workspaces`).
 #[tauri::command]
 pub async fn git_worktrees(app: AppHandle, path: String) -> Result<Vec<GitWorktree>, String> {
-    dispatch!(app, path, git(at) => git::worktrees(&at), plastic(_root) => Ok(Vec::new()))
+    dispatch!(app, path, git(at) => git::worktrees(&at), plastic(root) => plastic::workspaces::list(&root))
 }
 
 /// Add a linked worktree for `branch` beside the repository (`<parent>/<repo>.worktrees/<branch>`).
+/// Unity VCS: a new workspace of the same repository in that folder, switched to `branch`.
 #[tauri::command]
 pub async fn git_worktree_add(app: AppHandle, path: String, branch: String, from: Option<String>, create: bool) -> Result<GitWorktree, String> {
     dispatch!(app, path, git(at) => git::worktree_add(&at, &branch, from.as_deref(), create),
-        plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+        plastic(root) => plastic::workspaces::add(&root, &branch, from.as_deref(), create))
 }
 
-/// Remove the linked worktree in the folder `worktree`; its branch is kept.
+/// Remove the linked worktree (Unity VCS: the chat workspace) in the folder `worktree`; its branch is kept.
 #[tauri::command]
 pub async fn git_worktree_remove(app: AppHandle, path: String, worktree: String, force: bool) -> Result<(), String> {
-    dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+    dispatch!(app, path, git(at) => git::worktree_remove(&at, &worktree, force),
+        plastic(root) => plastic::workspaces::remove(&root, &worktree, force))
 }
 
 /// How many commits the folder's branch has that `base` doesn't. Without `base`: compared with the
 /// branch checked out in the repository's main working tree (what a linked worktree merges into).
 #[tauri::command]
 pub async fn git_ahead(app: AppHandle, path: String, base: Option<String>) -> Result<GitAhead, String> {
-    dispatch!(app, path, git(at) => git::ahead_of(&at, base.as_deref()), plastic(_root) => Err(NO_PLASTIC_WORKTREES.into()))
+    dispatch!(app, path, git(at) => git::ahead_of(&at, base.as_deref()), plastic(_root) => Err(NO_PLASTIC_AHEAD.into()))
 }
+
+const NO_PLASTIC_AHEAD: &str = "Unity VCS workspaces aren't compared with the project's branch.";
 
 /// `git init` in `path`. Does nothing when it is already under version control.
 #[tauri::command]
 pub async fn git_init(app: AppHandle, path: String) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::init(&at), plastic(_root) => Ok(()))
+}
+
+const NO_GIT_LOCKS: &str = "Locks are a Unity Version Control feature; git has no file locks.";
+
+/// Unity VCS: the locks in the workspace's repository. Empty for git.
+#[tauri::command]
+pub async fn vcs_locks(app: AppHandle, path: String) -> Result<Vec<plastic::locks::VcsLock>, String> {
+    dispatch!(app, path, git(_at) => Ok(Vec::new()), plastic(root) => plastic::locks::locks(&root))
+}
+
+/// Unity VCS: lock files by checking them out. Returns a note when the server's
+/// lock rules left some of them unlocked; empty when all are locked.
+#[tauri::command]
+pub async fn vcs_lock(app: AppHandle, path: String, files: Vec<String>) -> Result<String, String> {
+    dispatch!(app, path, git(_at) => Err(NO_GIT_LOCKS.into()), plastic(root) => plastic::locks::lock(&root, &files))
+}
+
+/// Unity VCS: release the user's own locks on files.
+#[tauri::command]
+pub async fn vcs_unlock(app: AppHandle, path: String, files: Vec<String>) -> Result<(), String> {
+    dispatch!(app, path, git(_at) => Err(NO_GIT_LOCKS.into()), plastic(root) => plastic::locks::unlock(&root, &files))
 }
 
 #[cfg(test)]

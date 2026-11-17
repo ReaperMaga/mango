@@ -5,7 +5,7 @@ import {
   GitBranchPlus, GitMerge, ListCheck, LogIn, Pencil, Search, Trash2, Waypoints,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
-import type { GitBranchList, GitLocalBranch, GitRemoteBranch } from '~/types/ipc'
+import type { GitBranchList, GitLocalBranch, GitRemoteBranch, MergePreview } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
@@ -21,8 +21,9 @@ import { resultLines, units, vcsTerms } from '~/utils/vcs'
  * Wraps its trigger (default slot) and opens under it.
  *
  * Unity VCS workspaces use it too: branches are paths (`/main/task`), a new
- * branch is a child of the one it starts from, and the git-only actions
- * (fetch, push, merge, rebase, remote branches) are left out.
+ * branch is a child of the one it starts from, merge asks first with what it
+ * brings (the result is pending changes to check in), and the git-only
+ * actions (fetch, push, rebase, remote branches) are left out.
  */
 const props = defineProps<{ path: string | null }>()
 
@@ -50,7 +51,7 @@ const messageLines = computed(() => resultLines(message.value?.text ?? ''))
 type Row = { key: string; kind: 'local'; b: GitLocalBranch } | { key: string; kind: 'remote'; b: GitRemoteBranch }
 
 /** The list, or a small form in its place. `target` is the branch the form acts on. */
-const view = ref<'list' | 'new' | 'rename' | 'delete' | 'clear'>('list')
+const view = ref<'list' | 'new' | 'rename' | 'delete' | 'clear' | 'merge'>('list')
 const target = ref<Row | null>(null)
 const nameInput = ref('')
 const nameField = ref<HTMLInputElement | null>(null)
@@ -300,9 +301,38 @@ async function checkout(row: Row) {
 const update = () => run('pull', () => call('git_pull', { path: p() }), out => out || 'Already up to date.')
 const fetchAll = () => run('fetch', () => call('git_fetch', { path: p() }), out => out || 'Fetched. Nothing new.')
 const push = () => run('push', () => call('git_push', { path: p() }), out => out || 'Pushed.')
-function merge(row: Row) {
-  closeSub(true)
-  return run('merge', () => call('git_merge', { path: p(), branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+/** Unity VCS: what the merge in the confirm would do; null while it is read. */
+const mergePlan = ref<MergePreview | null>(null)
+const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`
+
+async function merge(row: Row) {
+  if (!terms.value.mergePreview) {
+    closeSub(true)
+    return run('merge', () => call('git_merge', { path: p(), branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+  }
+  // Unity VCS: confirm first, with what the merge brings and anything that stops it.
+  closeSub()
+  target.value = row
+  view.value = 'merge'
+  mergePlan.value = null
+  message.value = null
+  const branch = row.b.name
+  try {
+    const plan = await call('git_merge_preview', { path: p(), branch })
+    if (view.value !== 'merge' || target.value?.b.name !== branch) return
+    mergePlan.value = plan
+  } catch (e) {
+    if (view.value === 'merge') message.value = { error: true, text: reason(e) }
+  }
+  await nextTick()
+  pop.value?.querySelector<HTMLElement>('[data-merge-go]:not(:disabled), [data-cancel]')?.focus()
+}
+const mergeReady = computed(() => !!mergePlan.value && !mergePlan.value.blocker && !mergePlan.value.conflicts.length && mergePlan.value.files.length > 0)
+async function confirmMerge() {
+  const row = target.value
+  if (!row || !mergeReady.value) return
+  const ok = await run('merge', () => call('git_merge', { path: p(), branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+  if (ok) await backToList()
 }
 function rebase(row: Row) {
   closeSub(true)
@@ -629,6 +659,42 @@ defineExpose({ show, close })
             </div>
           </div>
 
+          <div v-else-if="view === 'merge' && target" class="bp__form" aria-live="polite">
+            <p class="bp__form-title">Merge <span class="bp__mono">{{ target.b.name }}</span> into <span class="bp__mono">{{ current }}</span>?</p>
+            <p v-if="!mergePlan && !message" class="bp__hint bp__reading"><span class="bp__spin" aria-hidden="true" />Reading what the merge brings…</p>
+            <template v-else-if="mergePlan">
+              <p v-if="mergePlan.blocker" class="bp__note"><CircleAlert aria-hidden="true" />{{ mergePlan.blocker }}</p>
+              <template v-else-if="mergePlan.conflicts.length">
+                <p class="bp__note">
+                  <CircleAlert aria-hidden="true" />
+                  <span>
+                    {{ files(mergePlan.conflicts.length) }} changed on both branches.
+                    Mango only merges what needs no resolving by hand: merge this branch in the Unity Version Control app, then check in from here.
+                  </span>
+                </p>
+                <ul class="bp__names">
+                  <li v-for="f in mergePlan.conflicts" :key="f" class="bp__mono" :title="f">{{ f }}</li>
+                </ul>
+              </template>
+              <p v-else-if="!mergePlan.files.length" class="bp__hint">Nothing to merge: <span class="bp__mono">{{ current }}</span> already has everything from it.</p>
+              <template v-else>
+                <ul class="bp__names">
+                  <li v-for="f in mergePlan.files" :key="f" class="bp__mono" :title="f">{{ f }}</li>
+                </ul>
+                <p class="bp__hint">
+                  <span class="tabular">{{ files(mergePlan.files.length) }}</span> change.
+                  The merge lands as pending changes, picked for the next checkin: check in to finish it.
+                </p>
+              </template>
+            </template>
+            <div class="bp__form-actions">
+              <UiButton v-if="mergeReady" size="sm" variant="primary" data-merge-go :loading="busy === 'merge'" @click="confirmMerge">
+                Merge {{ files(mergePlan!.files.length) }}
+              </UiButton>
+              <UiButton size="sm" variant="ghost" data-cancel :disabled="busy === 'merge'" @click="backToList">{{ mergeReady || !mergePlan ? 'Cancel' : 'Back' }}</UiButton>
+            </div>
+          </div>
+
           <div v-else-if="view === 'clear'" class="bp__form">
             <template v-if="clearUnmerged.length">
               <p class="bp__form-title">Delete {{ clearUnmerged.length === 1 ? 'it' : 'them' }} anyway?</p>
@@ -702,12 +768,12 @@ defineExpose({ show, close })
             <span class="bp__icon"><GitBranchPlus /></span>
             <span class="bp__label">New branch from here…</span>
           </button>
-          <template v-if="terms.mergeRebase && !(subRow.kind === 'local' && subRow.b.isCurrent) && current">
-            <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="merge(subRow)">
+          <template v-if="!(subRow.kind === 'local' && subRow.b.isCurrent) && current">
+            <button v-if="terms.merge" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="merge(subRow)">
               <span class="bp__icon"><GitMerge /></span>
-              <span class="bp__label">Merge into <span class="bp__mono">{{ current }}</span></span>
+              <span class="bp__label">Merge into <span class="bp__mono">{{ current }}</span>{{ terms.mergePreview ? '…' : '' }}</span>
             </button>
-            <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="rebase(subRow)">
+            <button v-if="terms.rebase" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="rebase(subRow)">
               <span class="bp__icon"><Waypoints /></span>
               <span class="bp__label">Rebase <span class="bp__mono">{{ current }}</span> onto this</span>
             </button>
@@ -871,6 +937,9 @@ defineExpose({ show, close })
   color: var(--fg-muted);
 }
 .bp__names li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }
+.bp__reading { display: flex; align-items: center; gap: var(--space-2); }
+.bp__note { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--fg-muted); }
+.bp__note svg { width: 14px; height: 14px; flex: none; margin-top: 2px; stroke-width: 1.85; color: var(--ripe-waiting-fg); }
 .bp__form-actions { display: flex; gap: var(--space-2); margin-top: var(--space-1); }
 
 .bp__msg {

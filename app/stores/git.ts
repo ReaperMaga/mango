@@ -1,11 +1,11 @@
 import { defineStore } from 'pinia'
-import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree } from '~/types/ipc'
+import type { GhItem, GitAhead, GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 
 /** The one action that can run at a time. */
-export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr'
+export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve'
 
 export interface GitDiffEntry {
   /** Unified diff text; null until the first load finishes. */
@@ -39,6 +39,13 @@ export interface GitRepoState {
    * into). Null when this is no linked worktree, or the count can't be read (a detached main folder).
    */
   vsMain: GitAhead | null
+  /** Unity VCS: the repository's locks, by path; null until read (and for git). */
+  locks: VcsLock[] | null
+  /** Unity VCS shelves, newest first; null until read. Read when the Shelves section opens and after each shelve action. */
+  shelves: VcsShelve[] | null
+  shelvesOpen: boolean
+  /** Why the last shelves read failed. */
+  shelvesError: string | null
 }
 
 export const HISTORY_LIMIT = 20
@@ -54,8 +61,18 @@ const parseKey = (key: string) => {
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
 const newRepo = (): GitRepoState => ({
-  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null,
+  status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null, shelves: null, shelvesOpen: false, shelvesError: null,
 })
+
+/**
+ * Locks are read from the server, so a refresh re-reads them at most this often. Actions that
+ * take or release locks (`LOCK_ACTIONS`) and a manual refresh read them at once.
+ */
+const LOCKS_TTL_MS = 30_000
+/** When each project's locks were last read. */
+const locksAt = new Map<string, number>()
+/** Lock, unlock, undo (releases a checkout's lock), checkin (releases or retains it), switch branch. */
+const LOCK_ACTIONS: GitAction[] = ['lock', 'discard', 'commit', 'checkout']
 
 /* Refreshes are coalesced per project: one running, at most one queued behind it. */
 const running = new Map<string, Promise<void>>()
@@ -92,6 +109,11 @@ export const useGit = defineStore('git', {
         .filter(f => f.worktree || f.conflicted)
         .sort((a, b) => rank(a) - rank(b))
     },
+    /** Unity VCS: the repository's locks; empty until read and for git. */
+    locks: s => (path: string | null | undefined): VcsLock[] => (path ? s.repos[path]?.locks ?? [] : []),
+    /** Unity VCS: the lock on one file (a path relative to the root), if any. */
+    lockOf: s => (path: string | null | undefined, file: string): VcsLock | null =>
+      (path ? s.repos[path]?.locks?.find(l => l.path === file) ?? null : null),
     isBusy: s => (path: string | null | undefined, action?: GitAction) =>
       !!s.busy && s.busyPath === path && (!action || s.busy === action),
   },
@@ -143,7 +165,7 @@ export const useGit = defineStore('git', {
         repo.error = null
         this.syncProject(path, status)
         if (!status.isRepo) {
-          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null })
+          Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null })
           return
         }
         this.reconcileDiffs(path)
@@ -156,6 +178,7 @@ export const useGit = defineStore('git', {
           status.vcs === 'git' && (repo.worktrees === null || moved) ? this.loadWorktrees(path) : null,
           // The main folder's branch moves without this folder knowing: read it every time.
           status.vcs === 'git' && status.mainRoot ? this.loadVsMain(path) : (repo.vsMain = null),
+          vcsTerms(status.vcs).locks ? this.loadLocks(path) : (repo.locks = null),
         ])
       } catch (e) {
         repo.error = reason(e)
@@ -232,6 +255,25 @@ export const useGit = defineStore('git', {
       }
     },
 
+    /** Unity VCS: re-read the locks when the last read is older than `LOCKS_TTL_MS`, or always with `force`. */
+    async loadLocks(path: string, force = false) {
+      const at = locksAt.get(path)
+      if (!force && at !== undefined && Date.now() - at < LOCKS_TTL_MS) return
+      locksAt.set(path, Date.now())
+      const repo = this.ensure(path)
+      try {
+        const list = await call('vcs_locks', { path })
+        if (JSON.stringify(list) !== JSON.stringify(repo.locks)) repo.locks = list
+      } catch {
+        // Not knowing who holds what is no reason to fail the Changes view; try again on the next refresh.
+        locksAt.delete(path)
+      }
+    },
+    /** Read the locks again on the next refresh. */
+    staleLocks(path: string) {
+      locksAt.delete(path)
+    },
+
     async loadLog(path: string) {
       const repo = this.ensure(path)
       const head = repo.status?.head ?? null
@@ -239,6 +281,22 @@ export const useGit = defineStore('git', {
         repo.log = await call('git_log', { path, limit: HISTORY_LIMIT })
         repo.logHead = head
       } catch { /* history stays as it was */ }
+    },
+
+    async loadShelves(path: string) {
+      const repo = this.ensure(path)
+      try {
+        const list = await call('vcs_shelves', { path })
+        if (JSON.stringify(list) !== JSON.stringify(repo.shelves)) repo.shelves = list
+        repo.shelvesError = null
+      } catch (e) {
+        repo.shelvesError = reason(e)
+      }
+    },
+    toggleShelves(path: string) {
+      const repo = this.ensure(path)
+      repo.shelvesOpen = !repo.shelvesOpen
+      if (repo.shelvesOpen) void this.loadShelves(path)
     },
 
     /* ---------- view state ---------- */
@@ -298,6 +356,7 @@ export const useGit = defineStore('git', {
         ok = false
         this.lastError = reason(e)
       }
+      if (LOCK_ACTIONS.includes(action)) locksAt.delete(path)
       await this.refresh(path)
       this.busy = null
       this.busyPath = null
@@ -344,6 +403,33 @@ export const useGit = defineStore('git', {
       return ok
     },
 
+    /**
+     * Unity VCS: shelve what a checkin would take (the staged files, or every change when none are)
+     * with `comment`. With `undo` the workspace drops those changes afterwards. Opens the Shelves list.
+     */
+    async shelve(path: string, comment: string, undo: boolean) {
+      const repo = this.ensure(path)
+      const ok = await this.run(path, 'shelve', () => call('vcs_shelve', { path, comment, undo }))
+      if (ok) repo.shelvesOpen = true
+      await this.loadShelves(path)
+      return ok
+    },
+    /** Bring a shelve's changes back into the workspace as pending changes; the shelve stays. */
+    async applyShelve(path: string, id: number) {
+      const ok = await this.run(path, 'shelve', () => call('vcs_shelve_apply', { path, id }))
+      await this.loadShelves(path)
+      return ok
+    },
+    /** Delete a shelve from the server. Destroys work: the UI asks first. */
+    async deleteShelve(path: string, id: number) {
+      const ok = await this.run(path, 'shelve', async () => {
+        await call('vcs_shelve_delete', { path, id })
+        return `Deleted sh:${id}.`
+      })
+      await this.loadShelves(path)
+      return ok
+    },
+
     fetch(path: string) {
       return this.run(path, 'fetch', async () => (await call('git_fetch', { path })) || 'Fetched. Nothing new on the remote.')
     },
@@ -359,6 +445,23 @@ export const useGit = defineStore('git', {
       const ok = await this.run(path, 'checkout', () => call('git_checkout', { path, branch, create }))
       if (ok) await this.loadBranches(path)
       return ok
+    },
+    /**
+     * Unity VCS: lock files by checking them out. The server's lock rules decide whether a checkout
+     * locks; the result says when they didn't.
+     */
+    lock(path: string, files: string[]) {
+      return this.run(path, 'lock', async () => {
+        const note = await call('vcs_lock', { path, files })
+        return note || `Locked ${lockedNames(files)}.`
+      })
+    },
+    /** Unity VCS: release the user's own locks on files; the files stay as they are. */
+    unlock(path: string, files: string[]) {
+      return this.run(path, 'lock', async () => {
+        await call('vcs_unlock', { path, files })
+        return `Released the lock on ${lockedNames(files)}.`
+      })
     },
     init(path: string) {
       return this.run(path, 'init', () => call('git_init', { path }))
@@ -394,6 +497,13 @@ export const useGit = defineStore('git', {
     },
   },
 })
+
+/** "Farm.unity" / "3 files", for a lock result. */
+function lockedNames(files: string[]): string {
+  if (files.length !== 1) return `${files.length} files`
+  const f = files[0]!
+  return f.slice(f.lastIndexOf('/') + 1)
+}
 
 /**
  * Re-read a project's repository (the active one by default). Call it when

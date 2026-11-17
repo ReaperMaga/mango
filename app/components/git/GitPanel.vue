@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import {
-  ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
-  FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
+  Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
+  FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
 } from 'lucide-vue-next'
-import type { GitFile } from '~/types/ipc'
+import type { GitFile, VcsLock } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { useWorkspace } from '~/stores/workspace'
 import { gitFileKey, useGit, type GitAction } from '~/stores/git'
@@ -14,7 +14,7 @@ import { linkFromItem } from '~/utils/githubLinks'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
-import { resultLines, units, vcsTerms } from '~/utils/vcs'
+import { lockHolder, lockSummary, resultLines, units, vcsTerms } from '~/utils/vcs'
 import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
 
@@ -83,6 +83,7 @@ const confirming = ref<string | null>(null)
 const spun = ref(false)
 async function manualRefresh() {
   spun.value = true
+  if (path.value) git.staleLocks(path.value)
   await Promise.all([refresh(), new Promise(r => setTimeout(r, 450))])
   spun.value = false
 }
@@ -299,8 +300,23 @@ watch([message, messageBox], async () => {
 /** Nothing staged: the button stages everything first, like "Commit all" elsewhere. */
 const commitsAll = computed(() => staged.value.length === 0 && changes.value.length > 0)
 const canCommit = computed(() => !git.busy && !!message.value.trim() && conflicts.value === 0 && (staged.value.length > 0 || changes.value.length > 0))
-const commitHint = computed(() => {
+/** Unity VCS: files the next checkin takes that someone else has locked. It will likely be refused; warn, don't block. */
+const lockedOut = computed(() => (terms.value.locks
+  ? (staged.value.length ? staged.value : changes.value).map(f => lockOf(f.path)).filter((l): l is VcsLock => !!l && !l.mine)
+  : []))
+const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title?: string }>(() => {
   if (conflicts.value) return { text: `Resolve ${plural(conflicts.value, 'conflict')} first`, warn: true }
+  const out = lockedOut.value
+  if (out.length) {
+    const first = out[0]!
+    const name = first.path.slice(first.path.lastIndexOf('/') + 1)
+    return {
+      text: out.length === 1 ? `${name} is locked by ${lockHolder(first)}` : `${plural(out.length, 'file')} locked by others`,
+      warn: false,
+      lock: true,
+      title: `${out.map(l => `${l.path}: ${lockSummary(l)}`).join('\n')}\nThe checkin is likely to be refused until the lock is released.`,
+    }
+  }
   if (staged.value.length) return { text: `${plural(staged.value.length, 'file')} staged`, warn: false }
   const all = changes.value.length === 1 ? 'the 1 change' : `all ${changes.value.length} changes`
   if (changes.value.length) return { text: terms.value.amend ? `Nothing staged. Stages ${all}.` : `Nothing staged. Checks in ${all}.`, warn: false }
@@ -321,6 +337,15 @@ function onMessageKey(e: KeyboardEvent) {
     commit()
   }
 }
+/** Unity VCS: the Shelves section, whose form the commit menu opens with the comment typed so far. */
+const shelvesView = ref<{ start: (comment?: string) => void } | null>(null)
+const shelveMenu = computed<MenuItem[]>(() => [{
+  label: 'Shelve changes…',
+  icon: Archive,
+  hint: 'Park them on the server, with the comment above',
+  disabled: !!git.busy || (!staged.value.length && !changes.value.length),
+  onSelect: () => shelvesView.value?.start(message.value),
+}])
 const commitMenu = computed<MenuItem[]>(() => [{
   label: 'Amend last commit',
   hint: message.value.trim() ? 'Adds what is staged and replaces its message' : 'Adds what is staged, keeps its message',
@@ -330,7 +355,7 @@ const commitMenu = computed<MenuItem[]>(() => [{
 
 /* ---------- files ---------- */
 
-const open = reactive({ staged: true, changes: true })
+const open = reactive({ staged: true, changes: true, locks: true })
 
 /** Show the file's diff as a tab in the main pane. */
 function toggle(file: GitFile, isStaged: boolean) {
@@ -369,6 +394,56 @@ function discard(file: GitFile) {
 function discardAll() {
   confirming.value = null
   if (path.value) void git.discard(path.value)
+}
+
+/* ---------- locks (Unity VCS) ---------- */
+
+/** The repository's locks: other people's first (they are what stops you), then yours. */
+const locks = computed(() => (terms.value.locks
+  ? [...git.locks(path.value)].sort((a, b) => Number(a.mine) - Number(b.mine) || a.path.localeCompare(b.path))
+  : []))
+const othersLocks = computed(() => locks.value.filter(l => !l.mine).length)
+function lockOf(file: string): VcsLock | null {
+  return terms.value.locks ? git.lockOf(path.value, file) : null
+}
+const fileName = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+const fileDir = (p: string) => (p.lastIndexOf('/') > 0 ? p.slice(0, p.lastIndexOf('/')) : '')
+function lockFile(file: string) {
+  if (path.value) void git.lock(path.value, [file])
+}
+function unlockFile(file: string) {
+  if (path.value) void git.unlock(path.value, [file])
+}
+
+/** A file row's context menu: open, stage, and (Unity VCS) lock or release it. */
+function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
+  if (!terms.value.locks) return null
+  const code = isStaged ? file.index : file.worktree
+  const lock = lockOf(file.path)
+  const items: MenuItem[] = [
+    { label: 'Open diff', onSelect: () => toggle(file, isStaged) },
+    isStaged
+      ? { label: 'Unstage', icon: Minus, disabled: waiting.value, onSelect: () => unstage(file) }
+      : { label: 'Stage', icon: Plus, disabled: waiting.value, onSelect: () => stage(file) },
+  ]
+  if (lock?.mine) {
+    items.push({ label: 'Release lock', icon: LockOpen, hint: 'Others can check it out again', divider: true, disabled: !!git.busy, onSelect: () => unlockFile(file.path) })
+  } else if (lock) {
+    items.push({ label: 'Lock', icon: Lock, hint: `Held by ${lock.owner}`, divider: true, disabled: true })
+  } else {
+    const cannot = code === '?' || code === 'A' ? 'New files can be locked once checked in'
+      : code === 'D' ? 'Deleted from the workspace'
+        : null
+    items.push({
+      label: 'Lock',
+      icon: Lock,
+      hint: cannot ?? 'Checks it out so only you can change it',
+      divider: true,
+      disabled: !!cannot || !!git.busy,
+      onSelect: () => lockFile(file.path),
+    })
+  }
+  return items
 }
 
 const scroller = ref<HTMLElement | null>(null)
@@ -521,7 +596,9 @@ function onListKey(e: KeyboardEvent) {
         @keydown="onMessageKey"
       />
       <div class="gp__commit-row">
-        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn }">{{ commitHint.text }}</span>
+        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn, 'is-lock': commitHint.lock }" :title="commitHint.title">
+          <Lock v-if="commitHint.lock" class="gp__hint-icon" aria-hidden="true" />{{ commitHint.text }}
+        </span>
         <div class="gp__commit-btns">
           <UiButton
             variant="primary"
@@ -533,7 +610,7 @@ function onListKey(e: KeyboardEvent) {
           >
             {{ commitsAll ? terms.commitAll : terms.commit }}
           </UiButton>
-          <UiMenu v-if="terms.amend" :items="commitMenu" placement="bottom-end" :width="264" label="More commit options">
+          <UiMenu v-if="terms.amend || terms.shelves" :items="terms.amend ? commitMenu : shelveMenu" placement="bottom-end" :width="264" label="More commit options">
             <template #default="{ toggle, open: menuOpen }">
               <UiIconButton size="sm" label="More commit options" :active="menuOpen" class="gp__commit-more" @click="toggle"><ChevronDown /></UiIconButton>
             </template>
@@ -565,6 +642,8 @@ function onListKey(e: KeyboardEvent) {
               :diff="repo?.diffs[gitFileKey(f.path, true)] ?? null"
               :confirming="false"
               :disabled="waiting"
+              :lock="lockOf(f.path)"
+              :menu="fileMenu(f, true)"
               @toggle="toggle(f, true)"
               @unstage="unstage(f)"
             />
@@ -615,6 +694,8 @@ function onListKey(e: KeyboardEvent) {
               :diff="repo?.diffs[gitFileKey(f.path, false)] ?? null"
               :confirming="confirming === gitFileKey(f.path, false)"
               :disabled="waiting"
+              :lock="lockOf(f.path)"
+              :menu="fileMenu(f, false)"
               @toggle="toggle(f, false)"
               @stage="stage(f)"
               @ask="confirming = gitFileKey(f.path, false)"
@@ -625,6 +706,48 @@ function onListKey(e: KeyboardEvent) {
         </section>
 
         <p v-if="clean" class="gp__quiet">No changes</p>
+
+        <section v-if="locks.length" class="gp__sec">
+          <div class="gp__sec-head">
+            <button
+              type="button"
+              class="gp__sec-toggle"
+              :aria-expanded="open.locks"
+              :title="`Files locked in ${repositoryName ?? 'the repository'}: ${plural(othersLocks, 'by someone else', 'by others')}, ${locks.length - othersLocks} by you`"
+              @click="open.locks = !open.locks"
+            >
+              <ChevronRight class="gp__caret" :class="{ 'is-open': open.locks }" aria-hidden="true" />
+              <span>Locks</span>
+              <span class="gp__count tabular">{{ locks.length }}</span>
+            </button>
+          </div>
+          <ul v-show="open.locks" class="gp__list" role="list">
+            <li
+              v-for="l in locks"
+              :key="l.path"
+              class="gp__lock"
+              :class="{ 'is-mine': l.mine }"
+              :title="`${l.path}\n${lockSummary(l)}${l.time ? ` · ${new Date(l.time).toLocaleString()}` : ''}`"
+            >
+              <Lock class="gp__lock-icon" aria-hidden="true" />
+              <span class="gp__lock-name">{{ fileName(l.path) }}</span>
+              <span v-if="fileDir(l.path)" class="gp__lock-dir"><bdi>{{ fileDir(l.path) }}</bdi></span>
+              <span class="gp__lock-who">{{ lockHolder(l) }}<template v-if="l.status === 'retained'"> · kept</template></span>
+              <span class="sr-only">{{ lockSummary(l) }}</span>
+              <UiIconButton
+                v-if="l.mine"
+                size="sm"
+                class="gp__lock-release"
+                :label="`Release the lock on ${fileName(l.path)}`"
+                :disabled="!!git.busy"
+                @click="unlockFile(l.path)"
+              >
+                <LockOpen />
+              </UiIconButton>
+            </li>
+          </ul>
+        </section>
+        <GitShelves v-if="terms.shelves && path" ref="shelvesView" :path="path" />
 
         <section class="gp__sec gp__sec--history">
           <div class="gp__sec-head">
@@ -933,6 +1056,9 @@ function onListKey(e: KeyboardEvent) {
   text-overflow: ellipsis;
 }
 .gp__commit-hint.is-warn { color: var(--ripe-error-fg); }
+/* Someone else's lock: a word with them, not an error. */
+.gp__commit-hint.is-lock { color: var(--ripe-waiting-fg); }
+.gp__hint-icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -1.5px; stroke-width: 1.85; }
 .gp__commit-btns { flex: none; display: flex; align-items: center; gap: 2px; }
 .gp__commit-btns .gp__commit-more { height: 26px; }
 
@@ -967,6 +1093,50 @@ function onListKey(e: KeyboardEvent) {
 .gp__count { margin-left: 2px; font-weight: 500; color: var(--fg-faint); }
 .gp__sec-actions { flex: none; display: flex; align-items: center; gap: 1px; }
 .gp__list { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 1px; }
+
+/* ---------- locks ---------- */
+.gp__lock {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 3px 0 var(--space-1);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.gp__lock:hover, .gp__lock:has(:focus-visible) { background: var(--bg-hover); }
+.gp__lock-icon { width: 13px; height: 13px; flex: none; margin: 0 1.5px; stroke-width: 1.85; color: var(--ripe-waiting-fg); }
+.gp__lock.is-mine .gp__lock-icon { color: var(--accent-ink); }
+.gp__lock-name { flex: 0 1 auto; min-width: 0; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gp__lock-dir {
+  flex: 1 1 0;
+  min-width: 0;
+  direction: rtl;
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gp__lock-who {
+  flex: none;
+  max-width: 40%;
+  margin-left: auto;
+  padding-right: 3px;
+  font-size: var(--text-2xs);
+  color: var(--fg-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Your own lock: the release button takes the holder's place on hover or focus, so every row keeps one right edge. */
+.gp__lock-release { position: absolute; right: 3px; top: 3px; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.gp__lock:hover .gp__lock-release, .gp__lock:has(:focus-visible) .gp__lock-release { opacity: 1; }
+.gp__lock.is-mine:hover .gp__lock-who, .gp__lock.is-mine:has(:focus-visible) .gp__lock-who { visibility: hidden; }
 
 .gp__ask {
   margin: 2px 0 var(--space-2);

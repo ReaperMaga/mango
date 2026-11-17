@@ -92,7 +92,7 @@ The **...** button on a row opens:
 - **Open to the side**: show it in the second pane of a split.
 - **Move up** / **Move down**.
 - **Working** / **Archived**: set the status by hand.
-- **Remove worktree…**: for a chat in its own worktree (see below).
+- **Remove worktree…** (**Remove workspace…** for Unity VCS): for a chat in its own worktree (see below).
 - **Delete chat**.
 
 An archived chat has an **Unarchive** button on its row. Sending a message in an archived chat also brings it back.
@@ -113,7 +113,7 @@ What you look at follows the chat in front of you: the titlebar shows that chat'
 
 **Remove worktree…** in a chat's menu deletes the worktree's folder. The branch and its commits stay, so you can merge it or open a pull request from it. If the worktree has uncommitted changes Mango says so, and removing it anyway is a separate second step. Chats that worked there carry on in the project folder.
 
-Worktrees need git; Unity Version Control projects don't have them.
+In a [Unity Version Control](./unity-vcs#a-workspace-per-chat) project the same commands give a chat its own workspace instead of a worktree.
 
 ## Drafts
 

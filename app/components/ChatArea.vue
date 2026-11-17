@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
+import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
@@ -68,6 +69,9 @@ function newChat() {
 }
 
 /** A tab's tooltip: what it shows, who opened it, and its shortcut. */
+/** "worktree", or "workspace" for a Unity VCS project. */
+const wtTerm = (projectPath: string) => vcsTerms(ws.openProjects.find(p => p.path === projectPath)?.vcs).worktree
+
 function tabTitle(t: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
@@ -78,7 +82,8 @@ function tabTitle(t: Tab, i: number) {
     return `${where}${owner ? `\nOpened by ${owner.title}` : ''}${keys}`
   }
   const wt = t.kind === 'chat' ? t.thread.worktree : null
-  return `${t.title}${keys}${wt ? `\nWorktree: ${wt}${t.thread.branch ? ` (${t.thread.branch})` : ''}` : ''}`
+  const term = t.kind === 'chat' ? wtTerm(t.thread.projectPath) : ''
+  return `${t.title}${keys}${wt ? `\n${term[0]!.toUpperCase()}${term.slice(1)}: ${wt}${t.thread.branch ? ` (${t.thread.branch})` : ''}` : ''}`
 }
 
 /*
@@ -223,7 +228,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           <template v-if="t.kind === 'chat'">
             <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
             <span class="ca__tab-title">{{ t.title }}</span>
-            <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own worktree${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
+            <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
           </template>
           <template v-else-if="t.kind === 'diff'">
             <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />

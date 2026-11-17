@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, VcsKind } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -31,7 +31,14 @@ interface Repo {
   renames: { from: string; to: string; change: Change }[]
   /** Unity VCS: branches that have changesets of their own (and so can't be deleted). */
   used?: Set<string>
+  /** Unity VCS: locks in the repository, mine and other people's. */
+  locks?: VcsLock[]
+  /** Unity VCS: branches already merged into the workspace's branch. */
+  merged?: Set<string>
+  /** Unity VCS: shelves on the server, with the changes each one holds. */
+  shelves?: MockShelve[]
 }
+interface MockShelve extends VcsShelve { files: MockFile[] }
 
 const MIN = 60_000
 const hex = (n: number) => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('')
@@ -439,6 +446,20 @@ function unityRepo(): Repo {
       },
     },
     {
+      path: 'Assets/Prefabs/Player.prefab',
+      staged: null,
+      unstaged: {
+        status: 'M',
+        diff: `${head('Assets/Prefabs/Player.prefab')}@@ -88,7 +88,7 @@ MonoBehaviour:
+   m_Script: {fileID: 11500000, guid: 5f1c2a9e0b7d4c3a8e6f1b2c3d4e5f60, type: 3}
+   moveSpeed: 4.5
+-  carryCapacity: 12
++  carryCapacity: 16
+   pickupRadius: 1.2
+`,
+      },
+    },
+    {
       path: 'Assets/Prefabs/Crate.prefab',
       staged: null,
       unstaged: {
@@ -483,10 +504,138 @@ function unityRepo(): Repo {
     used: new Set(['/main', '/main/feature/inventory', '/main/feature/weather', '/main/fix/crate-physics', '/main/release-1.2']),
     files,
     log,
+    shelves: [
+      {
+        id: 41, comment: 'Weather: rain particles, half done', owner: 'you@orchard.studio', time: Date.now() - 26 * 60 * MIN, branch: '/main/feature/weather',
+        files: [{
+          path: 'Assets/Scripts/Weather/RainEmitter.cs', staged: null,
+          unstaged: { status: 'M', diff: `${head('Assets/Scripts/Weather/RainEmitter.cs')}@@ -12,6 +12,8 @@ public class RainEmitter : MonoBehaviour\n     [SerializeField] ParticleSystem drops;\n+    [SerializeField, Range(0, 1)] float intensity = 0.4f;\n+    [SerializeField] AnimationCurve windByHour;\n     void Update()\n     {\n` },
+        }],
+      },
+      {
+        id: 38, comment: 'Try a lighter crate mass', owner: 'you@orchard.studio', time: Date.now() - 4 * 24 * 60 * MIN, branch: '/main/fix/crate-physics',
+        files: [{
+          path: 'Assets/Prefabs/Barrel.prefab', staged: null,
+          unstaged: { status: 'M', diff: `${head('Assets/Prefabs/Barrel.prefab')}@@ -40,7 +40,7 @@ Rigidbody:\n   m_ObjectHideFlags: 0\n-  m_Mass: 12\n+  m_Mass: 4.5\n   m_Drag: 0\n` },
+        }],
+      },
+    ],
     // Changesets a teammate checked in on this branch since the workspace was updated.
     incoming: ['Inventory: tooltips show the stack total', 'Fix the crate falling through the barn floor'],
     renames: [],
+    locks: [
+      { path: 'Assets/Art/Barn.psd', owner: 'sam@orchard.studio', workspace: 'sam-art', branch: '/main/art-pass', status: 'retained', time: Date.now() - 26 * 60 * MIN, mine: false },
+      { path: 'Assets/Prefabs/Player.prefab', owner: ME, workspace: 'fruit-stand', branch: '/main/feature/inventory', status: 'locked', time: Date.now() - 40 * MIN, mine: true },
+      { path: 'Assets/Scenes/Farm.unity', owner: 'priya@orchard.studio', workspace: 'priya-desktop', branch: '/main/feature/weather', status: 'locked', time: Date.now() - 95 * MIN, mine: false },
+      { path: 'Assets/Scenes/Market.unity', owner: 'priya@orchard.studio', workspace: 'priya-desktop', branch: '/main/feature/weather', status: 'locked', time: Date.now() - 3 * 60 * MIN, mine: false },
+    ],
   }
+}
+
+/** Unity VCS: the signed-in user, and the files the server's lock rules cover. */
+const ME = 'you@orchard.studio'
+const LOCK_RULES = /\.(unity|prefab|psd|png|fbx|asset)$/i
+const fileName = (p: string) => p.slice(p.lastIndexOf('/') + 1)
+const heldBy = (l: VcsLock) => `${l.owner} (workspace ${l.workspace})`
+
+/** Unity VCS: lock by checking out, as `vcs_lock` does. */
+async function lockFiles(r: Repo, files: string[]): Promise<string> {
+  if (!files.length) throw new Error('Pick the files to lock or unlock')
+  await wait(400)
+  const locks = r.locks ??= []
+  for (const f of files) {
+    const other = locks.find(l => l.path === f && !l.mine)
+    if (other) throw new Error(`${fileName(f)} is locked by ${heldBy(other)}. Ask them to check it in or release the lock.`)
+    const change = r.files.find(x => x.path === f)
+    const code = change?.unstaged?.status ?? change?.staged?.status
+    if (code === '?' || code === 'A') throw new Error(`cm checkout failed\n\nThe item ${f} is not under source control. Check it in first.`)
+  }
+  const skipped: string[] = []
+  for (const f of files) {
+    if (!LOCK_RULES.test(f)) { skipped.push(fileName(f)); continue }
+    const at = locks.findIndex(l => l.path === f)
+    const lock: VcsLock = { path: f, owner: ME, workspace: 'fruit-stand', branch: r.branch, status: 'locked', time: Date.now(), mine: true }
+    if (at >= 0) locks[at] = lock
+    else locks.push(lock)
+  }
+  locks.sort((a, b) => a.path.localeCompare(b.path))
+  if (!skipped.length) return ''
+  const rules = "An administrator sets them in the Unity Cloud dashboard (or the server's lock.conf)."
+  return skipped.length === 1
+    ? `Checked out ${skipped[0]}, but it isn't locked.\nThe server's lock rules don't cover this file. ${rules}`
+    : `Checked out ${files.length} files, but ${skipped.length} of them aren't locked: ${skipped.join(', ')}.\nThe server's lock rules don't cover them. ${rules}`
+}
+
+async function unlockFiles(r: Repo, files: string[]) {
+  if (!files.length) throw new Error('Pick the files to lock or unlock')
+  await wait(300)
+  const locks = r.locks ?? []
+  for (const f of files) {
+    const l = locks.find(x => x.path === f)
+    if (!l) throw new Error(`${fileName(f)} isn't locked.`)
+    if (!l.mine) throw new Error(`${fileName(f)} is locked by ${heldBy(l)}. Only they, or a server administrator, can release it.`)
+  }
+  r.locks = locks.filter(l => !files.includes(l.path))
+}
+
+/**
+ * Unity VCS: what merging each branch into fruit-stand brings ([path, status]), and what clashes.
+ * `/main/feature/weather` changed two files the workspace's branch changed too: Mango refuses it.
+ */
+const UNITY_MERGES: Record<string, { files: [string, 'M' | 'A' | 'D'][]; conflicts?: string[] }> = {
+  '/main': {
+    files: [
+      ['Assets/Scripts/Save/SaveSystem.cs', 'M'],
+      ['Assets/Scripts/Save/SaveV2.cs', 'A'],
+      ['Assets/Scenes/Title.unity', 'M'],
+      ['Packages/manifest.json', 'M'],
+      ['ProjectSettings/ProjectVersion.txt', 'M'],
+    ],
+  },
+  '/main/feature/weather': {
+    files: [['Assets/Scripts/Weather/RainSystem.cs', 'A'], ['Assets/Scripts/Weather/RainSystem.cs.meta', 'A']],
+    conflicts: ['Assets/Scenes/Farm.unity', 'Assets/Scripts/Inventory/InventoryGrid.cs'],
+  },
+  '/main/fix/crate-physics': {
+    files: [['Assets/Scripts/Physics/CrateBody.cs', 'M'], ['Assets/Physics/Crate.physicMaterial', 'M']],
+  },
+}
+
+function mergePreview(r: Repo, branch: string): MergePreview {
+  const base = { branch, into: r.branch, files: [] as string[], conflicts: [] as string[], blocker: null as string | null }
+  if (branch === r.branch) return { ...base, blocker: `The workspace is already on ${branch}. Switch to the branch to merge into first.` }
+  const pending = r.files.filter(f => f.staged || (f.unstaged && f.unstaged.status !== '?')).length
+  if (pending) {
+    return { ...base, blocker: `The workspace has ${pending} file${pending === 1 ? '' : 's'} pending. Check in or undo them first, so the merge result is all that's left to check in.` }
+  }
+  if (r.incoming.length) {
+    const n = r.incoming.length
+    return { ...base, blocker: `${r.branch} has ${n} changeset${n === 1 ? '' : 's'} your workspace doesn't have yet. Update first, then merge.` }
+  }
+  const m = r.merged?.has(branch) ? undefined : UNITY_MERGES[branch]
+  if (!m) return base
+  const conflicts = m.conflicts ?? []
+  return { ...base, files: m.files.map(f => f[0]).filter(p => !conflicts.includes(p)), conflicts }
+}
+
+async function plasticMerge(r: Repo, branch: string): Promise<string> {
+  await wait(700)
+  const p = mergePreview(r, branch)
+  if (p.blocker) throw new Error(p.blocker)
+  if (p.conflicts.length) {
+    const n = p.conflicts.length
+    throw new Error(`${n} file${n === 1 ? '' : 's'} changed on both branches need resolving by hand, so Mango didn't merge ${branch}. Merge it in the Unity Version Control app, which resolves conflicts, then check in from here.\n\n${p.conflicts.join('\n')}`)
+  }
+  if (!p.files.length) return `Nothing to merge: ${r.branch} already has everything from ${branch}.`
+  for (const [path, status] of UNITY_MERGES[branch]!.files) {
+    const diff = status === 'A'
+      ? added(path, ['// Merged from ' + branch, 'public class ' + (baseName(path).split('.')[0] || 'Merged') + ' { }'])
+      : `${head(path)}@@ -1,3 +1,3 @@\n // ${baseName(path)}\n-// before the merge\n+// merged from ${branch}\n \n`
+    r.files.push({ path, staged: { status, diff }, unstaged: null })
+  }
+  ;(r.merged ??= new Set()).add(branch)
+  const n = p.files.length
+  return `Merged ${branch}: ${n} file${n === 1 ? '' : 's'} changed, check in to finish.\nThe merge into ${r.branch} is pending changes until you check it in.`
 }
 
 const UNITY_ONLY = (what: string) => new Error(`${what} isn't part of Unity Version Control. Checkins go straight to the server.`)
@@ -506,8 +655,51 @@ function childBranch(name: string, parent: string): string {
   return n.startsWith('/') ? n : `${parent.replace(/\/+$/, '')}/${n}`
 }
 
+/* ---------- Unity VCS shelves ---------- */
+
+let nextShelve = 42
+const listShelves = (r: Repo): VcsShelve[] =>
+  (r.shelves ?? []).map(({ files: _files, ...s }) => s).sort((a, b) => b.time - a.time)
+
+/** Shelve what a checkin would take (the staged files, or all); private files can't be shelved. */
+async function shelve(r: Repo, comment: string, undo: boolean): Promise<string> {
+  if (!comment.trim()) throw new Error('Write a comment for the shelve first')
+  const chosen = r.files.some(f => f.staged) ? r.files.filter(f => f.staged) : r.files
+  // A staged new file is only picked for the checkin: to Unity VCS it is still private.
+  const isPrivate = (f: MockFile) => (f.unstaged ?? f.staged)?.status === '?' || (!f.unstaged && f.staged?.status === 'A')
+  const take = chosen.filter(f => !isPrivate(f))
+  const privates = chosen.length - take.length
+  if (!take.length) {
+    throw new Error(privates
+      ? "Only new files are pending, and Unity VCS can't shelve a file until it is under version control. Check them in, or add them with cm add first."
+      : 'There are no changes to shelve.')
+  }
+  await wait(700)
+  const id = nextShelve++
+  // As pending changes again: Unity VCS has no staging area to restore.
+  const files = take.map(f => {
+    const c = (f.unstaged ?? f.staged)!
+    return { path: f.path, staged: null, unstaged: { ...c } }
+  })
+  ;(r.shelves ??= []).push({ id, comment: comment.trim(), owner: 'you@orchard.studio', time: Date.now(), branch: r.branch, files })
+  if (undo) r.files = r.files.filter(f => !take.includes(f))
+  const n = take.length
+  return `Shelved ${n} change${n === 1 ? '' : 's'} as sh:${id}${undo ? ' and undid them in the workspace' : ''}.`
+    + (privates ? `\n${privates} new file${privates === 1 ? '' : 's'} not under version control stay${privates === 1 ? 's' : ''} in the workspace.` : '')
+}
+
+async function applyShelve(r: Repo, id: number): Promise<string> {
+  const s = r.shelves?.find(x => x.id === id)
+  if (!s) throw new Error(`The shelve sh:${id} does not exist.`)
+  const clash = s.files.find(f => r.files.some(p => p.path === f.path))
+  if (clash) throw new Error(`Shelve sh:${id} conflicts with changes in the workspace. Check in or undo those files, then apply it again.\n\n${clash.path} has pending changes.`)
+  await wait(600)
+  r.files.push(...s.files.map(f => ({ ...f, unstaged: f.unstaged && { ...f.unstaged } })))
+  return `Applied sh:${id} to the workspace. Its changes are pending again; the shelve stays on the server.`
+}
+
 const repos = new Map<string, Repo>()
-/** Linked worktrees made with `git_worktree_add`: folder → the main working tree's folder. */
+/** Linked worktrees (Unity VCS: chat workspaces) made with `git_worktree_add`: folder → the project's folder. */
 const linkedTrees = new Map<string, string>()
 /** The `mango` project comes with one linked worktree, a few commits ahead of main (start a chat in it from the sidebar's "Continue in" list). */
 const SEEDED = { leaf: 'fix-diff-wrap', branch: 'fix/diff-wrap' }
@@ -620,6 +812,8 @@ function discard(r: Repo, files: string[]) {
     }
   }
   prune(r)
+  // Unity VCS: undoing a checkout releases the lock it took.
+  if (r.locks) r.locks = r.locks.filter(l => !(l.mine && l.status === 'locked' && !r.files.some(f => f.path === l.path)))
 }
 
 function checkin(r: Repo, message: string, amend: boolean): string {
@@ -629,6 +823,14 @@ function checkin(r: Repo, message: string, amend: boolean): string {
   if (!r.files.some(f => f.staged)) throw new Error('Nothing is staged. Stage the changes you want in this checkin first.')
   if (r.incoming.length) {
     throw new Error(`The branch has changesets your workspace doesn't have yet. Update the workspace, then check in again.\n\nMERGE_NEEDED A merge is needed from changeset 'cs:${nextChangeset + r.incoming.length - 1}' to changeset '${r.log[0]?.shortHash}' in order to checkin.`)
+  }
+  const taken = r.files.filter(f => f.staged).map(f => f.path)
+  const blocked = r.locks?.find(l => !l.mine && taken.includes(l.path))
+  if (blocked) throw new Error(`The checkin was refused.\n\nThe item ${blocked.path} is locked by ${heldBy(blocked)}.`)
+  if (r.locks) {
+    r.locks = r.branch === '/main'
+      ? r.locks.filter(l => !(l.mine && taken.includes(l.path)))
+      : r.locks.map(l => (l.mine && taken.includes(l.path) ? { ...l, status: 'retained' as const } : l))
   }
   for (const f of r.files) f.staged = null
   prune(r)
@@ -758,13 +960,33 @@ async function worktreeAdd(path: string, branch: string, from: string | null, cr
   return worktreeList(folder).find(w => w.path === folder)!
 }
 
+/** Unity VCS: a chat workspace beside the project, on a new child branch, after "downloading" its files. */
+async function workspaceAdd(path: string, branch: string, from: string | null, create: boolean): Promise<GitWorktree> {
+  const main = linkedTrees.get(path) ?? path
+  const mainRepo = repoAt(main)
+  const full = create ? childBranch(branch, from || mainRepo.branch) : childBranch(branch, '')
+  if (create && mainRepo.branches[full]) throw new Error(`A branch named ${full} already exists`)
+  if (!create && !mainRepo.branches[full]) throw new Error(`There is no branch named ${full}`)
+  const leaf = (create && !branch.trim().startsWith('/') ? branch.trim() : full.slice(1)).replace(/\//g, '-')
+  const folder = `${main.replace(/\/+$/, '')}.worktrees/${leaf}`
+  if (repos.has(folder)) throw new Error(`${folder} already exists; pick another branch name`)
+  // A fresh workspace downloads every file of its branch: the slow part on a real project.
+  await wait(2500)
+  if (create) createBranch(mainRepo, full, false)
+  repos.set(folder, { ...mainRepo, branch: full, files: [], log: [...mainRepo.log], incoming: [], renames: [] })
+  linkedTrees.set(folder, main)
+  return worktreeList(folder).find(w => w.path === folder)!
+}
+
 async function worktreeRemove(path: string, folder: string, force: boolean) {
   await wait(250)
   const main = linkedTrees.get(path) ?? path
-  if (folder === main) throw new Error('That is the main working tree; it cannot be removed')
+  if (folder === main) throw new Error(repoAt(main).vcs === 'plastic' ? "The project's own workspace can't be removed here" : 'That is the main working tree; it cannot be removed')
   if (linkedTrees.get(folder) !== main) throw new Error(`${folder} is not a worktree of this repository`)
   const r = repoAt(folder)
-  if (r.files.length && !force) throw new Error(`${r.branch} has uncommitted changes; commit or discard them first`)
+  if (r.files.length && !force) {
+    throw new Error(r.vcs === 'plastic' ? `${r.branch} has pending changes; check them in or undo them first` : `${r.branch} has uncommitted changes; commit or discard them first`)
+  }
   repos.delete(folder)
   linkedTrees.delete(folder)
 }
@@ -772,16 +994,26 @@ async function worktreeRemove(path: string, folder: string, force: boolean) {
 export async function mockGit(cmd: string, args: any): Promise<any> {
   const path = String(args?.path ?? '')
   const r = repoAt(path)
-  if (cmd === 'git_worktrees') return r.isRepo && r.vcs === 'git' ? worktreeList(path) : []
+  if (cmd === 'git_worktrees') return r.isRepo ? worktreeList(path) : []
   if (cmd === 'git_worktree_add') {
-    if (r.vcs === 'plastic') throw new Error('Worktrees are a git feature; Unity Version Control workspaces have none')
+    if (r.vcs === 'plastic') return workspaceAdd(path, String(args.branch ?? ''), args.from ?? null, args.create !== false)
     return worktreeAdd(path, String(args.branch ?? ''), args.from ?? null, args.create !== false)
   }
   if (cmd === 'git_worktree_remove') return worktreeRemove(path, String(args.worktree ?? ''), !!args.force)
   if (cmd === 'git_status') return statusOf(r, path)
+  if (cmd.startsWith('vcs_')) {
+    if (cmd === 'vcs_locks') {
+      if (r.vcs !== 'plastic') return []
+      await wait(150)
+      return (r.locks ?? []).map(l => ({ ...l }))
+    }
+    if (r.vcs !== 'plastic') throw new Error('Locks are a Unity Version Control feature; git has no file locks.')
+    if (cmd === 'vcs_lock') return lockFiles(r, args.files ?? [])
+    if (cmd === 'vcs_unlock') return unlockFiles(r, args.files ?? [])
+  }
   if (cmd === 'git_ahead') {
     if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
-    if (r.vcs === 'plastic') throw new Error("Worktrees are a git feature; Unity Version Control workspaces don't have them.")
+    if (r.vcs === 'plastic') throw new Error("Unity VCS workspaces aren't compared with the project's branch.")
     await wait(120)
     const mainRepo = repoAt(linkedTrees.get(path) ?? path)
     const base = args.base ? String(args.base) : mainRepo.branch
@@ -802,12 +1034,22 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     return
   }
   if (!r.isRepo) throw new Error(`${path} is not inside a git repository`)
+  if (cmd.startsWith('vcs_shelve')) {
+    if (r.vcs !== 'plastic') throw new Error('Shelves are a Unity Version Control feature. In a git repository, use git stash in a terminal.')
+    switch (cmd) {
+      case 'vcs_shelves': await wait(250); return listShelves(r)
+      case 'vcs_shelve': return shelve(r, String(args.comment ?? ''), !!args.undo)
+      case 'vcs_shelve_apply': return applyShelve(r, Number(args.id))
+      case 'vcs_shelve_delete': r.shelves = r.shelves?.filter(x => x.id !== Number(args.id)); return
+    }
+  }
   if (r.vcs === 'plastic') {
     switch (cmd) {
       case 'git_fetch': throw UNITY_ONLY('Fetch')
       case 'git_push': throw UNITY_ONLY('Push')
       case 'git_pull': return update(r)
-      case 'git_merge': throw UNITY_ONLY('Merging from Mango')
+      case 'git_merge': return plasticMerge(r, String(args.branch ?? ''))
+      case 'git_merge_preview': await wait(450); return mergePreview(r, String(args.branch ?? ''))
       case 'git_rebase': throw UNITY_ONLY('Rebase')
       case 'git_checkout_remote': throw UNITY_ONLY('Remote branches')
       case 'git_checkout':
@@ -904,6 +1146,7 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       if (t.upstream) t.ahead += fresh.length
       return `Merged ${commits(fresh.length)} from ${branch} into ${r.branch}.\n${fresh.length + 2} files changed, +${fresh.length * 17} −${fresh.length * 4}`
     }
+    case 'git_merge_preview': throw new Error('Merge previews are for Unity VCS workspaces.')
     case 'git_rebase': return `Rebased ${r.branch} onto ${String(args.onto)}.\nPicked up 2 commits from ${String(args.onto)}.`
     case 'git_branch_rename': {
       const from = String(args.from); const to = String(args.to).trim()

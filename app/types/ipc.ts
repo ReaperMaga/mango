@@ -190,6 +190,54 @@ export interface GitBranchList {
   remotes: string[]
 }
 
+/**
+ * A Unity VCS lock (exclusive checkout) in the workspace's repository (`vcs_locks`).
+ * Unity scenes, prefabs and binary assets can't be merged, so the server's lock rules
+ * make a checkout lock them; nobody else can check them out until it is released.
+ */
+export interface VcsLock {
+  /** Relative to the workspace root, forward slashes. */
+  path: string
+  /** Who holds it, as the server names them (often an email address). */
+  owner: string
+  /** The workspace it was taken from. */
+  workspace: string
+  /** The branch it was taken on. */
+  branch: string
+  /** `locked`: checked out now. `retained`: checked in on a task branch, held until it reaches the destination branch. */
+  status: 'locked' | 'retained'
+  /** When it was taken, unix ms; null when unknown. */
+  time: number | null
+  /** Held by the signed-in user (in any workspace). */
+  mine: boolean
+}
+
+/** Unity VCS: what merging a branch into the workspace would do, read before anything changes. */
+export interface MergePreview {
+  /** The branch merged from (`/main/task`). */
+  branch: string
+  /** The branch the workspace is on, which the merge goes into. */
+  into: string | null
+  /** Items the merge changes, relative to the workspace root. Empty with no conflicts: nothing to merge. */
+  files: string[]
+  /** Items changed on both branches. Mango doesn't merge these; the Unity VCS app resolves them. */
+  conflicts: string[]
+  /** Why the merge can't run from Mango right now (pending changes, not up to date). */
+  blocker: string | null
+}
+
+/** A Unity VCS shelve (`sh:12`): pending changes parked on the server (`vcs_shelves`). */
+export interface VcsShelve {
+  /** The number in `sh:12`. */
+  id: number
+  comment: string
+  owner: string
+  /** Unix ms. */
+  time: number
+  /** Branch of the changeset it was shelved from, when known. */
+  branch: string | null
+}
+
 /* ---------- pull requests and issues (linked to chats, read through the GitHub CLI) ---------- */
 
 export interface GhLabel {
@@ -199,6 +247,50 @@ export interface GhLabel {
 }
 
 export type GhState = 'open' | 'draft' | 'merged' | 'closed'
+
+/** A Unity VCS code review's status (`cm codereview --status`). */
+export type PlasticReviewStatus = 'underReview' | 'reviewed' | 'reworkRequired'
+
+export interface PlasticReviewer {
+  /** A user or group name (an email on Unity Cloud). */
+  name: string
+  status: PlasticReviewStatus
+}
+
+/** One Unity VCS code review as `cm find review` reports it. */
+export interface PlasticReview {
+  id: number
+  guid: string | null
+  title: string
+  status: PlasticReviewStatus
+  owner: string
+  /** The single assignee of older reviews; newer ones have reviewers. */
+  assignee: string | null
+  reviewers: PlasticReviewer[]
+  targetType: 'branch' | 'changeset'
+  /** The branch (`/main/task-1`) or changeset (`cs:12`); empty when `cm` named it only by id. */
+  target: string
+  /** Unix ms; 0 when unknown. */
+  created: number
+  /** Last activity, Unix ms, when the client reports it. */
+  modified: number | null
+  comments: number | null
+  /** Change requests not applied plus questions not answered, when the client reports it. */
+  unresolved: number | null
+}
+
+/** Code reviews of a Unity VCS workspace (`plastic_reviews`). */
+export interface PlasticReviews {
+  repository: string | null
+  /** The branch the workspace is on; null when pinned to a changeset or label. */
+  branch: string | null
+  /** Reviews of that branch, newest first, whatever their status (at most 20). */
+  branchReviews: PlasticReview[]
+  /** The repository's reviews under review or waiting for rework, newest first, without the branch's own (at most 50). */
+  open: PlasticReview[]
+  /** More open reviews exist than `open` holds. */
+  more: boolean
+}
 
 /** One pull request or issue as `gh_item` reads it. */
 export interface GhItem {
@@ -742,14 +834,20 @@ export interface Commands {
   git_branch_create: [{ path: string; name: string; from: string | null; checkout: boolean }, void]
   /** Check out a remote branch as a local tracking branch. Returns the local branch name. */
   git_checkout_remote: [{ path: string; branch: string }, string]
-  /** Merge `branch` into the current branch. Returns git's output. */
+  /**
+   * Merge `branch` into the current branch. Returns git's output.
+   * Unity VCS: merges into the workspace, leaving pending changes (picked for the checkin) that a checkin
+   * finishes; refused when the workspace has pending changes, is not up to date, or the merge has conflicts.
+   */
   git_merge: [{ path: string; branch: string }, string]
+  /** Unity VCS only: what `git_merge` would change, and whether it can run. Fails for git. */
+  git_merge_preview: [{ path: string; branch: string }, MergePreview]
   /** Rebase the current branch onto `onto`. Returns git's output. */
   git_rebase: [{ path: string; onto: string }, string]
   git_branch_rename: [{ path: string; from: string; to: string }, void]
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
-   * Unity VCS refuses branches with changesets or children; merge, rebase and remote checkout are git only.
+   * Unity VCS refuses branches with changesets or children; rebase and remote checkout are git only.
    */
   git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
   /** The repository's working trees, the main one first. Empty for Unity VCS or no repository. */
@@ -771,6 +869,27 @@ export interface Commands {
    * that is detached. Git only.
    */
   git_ahead: [{ path: string; base: string | null }, GitAhead]
+  /** Unity VCS: every lock in the workspace's repository. Empty for git. */
+  vcs_locks: [{ path: string }, VcsLock[]]
+  /**
+   * Unity VCS: lock files (paths relative to the root) by checking them out; the server's lock rules decide
+   * whether a checkout locks. Refuses files someone else holds. Returns a note naming the files that were
+   * checked out but not locked; empty when all are locked. Git: an error.
+   */
+  vcs_lock: [{ path: string; files: string[] }, string]
+  /** Unity VCS: release the user's own locks on files (the files stay as they are). Refuses other people's. */
+  vcs_unlock: [{ path: string; files: string[] }, void]
+  /**
+   * Shelves, Unity VCS only (a git folder is refused: git has stash). `vcs_shelves` lists the
+   * signed-in user's, newest first. `vcs_shelve` takes what the next checkin would (the staged
+   * files, or every change when none are; private files can't be shelved and stay) and returns a
+   * result line; with `undo` the workspace drops those changes afterwards. Apply brings one back as
+   * pending changes and keeps it; delete removes it from the server for good.
+   */
+  vcs_shelves: [{ path: string }, VcsShelve[]]
+  vcs_shelve: [{ path: string; comment: string; undo: boolean }, string]
+  vcs_shelve_apply: [{ path: string; id: number }, string]
+  vcs_shelve_delete: [{ path: string; id: number }, void]
 
   /** One folder of a project (`dir` "" for the top). */
   /**
@@ -794,6 +913,16 @@ export interface Commands {
    * and once it finished, its log split into them. Other links are refused.
    */
   gh_job: [{ url: string }, GhJob]
+  /**
+   * Unity VCS code reviews for the workspace holding `path`: its branch's, and the repository's open
+   * ones. Fails for a git folder.
+   */
+  plastic_reviews: [{ path: string }, PlasticReviews]
+  /**
+   * Ask for a code review of the branch the workspace at `path` is on (`cm codereview`), optionally
+   * naming reviewers (comma-separated users). Returns the new review's id.
+   */
+  plastic_review_create: [{ path: string; title: string; reviewers: string | null }, number]
 
   fs_list_dir: [{ root: string; dir: string }, FsListing]
   fs_read_file: [{ root: string; file: string }, FileContent]

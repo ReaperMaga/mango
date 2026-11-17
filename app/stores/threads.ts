@@ -15,6 +15,7 @@ import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
+import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
 import { movedEnvPath } from '~/utils/envPath'
 import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
@@ -269,12 +270,12 @@ export const useThreads = defineStore('threads', {
 
     /**
      * "New chat in a worktree": a chat that runs nowhere yet. Its first message names a new branch
-     * and the worktree is added for it before the agent starts (`_addWorktreeFor`). Projects without
-     * git worktrees (no git, Unity VCS) get a plain chat.
+     * and the worktree (for Unity VCS: a workspace of its own) is added for it before the agent starts
+     * (`_addWorktreeFor`). Projects without version control get a plain chat.
      */
     createAwaitingWorktree(projectPath: string, agent?: AgentId): Thread {
       const project = useWorkspace().openProjects.find(p => p.path === projectPath)
-      if (!project?.isGit || project.vcs === 'plastic') return this.create(projectPath, agent)
+      if (!project?.isGit || !vcsTerms(project.vcs).worktrees) return this.create(projectPath, agent)
       return this.create(projectPath, agent, null, null, true)
     },
 
@@ -309,6 +310,8 @@ export const useThreads = defineStore('threads', {
     /**
      * Add the worktree a chat waits for: a new branch named after its first message (`-2`, `-3` …
      * when that branch or folder is taken), from the project's HEAD. Rejects with git's reason.
+     * Unity VCS: a child of the project's branch (`/main/task/fix-the-login`) in a new workspace,
+     * which downloads the branch's files first, so this can take minutes on a big project.
      */
     async _addWorktreeFor(id: string) {
       const t = this.byId(id)
@@ -321,8 +324,14 @@ export const useThreads = defineStore('threads', {
         call('git_branch_list', { path }).catch(() => null),
         call('git_worktrees', { path }).catch(() => []),
       ])
+      // Unity VCS names the new branch as a child of the current one: its siblings' last parts are taken.
+      const current = branches?.current
+      const children = vcsTerms(useWorkspace().openProjects.find(p => p.path === path)?.vcs).pathBranches && current
+        ? (branches?.local ?? []).map(b => b.name).filter(n => n.startsWith(`${current}/`)).map(n => n.slice(current.length + 1))
+        : []
       const taken = [
         ...(branches?.local.map(b => b.name) ?? []),
+        ...children,
         ...trees.flatMap(w => [worktreeName(w.path), ...(w.branch ? [w.branch] : [])]),
       ]
       let failure: unknown = null
@@ -351,7 +360,8 @@ export const useThreads = defineStore('threads', {
       const folder = t?.worktree
       if (!t || !folder) return
       const users = this.threads.filter(x => x.worktree === folder)
-      if (users.some(isBusy)) throw new Error('A chat is still working in this worktree. Stop it first.')
+      const term = vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
+      if (users.some(isBusy)) throw new Error(`A chat is still working in this ${term}. Stop it first.`)
       await call('git_worktree_remove', { path: t.projectPath, worktree: folder, force })
       for (const x of users) x.worktree = null
       // Diff and file tabs opened from the folder show nothing now.
@@ -715,7 +725,7 @@ export const useThreads = defineStore('threads', {
             this._pushPart(id, m, {
               type: 'notice',
               level: 'error',
-              text: `Could not make a worktree for this chat: ${errorText(e)}. Nothing ran yet; send a message to try again (what you wrote goes along).`,
+              text: `Could not make a ${vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree} for this chat: ${errorText(e)}. Nothing ran yet; send a message to try again (what you wrote goes along).`,
             })
           }
           this._setStatus(id, 'error', 'error')

@@ -4,6 +4,7 @@ import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { isEnvPath } from '~/utils/envPath'
 
@@ -339,6 +340,8 @@ const mock = (() => {
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
       case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))
+      case 'plastic_reviews': await new Promise(r => setTimeout(r, 500)); return mockPlasticReviews(args.path)
+      case 'plastic_review_create': await new Promise(r => setTimeout(r, 900)); return mockPlasticReviewCreate(args.path, args.title, args.reviewers)
       /* Browser: no native webview here (BrowserPane shows an iframe); pages "load" at once. */
       case 'browser_open': case 'browser_navigate': {
         const { id, url } = args as { id: string; url: string }
@@ -365,7 +368,7 @@ const mock = (() => {
     // Project env files, not remote environments: the in-memory project answers them.
     if (cmd === 'env_files' || cmd === 'env_gitignore_add') return mockFiles(cmd, args)
     if (cmd === 'git_base') return mockBaseFile(args.file)
-    if (cmd.startsWith('git_')) return mockGit(cmd, args)
+    if (cmd.startsWith('git_') || cmd.startsWith('vcs_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)
     throw new Error(`mock: unknown command ${cmd}`)
