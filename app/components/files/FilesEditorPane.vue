@@ -10,6 +10,9 @@ import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
 import { modLabel } from '~/composables/useShortcuts'
 import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
+import { changeMarkers, type ChangeMarkers } from '~/composables/changeMarkers'
+import { useGit } from '~/stores/git'
+import { call } from '~/composables/useBackend'
 
 /**
  * A project file open in the main pane, edited with Monaco. Pictures open in
@@ -23,6 +26,7 @@ const props = defineProps<{ tabId: string; paneId: string; split: boolean; activ
 const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
+const git = useGit()
 const mod = ref('Ctrl')
 
 const tab = computed(() => parseFileTab(props.tabId))
@@ -60,6 +64,7 @@ let editor: Monaco.editor.IStandaloneCodeEditor | null = null
 let fontObserver: MutationObserver | null = null
 let shownTab: string | null = null
 let contentSub: Monaco.IDisposable | null = null
+let markers: ChangeMarkers | null = null
 const failed = ref<string | null>(null)
 
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
@@ -107,6 +112,7 @@ function show() {
     if (entry?.viewState) editor.restoreViewState(entry.viewState)
     syncDirty()
     readSvg()
+    void loadBase()
     // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
     if (props.active && !svgPreview.value) editor.focus()
   }
@@ -141,7 +147,9 @@ async function setUp() {
       hideCursorInOverviewRuler: true,
       scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10, useShadows: false },
       stickyScroll: { enabled: true },
+      lineDecorationsWidth: 14,
     })
+    markers = changeMarkers(monaco, editor)
     monaco.editor.remeasureFonts()
     contentSub = editor.onDidChangeModelContent(() => {
       syncDirty()
@@ -177,6 +185,31 @@ watch(() => [props.tabId, editable.value, file.value?.version] as const, () => {
 
 watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value) editor.focus() })
 
+/* ---------- change markers ---------- */
+
+/**
+ * The committed version each tab was compared with, and the commit it was read at: read again
+ * once HEAD moves (a commit, a checkout), as far as the Changes view has seen.
+ */
+const bases = new Map<string, { head: string; text: string | null }>()
+const head = computed(() => (tab.value ? git.status(tab.value.projectPath)?.head ?? '' : ''))
+
+async function loadBase() {
+  const id = props.tabId
+  const t = tab.value
+  if (!markers || !t || shownTab !== id) return
+  const at = head.value
+  let entry = bases.get(id)
+  if (!entry || entry.head !== at) {
+    // No committed version, or none readable: no markers.
+    const text = await call('git_base', { path: t.projectPath, file: t.file }).catch(() => null)
+    entry = { head: at, text }
+    bases.set(id, entry)
+  }
+  if (markers && shownTab === id) markers.setBase(entry.text)
+}
+watch(head, () => void loadBase())
+
 function setView(view: 'preview' | 'code') {
   files.setView(props.tabId, view)
   if (view === 'code') nextTick(() => editor?.focus())
@@ -188,6 +221,8 @@ onBeforeUnmount(() => {
     if (entry && !entry.model.isDisposed()) entry.viewState = editor.saveViewState()
   }
   contentSub?.dispose()
+  markers?.dispose()
+  markers = null
   // The model stays (the tab is still open); only this view of it goes.
   editor?.setModel(null)
   fontObserver?.disconnect()
@@ -424,4 +459,37 @@ const state = computed(() => {
 .fe__note-title { font-size: var(--text-md); font-weight: 600; color: var(--fg); }
 .fe__note-sub { font-size: var(--text-sm); color: var(--fg-subtle); overflow-wrap: anywhere; }
 .fe__note .btn { margin-top: var(--space-2); }
+</style>
+
+<style>
+/* Change markers (composables/changeMarkers.ts): Monaco's own DOM, so not scoped. */
+.monaco-editor .mango-change { cursor: pointer; }
+.monaco-editor .mango-change::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 3px;
+  background: var(--mark);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+.monaco-editor .mango-change:hover::before { width: 5px; }
+.monaco-editor .mango-change--add { --mark: var(--diff-add-fg); }
+.monaco-editor .mango-change--mod { --mark: var(--accent-ink); }
+/* Removed lines: a wedge on the line they stood before. */
+.monaco-editor .mango-change--del::before,
+.monaco-editor .mango-change--del:hover::before {
+  top: -4px;
+  bottom: auto;
+  width: 0;
+  height: 0;
+  border-radius: 0;
+  background: none;
+  border-style: solid;
+  border-width: 4px 0 4px 6px;
+  border-color: transparent transparent transparent var(--diff-del-fg);
+}
+.monaco-editor .mango-change--del.is-end::before { top: auto; bottom: -4px; }
+.monaco-editor .mango-change-peek { box-sizing: border-box; padding: 4px 0; z-index: 3; }
 </style>
