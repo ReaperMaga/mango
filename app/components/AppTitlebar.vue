@@ -74,7 +74,7 @@ const projectItems = computed<MenuItem[]>(() => [
     label: p.name,
     // A remote project says where it runs instead of a branch.
     hint: remotePlace(p.path)?.where ?? (p.branch ? p.branch : undefined),
-    icon: isEnvPath(p.path) ? Server : Folder,
+    icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
     checked: p.path === ws.activeProjectPath,
     onSelect: () => ws.setActiveProject(p.path),
   })),
@@ -122,6 +122,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
             <template #default>
               <button type="button" class="tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+                <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
                 <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
                 <ChevronDown class="tb__chev" />
               </button>
@@ -241,7 +242,7 @@ const isDark = computed(() => ws.resolvedTheme() === 'dark' && ws.theme !== 'lig
 .tb__project {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 26px;
   margin-left: var(--space-1);
   padding: 0 6px 0 8px;

@@ -43,7 +43,8 @@ const name = useId()
 <style scoped>
 .schemes {
   display: flex;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-2);
 }
 .scheme {
   position: relative;

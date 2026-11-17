@@ -260,9 +260,9 @@ function threadMenu(t: Thread): MenuItem[] {
     ]),
     // Status. Settled is only set with the row's mark.
     { label: 'Working', icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
-    { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) threads.archive(t.id) } },
+    { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) ws.confirmThen('archive', { title: 'Archive chat?', body: `“${t.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(t.id)) } },
     ...(t.worktree ? [{ label: 'Remove worktree…', icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
-    { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => threads.remove(t.id) },
+    { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => ws.confirmThen('delete', { title: 'Delete chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
   ]
 }
 

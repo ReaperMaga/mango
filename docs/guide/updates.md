@@ -8,11 +8,11 @@ A few seconds after launch, and then every hour while it runs, Mango reads the u
 
 Checking sends nothing about you or your projects: it downloads one small file from GitHub.
 
-To turn the automatic checks off, go to **Settings > General > Updates** and switch off **Check for updates automatically**. **Check now** in the same place checks at any time, and so does **Check for updates** in the command palette (<kbd>Ctrl/⌘</kbd> <kbd>K</kbd>).
+To turn the automatic checks off, go to **Settings > Technical > Maintenance** and switch off **Check for updates automatically**. **Check now** in the same place checks at any time, and so does **Check for updates** in the command palette (<kbd>Ctrl/⌘</kbd> <kbd>K</kbd>).
 
 ## Installing an update
 
-Click **Update** in the titlebar and choose **Update and restart**, or use the button of the same name in **Settings > General**. **Release notes** opens the release on GitHub first, if you want to see what changed.
+Click **Update** in the titlebar and choose **Update and restart**, or use the button of the same name in **Settings > Technical > Maintenance**. **Release notes** opens the release on GitHub first, if you want to see what changed.
 
 Mango then:
 

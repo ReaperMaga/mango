@@ -57,6 +57,7 @@ const picture = computed(() => {
 const host = ref<HTMLElement | null>(null)
 let monaco: MonacoApi | null = null
 let editor: Monaco.editor.IStandaloneCodeEditor | null = null
+let fontObserver: MutationObserver | null = null
 let shownTab: string | null = null
 let contentSub: Monaco.IDisposable | null = null
 const failed = ref<string | null>(null)
@@ -147,6 +148,12 @@ async function setUp() {
       if (kind.value === 'svg') { clearTimeout(svgTimer); svgTimer = setTimeout(readSvg, 120) }
     })
     editor.onDidFocusEditorText(() => threads.focusPane(props.paneId))
+    // A new code font (Settings > Appearance) reaches the open editor too.
+    fontObserver = new MutationObserver(async () => {
+      await document.fonts?.load(`12.5px ${fontFamily()}`).catch(() => {})
+      editor?.updateOptions({ fontFamily: fontFamily() })
+    })
+    fontObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-font-mono'] })
     show()
   } catch (e) {
     failed.value = e instanceof Error ? e.message : String(e)
@@ -183,6 +190,7 @@ onBeforeUnmount(() => {
   contentSub?.dispose()
   // The model stays (the tab is still open); only this view of it goes.
   editor?.setModel(null)
+  fontObserver?.disconnect()
   editor?.dispose()
   editor = null
 })

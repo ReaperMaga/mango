@@ -23,6 +23,12 @@ export default defineNuxtConfig({
   css: [
     '@fontsource-variable/inter',
     '@fontsource-variable/jetbrains-mono',
+    '@fontsource-variable/geist',
+    '@fontsource-variable/dm-sans',
+    '@fontsource-variable/manrope',
+    '@fontsource-variable/fira-code',
+    '@fontsource-variable/source-code-pro',
+    '@fontsource-variable/geist-mono',
     '@xterm/xterm/css/xterm.css',
     '~/assets/css/tokens.css',
     '~/assets/css/base.css',

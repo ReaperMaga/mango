@@ -1,11 +1,15 @@
 <script setup lang="ts">
-import { Bot, History, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
+import { Archive, Bot, Folder, History, MessageSquareMore, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
+import SettingsArchive from './SettingsArchive.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
+import SettingsBehavior from './SettingsBehavior.vue'
 import SettingsChangelog from './SettingsChangelog.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
+import SettingsMaintenance from './SettingsMaintenance.vue'
+import SettingsProjects from './SettingsProjects.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
 import { useOverlay } from '~/composables/useOverlay'
@@ -24,15 +28,39 @@ type Section = NonNullable<ReturnType<typeof useWorkspace>['settings']>
 const ws = useWorkspace()
 const build = useBuildInfo()
 
-const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
-  { id: 'general', label: 'General', icon: SlidersHorizontal },
+interface Item { id: Section; label: string; icon: typeof Bot }
+/**
+ * The rail: two headlines (not clickable) with their sections as a small tree under them, then Agents and
+ * Changelog at the bottom.
+ */
+const groups: Array<{ label: string; items: Item[] }> = [
+  {
+    label: 'General',
+    items: [
+      { id: 'general', label: 'Preferences', icon: SlidersHorizontal },
+      { id: 'projects', label: 'Projects', icon: Folder },
+      { id: 'appearance', label: 'Appearance', icon: SunMoon },
+      { id: 'voice', label: 'Voice', icon: Mic },
+    ],
+  },
+  {
+    label: 'Technical',
+    items: [
+      { id: 'environments', label: 'Environments', icon: Server },
+      { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
+      { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
+      { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+    ],
+  },
+]
+const bottom: Item[] = [
   { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'environments', label: 'Environments', icon: Server },
-  { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
-  { id: 'voice', label: 'Voice', icon: Mic },
-  { id: 'appearance', label: 'Appearance', icon: SunMoon },
+  { id: 'archive', label: 'Archive', icon: Archive },
   { id: 'changelog', label: 'Changelog', icon: History },
 ]
+
+/** The sections in rail order: what Up and Down walk. */
+const sections: Section[] = [...groups.flatMap(g => g.items), ...bottom].map(i => i.id)
 
 const open = computed(() => ws.settings !== null)
 /* Settings covers the workspace; the browsers' native pages would show through. */
@@ -114,11 +142,12 @@ function onKey(e: KeyboardEvent) {
 /** Up and Down walk the section list, like a native settings sidebar. */
 function onRailKey(e: KeyboardEvent) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-  const i = sections.findIndex(s => s.id === section.value)
-  const next = sections[(i + (e.key === 'ArrowDown' ? 1 : -1) + sections.length) % sections.length]
+  const list = sections
+  const i = list.indexOf(section.value)
+  const next = list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]
   if (!next) return
   e.preventDefault()
-  show(next.id)
+  show(next)
 }
 
 onMounted(() => {
@@ -147,8 +176,25 @@ onBeforeUnmount(() => {
           <UiIconButton label="Close settings" shortcut="Esc" @click="close"><X /></UiIconButton>
         </header>
         <nav class="settings__nav" aria-label="Settings sections" @keydown="onRailKey">
+          <div v-for="g in groups" :key="g.label" class="settings__group" role="group" :aria-label="g.label">
+            <h2 class="settings__heading" aria-hidden="true">{{ g.label }}</h2>
+            <button
+              v-for="s in g.items"
+              :key="s.id"
+              type="button"
+              class="settings__item settings__item--child"
+              :class="{ 'is-current': section === s.id }"
+              :aria-current="section === s.id ? 'page' : undefined"
+              @click="show(s.id)"
+            >
+              <component :is="s.icon" aria-hidden="true" />
+              <span>{{ s.label }}</span>
+            </button>
+          </div>
+        </nav>
+        <nav class="settings__nav settings__nav--bottom" aria-label="Agents, archive and changelog" @keydown="onRailKey">
           <button
-            v-for="s in sections"
+            v-for="s in bottom"
             :key="s.id"
             type="button"
             class="settings__item"
@@ -160,7 +206,7 @@ onBeforeUnmount(() => {
             <span>{{ s.label }}</span>
           </button>
         </nav>
-        <button type="button" class="settings__version tabular" title="About Mango" @click="show('general')">
+        <button type="button" class="settings__version tabular" title="About Mango" @click="show('maintenance')">
           Mango {{ build.version }}<template v-if="build.dev"> · dev</template>
         </button>
       </div>
@@ -175,6 +221,10 @@ onBeforeUnmount(() => {
               <SettingsVoice v-else-if="section === 'voice'" />
               <SettingsAppearance v-else-if="section === 'appearance'" />
               <SettingsChangelog v-else-if="section === 'changelog'" />
+              <SettingsMaintenance v-else-if="section === 'maintenance'" />
+              <SettingsArchive v-else-if="section === 'archive'" />
+              <SettingsProjects v-else-if="section === 'projects'" />
+              <SettingsBehavior v-else-if="section === 'behavior'" />
               <SettingsGeneral v-else-if="section === 'general'" />
             </template>
             <SettingsEnvironments
@@ -227,8 +277,28 @@ onBeforeUnmount(() => {
   gap: 2px;
   margin-top: var(--space-3);
 }
+.settings__group { display: grid; gap: 1px; margin-bottom: var(--space-3); }
+/* A headline, not a button: it names the sections under it. */
+.settings__heading {
+  margin: 0;
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--fg-faint);
+}
+/* Sections under a headline: one step smaller and in from the headline, so the rail reads as a tree. */
+.settings__item.settings__item--child {
+  height: 26px;
+  padding-left: var(--space-4);
+  font-size: var(--text-xs);
+}
+.settings__item.settings__item--child svg { width: 14px; height: 14px; }
+/* Agents and Changelog sit at the bottom of the rail, above the version. */
+.settings__nav--bottom { display: grid; gap: 2px; margin-top: auto; margin-bottom: var(--space-2); }
 .settings__item {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: center;
   gap: var(--space-2);
   height: 30px;
@@ -254,7 +324,6 @@ onBeforeUnmount(() => {
 .settings__item:focus-visible { border-radius: var(--radius-sm); }
 .settings__version {
   align-self: flex-start;
-  margin-top: auto;
   padding: var(--space-1) var(--space-2);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
