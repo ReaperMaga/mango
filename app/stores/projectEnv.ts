@@ -4,7 +4,7 @@ import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 
 /**
- * Project settings > Environment variables: the env files at a project's root and the
+ * Settings > Projects > Environment variables: the env files at a project's root and the
  * edits made to them.
  *
  * Edits are drafts kept in memory only, per project and file, so switching file, section or

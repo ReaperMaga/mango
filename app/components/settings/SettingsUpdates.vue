@@ -5,7 +5,7 @@ import { openExternal } from '~/composables/useBackend'
 import { releaseUrl, RELEASES_URL } from '~/utils/releases'
 import { useNow } from '~/utils/time'
 
-/** Settings > General: check for, and install, a newer release from GitHub. */
+/** Settings > Maintenance: check for, and install, a newer release from GitHub. */
 const up = useUpdater()
 const build = useBuildInfo()
 const now = useNow()

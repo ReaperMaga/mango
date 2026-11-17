@@ -28,7 +28,7 @@ The **Agent** and **Model** pickers under the message box work at any time betwe
 
 ## Permission modes
 
-The **Permissions** picker sets how much the agent may do before it checks with you. It applies from the next turn, so you can tighten or loosen it in the middle of a chat. The default for new chats is in **Settings > General**.
+The **Permissions** picker sets how much the agent may do before it checks with you. It applies from the next turn, so you can tighten or loosen it in the middle of a chat. The default for new chats is in **Settings > Preferences**.
 
 | Mode | What it means |
 | --- | --- |

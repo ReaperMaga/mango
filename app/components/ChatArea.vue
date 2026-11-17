@@ -166,7 +166,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     items.push(
       splitItem,
       { label: 'Mark as settled', icon: CircleCheck, divider: true, disabled: busy || tab.thread.status === 'done', onSelect: () => threads.setStatus(tab.id, 'done') },
-      { label: 'Archive chat', icon: Archive, disabled: busy, hint: busy ? 'Still working' : undefined, onSelect: () => threads.archive(tab.id) },
+      { label: 'Archive chat', icon: Archive, disabled: busy, hint: busy ? 'Still working' : undefined, onSelect: () => ws.confirmThen('archive', { title: 'Archive chat?', body: `“${tab.thread.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(tab.id)) },
     )
     return items
   }

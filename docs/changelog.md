@@ -14,6 +14,15 @@ All notable changes to Mango. Versions follow [semantic versioning](https://semv
 
 - **Changelog** in Settings and in the Settings menu of the sidebar: what changed in each version.
 
+- **More color schemes and appearance options:** Teal, Green, Red, Slate and Uchiha (black and crimson) join the color schemes, and Settings > Appearance gains Text size, Corners and Animations.
+
+- **Settings rail:** General and Technical are headlines with their sections under them. General holds Preferences (the old General page), Appearance and Voice; Technical holds Environments, Terminal and the new Maintenance page, which now has Updates.
+- **Fonts and project badges:** choose the interface and code fonts in Settings > Appearance (five each), and a project's badge now shows in the titlebar and the Recent list.
+- **Behaviour** in Settings: the send shortcut, queue or steer for messages written while the agent works, and how many tool calls a chat shows.
+- **Projects** in Settings: per project, a display name and badge color, pinning, archiving, the agent, model and permission mode new chats start with, and removing the project.
+- **Archive** in Settings: all archived chats in one list, to restore or delete.
+- **Confirmations:** optional questions before a chat is archived or deleted (Settings > Preferences).
+
 ### Environments
 
 - Remote projects open faster: ssh connections are reused and git reads are batched.

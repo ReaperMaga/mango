@@ -59,6 +59,7 @@ onBeforeUnmount(() => unlistenJoin?.())
     <ProjectOpenEnvFolderDialog />
     <SetupGettingStarted />
     <UsageDialog />
+    <ConfirmDialog />
     <SettingsView />
     <CommandPalette />
     <UiImageViewer />

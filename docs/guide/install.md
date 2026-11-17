@@ -61,4 +61,4 @@ There is no macOS build yet. Parts of Mango already account for macOS (shortcuts
 
 ## Check the version
 
-The version you are running, and the commit it was built from, are in **Settings > General > About Mango**. **Copy version info** copies them for a bug report.
+The version you are running, and the commit it was built from, are in **Settings > Technical > Maintenance**. **Copy version info** copies them for a bug report.

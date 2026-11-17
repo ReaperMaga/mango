@@ -275,10 +275,18 @@ onMounted(async () => {
   resizeObserver = new ResizeObserver(scheduleFit)
   resizeObserver.observe(host.value)
 
-  themeObserver = new MutationObserver(() => {
-    if (term) term.options.theme = buildTheme()
+  themeObserver = new MutationObserver(async () => {
+    if (!term) return
+    term.options.theme = buildTheme()
+    // A new code font (Settings > Appearance): load it, then refit to the new glyph size.
+    const family = terminalFontFamily(cssVar('--font-mono'))
+    if (term.options.fontFamily === family) return
+    await loadFonts(family)
+    if (!term) return
+    term.options.fontFamily = family
+    scheduleFit()
   })
-  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-scheme'] })
+  themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-scheme', 'data-font-mono'] })
 
   if (props.active && props.visible) term.focus()
   await spawn()

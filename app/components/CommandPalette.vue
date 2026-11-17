@@ -144,15 +144,15 @@ const actions = computed<Item[]>(() => {
   if (ws.activeProject) {
     // Names only: what is in the files never reaches the palette.
     items.push(
-      { id: 'project-settings', group: 'Actions', label: 'Project settings', detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure env environment variables dotenv', run: () => ws.openSettings('project-env') },
-      { id: 'project-env', group: 'Actions', label: 'Environment variables', detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openSettings('project-env') },
+      { id: 'project-settings', group: 'Actions', label: 'Project settings', detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure name icon color pin archive agent model permissions env environment variables dotenv', run: () => ws.openSettings('projects') },
+      { id: 'project-env', group: 'Actions', label: 'Environment variables', detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
     )
   }
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
   const up = useUpdater()
   items.push(up.update
     ? { id: 'update', group: 'Actions', label: `Update to ${up.update.version} and restart`, icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
-    : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('general'); up.check(true) } })
+    : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('maintenance'); up.check(true) } })
   items.push({ id: 'usage', group: 'Actions', label: 'Usage limits', detail: '5-hour and weekly', icon: Gauge, keys: [mod, shift, 'U'], keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
   items.push({ id: 'setup', group: 'Actions', label: 'Get started', detail: 'Install and sign in to agents', icon: Download, keywords: 'setup install onboarding first run claude code codex git cli agents download sign in login', run: () => ws.openSetup() })
   items.push({ id: 'changelog', group: 'Actions', label: 'Changelog', icon: History, keywords: 'changelog release notes what is new whats new versions history', run: () => ws.openSettings('changelog') })
@@ -193,7 +193,7 @@ const threadItems = computed<Item[]>(() => {
 })
 
 const projectItems = computed<Item[]>(() =>
-  ws.recent.map((p, i) => {
+  ws.listedRecent.map((p, i) => {
     const isOpen = ws.openProjects.some(o => o.path === p.path)
     const current = p.path === ws.activeProjectPath
     // A remote project: where it runs, then its folder inside the instance.

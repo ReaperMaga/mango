@@ -2,6 +2,7 @@
 import { Clock, Paperclip, SendHorizontal, X } from 'lucide-vue-next'
 import type { Thread } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
+import { isRunning } from '~/agents'
 
 /**
  * Messages written while the agent works. They wait for the turn to end, so the agent is not
@@ -13,6 +14,12 @@ const threads = useThreads()
 
 /** A message that is already in the chat only waits for its turn: nothing to offer there. */
 const waiting = computed(() => (threads.queue[props.thread.id] ?? []).filter(q => !q.shown))
+
+/**
+ * Only a real run can take a message mid-turn. The simulated agent of the browser preview cannot,
+ * so there (and between turns) "Send now" is not offered. The status is read so this re-checks as the run starts and ends.
+ */
+const steerable = computed(() => props.thread.status !== undefined && isRunning(props.thread.id))
 </script>
 
 <template>
@@ -24,6 +31,7 @@ const waiting = computed(() => (threads.queue[props.thread.id] ?? []).filter(q =
         <Paperclip aria-hidden="true" />{{ q.attachments.length }}
       </span>
       <UiButton
+        v-if="steerable"
         variant="ghost"
         size="sm"
         :title="`Give it to ${thread.status === 'waiting' ? 'the agent' : 'the running turn'} now: it reads it at its next step`"

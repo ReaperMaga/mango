@@ -24,7 +24,7 @@ const items = computed<MenuItem[]>(() => {
       onSelect: () => up.install(),
     },
     { label: 'Release notes', icon: ExternalLink, onSelect: () => v && openExternal(releaseUrl(v)) },
-    { label: 'Update settings', icon: Settings, divider: true, onSelect: () => ws.openSettings('general') },
+    { label: 'Update settings', icon: Settings, divider: true, onSelect: () => ws.openSettings('maintenance') },
   ]
 })
 

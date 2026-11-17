@@ -64,7 +64,7 @@ app/
   composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
-                     projectEnv.ts (Project settings > Environment variables: env files, in-memory drafts; values never persisted)
+                     projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),

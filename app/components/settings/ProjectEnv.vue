@@ -4,22 +4,37 @@ import { useWorkspace, type EnvEditMode } from '~/stores/workspace'
 import { envNameProblem, useProjectEnv } from '~/stores/projectEnv'
 import { parseEnv } from '~/utils/dotenv'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import SettingsSection from './SettingsSection.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 import ProjectEnvFields from './ProjectEnvFields.vue'
 
 /**
- * Project settings > Environment variables: the .env-style files at the active project's root
+ * Settings > Projects > Environment variables: the .env-style files at the picked project's root
  * (a remote project's too; the backend reaches into its environment). Each file is edited as
  * rows or as raw text; both edit the same draft, which stays in memory (`stores/projectEnv.ts`)
  * until it is saved, so moving to another file, section or project keeps it.
  */
+const props = defineProps<{
+  /** The project's folder (an `env://` path for a remote project). */
+  root: string
+  /** The project's name, for the description. */
+  name: string
+}>()
 const ws = useWorkspace()
 const env = useProjectEnv()
+const headId = useId()
+
+/* Opened as "Environment variables" (palette): bring this block into view below the project's other settings. */
+const sectionEl = ref<HTMLElement | null>(null)
+onMounted(() => {
+  if (ws.settingsAnchor !== 'project-env') return
+  ws.settingsAnchor = null
+  // After Settings has scrolled the new section to the top.
+  requestAnimationFrame(() => sectionEl.value?.scrollIntoView({ block: 'start' }))
+})
 const mod = ref('Ctrl')
 onMounted(() => { mod.value = modLabel() })
 
-const root = computed(() => ws.activeProjectPath)
+const root = computed<string | null>(() => props.root)
 const files = computed(() => (root.value ? env.files[root.value] ?? [] : []))
 const listing = computed(() => !!root.value && !!env.listing[root.value])
 const listError = computed(() => (root.value ? env.listError[root.value] ?? null : null))
@@ -275,11 +290,12 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
 </script>
 
 <template>
-  <div class="pe" @keydown="onKeydown">
-    <SettingsSection
-      title="Environment variables"
-      :description="`The .env files at the root of ${ws.activeProject?.name ?? 'the project'}. Changes stay here until you save them; values stay hidden until you show them.`"
-    >
+  <section id="project-env" ref="sectionEl" class="pe" :aria-labelledby="headId" @keydown="onKeydown">
+    <header class="pe__head">
+      <h3 :id="headId" class="pe__title">Environment variables</h3>
+      <p class="pe__desc">The .env files at the root of {{ name }}. Changes stay here until you save them; values stay hidden until you show them.</p>
+    </header>
+    <div>
       <!-- Files, with the actions on files at the end of the row -->
       <div class="pe__files">
         <div
@@ -498,11 +514,17 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           />
         </template>
       </div>
-    </SettingsSection>
-  </div>
+    </div>
+  </section>
 </template>
 
 <style scoped>
+/* A block of Settings > Projects: its heading matches that page's own ("New chats", "Danger"). */
+.pe { scroll-margin-top: var(--space-5); }
+.pe__head { margin: var(--space-6) 0 var(--space-3); }
+.pe__title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.pe__desc { margin: var(--space-1) 0 0; max-width: 62ch; font-size: var(--text-sm); color: var(--fg-subtle); text-wrap: pretty; }
+
 /* ---- files: tabs with the file actions at the end ---- */
 .pe__files {
   display: flex;
