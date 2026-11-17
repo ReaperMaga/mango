@@ -1,15 +1,16 @@
-import type { ChatImage, FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { ChatImage, EnvFile, FileBytes, FileContent, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
- * `fs_*` commands from types/ipc.ts. Every project gets its own copy of one
- * small tree, so edits stick while the page is open and saving really works.
+ * `fs_*` commands from types/ipc.ts, plus `env_files` and `env_gitignore_add`.
+ * Every project gets its own copy of one small tree, so edits stick while the
+ * page is open and saving really works. What is ignored follows the project's
+ * root `.gitignore` (simple names and folders only), as if it were a git repository.
  */
 
 interface MockFile { text: string | null; modifiedMs: number; size?: number }
 
 const MIN = 60_000
-const IGNORED = ['node_modules', '.nuxt', '.output', 'src-tauri/target']
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 
 const SEED: Record<string, string | null> = {
@@ -17,7 +18,10 @@ const SEED: Record<string, string | null> = {
   'package.json': '{\n  "name": "mango",\n  "private": true,\n  "type": "module",\n  "version": "0.1.1",\n  "scripts": {\n    "dev": "nuxt dev",\n    "build": "nuxt generate",\n    "app": "tauri dev"\n  }\n}\n',
   'nuxt.config.ts': "export default defineNuxtConfig({\n  ssr: false,\n  modules: ['@pinia/nuxt'],\n  devServer: { host: '127.0.0.1', port: 1420 },\n})\n",
   'tsconfig.json': '{\n  "extends": "./.nuxt/tsconfig.json"\n}\n',
-  '.gitignore': 'node_modules\n.nuxt\n.output\nsrc-tauri/target\n',
+  '.gitignore': 'node_modules\n.nuxt\n.output\nsrc-tauri/target\n/.env\n',
+  '.env': '# Local settings for the dev server: never commit this file\nDATABASE_URL=postgres://mango:secret@localhost:5432/mango\nAPI_KEY=sk-test-4f9a2c71e0b3\nGREETING="Hello, Mango # not a comment"\nDEBUG=true\n',
+  '.env.local': '# Overrides for this machine\nDEBUG=false\nPORT=1420\n',
+  '.env.example': '# Copy to .env and fill in\nDATABASE_URL=\nAPI_KEY=\nGREETING="Hello"\nDEBUG=false\n',
   'app/app.vue': '<script setup lang="ts">\nimport { useWorkspace } from \'~/stores/workspace\'\n\nconst ws = useWorkspace()\nonMounted(() => ws.init())\n</script>\n\n<template>\n  <div class="app">\n    <AppTitlebar />\n    <AppWorkspace v-if="ws.hasProject" />\n  </div>\n</template>\n',
   'app/stores/workspace.ts': "import { defineStore } from 'pinia'\n\nexport const useWorkspace = defineStore('workspace', {\n  state: () => ({\n    openProjects: [] as string[],\n    activeProjectPath: null as string | null,\n    sidebarOpen: true,\n  }),\n  actions: {\n    toggleSidebar() {\n      this.sidebarOpen = !this.sidebarOpen\n    },\n  },\n})\n",
   'app/stores/git.ts': "import { defineStore } from 'pinia'\n\n/** All git state goes through here; it refreshes after every action. */\nexport const useGit = defineStore('git', {\n  state: () => ({ repos: {} as Record<string, unknown> }),\n})\n",
@@ -56,7 +60,17 @@ function clean(rel: string) {
   return rel
 }
 
-const isIgnored = (path: string) => IGNORED.some(i => path === i || path.startsWith(`${i}/`))
+/** The root `.gitignore`'s patterns, read the simple way: a name or folder, `/` anchors ignored, `\\` escapes undone. */
+function ignorePatterns(root: string) {
+  const text = filesOf(root).get('.gitignore')?.text ?? ''
+  return text.split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#') && !l.startsWith('!'))
+    .map(l => l.replace(/^\//, '').replace(/\/$/, '').replace(/\\(.)/g, '$1'))
+}
+
+const isIgnored = (root: string, path: string) =>
+  ignorePatterns(root).some(i => path === i || path.startsWith(`${i}/`))
 
 function listDir(root: string, dir: string): FsListing {
   dir = clean(dir).replace(/\/+$/, '')
@@ -68,7 +82,7 @@ function listDir(root: string, dir: string): FsListing {
     const rest = path.slice(prefix.length)
     const name = rest.split('/')[0]!
     const full = prefix + name
-    if (!seen.has(name)) seen.set(name, { name, path: full, isDir: rest.includes('/'), ignored: isIgnored(full) })
+    if (!seen.has(name)) seen.set(name, { name, path: full, isDir: rest.includes('/'), ignored: isIgnored(root, full) })
   }
   if (dir && !seen.size) throw new Error(`${dir} no longer exists`)
   const entries = [...seen.values()].sort((a, b) =>
@@ -129,6 +143,79 @@ function writeFile(root: string, file: string, text: string, expected: number | 
   return { saved: true, modifiedMs: f.modifiedMs }
 }
 
+const isFolder = (files: Map<string, MockFile>, rel: string) => [...files.keys()].some(p => p.startsWith(`${rel}/`))
+
+/** The file part of a project-relative path, refused when it is not a file name. */
+function fileRel(file: string) {
+  const rel = clean(file)
+  const name = rel.split('/').pop() ?? ''
+  if (!rel || rel.endsWith('/') || name === '.' || name === '..' || rel.split('/').some(s => !s)) {
+    throw new Error(`"${file}" is not a path inside the project`)
+  }
+  return rel
+}
+
+function createFile(root: string, file: string, text: string): WriteResult {
+  const rel = fileRel(file)
+  const files = filesOf(root)
+  if (files.has(rel) || isFolder(files, rel)) throw new Error(`${rel} already exists`)
+  const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
+  if (dir && files.has(dir)) throw new Error(`${dir} is not a folder`)
+  if (dir && !isFolder(files, dir)) throw new Error(`${dir} no longer exists`)
+  const modifiedMs = Date.now()
+  files.set(rel, { text, modifiedMs })
+  return { saved: true, modifiedMs }
+}
+
+function deleteFile(root: string, file: string) {
+  const rel = fileRel(file)
+  const files = filesOf(root)
+  if (!files.has(rel)) {
+    throw new Error(isFolder(files, rel) ? `${rel} is a folder; only files can be deleted here` : `${rel} no longer exists`)
+  }
+  files.delete(rel)
+}
+
+function plainName(name: string) {
+  if (!name || name === '.' || name === '..' || /[\\/\0\r\n]/.test(name)) throw new Error(`"${name}" is not a file name`)
+  return name
+}
+
+const TEMPLATES = ['.env.example', '.env.sample', '.env.template', 'example.env', 'sample.env', 'template.env']
+/** `.env`, `.env.*` or `*.env`, but not the example/template files projects commit for others to copy. */
+const isEnvName = (name: string) =>
+  (name === '.env' || name.startsWith('.env.') || name.endsWith('.env')) && !TEMPLATES.includes(name.toLowerCase())
+
+function envFiles(root: string, extra: string[]): EnvFile[] {
+  extra.forEach(plainName)
+  const out: EnvFile[] = []
+  for (const [path, f] of filesOf(root)) {
+    if (path.includes('/') || !(isEnvName(path) || extra.includes(path))) continue
+    const size = f.size ?? new TextEncoder().encode(f.text ?? '').length
+    out.push({ name: path, size, modifiedMs: f.modifiedMs, ignored: isIgnored(root, path) })
+  }
+  const lower = (s: string) => s.toLowerCase()
+  return out.sort((a, b) =>
+    Number(a.name !== '.env') - Number(b.name !== '.env')
+    || (lower(a.name) < lower(b.name) ? -1 : lower(a.name) > lower(b.name) ? 1 : 0)
+    || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+function gitignoreAdd(root: string, name: string) {
+  const line = `/${plainName(name).replace(/[*?[]/g, c => `\\${c}`).replace(/ +$/, m => '\\ '.repeat(m.length))}`
+  const files = filesOf(root)
+  const f = files.get('.gitignore')
+  if (!f) {
+    files.set('.gitignore', { text: `${line}\n`, modifiedMs: Date.now() })
+    return
+  }
+  const text = f.text ?? ''
+  if (text.split('\n').some(l => l.replace(/\r$/, '') === line)) return
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  f.text = `${text}${text && !text.endsWith('\n') ? eol : ''}${line}${eol}`
+  f.modifiedMs = Date.now()
+}
+
 export async function mockFiles(cmd: string, args: any): Promise<any> {
   await wait(40)
   switch (cmd) {
@@ -136,6 +223,10 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
     case 'fs_read_file': return readFile(args.root, args.file)
     case 'fs_read_bytes': return readBytes(args.root, args.file)
     case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
+    case 'fs_create_file': return createFile(args.root, args.file, args.text)
+    case 'fs_delete_file': return deleteFile(args.root, args.file)
+    case 'env_files': return envFiles(args.root, args.extra ?? [])
+    case 'env_gitignore_add': return gitignoreAdd(args.root, args.name)
   }
   throw new Error(`mock: unknown command ${cmd}`)
 }

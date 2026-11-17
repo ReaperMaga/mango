@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
+import { ChevronDown, FolderCog, FolderOpen, FolderPlus, Gauge, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, Sun, Moon, X, Folder } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -85,7 +85,10 @@ const projectItems = computed<MenuItem[]>(() => [
     ? [{ label: 'Projects go to…', hint: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
     : []),
   ...(ws.activeProject
-    ? [{ label: `Close ${ws.activeProject.name}`, icon: X, divider: true, onSelect: () => ws.closeProject(ws.activeProject!.path) }]
+    ? [
+        { label: 'Project settings…', icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        { label: `Close ${ws.activeProject.name}`, icon: X, onSelect: () => ws.closeProject(ws.activeProject!.path) },
+      ]
     : []),
 ])
 

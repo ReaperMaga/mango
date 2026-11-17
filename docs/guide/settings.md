@@ -26,6 +26,7 @@ Settings for one project at a time: pick it at the top ("Applying settings for")
 - **Pin**: pinned projects come first in the project lists.
 - **Archive**: hides the project from the Recent list and closes it. Its chats and folder are kept, and opening the project again brings it back.
 - **New chats**: the **Agent**, **Model** and **Permissions** a new chat in this project starts with, instead of the defaults.
+- **Environment variables**: the project's `.env` files, one tab each. Every `.env`, `.env.*` and `*.env` at the project root shows up on its own; example files such as `.env.example` stay out unless you add them by name. **New file** creates one under any name, and **Delete file** removes one (after asking). Edit a file as **Fields**, rows of name and value, or as **Raw** text: values stay hidden until you press **Show values**. Pasting `NAME=value` lines into a name adds them all, and lines you don't touch, comments and quoting are kept. Changes are drafts until you **Save** (<kbd>Ctrl/⌘</kbd> <kbd>S</kbd>) or **Revert**; if the file changed on disk in the meantime, Mango asks before overwriting it. A file git doesn't ignore gets a warning with **Add to .gitignore**. "Environment variables" in the command palette opens this part directly.
 - **Remove project** (under **Danger**): asks first, then deletes the project's entry and its chats. Files on disk are not touched.
 
 ## Behaviour

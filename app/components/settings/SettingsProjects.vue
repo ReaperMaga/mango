@@ -12,6 +12,7 @@ import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 import SettingsSelect from './SettingsSelect.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
+import ProjectEnv from './ProjectEnv.vue'
 
 /**
  * Settings > Projects: what one project overrides. Pick the project at the top; every row below applies
@@ -111,6 +112,7 @@ function askRemove() {
       ws.closeProject(p.path)
       await ws.forgetProject(p.path)
       ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null })
+      ws.forgetEnvExtraFiles(p.path)
       picked.value = null
     },
   }
@@ -202,6 +204,8 @@ function askRemove() {
           </template>
         </SettingsRow>
       </div>
+
+      <ProjectEnv :key="project.path" :root="project.path" :name="project.name" />
 
       <h3 class="head">Danger</h3>
       <div class="card">

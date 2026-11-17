@@ -1159,8 +1159,13 @@ fn has_head_cmd(root: &At) -> Git<'_> {
 /// when `dir` is not in a repository or git is missing: ignoring is a hint
 /// for the file tree, never a reason to fail a listing.
 pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
+    ignored_paths_known(dir, paths).unwrap_or_default()
+}
+
+/// [`ignored_paths`], or None when git could not tell (not a repository, git missing).
+pub(crate) fn ignored_paths_known(dir: &Path, paths: &[String]) -> Option<Vec<String>> {
     if paths.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
     let mut input = Vec::new();
     for p in paths {
@@ -1172,13 +1177,15 @@ pub(crate) fn ignored_paths(dir: &Path, paths: &[String]) -> Vec<String> {
     let cmd = git(&at).read_only().args(["check-ignore", "-z", "--stdin"]).stdin(input).env_remove("GIT_LITERAL_PATHSPECS");
     // Exit 0: some are ignored, 1: none are, 128: not a repository.
     match cmd.run() {
-        Ok(out) if out.ok() => out
-            .stdout
-            .split(|b| *b == 0)
-            .filter(|s| !s.is_empty())
-            .map(lossy)
-            .collect(),
-        _ => Vec::new(),
+        Ok(out) if out.ok() => Some(
+            out.stdout
+                .split(|b| *b == 0)
+                .filter(|s| !s.is_empty())
+                .map(lossy)
+                .collect(),
+        ),
+        Ok(out) if out.code == Some(1) => Some(Vec::new()),
+        _ => None,
     }
 }
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun, History,
+  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Server, SquareTerminal, Sun, History,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -139,6 +139,13 @@ const actions = computed<Item[]>(() => {
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: [mod, '\\'], keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
         : { id: 'split', group: 'Actions', label: 'Split chat right', icon: Columns2, keys: [mod, '\\'], keywords: 'split pane side by side', run: () => threads.split() },
+    )
+  }
+  if (ws.activeProject) {
+    // Names only: what is in the files never reaches the palette.
+    items.push(
+      { id: 'project-settings', group: 'Actions', label: 'Project settings', detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure name icon color pin archive agent model permissions env environment variables dotenv', run: () => ws.openSettings('projects') },
+      { id: 'project-env', group: 'Actions', label: 'Environment variables', detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
     )
   }
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })

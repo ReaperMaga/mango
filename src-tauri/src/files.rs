@@ -74,7 +74,7 @@ pub struct WriteResult {
     pub modified_ms: u64,
 }
 
-fn modified_ms(meta: &fs::Metadata) -> u64 {
+pub(crate) fn modified_ms(meta: &fs::Metadata) -> u64 {
     meta.modified()
         .ok()
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
@@ -83,7 +83,7 @@ fn modified_ms(meta: &fs::Metadata) -> u64 {
 
 /// The project folder (canonical) and `rel` inside it (canonical, existing).
 /// Refuses anything that leaves the project, through `..` or a symlink.
-fn resolve(root: &str, rel: &str) -> Result<(PathBuf, PathBuf), String> {
+pub(crate) fn resolve(root: &str, rel: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = existing_dir(root)?
         .canonicalize()
         .map_err(|e| format!("Could not open the project folder: {e}"))?;
@@ -220,6 +220,62 @@ pub(crate) fn write_file(
     Ok(WriteResult { saved: true, modified_ms: after })
 }
 
+/// One file or folder name: not empty, not `.` or `..`, no separators, NUL or line breaks.
+pub(crate) fn plain_name(name: &str) -> Result<&str, String> {
+    if name.is_empty() || name == "." || name == ".." || name.contains(['/', '\\', '\0', '\n', '\r']) {
+        return Err(format!("\"{}\" is not a file name", name.escape_debug()));
+    }
+    Ok(name)
+}
+
+/// A project-relative file path split into its folder ("" for the project itself) and its
+/// plain file name. Refuses absolute paths, `..` and a last part that is not a name.
+fn split_rel(rel: &str) -> Result<(&str, &str), String> {
+    let bad = || format!("\"{rel}\" is not a path inside the project");
+    clean_rel(rel).map_err(|_| bad())?;
+    let name = rel.rsplit(['/', '\\']).next().unwrap_or_default();
+    plain_name(name).map_err(|_| bad())?;
+    let dir = rel[..rel.len() - name.len()].trim_end_matches(['/', '\\']);
+    Ok((dir, name))
+}
+
+/// Create a new file with `text`. Never replaces anything: an existing file, folder or
+/// symlink (even a dangling one) at that name is an error. The folder must be inside the project.
+pub(crate) fn create_file(root: &str, file: &str, text: &str) -> Result<WriteResult, String> {
+    use std::io::Write as _;
+    let (dir, name) = split_rel(file)?;
+    let (_, parent) = resolve(root, dir)?;
+    if !parent.is_dir() {
+        return Err(format!("{dir} is not a folder"));
+    }
+    let target = parent.join(name);
+    // `create_new` is O_EXCL: it does not follow a symlink at the final name.
+    let mut out = fs::OpenOptions::new().write(true).create_new(true).open(&target).map_err(|e| match e.kind() {
+        std::io::ErrorKind::AlreadyExists => format!("{file} already exists"),
+        std::io::ErrorKind::PermissionDenied => format!("Could not create {file}: the folder is read-only"),
+        _ => format!("Could not create {file}: {e}"),
+    })?;
+    out.write_all(text.as_bytes()).map_err(|e| format!("Could not write {file}: {e}"))?;
+    drop(out);
+    let after = fs::metadata(&target).map(|m| modified_ms(&m)).unwrap_or(0);
+    Ok(WriteResult { saved: true, modified_ms: after })
+}
+
+/// Delete one file. A symlink is removed itself (never what it points at); folders are refused.
+pub(crate) fn delete_file(root: &str, file: &str) -> Result<(), String> {
+    let (dir, name) = split_rel(file)?;
+    let (_, parent) = resolve(root, dir)?;
+    let target = parent.join(name);
+    let meta = fs::symlink_metadata(&target).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("{file} no longer exists"),
+        _ => format!("Could not delete {file}: {e}"),
+    })?;
+    if meta.is_dir() || fs::metadata(&target).is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{file} is a folder; only files can be deleted here"));
+    }
+    fs::remove_file(&target).map_err(|e| format!("Could not delete {file}: {e}"))
+}
+
 // ---------------------------------------------------------------------------
 // Remote projects
 // ---------------------------------------------------------------------------
@@ -230,7 +286,7 @@ pub(crate) fn write_file(
 /// arguments, and file contents only on stdin. Paths are checked here first
 /// ([`remote_rel`]) and confined again inside the instance, where the script resolves
 /// symlinks (`readlink -f`) and refuses anything outside the project folder's real path.
-mod remote {
+pub(crate) mod remote {
     use super::*;
     use crate::git::{EnvAt, Output, LOCAL_TIMEOUT};
 
@@ -242,11 +298,13 @@ mod remote {
     const LIST_CAP: usize = 8 * 1024 * 1024;
 
     // Exit codes the scripts use for the refusals a person should read.
-    const MISSING: i32 = 10;
-    const OUTSIDE: i32 = 11;
-    const NOT_DIR: i32 = 12;
-    const NOT_FILE: i32 = 13;
-    const READ_ONLY: i32 = 14;
+    pub(crate) const MISSING: i32 = 10;
+    pub(crate) const OUTSIDE: i32 = 11;
+    pub(crate) const NOT_DIR: i32 = 12;
+    pub(crate) const NOT_FILE: i32 = 13;
+    pub(crate) const READ_ONLY: i32 = 14;
+    const EXISTS: i32 = 15;
+    const IS_DIR: i32 = 16;
 
     /// Shared start of every script: `$1` is the path relative to the project (the working
     /// folder), already checked by [`remote_rel`]. Leaves the resolved path in `$t` and defines
@@ -261,12 +319,17 @@ if [ -n "$rel" ]; then t=$(readlink -f "$root/$rel" 2>/dev/null) || exit 10; fi
 [ -n "$t" ] && [ -e "$t" ] || exit 10
 case $root in /) ;; *) case $t in "$root"|"$root"/*) ;; *) exit 11 ;; esac ;; esac
 mtime() {
-  m=$(date -r "$1" +%s%3N 2>/dev/null)
-  case $m in ''|*[!0-9]*) m=$(stat -c %Y "$1")000 ;; esac
+  # Whole nanoseconds, cut to milliseconds here: uutils' date drops the zeros `%3N` should keep.
+  m=$(date -r "$1" +%s.%N 2>/dev/null)
+  mtime_s=${m%%.*} mtime_n=${m#*.}
+  mtime_n=${mtime_n%"${mtime_n#???}"}
+  case $mtime_s in ''|*[!0-9]*) m= ;; *) case $mtime_n in [0-9][0-9][0-9]) m=$mtime_s$mtime_n ;; *) m= ;; esac ;; esac
+  [ -n "$m" ] || m=$(stat -c %Y "$1")000
 }
 "#
         };
     }
+    pub(crate) use prelude;
 
     /// `$2`: how many entries at most. Prints `d<name>\0` / `f<name>\0` per entry (symlinks
     /// followed for the kind), `t\0` when cut off, then `i\0` and the names git ignores.
@@ -319,9 +382,37 @@ printf 'saved %s\n' "$m"
 "#
     );
 
+    /// `$1` is the folder, `$2` the new file's name. Creates it from stdin (never over anything
+    /// that exists, a dangling symlink included: `set -C`) and prints `saved <mtime>`.
+    pub(super) const CREATE: &str = concat!(
+        prelude!(),
+        r#"[ -d "$t" ] || exit 12
+p=$t/$2
+if [ -e "$p" ] || [ -L "$p" ]; then exit 15; fi
+[ -w "$t" ] || exit 14
+set -C
+cat > "$p" || exit 1
+mtime "$p"
+printf 'saved %s\n' "$m"
+"#
+    );
+
+    /// `$1` is the folder, `$2` the file's name. Deletes the file (a symlink itself, not
+    /// what it points at); refuses folders.
+    pub(super) const DELETE: &str = concat!(
+        prelude!(),
+        r#"[ -d "$t" ] || exit 12
+p=$t/$2
+[ -e "$p" ] || [ -L "$p" ] || exit 10
+[ -d "$p" ] && exit 16
+rm -f -- "$p" || exit 1
+printf 'deleted\n'
+"#
+    );
+
     /// A path relative to the project, safe to hand to the scripts: "" for the project
     /// itself, otherwise no absolute path, no `..`, no NUL and no line breaks.
-    pub(super) fn remote_rel(rel: &str) -> Result<String, String> {
+    pub(crate) fn remote_rel(rel: &str) -> Result<String, String> {
         let trimmed = rel.trim_end_matches('/');
         if trimmed.is_empty() && rel.is_empty() {
             return Ok(String::new());
@@ -334,14 +425,14 @@ printf 'saved %s\n' "$m"
         Ok(trimmed.to_string())
     }
 
-    fn run(env: &EnvAt, script: &str, args: &[&str], stdin: Option<Vec<u8>>, cap: usize) -> Result<Output, String> {
+    pub(crate) fn run(env: &EnvAt, script: &str, args: &[&str], stdin: Option<Vec<u8>>, cap: usize) -> Result<Output, String> {
         let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
         argv.extend(args.iter().map(|a| a.to_string()));
         env.run_plain(&[], &argv, stdin, cap, LOCAL_TIMEOUT)
     }
 
     /// The script's own output, after [`MARK`].
-    pub(super) fn body(stdout: &[u8]) -> Option<&[u8]> {
+    pub(crate) fn body(stdout: &[u8]) -> Option<&[u8]> {
         let at = stdout.windows(MARK.len()).position(|w| w == MARK)?;
         Some(&stdout[at + MARK.len()..])
     }
@@ -487,6 +578,57 @@ printf 'saved %s\n' "$m"
             .and_then(parse_write)
             .ok_or_else(|| format!("Saved {rel}, but the environment's answer was not understood. Reopen the file to check it."))
     }
+
+    /// A checked project-relative file path, split into its folder ("" for the project) and name.
+    fn split_remote(file: &str) -> Result<(String, String, String), String> {
+        // `remote_rel` forgives a trailing slash (a folder); a file has none.
+        if file.ends_with('/') {
+            return Err(format!("\"{file}\" is not a path inside the project"));
+        }
+        let rel = remote_rel(file)?;
+        let (dir, name) = split_rel(&rel)?;
+        Ok((dir.to_string(), name.to_string(), rel.clone()))
+    }
+
+    /// Why the folder part of `rel` was refused, or `None` for a code about the file itself.
+    fn folder_failure(out: &Output, dir: &str) -> Option<String> {
+        let shown = if dir.is_empty() { "The project folder" } else { dir };
+        match out.code {
+            Some(MISSING) => Some(format!("{shown} no longer exists")),
+            Some(OUTSIDE) => Some(format!("{shown} links to a place outside the project")),
+            Some(NOT_DIR) => Some(format!("{shown} is not a folder")),
+            _ => None,
+        }
+    }
+
+    pub(super) fn create_file(env: &EnvAt, file: &str, text: &str) -> Result<WriteResult, String> {
+        let (dir, name, rel) = split_remote(file)?;
+        let out = run(env, CREATE, &[&dir, &name], Some(text.as_bytes().to_vec()), HEADER)?;
+        if !out.ok() {
+            let shown = if dir.is_empty() { "The project folder" } else { &dir };
+            return Err(match out.code {
+                Some(EXISTS) => format!("{rel} already exists"),
+                Some(READ_ONLY) => format!("{shown} is read-only"),
+                _ => folder_failure(&out, &dir).unwrap_or_else(|| out.error(&format!("Could not create {rel}"))),
+            });
+        }
+        body(&out.stdout)
+            .and_then(parse_write)
+            .ok_or_else(|| format!("Created {rel}, but the environment's answer was not understood. Reopen the file to check it."))
+    }
+
+    pub(super) fn delete_file(env: &EnvAt, file: &str) -> Result<(), String> {
+        let (dir, name, rel) = split_remote(file)?;
+        let out = run(env, DELETE, &[&dir, &name], None, HEADER)?;
+        if out.ok() {
+            return Ok(());
+        }
+        Err(match out.code {
+            Some(IS_DIR) => format!("{rel} is a folder; only files can be deleted here"),
+            Some(MISSING) => format!("{rel} no longer exists"),
+            _ => folder_failure(&out, &dir).unwrap_or_else(|| out.error(&format!("Could not delete {rel}"))),
+        })
+    }
 }
 
 /// The text (and BOM flag) of a file read whole, or binary when it has NUL bytes or is not UTF-8.
@@ -515,7 +657,7 @@ fn with_bom(text: &str, bom: bool) -> Vec<u8> {
 }
 
 /// Run `local` for a folder on this computer, `env` for a remote project, off the UI thread.
-async fn on_root<T, L, E>(app: AppHandle, root: String, local: L, env: E) -> Result<T, String>
+pub(crate) async fn on_root<T, L, E>(app: AppHandle, root: String, local: L, env: E) -> Result<T, String>
 where
     T: Send + 'static,
     L: FnOnce(&str) -> Result<T, String> + Send + 'static,
@@ -563,6 +705,18 @@ pub async fn fs_write_file(
         move |e| remote::write_file(e, &f, &t, bom, expected_modified_ms),
     )
     .await
+}
+
+#[tauri::command]
+pub async fn fs_create_file(app: AppHandle, root: String, file: String, text: String) -> Result<WriteResult, String> {
+    let (f, t) = (file.clone(), text.clone());
+    on_root(app, root, move |r| create_file(r, &file, &text), move |e| remote::create_file(e, &f, &t)).await
+}
+
+#[tauri::command]
+pub async fn fs_delete_file(app: AppHandle, root: String, file: String) -> Result<(), String> {
+    let f = file.clone();
+    on_root(app, root, move |r| delete_file(r, &file), move |e| remote::delete_file(e, &f)).await
 }
 
 #[cfg(test)]
@@ -691,6 +845,93 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn creates_new_files_only() {
+        let dir = scratch();
+        let root = dir.join("proj");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join(".env"), "OLD=1").unwrap();
+        fs::write(dir.join("outside"), "x").unwrap();
+        let r = path_of(&root);
+
+        let made = create_file(&r, ".env.local", "A=1\n").unwrap();
+        assert!(made.saved && made.modified_ms > 0);
+        assert_eq!(fs::read_to_string(root.join(".env.local")).unwrap(), "A=1\n");
+        create_file(&r, "sub/x.env", "").unwrap();
+        assert!(root.join("sub/x.env").is_file());
+
+        // Never over an existing file or folder.
+        let err = create_file(&r, ".env", "NEW=1").unwrap_err();
+        assert!(err.contains("already exists"), "{err}");
+        assert_eq!(fs::read_to_string(root.join(".env")).unwrap(), "OLD=1");
+        assert!(create_file(&r, "sub", "").is_err());
+
+        for bad in ["", "../outside", "../new", "/tmp/x", "sub/../../x", "sub/", ".", "..", "sub/..", "missing/x"] {
+            assert!(create_file(&r, bad, "x").is_err(), "{bad:?}");
+        }
+        assert!(!dir.join("new").exists());
+        assert_eq!(fs::read_to_string(dir.join("outside")).unwrap(), "x");
+
+        #[cfg(unix)]
+        {
+            // Through a linked folder out of the project, or onto a (dangling) link.
+            std::os::unix::fs::symlink(&dir, root.join("up")).unwrap();
+            assert!(create_file(&r, "up/new", "x").is_err());
+            std::os::unix::fs::symlink(dir.join("planted"), root.join("trap.env")).unwrap();
+            assert!(create_file(&r, "trap.env", "x").is_err());
+            assert!(!dir.join("new").exists() && !dir.join("planted").exists());
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn deletes_files_but_not_folders() {
+        let dir = scratch();
+        let root = dir.join("proj");
+        fs::create_dir_all(root.join("sub")).unwrap();
+        fs::write(root.join(".env"), "").unwrap();
+        fs::write(root.join("sub/x.env"), "").unwrap();
+        fs::write(dir.join("outside"), "x").unwrap();
+        let r = path_of(&root);
+
+        delete_file(&r, ".env").unwrap();
+        assert!(!root.join(".env").exists());
+        delete_file(&r, "sub/x.env").unwrap();
+        assert!(!root.join("sub/x.env").exists());
+        assert!(delete_file(&r, ".env").unwrap_err().contains("no longer exists"));
+
+        let err = delete_file(&r, "sub").unwrap_err();
+        assert!(err.contains("folder"), "{err}");
+        assert!(root.join("sub").is_dir());
+        for bad in ["", "../outside", "/etc/hostname", "sub/..", ".", "sub/"] {
+            assert!(delete_file(&r, bad).is_err(), "{bad:?}");
+        }
+        assert!(dir.join("outside").exists());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&dir, root.join("up")).unwrap();
+            assert!(delete_file(&r, "up/outside").is_err());
+            assert!(delete_file(&r, "up").is_err(), "a link to a folder is a folder");
+            // A link to a file: the link goes, its target stays.
+            std::os::unix::fs::symlink(dir.join("outside"), root.join("link.env")).unwrap();
+            delete_file(&r, "link.env").unwrap();
+            assert!(root.join("link.env").symlink_metadata().is_err());
+            assert_eq!(fs::read_to_string(dir.join("outside")).unwrap(), "x");
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn plain_names_have_no_path_in_them() {
+        for ok in [".env", "prod.env", "a b.env", "..x"] {
+            assert!(plain_name(ok).is_ok(), "{ok:?}");
+        }
+        for bad in ["", ".", "..", "a/b", "a\\b", "a\0b", "a\nb", "a\rb"] {
+            assert!(plain_name(bad).is_err(), "{bad:?}");
+        }
+    }
+
     // ----- remote projects -----
 
     #[test]
@@ -756,7 +997,8 @@ mod tests {
                 .stderr(Stdio::null())
                 .spawn()
                 .unwrap();
-            child.stdin.take().unwrap().write_all(stdin).unwrap();
+            // A script that refuses exits without reading its input: the pipe may be closed by now.
+            let _ = child.stdin.take().unwrap().write_all(stdin);
             let out = child.wait_with_output().unwrap();
             (out.status.code(), out.stdout)
         }
@@ -888,6 +1130,44 @@ mod tests {
             let (code, _) = sh(&root, remote::WRITE, &[".env", ""], b"x");
             // root ignores the write bit; everyone else is refused.
             assert!(code == Some(14) || code == Some(0));
+            fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn creates_and_deletes_like_a_local_project() {
+            let (dir, root) = project();
+            let (code, out) = sh(&root, remote::CREATE, &["", ".env.local"], b"A=1\n");
+            assert_eq!(code, Some(0));
+            let made = remote::parse_write(remote::body(&out).unwrap()).unwrap();
+            assert!(made.saved && made.modified_ms > 1_000_000_000_000);
+            assert_eq!(fs::read_to_string(root.join(".env.local")).unwrap(), "A=1\n");
+            let (code, _) = sh(&root, remote::CREATE, &["src/deep", "x.env"], b"");
+            assert_eq!(code, Some(0));
+            assert!(root.join("src/deep/x.env").is_file());
+
+            // Never over anything: a file, a folder, a dangling link.
+            assert_eq!(sh(&root, remote::CREATE, &["", ".env"], b"NEW").0, Some(15));
+            assert_eq!(fs::read_to_string(root.join(".env")).unwrap(), "A=1\n");
+            assert_eq!(sh(&root, remote::CREATE, &["", "src"], b"").0, Some(15));
+            assert_eq!(sh(&root, remote::CREATE, &["", "broken"], b"x").0, Some(15));
+            assert!(!root.join("nowhere").exists());
+            // Not through a link out of the project, nor into a file or missing folder.
+            assert_eq!(sh(&root, remote::CREATE, &["up", "new"], b"x").0, Some(11));
+            assert!(!dir.join("new").exists());
+            assert_eq!(sh(&root, remote::CREATE, &[".env", "x"], b"").0, Some(12));
+            assert_eq!(sh(&root, remote::CREATE, &["missing", "x"], b"").0, Some(10));
+
+            assert_eq!(sh(&root, remote::DELETE, &["", ".env.local"], b"").0, Some(0));
+            assert!(!root.join(".env.local").exists());
+            assert_eq!(sh(&root, remote::DELETE, &["", ".env.local"], b"").0, Some(10));
+            assert_eq!(sh(&root, remote::DELETE, &["", "src"], b"").0, Some(16));
+            assert_eq!(sh(&root, remote::DELETE, &["", "inside"], b"").0, Some(16));
+            assert_eq!(sh(&root, remote::DELETE, &["up", "secret.txt"], b"").0, Some(11));
+            // A link goes, not what it points at.
+            assert_eq!(sh(&root, remote::DELETE, &["", "leak"], b"").0, Some(0));
+            assert!(root.join("leak").symlink_metadata().is_err());
+            assert_eq!(fs::read_to_string(dir.join("secret.txt")).unwrap(), "secret");
+            assert_eq!(sh(&root, remote::DELETE, &["", "broken"], b"").0, Some(0));
             fs::remove_dir_all(&dir).ok();
         }
     }

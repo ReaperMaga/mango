@@ -7,6 +7,7 @@ mod browser;
 mod browser_mcp;
 mod browser_remote;
 mod chats;
+mod env_files;
 mod envs;
 mod files;
 mod git;
@@ -121,6 +122,10 @@ pub fn run() {
             files::fs_read_file,
             files::fs_read_bytes,
             files::fs_write_file,
+            files::fs_create_file,
+            files::fs_delete_file,
+            env_files::env_files,
+            env_files::env_gitignore_add,
             updater::update_check,
             updater::update_install,
             voice::voice_models,

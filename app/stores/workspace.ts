@@ -73,6 +73,8 @@ const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPr
 export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
+/** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
+export type EnvEditMode = 'fields' | 'raw'
 
 const LS_KEY = 'mango.workspace.v1'
 
@@ -151,6 +153,21 @@ function loadHostsFor(projects: ProjectInfo[]) {
   if (!envs.loaded) envs.load().catch(() => {})
 }
 
+/**
+ * Env file names the user created that `env_files` would not find on its own (not `.env`,
+ * `.env.*` or `*.env`), per project path. Anything unreadable from an older or newer build is dropped.
+ */
+function envExtraOf(v: unknown): Record<string, string[]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: Record<string, string[]> = {}
+  for (const [root, names] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(names)) continue
+    const list = [...new Set(names.filter((n): n is string => typeof n === 'string' && n.length > 0))]
+    if (list.length) out[root] = list
+  }
+  return out
+}
+
 const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
@@ -207,6 +224,11 @@ export const useWorkspace = defineStore('workspace', {
       toolPanel: toolView(prefs.toolPanel !== undefined ? prefs.toolPanel : prefs.sidebarView),
       toolWidth: (prefs.toolWidth ?? 340) as number,
 
+      /** Settings > Projects > Environment variables: rows or plain text. */
+      envEditMode: (prefs.envEditMode === 'raw' ? 'raw' : 'fields') as EnvEditMode,
+      /** Extra env file names per project (see `envExtraOf`). Names only, never contents. */
+      envExtraFiles: envExtraOf(prefs.envExtraFiles),
+
       /** Permission mode new chats start in. */
       defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
       sendKey: (prefs.sendKey === 'mod-enter' ? 'mod-enter' : 'enter') as SendKey,
@@ -222,6 +244,8 @@ export const useWorkspace = defineStore('workspace', {
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
+      /** A block of the section to scroll to once it shows (Projects > Environment variables). Not persisted. */
+      settingsAnchor: null as null | 'project-env',
       /** which tab of Settings > Agents shows; not persisted */
       agentsTab: 'agents' as AgentsTab,
 
@@ -280,6 +304,8 @@ export const useWorkspace = defineStore('workspace', {
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
           defaultMode: this.defaultMode,
+          envEditMode: this.envEditMode,
+          envExtraFiles: this.envExtraFiles,
           projectPrefs: this.projectPrefs,
           sendKey: this.sendKey,
           followUp: this.followUp,
@@ -371,6 +397,30 @@ export const useWorkspace = defineStore('workspace', {
       this.adopt(info)
       loadHostsFor([info])
       return info
+    },
+
+    setEnvEditMode(mode: EnvEditMode) {
+      this.envEditMode = mode
+      this.persist()
+    },
+    /** Remember (or forget) an env file name `env_files` would not find by its pattern. */
+    setEnvExtraFile(root: string, name: string, on: boolean) {
+      const now = this.envExtraFiles[root] ?? []
+      const next = on ? [...new Set([...now, name])] : now.filter(n => n !== name)
+      const all = { ...this.envExtraFiles }
+      if (next.length) all[root] = next
+      else delete all[root]
+      this.envExtraFiles = all
+      this.persist()
+    },
+
+    /** A removed project's remembered env file names go with it. */
+    forgetEnvExtraFiles(root: string) {
+      if (!(root in this.envExtraFiles)) return
+      const all = { ...this.envExtraFiles }
+      delete all[root]
+      this.envExtraFiles = all
+      this.persist()
     },
 
     /** Remember where new projects go (null: this computer). */
@@ -516,6 +566,11 @@ export const useWorkspace = defineStore('workspace', {
       this.settings = section
       if (tab) this.agentsTab = tab
       this.paletteOpen = false
+    },
+    /** Settings > Projects for the active project, scrolled to its environment variables. */
+    openProjectEnv() {
+      this.settingsAnchor = 'project-env'
+      this.openSettings('projects')
     },
     openUsage() {
       this.dialog = 'usage'

@@ -362,6 +362,8 @@ const mock = (() => {
         return { text: `Simulated transcription of ${duration} s of audio; the desktop app runs Whisper here.`, language: args.language ?? 'en', duration }
       }
     }
+    // Project env files, not remote environments: the in-memory project answers them.
+    if (cmd === 'env_files' || cmd === 'env_gitignore_add') return mockFiles(cmd, args)
     if (cmd.startsWith('git_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)

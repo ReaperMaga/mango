@@ -56,14 +56,15 @@ app/
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
-    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance)
+    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
   composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts,
-                     browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers)
+                     browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
+                     projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
