@@ -170,6 +170,7 @@ export default function ChatScreen() {
           ? <Banner tone="error" message={files.error} onDismiss={files.clearError} style={s.attachError} />
           : null}
         <ChatComposer
+          workdir={store.workdirFor(id) ?? thread.projectPath}
           value={draft}
           onChangeText={text => store.setDraft(id, text)}
           onSend={send}

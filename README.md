@@ -94,7 +94,7 @@ environments, on the go. Join an environment by scanning its share code (on the 
 **Share…**) or opening a `mango://join/…` link, or add a server by putting the phone's own key
 in its `authorized_keys` (both under Settings). Home lists your chats; New chat starts one in any project of any
 environment, or any folder in it. Read and continue chats with Claude Code and Codex (approvals, questions,
-permission mode, model), mark them Working, Settled or Archived, attach photos, camera shots and files (they are put into the environment, so the agent reads
+permission mode, model, slash commands), mark them Working, Settled or Archived, attach photos, camera shots and files (they are put into the environment, so the agent reads
 every kind, and pictures are shown to it directly), dictate messages with the microphone (iOS recognizes the speech on the
 phone where it can; language and "send after dictation" under Settings > Voice), and review, commit and push the changes.
 The phone speaks SSH itself

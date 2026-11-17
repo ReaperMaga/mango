@@ -1,11 +1,14 @@
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
-import { Animated, Image, Linking, Platform, Pressable, ScrollView, TextInput, View } from 'react-native'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
+import { Animated, Image, Linking, Platform, Pressable, ScrollView, TextInput, View, type TextInputInstance } from 'react-native'
 import { useRouter } from 'expo-router'
 import { ArrowUp, ChevronDown, CircleAlert, FilePen, FileText, Info, Map as MapIcon, Mic, Paperclip, ShieldCheck, Square, X, Zap, type LucideProps } from 'lucide-react-native'
 import { AGENTS, effortLabel, type AgentId, type AgentModel, type PermissionMode } from '~/types/chat'
 import { easeInOut, fonts, fontSize, makeStyles, radius, space, useReducedMotion, useTheme } from '@/theme'
 import { AgentIcon, Badge, ListRow, ListSection, Sheet, Spinner, Text, haptic } from '@/ui'
 import { clock, useDictation } from '@/voice'
+import { useAgentCommands } from '@/agents/commands'
+import { ChatCommandMenu } from './ChatCommandMenu'
+import { commandsFor, matchCommands, pickedText, slashQuery, type CommandMatch } from './commands'
 
 /** The four permission modes, as the desktop's composer names them. */
 export const PERMISSION_MODES: Record<PermissionMode, { label: string; hint: string; icon: ComponentType<LucideProps> }> = {
@@ -43,6 +46,11 @@ export interface ChatComposerProps {
   /** Offer to attach files (the paperclip). */
   onAttach?: () => void
   onRemoveAttachment?: (key: string) => void
+  /**
+   * The folder the agent runs in (the chat's worktree or project). With it, typing `/` asks the
+   * agent's CLI there for its commands; without, the list is Mango's and the built-in stand-ins.
+   */
+  workdir?: string | null
 }
 
 /** An attachment as the composer shows it: still uploading, ready, or failed (with why). */
@@ -75,6 +83,17 @@ export function ChatComposer(props: ChatComposerProps) {
   const selection = useRef<{ start: number; end: number } | null>(null)
   const dictation = useDictation({ value, onChangeText, onSend, selection: () => selection.current })
   const listening = dictation.phase === 'listening' || dictation.phase === 'starting'
+  const input = useRef<TextInputInstance>(null)
+
+  // Slash commands: `/` at the start of the draft lists the agent's commands until a space ends the name.
+  const query = disabled || dictation.busy ? null : slashQuery(value)
+  const live = useAgentCommands(agent, props.workdir, query !== null)
+  const matches = useMemo(() => (query === null ? [] : matchCommands(commandsFor(agent, live), query)), [agent, live, query])
+  const pickCommand = (m: CommandMatch) => {
+    haptic('select')
+    onChangeText(pickedText(m.command))
+    input.current?.focus()
+  }
 
   const name = AGENTS[agent].name
   const models = props.models ?? AGENTS[agent].models
@@ -83,7 +102,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const files = props.attachments ?? []
   const uploading = files.some(f => f.state === 'uploading')
   const canSend = !disabled && !uploading && (!!value.trim() || files.some(f => f.state === 'ready'))
-  const placeholder = dictation.busy ? 'Listening…' : props.placeholder ?? (running ? `Write the next message: it is sent when ${name} is done…` : `Ask ${name} to build, fix or explain…`)
+  const placeholder = dictation.busy ? 'Listening…' : props.placeholder ?? (running ? `Write the next message: it is sent when ${name} is done…` : `Ask ${name} to build, fix or explain, or type / for commands…`)
   const ModeIcon = PERMISSION_MODES[mode].icon
   const effortText = effort ? effortLabel(effort) : null
 
@@ -104,7 +123,9 @@ export function ChatComposer(props: ChatComposerProps) {
   }
 
   return (
-    <View style={[s.box, focused && s.focused]} onLayout={e => setNarrow(e.nativeEvent.layout.width < NARROW)}>
+    <>
+      {query !== null ? <ChatCommandMenu matches={matches} query={query} agentName={AGENTS[agent].name} onPick={pickCommand} /> : null}
+      <View style={[s.box, focused && s.focused]} onLayout={e => setNarrow(e.nativeEvent.layout.width < NARROW)}>
       {files.length
         ? (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.tray} keyboardShouldPersistTaps="handled">
@@ -113,6 +134,7 @@ export function ChatComposer(props: ChatComposerProps) {
           )
         : null}
       <TextInput
+        ref={input}
         value={value}
         onChangeText={onChangeText}
         placeholder={placeholder}
@@ -310,7 +332,8 @@ export function ChatComposer(props: ChatComposerProps) {
           })}
         </ListSection>
       </Sheet>
-    </View>
+      </View>
+    </>
   )
 }
 
