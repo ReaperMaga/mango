@@ -75,7 +75,7 @@ src-tauri/src/
   setup.rs           "Get started": what is installed, per-OS installer recipes run in a PTY (`setup_install`)
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
-  plastic.rs         the same for Unity Version Control workspaces (shells out to `cm`, XML output)
+  plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
@@ -165,7 +165,7 @@ scripts/try-agent.ts run an adapter against the real CLI
 - Ref names from the UI go through `safe_ref` before reaching git. File names are literal
   (`GIT_LITERAL_PATHSPECS=1`). `GIT_TERMINAL_PROMPT=0` so nothing waits on a prompt nobody sees.
 - Discard and delete destroy work: the UI asks first (two-step confirm), and the backend refuses unsafe cases.
-- Unity VCS (`plastic.rs`): branch names go through `safe_branch`; `cm` never gets a prompt (`--noinput`,
+- Unity VCS (`plastic/`): branch names go through `safe_branch`; `cm` never gets a prompt (`--noinput`,
   `PLASTICEDITOR` removed). Read structured output with `--xml --encoding=utf-8`: plain `cm` output is in the
   console code page and mangles non-ASCII names. Prove changes with the ignored `plastic::tests::real_cm` test
   against a throwaway workspace (`MANGO_CM_WORKSPACE`), never a real one.

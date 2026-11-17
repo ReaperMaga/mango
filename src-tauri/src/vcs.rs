@@ -1,6 +1,6 @@
 //! The source-control commands behind the Changes view, diffs and branch
 //! popup. Each one works out which version control the folder is under and
-//! hands the call to git (`git.rs`) or Unity VCS (`plastic.rs`), so the
+//! hands the call to git (`git.rs`) or Unity VCS (`plastic/`), so the
 //! frontend makes the same calls and gets the same shapes either way.
 
 use std::path::{Path, PathBuf};

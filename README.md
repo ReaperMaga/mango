@@ -117,7 +117,7 @@ src-tauri/src/        Rust backend
   git.rs              git for the changes panel
   files.rs            the Files view: list folders, read and save files inside the project
   github.rs           pull requests and issues linked to chats, and GitHub Actions job logs, read through the GitHub CLI
-  plastic.rs          Unity Version Control (`cm`) for the same commands
+  plastic/            Unity Version Control (`cm`) for the same commands
   pty.rs              terminals
   projects.rs         projects, clone, recents
   updater.rs          self-update from GitHub releases
