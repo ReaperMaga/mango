@@ -2,6 +2,24 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.12
+
+### Agents and chats
+
+- **Worktrees in the sidebar:** the **+** in Active is a split button with **New chat in a worktree** (`Ctrl/⌘ Shift N`) and **Continue in** an existing worktree. A worktree chat starts without a dialog: the worktree is made on a branch named from its first message.
+- **Worktrees in Changes:** a linked worktree shows how many commits it is ahead of its base, with **Merge into** the base, **Pull request**, and Reveal in Files, Open terminal here and Remove worktree. Chats follow Claude Code when it enters or leaves a worktree itself.
+
+### Settings
+
+- **More color schemes and appearance options:** Teal, Green, Red, Slate and Uchiha (black and crimson) join the color schemes, and Settings > Appearance gains Text size, Corners and Animations.
+- **Settings rail:** General and Technical are headlines with their sections under them. General holds Preferences (the old General page), Appearance and Voice; Technical holds Environments, Terminal and the new Maintenance page, which now has Updates.
+- **Fonts and project badges:** choose the interface and code fonts in Settings > Appearance (five each), and a project's badge now shows in the titlebar and the Recent list.
+- **Behaviour** in Settings: the send shortcut, queue or steer for messages written while the agent works, and how many tool calls a chat shows.
+- **Projects** in Settings: per project, a display name and badge color, pinning, archiving, the agent, model and permission mode new chats start with, and removing the project.
+- **Archive** in Settings: all archived chats in one list, to restore or delete.
+- **Confirmations:** optional questions before a chat is archived or deleted (Settings > Preferences).
+- **Environment variables** in Settings > Projects: a project's `.env` files as fields or raw text, values hidden until shown, a warning with **Add to .gitignore** for a file git does not ignore, and no silent overwrite when the file changed on disk.
+
 ## 0.1.11
 
 ### Agents and chats
@@ -13,15 +31,6 @@ All notable changes to Mango. Versions follow [semantic versioning](https://semv
 ### Settings
 
 - **Changelog** in Settings and in the Settings menu of the sidebar: what changed in each version.
-
-- **More color schemes and appearance options:** Teal, Green, Red, Slate and Uchiha (black and crimson) join the color schemes, and Settings > Appearance gains Text size, Corners and Animations.
-
-- **Settings rail:** General and Technical are headlines with their sections under them. General holds Preferences (the old General page), Appearance and Voice; Technical holds Environments, Terminal and the new Maintenance page, which now has Updates.
-- **Fonts and project badges:** choose the interface and code fonts in Settings > Appearance (five each), and a project's badge now shows in the titlebar and the Recent list.
-- **Behaviour** in Settings: the send shortcut, queue or steer for messages written while the agent works, and how many tool calls a chat shows.
-- **Projects** in Settings: per project, a display name and badge color, pinning, archiving, the agent, model and permission mode new chats start with, and removing the project.
-- **Archive** in Settings: all archived chats in one list, to restore or delete.
-- **Confirmations:** optional questions before a chat is archived or deleted (Settings > Preferences).
 
 ### Environments
 
