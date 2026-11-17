@@ -1,6 +1,6 @@
 # Install
 
-Mango is built for Windows (x64) and Linux (x64). The current release is <ReleaseVersion />.
+Mango is built for Windows (x64), macOS (Apple Silicon and Intel, macOS 11 or later) and Linux (x64). The current release is <ReleaseVersion />.
 
 ## Before you start
 
@@ -57,7 +57,19 @@ Mango needs WebKitGTK 4.1 at runtime (`libwebkit2gtk-4.1-0` on Debian and Ubuntu
 
 ## macOS
 
-There is no macOS build yet. Parts of Mango already account for macOS (shortcuts use <kbd>⌘</kbd>, the terminal looks for your login shell), but no release is built or tested there. You can [build it from source](../development/building).
+Download the disk image for your Mac: `Mango_<version>_aarch64.dmg` for Apple Silicon (M1 and later), `Mango_<version>_x64.dmg` for Intel. Not sure which? Apple menu > **About This Mac** shows **Chip: Apple M…** on Apple Silicon. Open the `.dmg` and drag **Mango** into **Applications**.
+
+**"Mango can't be opened" / "Apple could not verify".** The app is not signed with an Apple Developer ID or notarized yet, so Gatekeeper blocks the first launch. Open it once, then go to **System Settings > Privacy & Security**, scroll to the message about Mango and choose **Open Anyway**. Or clear the download quarantine flag in a terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Mango.app
+```
+
+After that it starts like any other app, and [updates](./updates) install without asking again.
+
+**Microphone.** Voice input asks for microphone access the first time you dictate; speech is transcribed on your Mac.
+
+macOS builds are new: if something behaves differently from Windows or Linux, please [open an issue](https://github.com/ReaperMaga/mango/issues). Known gap: browser screenshots for agents work on Linux only for now.
 
 ## Check the version
 

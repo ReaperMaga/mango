@@ -28,6 +28,8 @@ pnpm version:check                  # every copy of the version agrees (exit 1 i
 pnpm nuxt prepare && pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json   # typecheck (must be clean)
 cd src-tauri && cargo test && cargo build                               # backend tests, no new warnings
 cd src-tauri && cargo check --target x86_64-pc-windows-msvc             # Windows must keep compiling
+# macOS: CI runs `cargo check` on a Mac runner. From Linux, stub the C compiler (no Apple SDK here):
+#   CC_aarch64_apple_darwin=<stub> AR_aarch64_apple_darwin=llvm-ar cargo check --target aarch64-apple-darwin --all-targets
 
 # Windows installer from Linux (needs nsis, lld, llvm, clang, the msvc rust target, cargo-xwin)
 pnpm tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc
@@ -205,7 +207,9 @@ unless asked for them. Ask at most one short batch of product questions, then bu
 - **Native behaviour** (PTY, real agents, real git): build the debug binary and run it against the dev
   server, on a private display if needed (`xvfb-run`), with `XDG_DATA_HOME` pointed at a scratch folder so
   test projects do not land in the real app data.
-- Say what was and was not tested. Windows builds here are cross-compiled and have not been run on Windows.
+- Say what was and was not tested. Windows builds here are cross-compiled and have not been run on Windows; macOS
+  builds come from CI only and have not been run here. macOS window settings live in `src-tauri/tauri.macos.conf.json`
+  (merged over `tauri.conf.json`: keep its window entry in step), and the titlebar leaves room for the traffic lights.
 
 ## Housekeeping
 

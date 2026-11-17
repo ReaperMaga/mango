@@ -13,7 +13,7 @@ export const REPO = 'https://github.com/ReaperMaga/mango'
 
 export interface ReleaseAsset {
   id: string
-  platform: 'Windows' | 'Linux'
+  platform: 'Windows' | 'macOS' | 'Linux'
   format: string
   file: string
   url: string
@@ -51,6 +51,8 @@ export function releaseFor(version: string): Release {
     assets: [
       asset({ id: 'windows-exe', platform: 'Windows', format: 'Installer (.exe)', file: `Mango_${version}_x64-setup.exe`, note: 'NSIS installer', recommended: true }),
       asset({ id: 'windows-msi', platform: 'Windows', format: 'MSI (.msi)', file: `Mango_${version}_x64_en-US.msi`, note: 'For managed or scripted installs' }),
+      asset({ id: 'macos-arm64', platform: 'macOS', format: 'Apple Silicon (.dmg)', file: `Mango_${version}_aarch64.dmg`, note: 'M1 and later', recommended: true }),
+      asset({ id: 'macos-x64', platform: 'macOS', format: 'Intel (.dmg)', file: `Mango_${version}_x64.dmg` }),
       asset({ id: 'linux-appimage', platform: 'Linux', format: 'AppImage', file: `Mango_${version}_amd64.AppImage`, note: 'Runs on most distributions', recommended: true }),
       asset({ id: 'linux-deb', platform: 'Linux', format: 'Debian / Ubuntu (.deb)', file: `Mango_${version}_amd64.deb` }),
       asset({ id: 'linux-rpm', platform: 'Linux', format: 'Fedora / RHEL (.rpm)', file: `Mango-${version}-1.x86_64.rpm` }),

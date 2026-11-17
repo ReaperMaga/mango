@@ -59,7 +59,7 @@ Updater bundles and their signatures are only produced in the release workflow, 
 Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`:
 
 1. **Check version**: every copy of the version must agree, and the tag must match `package.json`; otherwise the run stops. It then creates a draft GitHub release for the tag, with generated notes.
-2. **Build**: Windows x64 and Linux x64 build in parallel with `tauri-action`, sign every installer with the updater key, and upload the installers, their `.sig` files and `latest.json` to the draft release.
+2. **Build**: Windows x64, Linux x64, macOS Apple Silicon and macOS Intel build in parallel (both Macs on GitHub's Apple Silicon runner; Intel is cross-compiled with `--target x86_64-apple-darwin`) with `tauri-action`, sign every installer with the updater key, and upload the installers, their `.sig` files and `latest.json` to the draft release.
 3. **Publish**: once every build has succeeded, the release leaves draft and is marked as the latest. From then on, running copies of Mango find it: the updater reads `releases/latest/download/latest.json`. A version with a pre-release suffix (`1.2.0-beta.1`) is published as a pre-release instead.
 
 The release carries these files (for version `X.Y.Z`):
@@ -67,6 +67,7 @@ The release carries these files (for version `X.Y.Z`):
 | Platform | File |
 | --- | --- |
 | Windows | `Mango_X.Y.Z_x64-setup.exe`, `Mango_X.Y.Z_x64_en-US.msi` |
+| macOS | `Mango_X.Y.Z_aarch64.dmg`, `Mango_X.Y.Z_x64.dmg` (plus the updater bundles `Mango_aarch64.app.tar.gz`, `Mango_x64.app.tar.gz`) |
 | Linux | `Mango_X.Y.Z_amd64.AppImage`, `Mango_X.Y.Z_amd64.deb`, `Mango-X.Y.Z-1.x86_64.rpm` |
 
 The [install page](../guide/install) links to these names for the version in `package.json`, so they are right as soon as the release is published.
@@ -75,7 +76,11 @@ The workflow can also be started by hand (**Run workflow** in GitHub Actions). A
 
 ### Build cache
 
-A run for a tag can only restore caches saved on that tag or on `main`, so a release cannot reuse what the previous release compiled. `.github/workflows/rust-cache.yml` does the same release build (without installers) on `main` whenever `src-tauri/` changes, and twice a week so the cache does not expire. Both workflows use the cache key `release`; the release workflow only reads it. A release then compiles Mango itself instead of every dependency. The same workflow also runs the CI's Rust jobs on `main` (keys `ci-linux` and `ci-windows`), which is the only place they save their caches for pull requests to restore. If the cache is cold (new `Cargo.lock`, new Rust version), run **Rust cache** by hand before tagging.
+A run for a tag can only restore caches saved on that tag or on `main`, so a release cannot reuse what the previous release compiled. `.github/workflows/rust-cache.yml` does the same release build (without installers) on `main` whenever `src-tauri/` changes, and twice a week so the cache does not expire. Both workflows use the cache key `release`; the release workflow only reads it. A release then compiles Mango itself instead of every dependency. The same workflow also runs the CI's Rust jobs on `main` (keys `ci-linux`, `ci-windows` and `ci-macos`), which is the only place they save their caches for pull requests to restore. If the cache is cold (new `Cargo.lock`, new Rust version), run **Rust cache** by hand before tagging.
+
+### macOS signing
+
+The macOS app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"` in `src-tauri/tauri.macos.conf.json`), which Apple Silicon needs to run it at all, but it is not signed with a Developer ID or notarized, so users confirm the first launch in System Settings (see the [install page](../guide/install#macos)). To ship a notarized build, get an Apple Developer ID Application certificate, add Tauri's `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` as secrets and pass them to the macOS builds' `tauri-action` step, and drop `signingIdentity` from the config; see [Tauri's macOS signing guide](https://tauri.app/distribute/sign/macos/).
 
 ## Documentation
 

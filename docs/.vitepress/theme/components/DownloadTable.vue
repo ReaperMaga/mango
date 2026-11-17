@@ -4,7 +4,7 @@ import { useData } from 'vitepress'
 import type { ThemeConfig } from '../../config'
 
 /** Every installer of the current release, one row each, with a direct download link. */
-const props = defineProps<{ platform?: 'Windows' | 'Linux' }>()
+const props = defineProps<{ platform?: 'Windows' | 'macOS' | 'Linux' }>()
 const { theme } = useData<ThemeConfig>()
 const release = computed(() => theme.value.release)
 const assets = computed(() => release.value.assets.filter(a => !props.platform || a.platform === props.platform))

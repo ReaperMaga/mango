@@ -51,6 +51,12 @@ jobs:
             os: windows-latest
           - name: Linux x64
             os: ubuntu-22.04
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -72,6 +78,8 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       # Same key as release.yml. Saves only when the dependencies changed (the key hashes
       # Cargo.lock, Cargo.toml and the compiler version).
@@ -79,6 +87,7 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: release
+          key: ${{ matrix.target }}
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
@@ -87,4 +96,7 @@ jobs:
       # release.yml so the build sees the same Tauri config; it only matters when
       # bundling, so no signing key is needed here.
       - name: Build
-        run: pnpm tauri build --no-bundle --config src-tauri/tauri.updater.conf.json
+        env:
+          TARGET: ${{ matrix.target }}
+        shell: bash
+        run: pnpm tauri build --no-bundle --config src-tauri/tauri.updater.conf.json ${TARGET:+--target "$TARGET"}

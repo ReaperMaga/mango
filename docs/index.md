@@ -10,7 +10,7 @@ titleTemplate: A workbench for coding agents
 
 ## What Mango does
 
-Mango is a calm, keyboard-first desktop app for Windows and Linux, built with Rust, Tauri 2 and Nuxt. It is a workspace around the agent CLIs you already use, not a new agent: every chat runs your own installed `claude` or `codex` command, signed in with that tool's own sign-in.
+Mango is a calm, keyboard-first desktop app for Windows, macOS and Linux, built with Rust, Tauri 2 and Nuxt. It is a workspace around the agent CLIs you already use, not a new agent: every chat runs your own installed `claude` or `codex` command, signed in with that tool's own sign-in.
 
 **Parallel chats.** Open a project and start as many chats as you like, in tabs or split side by side. The sidebar groups them by status (Working, Settled, Archived) and marks the ones that need you.
 
@@ -20,7 +20,7 @@ Mango is a calm, keyboard-first desktop app for Windows and Linux, built with Ru
 
 **Unity Version Control too.** A folder inside a Unity VCS (Plastic SCM) workspace uses the same Changes view, driven by your own `cm` client.
 
-**A real terminal.** A PTY docked at the bottom, with tabs and any shell Mango finds on your machine: PowerShell, Command Prompt, Git Bash, WSL, Nushell, or your login shell on Linux.
+**A real terminal.** A PTY docked at the bottom, with tabs and any shell Mango finds on your machine: PowerShell, Command Prompt, Git Bash, WSL, Nushell, or your login shell on Linux and macOS.
 
 **Keeps itself current.** Mango checks GitHub for a new release and installs it with one click when you choose **Update**. See [Updates](/guide/updates).
 

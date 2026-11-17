@@ -1,4 +1,4 @@
-# Builds the Windows and Linux installers and publishes them as a GitHub release.
+# Builds the Windows, macOS and Linux installers and publishes them as a GitHub release.
 #
 #   Tag push vX.Y.Z  ->  draft release, build every platform, upload installers, publish.
 #   Manual run       ->  build every platform and keep the installers as workflow
@@ -81,7 +81,7 @@ jobs:
             # up in the list, and an empty id makes every build skip its uploads.
             notes=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
               -f tag_name="$GITHUB_REF_NAME" --jq .body)
-            intro="Installers for Windows and Linux are attached below. Install notes: https://reapermaga.github.io/mango/guide/install"
+            intro="Installers for Windows, macOS and Linux are attached below. Install notes: https://reapermaga.github.io/mango/guide/install"
             id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
               -f tag_name="$GITHUB_REF_NAME" \
               -f name="Mango $VERSION" \
@@ -107,6 +107,13 @@ jobs:
             os: windows-latest
           - name: Linux x64
             os: ubuntu-22.04
+          # Both Macs build on the Apple Silicon runner; Intel is cross-compiled there.
+          - name: macOS Apple Silicon
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-latest
+            target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -128,6 +135,8 @@ jobs:
           cache: pnpm
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       # Restores the compiled dependencies that rust-cache.yml saves on main. A run for a
       # tag can read caches from main but not from other tags, so saving here would only
@@ -136,6 +145,8 @@ jobs:
         with:
           workspaces: src-tauri -> target
           shared-key: release
+          # The two macOS builds share a runner type, so the target tells their caches apart.
+          key: ${{ matrix.target }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
@@ -151,7 +162,8 @@ jobs:
         with:
           tauriScript: pnpm tauri
           # Updater bundles + .sig files are made only here, so local builds need no key.
-          args: --config src-tauri/tauri.updater.conf.json
+          # macOS is ad-hoc signed (tauri.macos.conf.json), not notarized.
+          args: --config src-tauri/tauri.updater.conf.json ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
           releaseId: ${{ needs.prepare.outputs.release-id }}
           # latest.json: what the in-app updater reads from the latest release.
           uploadUpdaterJson: true

@@ -1,5 +1,5 @@
 # Checks every pull request: the version agrees everywhere, the frontend typechecks and
-# builds, the backend's tests pass with no warnings, and Windows keeps compiling.
+# builds, the backend's tests pass with no warnings, and Windows and macOS keep compiling.
 #
 # Only the parts a pull request touches run: a frontend-only change skips the Rust jobs
 # and the other way round. "CI result" sums them up and is the one check to require.
@@ -184,9 +184,36 @@ jobs:
       - name: Check
         run: cargo check --locked --all-targets
 
+  # macOS type-checks the same way: the cfg(target_os = "macos") code and the tests, no link.
+  backend-macos:
+    name: Backend (macOS check)
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: src-tauri
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ci-macos
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Placeholder frontend
+        working-directory: .
+        run: mkdir -p .output/public
+
+      - name: Check
+        run: cargo check --locked --all-targets
+
   result:
     name: CI result
-    needs: [changes, frontend, backend-linux, backend-windows]
+    needs: [changes, frontend, backend-linux, backend-windows, backend-macos]
     if: always()
     runs-on: ubuntu-latest
     steps:
