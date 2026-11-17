@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Bot, History, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
+import { Bot, FileKey, History, Mic, Server, SlidersHorizontal, SquareTerminal, SunMoon, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
+import { useProjectEnv } from '~/stores/projectEnv'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
 import SettingsChangelog from './SettingsChangelog.vue'
@@ -8,6 +9,7 @@ import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
+import ProjectEnv from './ProjectEnv.vue'
 import { useOverlay } from '~/composables/useOverlay'
 
 /**
@@ -33,6 +35,18 @@ const sections: Array<{ id: Section; label: string; icon: typeof Bot }> = [
   { id: 'appearance', label: 'Appearance', icon: SunMoon },
   { id: 'changelog', label: 'Changelog', icon: History },
 ]
+
+/*
+ * Project settings: a second group, headed by the active project's name, shown while a project is
+ * open. They follow the active project; when the last one closes the view falls back to General.
+ */
+const env = useProjectEnv()
+const projectSections = computed<Array<{ id: Section; label: string; icon: typeof Bot; dirty?: boolean }>>(() =>
+  ws.activeProject
+    ? [{ id: 'project-env', label: 'Environment variables', icon: FileKey, dirty: env.anyDirty(ws.activeProject.path) }]
+    : [])
+const allSections = computed(() => [...sections, ...projectSections.value])
+watch(() => ws.activeProject, (p) => { if (!p && ws.settings === 'project-env') ws.settings = 'general' })
 
 const open = computed(() => ws.settings !== null)
 /* Settings covers the workspace; the browsers' native pages would show through. */
@@ -114,8 +128,9 @@ function onKey(e: KeyboardEvent) {
 /** Up and Down walk the section list, like a native settings sidebar. */
 function onRailKey(e: KeyboardEvent) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-  const i = sections.findIndex(s => s.id === section.value)
-  const next = sections[(i + (e.key === 'ArrowDown' ? 1 : -1) + sections.length) % sections.length]
+  const list = allSections.value
+  const i = list.findIndex(s => s.id === section.value)
+  const next = list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]
   if (!next) return
   e.preventDefault()
   show(next.id)
@@ -159,6 +174,23 @@ onBeforeUnmount(() => {
             <component :is="s.icon" aria-hidden="true" />
             <span>{{ s.label }}</span>
           </button>
+          <template v-if="ws.activeProject">
+            <h2 class="settings__group" :title="ws.activeProject.name">{{ ws.activeProject.name }}</h2>
+            <button
+              v-for="s in projectSections"
+              :key="s.id"
+              type="button"
+              class="settings__item"
+              :class="{ 'is-current': section === s.id }"
+              :aria-current="section === s.id ? 'page' : undefined"
+              :title="s.dirty ? `${s.label}, unsaved changes` : undefined"
+              @click="show(s.id)"
+            >
+              <component :is="s.icon" aria-hidden="true" />
+              <span class="settings__item-label">{{ s.label }}</span>
+              <span v-if="s.dirty" class="settings__dot" aria-hidden="true" />
+            </button>
+          </template>
         </nav>
         <button type="button" class="settings__version tabular" title="About Mango" @click="show('general')">
           Mango {{ build.version }}<template v-if="build.dev"> · dev</template>
@@ -167,7 +199,7 @@ onBeforeUnmount(() => {
 
       <div class="settings__main">
         <div ref="scroller" class="settings__scroll">
-          <div class="settings__col" :class="{ 'settings__col--wide': section === 'environments' }">
+          <div class="settings__col" :class="{ 'settings__col--wide': section === 'environments' || section === 'project-env' }">
             <template v-if="rendered">
               <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
               <SettingsAgents v-show="section === 'agents'" :active="open && section === 'agents'" />
@@ -176,6 +208,7 @@ onBeforeUnmount(() => {
               <SettingsAppearance v-else-if="section === 'appearance'" />
               <SettingsChangelog v-else-if="section === 'changelog'" />
               <SettingsGeneral v-else-if="section === 'general'" />
+              <ProjectEnv v-else-if="section === 'project-env' && ws.activeProject" />
             </template>
             <SettingsEnvironments
               v-if="envsMounted"
@@ -252,6 +285,21 @@ onBeforeUnmount(() => {
 .settings__item:hover svg,
 .settings__item.is-current svg { color: var(--fg); }
 .settings__item:focus-visible { border-radius: var(--radius-sm); }
+.settings__item-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.settings__dot { flex: none; width: 7px; height: 7px; margin-left: auto; border-radius: 50%; background: var(--accent); }
+/* The project's group: its name heads it, like a sidebar group header. */
+.settings__group {
+  margin: var(--space-4) 0 2px;
+  padding: 0 var(--space-2);
+  height: 24px;
+  line-height: 24px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--fg-subtle);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .settings__version {
   align-self: flex-start;
   margin-top: auto;

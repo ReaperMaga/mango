@@ -33,7 +33,9 @@ export interface TerminalTab {
 export type ToolView = 'env' | 'files' | 'changes' | 'links'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'changelog'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'voice' | 'appearance' | 'general' | 'changelog' | 'project-env'
+/** How Project settings > Environment variables edits a file: as key/value rows or as plain text. */
+export type EnvEditMode = 'fields' | 'raw'
 
 const LS_KEY = 'mango.workspace.v1'
 
@@ -102,6 +104,21 @@ function loadHostsFor(projects: ProjectInfo[]) {
   if (!envs.loaded) envs.load().catch(() => {})
 }
 
+/**
+ * Env file names the user created that `env_files` would not find on its own (not `.env`,
+ * `.env.*` or `*.env`), per project path. Anything unreadable from an older or newer build is dropped.
+ */
+function envExtraOf(v: unknown): Record<string, string[]> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  const out: Record<string, string[]> = {}
+  for (const [root, names] of Object.entries(v as Record<string, unknown>)) {
+    if (!Array.isArray(names)) continue
+    const list = [...new Set(names.filter((n): n is string => typeof n === 'string' && n.length > 0))]
+    if (list.length) out[root] = list
+  }
+  return out
+}
+
 const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
@@ -152,6 +169,11 @@ export const useWorkspace = defineStore('workspace', {
        */
       toolPanel: toolView(prefs.toolPanel !== undefined ? prefs.toolPanel : prefs.sidebarView),
       toolWidth: (prefs.toolWidth ?? 340) as number,
+
+      /** Project settings > Environment variables: rows or plain text. */
+      envEditMode: (prefs.envEditMode === 'raw' ? 'raw' : 'fields') as EnvEditMode,
+      /** Extra env file names per project (see `envExtraOf`). Names only, never contents. */
+      envExtraFiles: envExtraOf(prefs.envExtraFiles),
 
       /** Permission mode new chats start in. */
       defaultMode: (prefs.defaultMode ?? 'ask') as PermissionMode,
@@ -209,6 +231,8 @@ export const useWorkspace = defineStore('workspace', {
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
           defaultMode: this.defaultMode,
+          envEditMode: this.envEditMode,
+          envExtraFiles: this.envExtraFiles,
           setupSeen: this.setupSeen,
           where: this.where,
           openProjects: this.openProjects.map(p => p.path),
@@ -291,6 +315,21 @@ export const useWorkspace = defineStore('workspace', {
       this.adopt(info)
       loadHostsFor([info])
       return info
+    },
+
+    setEnvEditMode(mode: EnvEditMode) {
+      this.envEditMode = mode
+      this.persist()
+    },
+    /** Remember (or forget) an env file name `env_files` would not find by its pattern. */
+    setEnvExtraFile(root: string, name: string, on: boolean) {
+      const now = this.envExtraFiles[root] ?? []
+      const next = on ? [...new Set([...now, name])] : now.filter(n => n !== name)
+      const all = { ...this.envExtraFiles }
+      if (next.length) all[root] = next
+      else delete all[root]
+      this.envExtraFiles = all
+      this.persist()
     },
 
     /** Remember where new projects go (null: this computer). */
@@ -383,7 +422,8 @@ export const useWorkspace = defineStore('workspace', {
       this.toggleTool('files', force)
     },
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
-      this.settings = section
+      // Project settings need a project.
+      this.settings = section === 'project-env' && !this.activeProject ? 'general' : section
       if (tab) this.agentsTab = tab
       this.paletteOpen = false
     },
