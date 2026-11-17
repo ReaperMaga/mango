@@ -19,6 +19,14 @@ const MAX_OPEN: u64 = 5 * 1024 * 1024;
 const MAX_IMAGE: u64 = 25 * 1024 * 1024;
 /// A folder with more entries than this is listed only up to here.
 const MAX_ENTRIES: usize = 5000;
+/// Reading ahead ([`list_dir_ahead`]): at most this many subfolders of a listed folder are
+/// listed with it, so opening one of them shows its contents without another round trip.
+pub(crate) const AHEAD_DIRS: usize = 24;
+/// ... holding at most this many entries between them. A subfolder that does not fit whole
+/// is left out (it is read when it opens), so a read-ahead listing is never cut short.
+pub(crate) const AHEAD_ENTRIES: usize = 2000;
+/// Never read ahead into these, whatever the ignore rules say: they are huge and rarely opened.
+const NEVER_AHEAD: &[&str] = &["node_modules"];
 /// How much of a file is looked at to decide whether it is binary.
 const SNIFF: usize = 8000;
 const BOM: &[u8] = b"\xEF\xBB\xBF";
@@ -40,6 +48,18 @@ pub struct FsListing {
     pub entries: Vec<FsEntry>,
     /// The folder has more than [`MAX_ENTRIES`] entries; the rest are left out.
     pub truncated: bool,
+    /// Asked for with `ahead`: the listings of some of its subfolders, read in the same call.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ahead: Vec<FsAhead>,
+}
+
+/// A subfolder's whole listing, read ahead with its parent (never cut short).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FsAhead {
+    /// Relative to the project, forward slashes.
+    pub dir: String,
+    pub entries: Vec<FsEntry>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,12 +139,9 @@ fn sort_entries(entries: &mut [FsEntry]) {
     });
 }
 
-pub(crate) fn list_dir(root: &str, dir: &str) -> Result<FsListing, String> {
-    let (_, target) = resolve(root, dir)?;
-    if !target.is_dir() {
-        return Err(format!("{dir} is not a folder"));
-    }
-    let read = fs::read_dir(&target).map_err(|e| format!("Could not list {}: {e}", target.display()))?;
+/// The entries of the folder `target` (shown as `dir`), at most `max`, without the ignore marks.
+fn read_entries(target: &std::path::Path, dir: &str, max: usize) -> Result<(Vec<FsEntry>, bool), String> {
+    let read = fs::read_dir(target).map_err(|e| format!("Could not list {}: {e}", target.display()))?;
     let mut entries = Vec::new();
     let mut truncated = false;
     for item in read.flatten() {
@@ -133,7 +150,7 @@ pub(crate) fn list_dir(root: &str, dir: &str) -> Result<FsListing, String> {
         if name == ".git" {
             continue;
         }
-        if entries.len() == MAX_ENTRIES {
+        if entries.len() == max {
             truncated = true;
             break;
         }
@@ -142,21 +159,77 @@ pub(crate) fn list_dir(root: &str, dir: &str) -> Result<FsListing, String> {
         entries.push(FsEntry { path: join_rel(dir, &name), name, is_dir, ignored: false });
     }
     sort_entries(&mut entries);
+    Ok((entries, truncated))
+}
 
+/// Mark what the repository ignores, when the project is a git work tree.
+fn mark_ignored<'a>(root: &str, entries: impl Iterator<Item = &'a mut FsEntry>) -> Result<(), String> {
     // Git runs in the folder as given: on Windows the canonical form is a
     // `\\?\` path, which git does not accept as a working directory.
     let project = existing_dir(root)?;
-    if matches!(crate::vcs::detect_on_disk(&project), Some((Vcs::Git, _))) {
-        let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-        let ignored = git::ignored_paths(&project, &paths);
-        for e in &mut entries {
-            e.ignored = ignored.iter().any(|p| p.trim_end_matches('/') == e.path);
-        }
+    if !matches!(crate::vcs::detect_on_disk(&project), Some((Vcs::Git, _))) {
+        return Ok(());
     }
-    Ok(FsListing { entries, truncated })
+    let mut entries: Vec<&mut FsEntry> = entries.collect();
+    let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
+    let ignored: std::collections::HashSet<String> =
+        git::ignored_paths(&project, &paths).into_iter().map(|p| p.trim_end_matches('/').to_string()).collect();
+    for e in &mut entries {
+        e.ignored = ignored.contains(&e.path);
+    }
+    Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn list_dir(root: &str, dir: &str) -> Result<FsListing, String> {
+    list_dir_ahead(root, dir, 0, 0)
+}
+
+/// [`list_dir`], plus the whole listings of up to `dirs` of its subfolders holding at most
+/// `budget` entries between them: the first ones in display order that git does not ignore,
+/// that stay inside the project and that fit whole.
+pub(crate) fn list_dir_ahead(root: &str, dir: &str, dirs: usize, budget: usize) -> Result<FsListing, String> {
+    let (project, target) = resolve(root, dir)?;
+    if !target.is_dir() {
+        return Err(format!("{dir} is not a folder"));
+    }
+    let (mut entries, truncated) = read_entries(&target, dir, MAX_ENTRIES)?;
+    mark_ignored(root, entries.iter_mut())?;
+
+    let mut ahead = Vec::new();
+    let mut left = budget;
+    for e in entries.iter().filter(|e| e.is_dir && !e.ignored && !NEVER_AHEAD.contains(&e.name.as_str())) {
+        if ahead.len() == dirs {
+            break;
+        }
+        let Ok(sub) = target.join(&e.name).canonicalize() else { continue };
+        if !sub.starts_with(&project) || !sub.is_dir() {
+            continue;
+        }
+        // Counted first, so a big folder costs no more than the budget it would overrun.
+        let Ok(read) = fs::read_dir(&sub) else { continue };
+        if read.flatten().filter(|i| i.file_name() != ".git").nth(left).is_some() {
+            continue;
+        }
+        let Ok((sub_entries, false)) = read_entries(&sub, &e.path, left) else { continue };
+        left -= sub_entries.len();
+        ahead.push(FsAhead { dir: e.path.clone(), entries: sub_entries });
+    }
+    if !ahead.is_empty() {
+        mark_ignored(root, ahead.iter_mut().flat_map(|a| a.entries.iter_mut()))?;
+    }
+    Ok(FsListing { entries, truncated, ahead })
+}
+
+#[cfg(test)]
 pub(crate) fn read_file(root: &str, file: &str) -> Result<FileContent, String> {
+    read_file_within(root, file, MAX_OPEN)
+}
+
+/// [`read_file`] with a lower size limit (never above [`MAX_OPEN`]): a larger file comes back
+/// as `too_large` without its text. For reading ahead a file that may never be opened.
+pub(crate) fn read_file_within(root: &str, file: &str, limit: u64) -> Result<FileContent, String> {
+    let limit = limit.min(MAX_OPEN);
     let (_, target) = resolve(root, file)?;
     let meta = fs::metadata(&target).map_err(|e| format!("Could not read {file}: {e}"))?;
     if !meta.is_file() {
@@ -164,10 +237,14 @@ pub(crate) fn read_file(root: &str, file: &str) -> Result<FileContent, String> {
     }
     let size = meta.len();
     let modified_ms = modified_ms(&meta);
-    if size > MAX_OPEN {
+    if size > limit {
         return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms });
     }
     let bytes = fs::read(&target).map_err(|e| format!("Could not read {file}: {e}"))?;
+    if bytes.len() as u64 > limit {
+        // It grew since it was looked at.
+        return Ok(FileContent { text: None, binary: false, too_large: true, size: bytes.len() as u64, bom: false, modified_ms });
+    }
     Ok(content(bytes, size, modified_ms))
 }
 
@@ -289,6 +366,7 @@ pub(crate) fn delete_file(root: &str, file: &str) -> Result<(), String> {
 pub(crate) mod remote {
     use super::*;
     use crate::git::{EnvAt, Output, LOCAL_TIMEOUT};
+    use std::collections::HashSet;
 
     /// Printed before anything else, so whatever a login profile prints is skipped.
     const MARK: &[u8] = b"\0mango-fs\0";
@@ -333,10 +411,17 @@ mtime() {
 
     /// `$2`: how many entries at most. Prints `d<name>\0` / `f<name>\0` per entry (symlinks
     /// followed for the kind), `t\0` when cut off, then `i\0` and the names git ignores.
+    ///
+    /// Reading ahead, `$3`: how many subfolders at most, `$4`: how many entries between them.
+    /// Then an empty record, and per subfolder that fits whole `D<path>\0` and its `d`/`f`
+    /// records; last `i\0` and what git ignores among all of those. Subfolders git ignores,
+    /// `node_modules`, names with line breaks and links that lead out of the project are skipped.
     pub(super) const LIST: &str = concat!(
         prelude!(),
         r#"[ -d "$t" ] || exit 12
 max=$2
+ahead=${3:-0}
+budget=${4:-0}
 n=0
 set --
 for e in "$t"/* "$t"/.[!.]* "$t"/..?*; do
@@ -349,7 +434,60 @@ for e in "$t"/* "$t"/.[!.]* "$t"/..?*; do
   set -- "$@" "${rel:+$rel/}$name"
 done
 printf 'i\000'
-if [ "$#" -gt 0 ] && command -v git >/dev/null 2>&1; then
+git=
+command -v git >/dev/null 2>&1 && git=1
+if [ "$#" -gt 0 ] && [ -n "$git" ]; then
+  for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
+fi
+[ "$ahead" -gt 0 ] || exit 0
+printf '\000'
+nl='
+'
+cand=
+for p in "$@"; do
+  [ -d "$p" ] || continue
+  case $p in *"$nl"*|node_modules|*/node_modules) continue ;; esac
+  cand=$cand$p$nl
+done
+ign=
+if [ -n "$cand" ] && [ -n "$git" ]; then
+  ign=$(printf '%s' "$cand" | GIT_OPTIONAL_LOCKS=0 git -c core.quotePath=false check-ignore --stdin 2>/dev/null)
+fi
+k=0
+set --
+old=$IFS
+set -f
+IFS=$nl
+for p in $cand; do
+  set +f
+  IFS=$old
+  [ "$k" -ge "$ahead" ] && break
+  case "$nl$ign$nl" in *"$nl$p$nl"*) continue ;; esac
+  s=$(readlink -f "$root/$p" 2>/dev/null) || continue
+  case $root in /) ;; *) case $s in "$root"/*) ;; *) continue ;; esac ;; esac
+  [ -d "$s" ] || continue
+  c=0
+  for e in "$s"/* "$s"/.[!.]* "$s"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    [ "${e##*/}" = .git ] && continue
+    c=$((c + 1))
+    [ "$c" -gt "$budget" ] && break
+  done
+  [ "$c" -gt "$budget" ] && continue
+  budget=$((budget - c))
+  k=$((k + 1))
+  printf 'D%s\000' "$p"
+  for e in "$s"/* "$s"/.[!.]* "$s"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    name=${e##*/}
+    [ "$name" = .git ] && continue
+    if [ -d "$e" ]; then printf 'd%s\000' "$name"; else printf 'f%s\000' "$name"; fi
+    set -- "$@" "$p/$name"
+  done
+done
+set +f
+printf 'i\000'
+if [ "$#" -gt 0 ] && [ -n "$git" ]; then
   for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
 fi
 exit 0
@@ -464,39 +602,73 @@ printf 'deleted\n'
 
     /// Parse [`LIST`]'s records into the same listing a local folder gives.
     pub(super) fn parse_listing(body: &[u8], dir: &str) -> FsListing {
+        enum Part {
+            Entries,
+            Ignored,
+            Ahead,
+            AheadIgnored,
+        }
+        let mut part = Part::Entries;
         let mut entries = Vec::new();
         let mut truncated = false;
         let mut ignored: Vec<String> = Vec::new();
-        let mut in_ignored = false;
+        let mut ahead: Vec<FsAhead> = Vec::new();
+        let mut ahead_ignored: HashSet<String> = HashSet::new();
+        let entry = |rec: &[u8], dir: &str| {
+            let name = git::lossy(&rec[1..]);
+            FsEntry { path: join_rel(dir, &name), name, is_dir: rec[0] == b'd', ignored: false }
+        };
         for rec in body.split(|b| *b == 0) {
-            if rec.is_empty() {
-                continue;
-            }
-            if in_ignored {
-                ignored.push(git::lossy(rec));
-                continue;
-            }
-            match rec[0] {
-                b'i' if rec.len() == 1 => in_ignored = true,
-                b't' if rec.len() == 1 => truncated = true,
-                b'd' | b'f' if rec.len() > 1 => {
-                    let name = git::lossy(&rec[1..]);
-                    entries.push(FsEntry { path: join_rel(dir, &name), name, is_dir: rec[0] == b'd', ignored: false });
+            match part {
+                // An empty record ends the ignored names and starts the read-ahead.
+                Part::Ignored if rec.is_empty() => part = Part::Ahead,
+                _ if rec.is_empty() => {}
+                Part::Ignored => ignored.push(git::lossy(rec)),
+                Part::AheadIgnored => {
+                    ahead_ignored.insert(git::lossy(rec).trim_end_matches('/').to_string());
                 }
-                _ => {}
+                Part::Entries => match rec[0] {
+                    b'i' if rec.len() == 1 => part = Part::Ignored,
+                    b't' if rec.len() == 1 => truncated = true,
+                    b'd' | b'f' if rec.len() > 1 => entries.push(entry(rec, dir)),
+                    _ => {}
+                },
+                Part::Ahead => match rec[0] {
+                    b'i' if rec.len() == 1 => part = Part::AheadIgnored,
+                    b'D' if rec.len() > 1 => ahead.push(FsAhead { dir: git::lossy(&rec[1..]), entries: Vec::new() }),
+                    b'd' | b'f' if rec.len() > 1 => {
+                        if let Some(a) = ahead.last_mut() {
+                            let e = entry(rec, &a.dir);
+                            a.entries.push(e);
+                        }
+                    }
+                    _ => {}
+                },
             }
         }
         for e in &mut entries {
             e.ignored = ignored.iter().any(|p| p.trim_end_matches('/') == e.path);
         }
         sort_entries(&mut entries);
-        FsListing { entries, truncated }
+        for a in &mut ahead {
+            for e in &mut a.entries {
+                e.ignored = ahead_ignored.contains(&e.path);
+            }
+            sort_entries(&mut a.entries);
+        }
+        // Only what was asked for: subfolders of this folder.
+        ahead.retain(|a| a.dir.strip_prefix(dir).is_some_and(|rest| {
+            let rest = if dir.is_empty() { rest } else { rest.strip_prefix('/').unwrap_or("") };
+            !rest.is_empty() && !rest.contains('/')
+        }));
+        FsListing { entries, truncated, ahead }
     }
 
-    pub(super) fn list_dir(env: &EnvAt, dir: &str) -> Result<FsListing, String> {
+    pub(super) fn list_dir(env: &EnvAt, dir: &str, ahead: bool) -> Result<FsListing, String> {
         let rel = remote_rel(dir)?;
         let max = MAX_ENTRIES.to_string();
-        let out = run(env, LIST, &[&rel, &max], None, LIST_CAP)?;
+        let (dirs, budget) = if ahead { (AHEAD_DIRS, AHEAD_ENTRIES) } else { (0, 0) };
+        let out = run(env, LIST, &[&rel, &max, &dirs.to_string(), &budget.to_string()], None, LIST_CAP)?;
         if !out.ok() || out.truncated {
             return Err(failure(&out, &rel, "list"));
         }
@@ -521,12 +693,12 @@ printf 'deleted\n'
         Ok((size.max(bytes.len() as u64), mtime, if too_large { Vec::new() } else { bytes.to_vec() }, too_large))
     }
 
-    pub(super) fn read_file(env: &EnvAt, file: &str) -> Result<FileContent, String> {
+    pub(super) fn read_file(env: &EnvAt, file: &str, limit: u64) -> Result<FileContent, String> {
         let rel = remote_rel(file)?;
         if rel.is_empty() {
             return Err("The project folder is not a file".into());
         }
-        let (size, modified_ms, bytes, too_large) = read_raw(env, &rel, MAX_OPEN)?;
+        let (size, modified_ms, bytes, too_large) = read_raw(env, &rel, limit.min(MAX_OPEN))?;
         if too_large {
             return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms });
         }
@@ -670,16 +842,23 @@ where
     .await
 }
 
+/// List a folder. With `ahead`, some of its subfolders' listings come along (see
+/// [`list_dir_ahead`]): for a remote project that saves a round trip per folder opened.
 #[tauri::command]
-pub async fn fs_list_dir(app: AppHandle, root: String, dir: String) -> Result<FsListing, String> {
+pub async fn fs_list_dir(app: AppHandle, root: String, dir: String, ahead: Option<bool>) -> Result<FsListing, String> {
     let d = dir.clone();
-    on_root(app, root, move |r| list_dir(r, &dir), move |e| remote::list_dir(e, &d)).await
+    let ahead = ahead.unwrap_or(false);
+    let (dirs, budget) = if ahead { (AHEAD_DIRS, AHEAD_ENTRIES) } else { (0, 0) };
+    on_root(app, root, move |r| list_dir_ahead(r, &dir, dirs, budget), move |e| remote::list_dir(e, &d, ahead)).await
 }
 
+/// Read a file for the editor. `limit` (bytes) lowers the size limit for a read ahead of
+/// opening: a larger file comes back `tooLarge`, without its text, and is read when it opens.
 #[tauri::command]
-pub async fn fs_read_file(app: AppHandle, root: String, file: String) -> Result<FileContent, String> {
+pub async fn fs_read_file(app: AppHandle, root: String, file: String, limit: Option<u64>) -> Result<FileContent, String> {
     let f = file.clone();
-    on_root(app, root, move |r| read_file(r, &file), move |e| remote::read_file(e, &f)).await
+    let limit = limit.unwrap_or(MAX_OPEN).min(MAX_OPEN);
+    on_root(app, root, move |r| read_file_within(r, &file, limit), move |e| remote::read_file(e, &f, limit)).await
 }
 
 #[tauri::command]
@@ -782,6 +961,11 @@ mod tests {
 
         let b = read_file(&root, "b.bin").unwrap();
         assert!(b.binary && b.text.is_none());
+
+        // A lower limit leaves a larger file unread.
+        let small = read_file_within(&root, "t.txt", 5).unwrap();
+        assert!(small.too_large && small.text.is_none() && small.size == 12);
+        assert_eq!(read_file_within(&root, "t.txt", 12).unwrap().text.as_deref(), Some("hello\r\nworld"));
 
         let bom = read_file(&root, "bom.txt").unwrap();
         assert_eq!(bom.text.as_deref(), Some("hi"));
@@ -922,6 +1106,71 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// A project to read ahead in: `a` and `b` hold a few entries, `big` more than the
+    /// budget left for it, `out` links out of the project, `node_modules` and `target` are skipped.
+    fn ahead_project() -> (PathBuf, PathBuf) {
+        let dir = scratch();
+        let root = dir.join("proj");
+        for d in ["a/inner", "b", "big", "c", "node_modules/x", "target/debug", "empty"] {
+            fs::create_dir_all(root.join(d)).unwrap();
+        }
+        fs::write(root.join("a/one.rs"), "").unwrap();
+        fs::write(root.join("b/two.rs"), "").unwrap();
+        fs::write(root.join("b/skip.log"), "").unwrap();
+        fs::write(root.join("c/three.rs"), "").unwrap();
+        for i in 0..10 {
+            fs::write(root.join(format!("big/f{i}")), "").unwrap();
+        }
+        fs::write(root.join("top.txt"), "").unwrap();
+        fs::create_dir_all(dir.join("elsewhere")).unwrap();
+        fs::write(dir.join("elsewhere/secret"), "").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("elsewhere"), root.join("out")).unwrap();
+        let git = std::process::Command::new("git").current_dir(&root).args(["init", "-q"]).status();
+        if matches!(git, Ok(s) if s.success()) {
+            fs::write(root.join(".gitignore"), "target/\n*.log\n").unwrap();
+        }
+        (dir, root)
+    }
+
+    fn summary(listing: &FsListing) -> Vec<(String, Vec<(String, bool)>)> {
+        listing
+            .ahead
+            .iter()
+            .map(|a| (a.dir.clone(), a.entries.iter().map(|e| (e.path.clone(), e.ignored)).collect()))
+            .collect()
+    }
+
+    #[test]
+    fn reads_subfolders_ahead_within_the_caps() {
+        let (dir, root) = ahead_project();
+        let r = path_of(&root);
+        let has_git = root.join(".git").is_dir();
+
+        // No read-ahead unless asked.
+        assert!(list_dir(&r, "").unwrap().ahead.is_empty());
+
+        // 5 entries left after a (2) and b (2): big (10) does not fit and is left out whole.
+        let listing = list_dir_ahead(&r, "", 10, 5).unwrap();
+        let got = summary(&listing);
+        let dirs: Vec<_> = got.iter().map(|(d, _)| d.as_str()).collect();
+        if has_git {
+            assert_eq!(dirs, ["a", "b", "c", "empty"]);
+            assert_eq!(got[1].1, [("b/skip.log".to_string(), true), ("b/two.rs".to_string(), false)]);
+        } else {
+            assert!(dirs.starts_with(&["a", "b", "c", "empty"]), "{dirs:?}");
+        }
+        assert_eq!(got[0].1, [("a/inner".to_string(), false), ("a/one.rs".to_string(), false)]);
+        assert!(!dirs.contains(&"node_modules") && !dirs.contains(&"out") && !dirs.contains(&"big"));
+        assert_eq!(listing.entries.len(), list_dir(&r, "").unwrap().entries.len());
+
+        // The folder count is capped too, and a nested folder reads its own children.
+        assert_eq!(summary(&list_dir_ahead(&r, "", 1, 100).unwrap()).len(), 1);
+        let nested = list_dir_ahead(&r, "a", 10, 100).unwrap();
+        assert_eq!(summary(&nested), [("a/inner".to_string(), vec![])]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn plain_names_have_no_path_in_them() {
         for ok in [".env", "prod.env", "a b.env", "..x"] {
@@ -965,6 +1214,20 @@ mod tests {
         );
         assert!(listing.truncated);
         assert!(remote::body(b"no marker").is_none());
+    }
+
+    #[test]
+    fn parses_remote_read_ahead() {
+        let mut out = b"\0mango-fs\0dsrc\0fx\0i\0".to_vec();
+        out.extend_from_slice(b"\0Dsrc\0fmain.rs\0dtarget\0Dother/x\0fy\0i\0src/target\0");
+        let listing = remote::parse_listing(remote::body(&out).unwrap(), "");
+        assert_eq!(listing.entries.len(), 2);
+        assert!(listing.entries.iter().all(|e| !e.ignored));
+        // Only this folder's own subfolders are taken.
+        assert_eq!(
+            summary(&listing),
+            [("src".to_string(), vec![("src/target".to_string(), true), ("src/main.rs".to_string(), false)])]
+        );
     }
 
     #[test]
@@ -1045,6 +1308,26 @@ mod tests {
 
             let (code, _) = sh(&root, remote::LIST, &["src/main.rs", "5000"], b"");
             assert_eq!(code, Some(12));
+            fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn reads_ahead_like_a_local_folder() {
+            let (dir, root) = ahead_project();
+            let local = list_dir_ahead(&path_of(&root), "", 10, 5).unwrap();
+            let (code, out) = sh(&root, remote::LIST, &["", "5000", "10", "5"], b"");
+            assert_eq!(code, Some(0));
+            let listing = remote::parse_listing(remote::body(&out).unwrap(), "");
+            assert_eq!(listing.entries, local.entries);
+            assert_eq!(summary(&listing), summary(&local));
+
+            // Without the read-ahead arguments: the plain listing, as before.
+            let (_, out) = sh(&root, remote::LIST, &["", "5000"], b"");
+            assert!(remote::parse_listing(remote::body(&out).unwrap(), "").ahead.is_empty());
+
+            let (_, out) = sh(&root, remote::LIST, &["a", "5000", "10", "100"], b"");
+            let nested = remote::parse_listing(remote::body(&out).unwrap(), "a");
+            assert_eq!(summary(&nested), [("a/inner".to_string(), vec![])]);
             fs::remove_dir_all(&dir).ok();
         }
 
@@ -1217,6 +1500,7 @@ mod tests {
         time("git diff", &|| git::diff_of(&at, "a.txt", false).map(|d| assert!(!d.is_empty())));
         time("git log", &|| git::log(&at, 50).map(|_| ()));
         time("git branches", &|| git::branches(&at).map(|_| ()));
-        time("files list", &|| remote::list_dir(&env, "").map(|_| ()));
+        time("files list", &|| remote::list_dir(&env, "", false).map(|_| ()));
+        time("files ahead", &|| remote::list_dir(&env, "", true).map(|_| ()));
     }
 }

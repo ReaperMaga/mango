@@ -321,7 +321,7 @@ export const useThreads = defineStore('threads', {
       const firstText = first?.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ') ?? ''
       const base = branchFromMessage(firstText || t.title)
       const [branches, trees] = await Promise.all([
-        call('git_branch_list', { path }).catch(() => null),
+        useGit().loadBranchList(path).catch(() => null),
         call('git_worktrees', { path }).catch(() => []),
       ])
       // Unity VCS names the new branch as a child of the current one: its siblings' last parts are taken.

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { FsEntry } from '~/types/ipc'
+import type { FileContent, FsAhead, FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
@@ -7,8 +7,12 @@ import { disposeEditorModel, editorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
 
 /**
- * The Files view and the editor tabs it opens. The tree is read one folder at
- * a time as it is expanded. An open file keeps what was last read from or
+ * The Files view and the editor tabs it opens. The tree is read as it is
+ * expanded, each folder with its subfolders' listings ahead (`fs_list_dir`
+ * with `ahead`), so opening a folder shows it at once and reads the next level
+ * in the background. Listings stay here between visits: the panel shows them
+ * at once when it comes back and re-reads them quietly. A file the pointer
+ * rests on is read ahead (`preload`), so clicking it opens it at once. An open file keeps what was last read from or
  * written to disk here; the text being edited lives in its Monaco model
  * (`utils/editorModels.ts`), which saving reads from.
  */
@@ -18,6 +22,10 @@ export interface DirState {
   loading: boolean
   error: string | null
   truncated: boolean
+  /** Its subfolders were read ahead with it (otherwise it was itself read ahead, or refreshed alone). */
+  ahead: boolean
+  /** When the listing on screen was asked for (ms), so an older answer never replaces a newer one. */
+  readAt: number
 }
 
 export interface ProjectTree {
@@ -61,6 +69,43 @@ export interface OpenFile {
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
 const newTree = (): ProjectTree => ({ dirs: {}, expanded: [], selected: null })
+const newDir = (): DirState => ({ entries: null, loading: false, error: null, truncated: false, ahead: false, readAt: 0 })
+
+/** A folder opened again after this long is re-read quietly (it shows what was read before meanwhile). */
+const STALE_MS = 10_000
+/** The panel coming back (reopened, project switched back) re-reads the tree when it is older than this. */
+const REVISIT_MS = 3_000
+
+/** Folder reads under way, by project and folder: a second ask joins the first. */
+const listing = new Map<string, Promise<void>>()
+const dirKey = (projectPath: string, dir: string) => `${projectPath}\0${dir}`
+
+/**
+ * Files read ahead of opening (`preload`), by tab id: the read (or its result) and when it was
+ * asked for. A few only, kept briefly, dropped when the project is refreshed; opening one that
+ * is more than a moment old shows it at once and checks it against the disk right after.
+ */
+interface Preload { at: number; read: Promise<FileContent> }
+const preloads = new Map<string, Preload>()
+const PRELOAD_MAX = 10
+/** Older reads are not used. */
+const PRELOAD_TTL = 30_000
+/** Used as read if this recent; otherwise shown and checked again. */
+const PRELOAD_FRESH = 2_000
+/** Only files up to this size are read ahead (larger ones come back `tooLarge` and are read on open). */
+const PRELOAD_LIMIT = 256 * 1024
+
+function takePreload(tabId: string): Preload | null {
+  const p = preloads.get(tabId)
+  preloads.delete(tabId)
+  return p && Date.now() - p.at < PRELOAD_TTL ? p : null
+}
+
+/** What a text read says about a file, for an open file's state. */
+const textState = (c: FileContent) => ({
+  error: null, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom,
+  disk: c.text, modifiedMs: c.modifiedMs, dirty: false, conflict: false, saveError: null,
+})
 
 export const useFiles = defineStore('files', {
   state: () => ({
@@ -92,17 +137,34 @@ export const useFiles = defineStore('files', {
 
     /* ---------- tree ---------- */
 
-    /** Read one folder. `quiet` keeps the old entries on screen while it reloads. */
-    async loadDir(projectPath: string, dir: string, quiet = false) {
+    /**
+     * Read one folder. `quiet` keeps the old entries on screen while it reloads. `ahead` reads
+     * some of its subfolders in the same call and keeps their listings, so they open at once.
+     * A read of the same folder already under way is joined, not repeated.
+     */
+    loadDir(projectPath: string, dir: string, quiet = false, ahead = true): Promise<void> {
+      const key = dirKey(projectPath, dir)
+      const running = listing.get(key)
+      if (running) return running
+      const read = this._readDir(projectPath, dir, quiet, ahead).finally(() => listing.delete(key))
+      listing.set(key, read)
+      return read
+    },
+
+    async _readDir(projectPath: string, dir: string, quiet: boolean, ahead: boolean) {
       const tree = this.treeOf(projectPath)
-      if (!tree.dirs[dir]) tree.dirs[dir] = { entries: null, loading: false, error: null, truncated: false }
+      if (!tree.dirs[dir]) tree.dirs[dir] = newDir()
       const state = tree.dirs[dir]!
       if (!quiet) state.loading = true
+      const asked = Date.now()
       try {
-        const listing = await call('fs_list_dir', { root: projectPath, dir })
-        state.entries = listing.entries
-        state.truncated = listing.truncated
+        const got = await call('fs_list_dir', { root: projectPath, dir, ahead })
+        state.entries = got.entries
+        state.truncated = got.truncated
         state.error = null
+        state.readAt = asked
+        if (ahead) state.ahead = true
+        for (const sub of got.ahead ?? []) this._seed(projectPath, sub, asked)
       } catch (e) {
         // A folder that went away (deleted, branch switched) closes quietly.
         if (dir && quiet) {
@@ -116,10 +178,34 @@ export const useFiles = defineStore('files', {
       }
     },
 
-    /** First look at a project: list its top folder. */
-    ensureTree(projectPath: string) {
+    /** Keep a subfolder's listing read ahead, unless a newer one is here or on its way. */
+    _seed(projectPath: string, sub: FsAhead, asked: number) {
       const tree = this.treeOf(projectPath)
-      if (!tree.dirs['']) void this.loadDir(projectPath, '')
+      const had = tree.dirs[sub.dir]
+      if (had && had.readAt > asked || listing.has(dirKey(projectPath, sub.dir))) return
+      if (!had) {
+        tree.dirs[sub.dir] = { ...newDir(), entries: sub.entries, readAt: asked }
+        return
+      }
+      Object.assign(had, { entries: sub.entries, truncated: false, error: null, readAt: asked })
+    },
+
+    /**
+     * Show a project's tree. The first time, read its top folder; when it comes back into view
+     * (panel reopened, project switched back), show what was read before and re-read it quietly.
+     */
+    ensureTree(projectPath: string) {
+      const top = this.treeOf(projectPath).dirs['']
+      if (!top || !top.entries && !top.loading) void this.loadDir(projectPath, '')
+      else if (top.entries && Date.now() - top.readAt > REVISIT_MS) void this.refreshTree(projectPath)
+    },
+
+    /** A folder with a listing already here: re-read it quietly when it was only read ahead or is old. */
+    _freshen(projectPath: string, dir: string) {
+      const state = this.treeOf(projectPath).dirs[dir]
+      if (!state?.entries) return false
+      if (!state.ahead || Date.now() - state.readAt > STALE_MS) void this.loadDir(projectPath, dir, true)
+      return true
     },
 
     toggleDir(projectPath: string, dir: string, open?: boolean) {
@@ -129,7 +215,7 @@ export const useFiles = defineStore('files', {
       if (next === isOpen) return
       if (next) {
         tree.expanded.push(dir)
-        if (!tree.dirs[dir]?.entries) void this.loadDir(projectPath, dir)
+        if (!this._freshen(projectPath, dir)) void this.loadDir(projectPath, dir)
       } else {
         tree.expanded = tree.expanded.filter(d => d !== dir)
       }
@@ -146,24 +232,72 @@ export const useFiles = defineStore('files', {
       for (let i = 1; i < parts.length; i++) {
         const dir = parts.slice(0, i).join('/')
         if (!tree.expanded.includes(dir)) tree.expanded.push(dir)
-        if (!tree.dirs[dir]?.entries) await this.loadDir(projectPath, dir)
+        if (!this._freshen(projectPath, dir)) await this.loadDir(projectPath, dir)
       }
       tree.selected = file
     },
 
     /** Re-read what is on screen: open folders and open files. After focus, an agent's turn, a git action. */
     async refresh(projectPath: string) {
-      const tree = this.trees[projectPath]
-      if (tree) {
-        const dirs = ['', ...tree.expanded].filter(d => tree.dirs[d]?.entries)
-        await Promise.all(dirs.map(d => this.loadDir(projectPath, d, true)))
-      }
+      // Files read ahead may be out of date now.
+      for (const id of preloads.keys()) if (parseFileTab(id)?.projectPath === projectPath) preloads.delete(id)
+      await this.refreshTree(projectPath)
       await Promise.all(Object.keys(this.open)
         .filter(id => this.open[id]!.projectPath === projectPath)
         .map(id => this.recheck(id)))
     },
 
+    /**
+     * Re-read the open folders, quietly. Without reading ahead: it runs often (focus, every
+     * change), and a folder read ahead is read again when it opens.
+     */
+    async refreshTree(projectPath: string) {
+      const tree = this.trees[projectPath]
+      if (!tree) return
+      const dirs = ['', ...tree.expanded].filter(d => tree.dirs[d]?.entries)
+      await Promise.all(dirs.map(d => this.loadDir(projectPath, d, true, false)))
+    },
+
     /* ---------- open files ---------- */
+
+    /**
+     * Read a file ahead of opening it (the pointer rests on it, or the keyboard moved to it), so a
+     * click shows it at once. Text files up to 256 KB only; pictures, open files and files already
+     * read (or being read) are left alone.
+     */
+    preload(projectPath: string, file: string) {
+      const id = fileTabId(projectPath, file)
+      if (this.open[id] || imageKind(file) === 'raster') return
+      const had = preloads.get(id)
+      if (had && Date.now() - had.at < PRELOAD_TTL) return
+      const read = call('fs_read_file', { root: projectPath, file, limit: PRELOAD_LIMIT })
+      const entry = { at: Date.now(), read }
+      preloads.delete(id)
+      preloads.set(id, entry)
+      // Least recently asked for goes first.
+      while (preloads.size > PRELOAD_MAX) preloads.delete(preloads.keys().next().value!)
+      // A failed read is not kept; a file too large to read ahead is remembered as such (and read when it opens).
+      read.catch(() => { if (preloads.get(id) === entry) preloads.delete(id) })
+    },
+
+    /** The first read of a file just opened: what `preload` read when there is one, else from disk. */
+    async _firstRead(tabId: string) {
+      const f = this.open[tabId]
+      const pre = takePreload(tabId)
+      if (f && pre) {
+        try {
+          const c = await pre.read
+          if (this.open[tabId] === f && !c.tooLarge) {
+            Object.assign(f, textState(c), { loading: false })
+            f.version++
+            // Read a while ago: show it, then make sure it is still what is on disk.
+            if (Date.now() - pre.at > PRELOAD_FRESH) void this.recheck(tabId)
+            return
+          }
+        } catch { /* read it again below, for its error */ }
+      }
+      if (this.open[tabId] === f) await this.read(tabId)
+    },
 
     /**
      * Show a file in the active pane. A single click (`pin` false) reuses the
@@ -179,7 +313,7 @@ export const useFiles = defineStore('files', {
           disk: null, modifiedMs: 0, version: 0, dirty: false, saving: false, saveError: null, conflict: false, closing: false,
           image: null, view: 'preview',
         }
-        void this.read(id)
+        void this._firstRead(id)
       }
       const wasOpen = threads.tabs.includes(id)
       const preview = this.preview[projectPath] ?? null
@@ -213,10 +347,7 @@ export const useFiles = defineStore('files', {
           return
         }
         const c = await call('fs_read_file', { root: f.projectPath, file: f.file })
-        Object.assign(f, {
-          error: null, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom,
-          disk: c.text, modifiedMs: c.modifiedMs, dirty: false, conflict: false, saveError: null,
-        })
+        Object.assign(f, textState(c))
         f.version++
       } catch (e) {
         f.error = reason(e)
@@ -274,6 +405,7 @@ export const useFiles = defineStore('files', {
       const version = entry.model.getAlternativeVersionId()
       f.saving = true
       f.saveError = null
+      preloads.delete(tabId)
       try {
         const res = await call('fs_write_file', {
           root: f.projectPath, file: f.file, text, bom: f.bom, expectedModifiedMs: force ? null : f.modifiedMs,

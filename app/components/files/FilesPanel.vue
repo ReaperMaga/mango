@@ -11,7 +11,8 @@ import { parseEnvPath } from '~/utils/envPath'
 
 /**
  * The Files tool window on the right: the active project's folders as a tree,
- * read one folder at a time as it opens. A click previews a file in the main
+ * read as it opens (each folder with the next level ahead, see stores/files.ts).
+ * A file the pointer rests on, or the keyboard moves to, is read ahead so it opens at once. A click previews a file in the main
  * pane, a double-click (or Enter) keeps its tab. Names carry the same git
  * status colours and letters as the Changes view.
  */
@@ -122,6 +123,23 @@ function select(p: string) {
   if (path.value) files.treeOf(path.value).selected = p
 }
 
+/* ---------- reading a file ahead of the click ---------- */
+
+/** How long the pointer rests on a file (or the keyboard stays on it) before it is read ahead. */
+const PRELOAD_DELAY = 200
+let preloadTimer: ReturnType<typeof setTimeout> | undefined
+
+function preloadSoon(row: Row) {
+  clearTimeout(preloadTimer)
+  if (row.type !== 'entry' || row.entry.isDir || !path.value) return
+  const [at, file] = [path.value, row.entry.path]
+  preloadTimer = setTimeout(() => files.preload(at, file), PRELOAD_DELAY)
+}
+function preloadCancel() {
+  clearTimeout(preloadTimer)
+}
+onBeforeUnmount(preloadCancel)
+
 const spun = ref(false)
 async function manualRefresh() {
   if (!path.value) return
@@ -142,6 +160,8 @@ const focusKey = computed(() => {
 
 function focusRow(key: string) {
   select(key)
+  const row = entryRows.value.find(r => r.key === key)
+  if (row) preloadSoon(row)
   nextTick(() => list.value?.querySelector<HTMLElement>(`[data-path="${CSS.escape(key)}"]`)?.focus())
 }
 
@@ -227,6 +247,8 @@ function tintFor(entry: FsEntry, ignored: boolean) {
           :data-path="row.key"
           :title="row.kind ? `${row.entry.path} · ${row.entry.isDir ? 'Contains changes' : KIND_WORD[row.kind]}` : row.entry.path"
           @click="activate(row, false)"
+          @pointerenter="preloadSoon(row)"
+          @pointerleave="preloadCancel"
           @dblclick="!row.entry.isDir && activate(row, true)"
         >
           <ChevronRight v-if="row.entry.isDir" class="fp__caret" :class="{ 'is-open': row.open }" aria-hidden="true" />
