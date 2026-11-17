@@ -8,6 +8,9 @@ import { parseEnvPath } from '~/utils/envPath'
  * `~/agents/codex`) turn it into a believable reply, labelled "Simulated": some thinking, streamed
  * text, a file read, an edit with a diff (asked for first in "ask" mode, skipped in "plan" mode),
  * and a closing message. Messages steered in mid-turn are acknowledged; interrupting stops it.
+ * A Claude prompt that mentions "background" also starts two background commands, which outlive
+ * the reply (the run waits for them, their output can be read and each can be stopped) and are
+ * answered with a short follow-up once both are over.
  *
  * The line formats are the ones the adapters parse (see the protocol notes at the top of
  * `app/agents/claude.ts` and `app/agents/codex.ts`); nothing here runs anything.
@@ -52,6 +55,28 @@ function script(prompt: string) {
   }
 }
 
+/** The background commands a "background" prompt starts: how long each runs (in paces) and what it prints. */
+const BACKGROUND = [
+  {
+    tool: 'toolu_sim_bg_test',
+    task: 'sim_task_test',
+    command: 'pnpm test',
+    description: 'Run the test suite',
+    paces: 260,
+    summary: '42 tests passed',
+    lines: [' RUN  v3.2.4 /home/agent/project', ' ✓ src/index.test.ts (6 tests) 38ms', ' ✓ src/routes.test.ts (21 tests) 412ms', ' ✓ src/cart.test.ts (15 tests) 96ms', '', ' Test Files  3 passed (3)', '      Tests  42 passed (42)'],
+  },
+  {
+    tool: 'toolu_sim_bg_build',
+    task: 'sim_task_build',
+    command: 'pnpm build',
+    description: 'Build for production',
+    paces: 700,
+    summary: 'built in 24s',
+    lines: ['> project@0.1.0 build', '> vite build', '', 'vite v7.1.3 building for production...', 'transforming...', '✓ 214 modules transformed.', 'rendering chunks...', 'dist/index.html   0.46 kB', 'dist/assets/index.js  148.20 kB │ gzip: 47.61 kB', '✓ built in 24.08s'],
+  },
+] as const
+
 /** A process that is only a script: lines out, lines in, an exit. */
 function processOf(handlers: SpawnHandlers, pace: number) {
   let exited = false
@@ -90,6 +115,11 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
   const steered: string[] = []
   const decisions = new Map<string, (allow: boolean) => void>()
   let seq = 0
+  /** Background commands still running, by task id. */
+  const background = new Map<string, { spec: typeof BACKGROUND[number]; startedAt: number; timer?: ReturnType<typeof setTimeout> }>()
+  const outcomes: string[] = []
+  let answered = false
+  let followedUp = false
 
   /** Stream one content block of an assistant message, as `--include-partial-messages` does. */
   async function block(index: number, b: Json, deltas: Json[]) {
@@ -122,6 +152,54 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
   const finish = (text: string) => {
     if (interrupted) p.out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: sessionId })
     else p.out({ type: 'result', subtype: 'success', is_error: false, session_id: sessionId, result: text })
+    if (interrupted || answered) return
+    answered = true
+    // The background commands run on after the reply, as real ones do.
+    for (const [id, t] of background) t.timer = setTimeout(() => endTask(id, 'completed'), t.spec.paces * pace)
+  }
+
+  /** A background command ended: its notification, and once none is left, Claude Code's own answer to them. */
+  function endTask(id: string, status: 'completed' | 'killed') {
+    const t = background.get(id)
+    if (!t || !p.alive()) return
+    clearTimeout(t.timer)
+    background.delete(id)
+    const summary = status === 'completed' ? t.spec.summary : undefined
+    outcomes.push(`\`${t.spec.command}\` ${status === 'completed' ? `finished (${t.spec.summary})` : 'was stopped'}`)
+    p.out({ type: 'system', subtype: 'task_notification', task_id: id, status, ...(summary ? { summary } : {}) })
+    if (!background.size && answered && !interrupted && !followedUp) {
+      followedUp = true
+      void followUp()
+    }
+  }
+
+  async function followUp() {
+    await p.wait()
+    if (!p.alive() || interrupted) return
+    p.out({ type: 'system', subtype: 'init', session_id: sessionId, model: 'simulated', permissionMode: mode })
+    const text = `The background work is over (simulated): ${outcomes.join(', ')}.`
+    await message([{ type: 'text', text }])
+    finish(text)
+  }
+
+  /** What a background command has printed so far. */
+  function taskOutput(id: string): string | null {
+    const t = background.get(id)
+    if (!t) return null
+    const share = pace ? Math.min(1, (Date.now() - t.startedAt) / (t.spec.paces * pace)) : 1
+    return t.spec.lines.slice(0, Math.max(1, Math.ceil(t.spec.lines.length * share))).join('\n')
+  }
+
+  /** Two commands sent to the background, as `Bash` with `run_in_background` does. */
+  async function startBackground() {
+    await message(BACKGROUND.map(b => ({ type: 'tool_use', id: b.tool, name: 'Bash', input: { command: b.command, description: b.description, run_in_background: true } })))
+    if (interrupted) return
+    for (const b of BACKGROUND) {
+      toolResult(b.tool, `Command running in background with ID: ${b.task}`)
+      background.set(b.task, { spec: b, startedAt: Date.now() })
+      p.out({ type: 'system', subtype: 'task_started', task_id: b.task, tool_use_id: b.tool, task_type: 'local_bash', description: b.description, is_backgrounded: true })
+    }
+    await p.wait()
   }
 
   async function turn(prompt: string) {
@@ -133,6 +211,10 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
     if (interrupted) return finish('')
     toolResult(read.id, README, { tool_use_result: { file: { filePath: read.input.file_path, numLines: README.split('\n').length } } })
     await p.wait()
+    if (/background/i.test(prompt)) {
+      await startBackground()
+      if (interrupted) return finish('')
+    }
 
     let edited: 'yes' | 'denied' | 'plan' = 'plan'
     if (mode !== 'plan') {
@@ -154,7 +236,7 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
       edited = allow ? 'yes' : 'denied'
       await p.wait()
     }
-    const text = say.done(steered, edited)
+    const text = say.done(steered, edited) + (background.size ? ' The tests and the build go on in the background; I\'ll look at them when they finish.' : '')
     await message([{ type: 'text', text }])
     finish(text)
   }
@@ -168,9 +250,11 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
         for (const resolve of decisions.values()) resolve(false)
         decisions.clear()
       }
+      if (sub === 'stop_task') setTimeout(() => endTask(String(m.request?.task_id ?? ''), 'killed'), 0)
+      const output = sub === 'get_task_output' ? taskOutput(String(m.request?.task_id ?? '')) : null
       const response = sub === 'initialize'
         ? { commands: [], models: [{ value: 'default', displayName: 'Default', description: 'Simulated' }] }
-        : {}
+        : output !== null ? { output } : {}
       p.out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response } })
       return
     }

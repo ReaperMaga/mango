@@ -4,10 +4,12 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
-import { AGENTS, type Message, type Thread } from '~/types/chat'
+import { AGENTS, type BackgroundTask, type Message, type Thread } from '~/types/chat'
 import { makeStyles, radius, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
 import { ChatComposer, ChatMessage, ChatWorking } from '@/chat'
+import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
+import { readTaskOutput } from '@/agents/run'
 import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
 import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
@@ -40,6 +42,8 @@ export default function ChatScreen() {
   const [menu, setMenu] = useState(false)
   const [keyboard, setKeyboard] = useState(false)
   const [attachMenu, setAttachMenu] = useState(false)
+  const [tasksOpen, setTasksOpen] = useState(false)
+  const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
   const list = useRef<FlatList<Message>>(null)
   const atBottom = useRef(true)
@@ -155,6 +159,7 @@ export default function ChatScreen() {
           <View style={s.foot}>
             {queue?.length ? queue.map(q => <Queued key={q.id} q={q} threadId={id} running={busy} />) : null}
             {busy ? <ChatWorking thread={thread} waitingOnTasks={tasksLeft} /> : null}
+            {live?.tasks.length ? <ChatTasks tasks={live.tasks} onPress={() => setTasksOpen(true)} /> : null}
           </View>
         )}
         onScroll={onScroll}
@@ -198,9 +203,28 @@ export default function ChatScreen() {
           <ListRow title="Choose File" leading={<FolderOpen size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />} accessory="none" onPress={() => attachFrom('files')} />
         </ListSection>
       </Sheet>
+      <ChatTasksSheet
+        visible={tasksOpen && !!live?.tasks.length}
+        onClose={() => setTasksOpen(false)}
+        tasks={live?.tasks ?? NO_TASKS}
+        onStop={taskId => store.stopTask(id, taskId)}
+        readOutput={readOutput}
+        childOf={subagentChat}
+        onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
+      />
       <ThreadActions threadId={id} visible={menu} onClose={() => setMenu(false)} onDeleted={() => router.back()} />
     </KeyboardAvoidingView>
   )
+}
+
+const NO_TASKS: BackgroundTask[] = []
+
+/** The chat a background sub-agent writes, if it has one. */
+function subagentChat(task: BackgroundTask): string | null {
+  if (task.kind !== 'agent' || !task.toolId) return null
+  const all = useThreads.getState().threads
+  for (const c of Object.values(all)) if (c.parentId && c.toolId === task.toolId) return c.id
+  return null
 }
 
 /**

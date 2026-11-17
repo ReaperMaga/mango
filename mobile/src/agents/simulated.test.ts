@@ -104,3 +104,45 @@ for (const [agent, adapter] of [['claude', claudeAdapter], ['codex', codexAdapte
     })
   })
 }
+
+describe('simulated claude: background commands', () => {
+  /** A "background" prompt; `onTaskStart` acts on the run when a task appears. */
+  function driveBackground(onTaskStart?: (run: ReturnType<AgentAdapter['run']>, id: string) => void): Promise<{ events: AgentEvent[]; outputs: (string | null)[] }> {
+    return new Promise((resolve, reject) => {
+      const events: AgentEvent[] = []
+      const outputs: (string | null)[] = []
+      const guard = setTimeout(() => reject(new Error(`no turn-end; got ${events.map(e => e.type).join(', ')}`)), 8000)
+      const run = claudeAdapter.run({
+        cwd: '/home/agent/shop', remote: true, prompt: 'Run the tests in the background', images: [], readDirs: [],
+        model: 'default', mode: 'auto', effort: null, sessionId: null,
+        spawn: simulatedSpawn('claude', PROJECT, { pace: 1 }),
+        emit(e) {
+          events.push(e)
+          if (e.type === 'task-start') {
+            void run.taskOutput?.(e.id).then(o => outputs.push(o))
+            onTaskStart?.(run, e.id)
+          }
+          if (e.type === 'turn-end') { clearTimeout(guard); setTimeout(() => resolve({ events, outputs }), 20) }
+        },
+      })
+    })
+  }
+
+  it('keeps the run open for them, reads their output, then answers them', async () => {
+    const { events, outputs } = await driveBackground()
+    const types = events.map(e => e.type)
+    expect(events.filter(e => e.type === 'task-start').map(e => (e as { title: string }).title)).toEqual(['Run the test suite', 'Build for production'])
+    expect(types.indexOf('answered')).toBeLessThan(types.indexOf('task-end'))
+    expect(events.filter(e => e.type === 'task-end').map(e => (e as { status: string }).status)).toEqual(['done', 'done'])
+    expect(types).toContain('resume')
+    expect(events.filter(e => e.type === 'turn-end')).toEqual([{ type: 'turn-end', status: 'done' }])
+    expect(outputs.every(o => typeof o === 'string' && o.length > 0)).toBe(true)
+  })
+
+  it('stops one when asked', async () => {
+    const { events } = await driveBackground((run, id) => { if (id === 'sim_task_build') setTimeout(() => run.stopTask?.(id), 0) })
+    const ends = events.filter(e => e.type === 'task-end') as Extract<AgentEvent, { type: 'task-end' }>[]
+    expect(ends.find(e => e.id === 'sim_task_build')?.status).toBe('stopped')
+    expect(events[events.length - 1]).toEqual({ type: 'turn-end', status: 'done' })
+  })
+})
