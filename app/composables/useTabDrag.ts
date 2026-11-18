@@ -201,6 +201,11 @@ export function sidebarChatDrop(e: PointerEvent): boolean {
   return true
 }
 
+/** The sidebar's drag was cancelled (Escape, a lost pointer): nothing drops. */
+export function cancelSidebarChat() {
+  if (draggedChat()?.from === 'sidebar') endSidebarDrag()
+}
+
 function endSidebarDrag() {
   release()
   release = () => {}

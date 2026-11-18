@@ -17,7 +17,7 @@ import { vcsTerms } from '~/utils/vcs'
 import { useWorktrees } from '~/composables/useWorktrees'
 import { useGit } from '~/stores/git'
 import { useWindows } from '~/stores/windows'
-import { sidebarChatAt, sidebarChatDrop } from '~/composables/useTabDrag'
+import { cancelSidebarChat, sidebarChatAt, sidebarChatDrop } from '~/composables/useTabDrag'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -127,6 +127,15 @@ function onRowPointerDown(t: Thread, e: PointerEvent) {
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd)
   window.addEventListener('pointercancel', onDragEnd)
+  window.addEventListener('keydown', onDragKey, true)
+}
+
+/** Escape drops nothing: the row stays where it was. */
+function onDragKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !drag.id) return
+  e.preventDefault()
+  e.stopPropagation()
+  onDragEnd()
 }
 
 function onDragMove(e: PointerEvent) {
@@ -167,11 +176,15 @@ function onDragEnd(e?: PointerEvent) {
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', onDragEnd)
   window.removeEventListener('pointercancel', onDragEnd)
+  window.removeEventListener('keydown', onDragKey, true)
   if (dragStart?.el.hasPointerCapture(dragStart.pointerId)) dragStart.el.releasePointerCapture(dragStart.pointerId)
   if (drag.id) {
-    // Let go past the sidebar: the tab drag places it; a cancelled pointer drops nothing.
-    const taken = e?.type === 'pointerup' ? sidebarChatDrop(e) : (sidebarChatAt(e as PointerEvent, drag.id, false), false)
-    if (!taken && drag.overId) threads.reorder(drag.id, drag.overId, drag.where)
+    // Let go past the sidebar: the tab drag places it. Escape or a cancelled pointer drops nothing.
+    if (e?.type === 'pointerup') {
+      if (!sidebarChatDrop(e) && drag.overId) threads.reorder(drag.id, drag.overId, drag.where)
+    } else {
+      cancelSidebarChat()
+    }
     justDragged = true
     setTimeout(() => (justDragged = false), 0)
   }
