@@ -12,7 +12,7 @@ import { dragPlace, tearOffPlace } from '~/utils/windows'
  * a drag starts, so moves and the release outside the window still arrive.
  *
  * Drop targets mark themselves with `data-tab-drop`:
- *   "strip"  the main area's tab strip (its tabs carry `data-tab-id`)
+ *   "strip"  a pane's tab strip in the main area (`data-pane-id`; its tabs carry `data-tab-id`)
  *   "pane"   a main-area pane (`data-pane-id`)
  *   "panel"  the terminal panel (its tabs carry `data-term-id`), or the dock zone shown while it is
  *            hidden: terminals only
@@ -29,7 +29,7 @@ export type DragItem =
   | { kind: 'chat'; id: string; from: 'tab' | 'sidebar' }
 
 export type TabDrop =
-  | { kind: 'strip'; before: string | null; line: Box }
+  | { kind: 'strip'; paneId: string | undefined; before: string | null; line: Box }
   | { kind: 'pane'; paneId: string; split: boolean; box: Box }
   | { kind: 'panel'; before: string | null; line: Box | null; box: Box | null }
   /** Outside the window: the chat opens in a window of its own. */
@@ -128,7 +128,7 @@ function onUp(e: PointerEvent) {
 function dropTerminal(id: string, drop: TabDrop) {
   const ws = useWorkspace()
   if (drop.kind === 'panel') ws.moveTerminalToPanel(id, drop.before)
-  else if (drop.kind === 'strip') ws.moveTerminalToEditor(id, { before: drop.before })
+  else if (drop.kind === 'strip') ws.moveTerminalToEditor(id, { before: drop.before, paneId: drop.paneId })
   else if (drop.kind === 'pane') ws.moveTerminalToEditor(id, drop.split ? { split: true } : { paneId: drop.paneId })
 }
 
@@ -143,8 +143,8 @@ function dropChat(id: string, drop: TabDrop, e: PointerEvent) {
   const ws = useWorkspace()
   if (t && t.projectPath !== ws.activeProjectPath) ws.setActiveProject(t.projectPath)
   if (drop.kind === 'strip') {
-    threads.placeTab(id, drop.before)
-    threads.show(id)
+    threads.placeTab(id, drop.before, drop.paneId)
+    threads.show(id, drop.paneId)
   } else if (drop.kind === 'pane') {
     threads.showOnly(id, drop.split ? 'split' : drop.paneId)
   }
@@ -264,7 +264,7 @@ function dropAt(x: number, y: number): TabDrop | null {
     const els = [...el.querySelectorAll<HTMLElement>('[data-tab-id]')].filter(t => !isDraggedTab(item, t.dataset.tabId))
     const tabs = els.map(boxOf)
     const at = insertionIndex(tabs, x)
-    return { kind: 'strip', before: els[at]?.dataset.tabId ?? null, line: lineAt(boxOf(el), tabs, at) }
+    return { kind: 'strip', paneId: el.dataset.paneId, before: els[at]?.dataset.tabId ?? null, line: lineAt(boxOf(el), tabs, at) }
   }
 
   if (kind === 'pane' && el.dataset.paneId) {

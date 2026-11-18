@@ -74,10 +74,15 @@ watchEffect(() => {
   }
 })
 
-const paneOf = (id: string) => threads.panes.find(p => p.threadId === id)?.id
+/** One tab strip per pane: each pane's own tabs, in order. */
+const strips = computed(() => threads.panes.map(pane => ({ pane, tabs: tabs.value.filter(t => threads.groupOf(t.id) === pane.id) })))
+const stripOf = (id: string) => strips.value.find(s => s.tabs.some(t => t.id === id))
 
-function newChat() {
-  if (ws.activeProjectPath) threads.create(ws.activeProjectPath)
+/** A new chat in this pane (its strip's + button). */
+function newChat(paneId: string) {
+  if (!ws.activeProjectPath) return
+  threads.focusPane(paneId)
+  threads.create(ws.activeProjectPath)
 }
 
 /** A tab's tooltip: what it shows, who opened it, and its shortcut. */
@@ -110,13 +115,20 @@ function tabTitle(t: Tab, i: number) {
 watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join('\n')], ([path]) => {
   if (!path) return
   let moved = false
+  const emptied: string[] = []
+  const free = (ids: string[]) => ids.find(x => !threads.panes.some(p => p.threadId === x)) ?? null
   for (const pane of threads.panes) {
     const owner = threads.projectOf(pane.threadId)
     if (owner && owner !== path) {
-      pane.threadId = tabs.value.find(x => !threads.panes.some(p => p.threadId === x.id))?.id ?? null
+      pane.threadId = null
+      // Its own strip first (a project's tabs remember their pane), else any tab no pane shows.
+      const next = free(threads.groupTabs(pane.id)) ?? free(threads.visibleTabs)
+      if (next) { pane.threadId = next; threads._setGroup(next, pane.id) } else emptied.push(pane.id)
       moved = true
     }
   }
+  // A split pane with nothing of this project to show closes.
+  for (const id of emptied) if (threads.panes.length > 1) threads.closePane(id)
   if (threads.panes.length > 1 && threads.panes.every(p => !p.threadId)) threads.closePane('pane-b')
   // An empty area while the project has tabs (what it showed moved to another window): show one.
   const first = threads.panes[0]!
@@ -151,6 +163,8 @@ function onMove(e: PointerEvent) {
   split.value = Math.min(0.75, Math.max(0.25, (e.clientX - r.left) / r.width))
 }
 function onUp() { dragging = false; release() }
+/** A pane's width while split (its tab strip above it gets the same): its share, less half the 1px divider. */
+const paneBasis = (i: number) => threads.isSplit ? { flexBasis: `calc(${(i === 0 ? split.value : 1 - split.value) * 100}% - 0.5px)` } : undefined
 
 function onTabClick(id: string) {
   if (dragJustEnded()) return // the click that ends a drag is not a click
@@ -195,10 +209,12 @@ function absolutePath(projectPath: string, file: string) {
 
 const tabMenuItems = computed<MenuItem[]>(() => {
   const id = menuTabId.value
-  const at = tabs.value.findIndex(t => t.id === id)
-  const tab = tabs.value[at]
-  if (!tab) return []
-  const ids = tabs.value.map(t => t.id)
+  // Close others, to the right, all: within the tab's own strip, as each pane's tabs are its own.
+  const strip = id ? stripOf(id) : undefined
+  const at = strip?.tabs.findIndex(t => t.id === id) ?? -1
+  const tab = strip?.tabs[at]
+  if (!strip || !tab) return []
+  const ids = strip.tabs.map(t => t.id)
   const items: MenuItem[] = [
     { label: 'Close', icon: X, kbd: `${mod.value}+W`, onSelect: () => threads.closeTab(tab.id) },
     { label: 'Close others', icon: XCircle, disabled: ids.length < 2, onSelect: () => closeMany(ids.filter(x => x !== tab.id)) },
@@ -206,13 +222,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     { label: 'Close all', icon: ListX, onSelect: () => closeMany(ids) },
   ]
 
-  const inOtherPane = threads.isSplit && paneOf(tab.id) !== 'pane-b'
+  // Split: the tab moves into a new right pane, so something has to stay on the left.
+  const other = threads.panes.find(p => p.id !== strip.pane.id)
   const splitItem: MenuItem = {
-    label: threads.isSplit ? 'Show in the right pane' : 'Split right',
+    label: other ? (other.id === 'pane-b' ? 'Move to the right pane' : 'Move to the left pane') : 'Split right',
     icon: Columns2,
     divider: true,
-    disabled: threads.isSplit && !inOtherPane,
-    onSelect: () => threads.split(tab.id),
+    disabled: !other && ids.length < 2,
+    onSelect: () => threads.showOnly(tab.id, other?.id ?? 'split'),
   }
 
   if (tab.kind === 'chat') {
@@ -228,7 +245,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 
   if (tab.kind === 'terminal') {
     items.push(
-      { ...splitItem, onSelect: () => threads.showOnly(tab.id, threads.isSplit ? 'pane-b' : 'split') },
+      splitItem,
       { label: 'Move to panel', icon: ArrowDownToLine, divider: true, onSelect: () => ws.moveTerminalToPanel(tab.term.id) },
     )
     return items
@@ -261,78 +278,101 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 
 <template>
   <section class="ca">
-    <div class="ca__tabs" role="tablist" aria-label="Open chats">
-      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'" data-tab-drop="strip">
+    <!-- One tab strip per pane, each as wide as its pane, so a pane's tabs start at its own left edge. -->
+    <div class="ca__tabs">
+      <template v-for="(strip, si) in strips" :key="strip.pane.id">
         <div
-          v-for="(t, i) in tabs"
-          :key="t.id"
-          class="ca__tab"
-          :class="{
-            'is-active': threads.activePane.threadId === t.id,
-            'is-shown': !!paneOf(t.id),
-            'is-b': paneOf(t.id) === 'pane-b',
-            'is-dragged': isDragged(t),
-          }"
-          role="tab"
-          tabindex="0"
-          :data-tab-id="t.id"
-          :aria-selected="threads.activePane.threadId === t.id"
-          :title="tabTitle(t, i)"
-          @click="onTabClick(t.id)"
-          @pointerdown="onTabPress($event, t)"
-          @keydown.enter.prevent="threads.show(t.id)"
-          @auxclick="onTabAux($event, t.id)"
-          @contextmenu.prevent="onTabContext($event, t.id)"
-          @dblclick="t.kind === 'file' && files.pin(t.id)"
-        >
-          <template v-if="t.kind === 'chat'">
-            <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
-            <span class="ca__tab-title">{{ t.title }}</span>
-            <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
-          </template>
-          <template v-else-if="t.kind === 'diff'">
-            <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
-            <span class="ca__tab-title">{{ t.title }}</span>
-            <span v-if="t.staged" class="ca__tab-note">staged</span>
-          </template>
-          <template v-else-if="t.kind === 'terminal'">
-            <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
-            <span class="ca__tab-title">{{ t.title }}</span>
-            <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
-          </template>
-          <template v-else-if="t.kind === 'browser'">
-            <span v-if="t.browser.loading" class="ca__tab-spin" aria-hidden="true" />
-            <Globe v-else class="ca__tab-icon" aria-hidden="true" />
-            <span class="ca__tab-title">{{ t.title }}</span>
-            <span v-if="t.browser.threadId" class="ca__tab-note">agent</span>
-          </template>
-          <template v-else>
-            <component :is="fileIcon(t.title).icon" class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
-            <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
-          </template>
-          <button
-            type="button"
-            class="ca__tab-x"
-            :class="{ 'is-dirty': files.isDirty(t.id) }"
-            :aria-label="files.isDirty(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
-            @click.stop="threads.closeTab(t.id)"
-          ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
+          v-if="si > 0"
+          class="ca__divider ca__divider--bar"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize panes"
+          @pointerdown="onDown"
+          @pointermove="onMove"
+          @pointerup="onUp"
+          @dblclick="split = 0.5"
+        />
+        <div class="ca__group" :style="paneBasis(si)">
+          <TransitionGroup
+            tag="div"
+            class="ca__strip"
+            :name="tabMotion ? 'ca-tab' : 'ca-tab-still'"
+            role="tablist"
+            :aria-label="!threads.isSplit ? 'Open tabs' : si === 0 ? 'Left pane tabs' : 'Right pane tabs'"
+            data-tab-drop="strip"
+            :data-pane-id="strip.pane.id"
+          >
+            <div
+              v-for="(t, i) in strip.tabs"
+              :key="t.id"
+              class="ca__tab"
+              :class="{
+                'is-active': strip.pane.threadId === t.id && threads.activePaneId === strip.pane.id,
+                'is-shown': strip.pane.threadId === t.id,
+                'is-dragged': isDragged(t),
+              }"
+              role="tab"
+              tabindex="0"
+              :data-tab-id="t.id"
+              :aria-selected="strip.pane.threadId === t.id"
+              :title="tabTitle(t, i)"
+              @click="onTabClick(t.id)"
+              @pointerdown="onTabPress($event, t)"
+              @keydown.enter.prevent="threads.show(t.id)"
+              @auxclick="onTabAux($event, t.id)"
+              @contextmenu.prevent="onTabContext($event, t.id)"
+              @dblclick="t.kind === 'file' && files.pin(t.id)"
+            >
+              <template v-if="t.kind === 'chat'">
+                <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+                <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
+              </template>
+              <template v-else-if="t.kind === 'diff'">
+                <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+                <span v-if="t.staged" class="ca__tab-note">staged</span>
+              </template>
+              <template v-else-if="t.kind === 'terminal'">
+                <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+                <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
+              </template>
+              <template v-else-if="t.kind === 'browser'">
+                <span v-if="t.browser.loading" class="ca__tab-spin" aria-hidden="true" />
+                <Globe v-else class="ca__tab-icon" aria-hidden="true" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+                <span v-if="t.browser.threadId" class="ca__tab-note">agent</span>
+              </template>
+              <template v-else>
+                <component :is="fileIcon(t.title).icon" class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
+                <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
+              </template>
+              <button
+                type="button"
+                class="ca__tab-x"
+                :class="{ 'is-dirty': files.isDirty(t.id) }"
+                :aria-label="files.isDirty(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
+                @click.stop="threads.closeTab(t.id)"
+              ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
+            </div>
+            <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
+          </TransitionGroup>
+          <div v-if="si === strips.length - 1" class="ca__tools">
+            <UiIconButton size="sm" label="New browser tab" :shortcut="`${mod}+Shift+B`" @click="browsers.openNew()"><Globe /></UiIconButton>
+            <UiIconButton
+              size="sm"
+              :label="threads.isSplit ? 'Close split' : 'Split right'"
+              :shortcut="`${mod}+\\`"
+              :active="threads.isSplit"
+              @click="threads.isSplit ? threads.closePane('pane-b') : threads.split()"
+            >
+              <PanelRightClose v-if="threads.isSplit" />
+              <Columns2 v-else />
+            </UiIconButton>
+          </div>
         </div>
-        <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
-      </TransitionGroup>
-      <div class="ca__tools">
-        <UiIconButton size="sm" label="New browser tab" :shortcut="`${mod}+Shift+B`" @click="browsers.openNew()"><Globe /></UiIconButton>
-        <UiIconButton
-          size="sm"
-          :label="threads.isSplit ? 'Close split' : 'Split chat right'"
-          :shortcut="`${mod}+\\`"
-          :active="threads.isSplit"
-          @click="threads.isSplit ? threads.closePane('pane-b') : threads.split()"
-        >
-          <PanelRightClose v-if="threads.isSplit" />
-          <Columns2 v-else />
-        </UiIconButton>
-      </div>
+      </template>
     </div>
 
     <UiMenu ref="tabMenu" class="ca__ctx" :items="tabMenuItems" :width="230" label="Tab actions" />
@@ -356,7 +396,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :pane-id="pane.id"
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
-          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          :style="paneBasis(i)"
           data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
@@ -368,7 +408,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :pane-id="pane.id"
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
-          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          :style="paneBasis(i)"
           data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
@@ -380,7 +420,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :pane-id="pane.id"
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
-          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          :style="paneBasis(i)"
           data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
@@ -392,7 +432,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :pane-id="pane.id"
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
-          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          :style="paneBasis(i)"
           data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
@@ -403,7 +443,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :pane="pane"
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
-          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          :style="paneBasis(i)"
           data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
@@ -424,6 +464,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   background: var(--bg-app);
   flex: none;
 }
+/* A pane's tab strip: as wide as the pane under it (paneBasis), so the two line up at the divider. */
+.ca__group { flex: 1 1 0; min-width: 0; display: flex; align-items: stretch; }
 .ca__strip {
   flex: 1;
   min-width: 0;
@@ -525,4 +567,6 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 }
 .ca__divider::before { content: ''; position: absolute; inset: 0 -3px; }
 .ca__divider:hover { background: var(--accent-line); }
+/* The divider carries on through the tab bar, as one line from the top of the strips to the bottom of the panes. */
+.ca__divider--bar { margin-bottom: -1px; z-index: 1; }
 </style>

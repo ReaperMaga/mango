@@ -59,6 +59,12 @@ export const useThreads = defineStore('threads', {
     /** One or two side-by-side chat panes. */
     panes: [{ id: 'pane-a', threadId: null }] as Pane[],
     activePaneId: 'pane-a',
+    /**
+     * While split, each pane has its own tab strip: the pane a tab belongs to, by tab id. Only the
+     * right pane is written down; a tab without an entry is the left pane's. A tab shown in a pane
+     * always belongs to that pane (see groupOf). Ignored while there is one pane.
+     */
+    groups: {} as Record<string, string>,
     /** Default agent for new chats. */
     defaultAgent: 'claude' as AgentId,
     /** Per chat id, while its run has background work (see LiveState). */
@@ -139,6 +145,20 @@ export const useThreads = defineStore('threads', {
       const path = useWorkspace().activeProjectPath
       return path ? this.tabs.filter(id => this.projectOf(id) === path) : []
     },
+    /** The pane whose tab strip holds a tab: the pane showing it, else the one it was put in, else the left one. */
+    groupOf(): (id: string) => string {
+      return (id) => {
+        const shown = this.panes.find(p => p.threadId === id)
+        if (shown) return shown.id
+        if (this.panes.length === 1) return this.panes[0]!.id
+        const g = this.groups[id]
+        return g && this.panes.some(p => p.id === g) ? g : this.panes[0]!.id
+      }
+    },
+    /** One pane's tabs (the active project's), in order: what its tab strip shows and Ctrl+1–9 count. */
+    groupTabs(): (paneId: string) => string[] {
+      return (paneId) => this.visibleTabs.filter(id => this.groupOf(id) === paneId)
+    },
     /** Threads that need the user: shown as a count in the titlebar. */
     attentionCount: s => s.threads.filter(t => !t.archived && !t.parentId && (t.status === 'waiting' || (t.status === 'done' && !t.seen))).length,
   },
@@ -174,6 +194,9 @@ export const useThreads = defineStore('threads', {
           this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id))
           this.panes = Array.isArray(layout.panes) && layout.panes.length ? layout.panes : this.panes
           this.activePaneId = this.panes.some(p => p.id === layout.activePaneId) ? layout.activePaneId : this.panes[0]!.id
+          // Builds before per-pane tab strips saved none: every tab starts in the left pane.
+          const groups = layout.groups && typeof layout.groups === 'object' ? layout.groups : {}
+          this.groups = Object.fromEntries(Object.entries(groups).filter(([id, pane]) => pane === 'pane-b' && this.tabs.includes(id))) as Record<string, string>
           this.defaultAgent = layout.defaultAgent in AGENTS ? layout.defaultAgent : 'claude'
         }
       } catch { /* start fresh */ }
@@ -185,6 +208,7 @@ export const useThreads = defineStore('threads', {
           // with the app: none of them is something to restore next time.
           tabs: this.tabs.filter(id => !isViewTab(id)),
           panes: this.panes.map(p => (isViewTab(p.threadId) ? { ...p, threadId: null } : p)),
+          groups: Object.fromEntries(Object.entries(this.groups).filter(([id]) => !isViewTab(id) && this.tabs.includes(id))),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }),
       })
@@ -250,11 +274,11 @@ export const useThreads = defineStore('threads', {
         if (browser) useBrowser().forget(browser.browserId)
         if (isFileTab(tab)) useFiles().forget(tab)
       }
+      for (const tab of this.tabs.filter(leaving)) delete this.groups[tab]
       this.tabs = this.tabs.filter(tab => !leaving(tab))
-      for (const p of this.panes) if (p.threadId && leaving(p.threadId)) p.threadId = null
-      if (this.panes.length > 1) {
-        const kept = this.panes.filter(p => p.threadId !== null)
-        this.panes = kept.length ? kept : [this.panes[0]!]
+      // A pane that showed one of them shows the next tab of its own strip, or closes when that is empty.
+      for (const p of [...this.panes]) {
+        if (p.threadId && leaving(p.threadId)) { p.threadId = null; this._refill(p.id) }
       }
       if (!this.panes.some(p => p.id === this.activePaneId)) this.activePaneId = this.panes[0]!.id
       for (const id of gone) { delete this.queue[id]; delete this.live[id]; held.delete(id) }
@@ -336,7 +360,8 @@ export const useThreads = defineStore('threads', {
         && x.messages.length === 0 && x.title === 'New chat' && !x.archived && !x.parentId)
       if (blank) {
         if (agentArg) { blank.agent = agentArg; blank.model = AGENTS[agentArg].models[0]!.id; blank.effort = null }
-        this.show(blank.id)
+        // A new chat opens where it was asked for (the active pane), even when its blank tab sits in the other one.
+        this.show(blank.id, this.activePaneId)
         return blank
       }
       const t: Thread = {
@@ -492,20 +517,48 @@ export const useThreads = defineStore('threads', {
       this.persist(users.map(x => x.id))
     },
 
-    /** Show a thread in the active pane (or the pane that already shows it). */
+    /**
+     * Show a tab. In `paneId` when given (it moves to that pane's strip); otherwise where it already
+     * is: the pane showing it, or the pane whose strip holds it. A tab not open yet opens in the active pane.
+     */
     show(id: string, paneId?: string) {
-      if (!this.tabs.includes(id)) this.tabs.push(id)
-      const already = this.panes.find(p => p.threadId === id)
-      if (already && !paneId) {
-        this.activePaneId = already.id
-      } else {
-        const pane = this.panes.find(p => p.id === (paneId ?? this.activePaneId)) ?? this.panes[0]!
-        pane.threadId = id
-        this.activePaneId = pane.id
-      }
+      const isNew = !this.tabs.includes(id)
+      if (isNew) this.tabs.push(id)
+      const from = this.panes.find(p => p.threadId === id)
+      const pane = (paneId ? this.panes.find(p => p.id === paneId) : null)
+        ?? from
+        ?? (isNew ? this.activePane : this.panes.find(p => p.id === this.groupOf(id)))
+        ?? this.panes[0]!
+      const at = this.tabs.indexOf(id)
+      if (from && from !== pane) from.threadId = null
+      pane.threadId = id
+      this._setGroup(id, pane.id)
+      this.activePaneId = pane.id
+      // The pane it moved out of shows its strip's next tab, or closes when its strip is empty now.
+      if (from && from !== pane) this._refill(from.id, at)
       const t = this.byId(id)
       if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
       this.persist(id)
+    },
+
+    /** Put a tab in a pane's strip (the left one: no entry, see `groups`). */
+    _setGroup(id: string, paneId: string) {
+      if (this.panes.length > 1 && paneId !== this.panes[0]!.id) this.groups[id] = paneId
+      else delete this.groups[id]
+    },
+
+    /**
+     * A pane shows nothing now: give it the tab of its own strip nearest to `near` (an index in `tabs`)
+     * that no other pane shows. A split pane whose strip is empty closes; the only pane stays empty.
+     */
+    _refill(paneId: string, near = 0) {
+      const pane = this.panes.find(p => p.id === paneId)
+      if (!pane || pane.threadId) return
+      const free = this.groupTabs(paneId).filter(x => !this.panes.some(p => p.threadId === x))
+      const next = free.reduce<string | null>((best, x) =>
+        best === null || Math.abs(this.tabs.indexOf(x) - near) < Math.abs(this.tabs.indexOf(best) - near) ? x : best, null)
+      if (next) pane.threadId = next
+      else if (this.panes.length > 1) this.closePane(paneId)
     },
 
     closeTab(id: string) {
@@ -532,74 +585,61 @@ export const useThreads = defineStore('threads', {
     removeTab(id: string) {
       const i = this.tabs.indexOf(id)
       if (i === -1) return
-      const project = this.projectOf(id)
+      const shownIn = this.panes.filter(p => p.threadId === id)
       this.tabs.splice(i, 1)
-      // The neighbouring tab of the same project takes its place. Another project's chat
-      // would show in the pane with no tab and no sidebar row, and a message sent there
-      // would run in that other project's folder.
-      const siblings = this.tabs.filter(x => this.projectOf(x) === project)
-      const before = this.tabs.slice(0, i).filter(x => this.projectOf(x) === project).length
-      const fallback = siblings[Math.min(before, siblings.length - 1)] ?? null
-      for (const p of this.panes) if (p.threadId === id) p.threadId = this.panes.some(o => o.threadId === fallback) ? null : fallback
-      if (this.panes.length > 1) {
-        const empty = this.panes.find(p => p.threadId === null)
-        if (empty) this.closePane(empty.id)
-      }
+      delete this.groups[id]
+      // The neighbouring tab of the same pane's strip takes its place (the strips only hold the active
+      // project's tabs: another project's chat would run in that other project's folder). A split
+      // pane left with an empty strip closes.
+      for (const p of shownIn) { p.threadId = null; this._refill(p.id, i) }
       this.persistLayout()
     },
 
-    /** Put a tab in the strip before `before` (null: at the end), moving it when it is open already. */
-    placeTab(id: string, before: string | null) {
+    /** Put a tab in the strip before `before` (null: at the end), moving it when it is open already; into `paneId`'s strip when given. */
+    placeTab(id: string, before: string | null, paneId?: string) {
       this.tabs = placeBefore(this.tabs, id, before)
+      if (paneId && !this.panes.some(p => p.threadId === id)) this._setGroup(id, paneId)
       this.persistLayout()
     },
 
     /**
-     * Show a tab in one pane only (a terminal can be drawn in one place): a pane that showed it
-     * already takes the target pane's old tab. 'split' opens it in a new pane on the right.
+     * Show a tab in one pane (a terminal can be drawn in one place): it moves to that pane's strip,
+     * and the pane it left shows its strip's next tab. 'split' opens it in a new pane on the right.
      */
     showOnly(id: string, paneId: string | 'split') {
-      if (!this.tabs.includes(id)) this.tabs.push(id)
       if (paneId === 'split' && this.panes.length === 1) {
-        const left = this.panes[0]!
-        if (left.threadId === id) left.threadId = this.visibleTabs.find(x => x !== id) ?? null
-        this.panes.push({ id: 'pane-b', threadId: id })
-        this.activePaneId = 'pane-b'
-        this.persistLayout()
+        this.split(id)
         return
       }
-      const target = this.panes.find(p => p.id === (paneId === 'split' ? 'pane-b' : paneId)) ?? this.activePane
-      const other = this.panes.find(p => p.id !== target.id && p.threadId === id)
-      if (other) other.threadId = target.threadId === id ? null : target.threadId
-      target.threadId = id
-      this.activePaneId = target.id
-      if (other && !other.threadId) this.closePane(other.id)
+      this.show(id, paneId === 'split' ? this.panes[1]!.id : paneId)
       this.persistLayout()
     },
 
-    /** Add a tab without showing it, after `after` when that is open (else at the end). */
+    /** Add a tab without showing it, after `after` when that is open (else at the end), in `after`'s strip (else the active pane's). */
     addTab(id: string, after: string | null = null) {
       if (this.tabs.includes(id)) return
       const at = after ? this.tabs.indexOf(after) : -1
       if (at >= 0) this.tabs.splice(at + 1, 0, id)
       else this.tabs.push(id)
+      this._setGroup(id, at >= 0 ? this.groupOf(after!) : this.activePaneId)
     },
 
     /**
      * Show `id` in the pane beside the one showing `beside` (the active pane when that is not
-     * on screen), splitting when there is one pane. The focus stays where it was unless `focus`:
-     * a browser an agent or a link opens must not take the keyboard from the chat.
+     * on screen), splitting when there is one pane; its tab goes into that pane's strip. The focus
+     * stays where it was unless `focus`: a browser an agent or a link opens must not take the
+     * keyboard from the chat.
      */
     showBeside(id: string, beside: string | null, focus = false) {
-      this.addTab(id, beside)
       const keep = this.activePaneId
       if (!this.panes.some(p => p.threadId === id)) {
         const anchor = this.panes.find(p => p.threadId === beside) ?? this.activePane
-        if (this.panes.length === 1) this.panes.push({ id: 'pane-b', threadId: id })
-        else this.panes.find(p => p.id !== anchor.id)!.threadId = id
+        this.addTab(id, beside)
+        if (this.panes.length === 1) this.split(id)
+        else this.show(id, this.panes.find(p => p.id !== anchor.id)!.id)
       }
-      const target = this.panes.find(p => p.threadId === id)!
-      this.activePaneId = focus || !this.panes.some(p => p.id === keep) ? target.id : keep
+      const target = this.panes.find(p => p.threadId === id)
+      this.activePaneId = focus || !target || !this.panes.some(p => p.id === keep) ? target?.id ?? this.panes[0]!.id : keep
       this.persistLayout()
     },
 
@@ -612,6 +652,8 @@ export const useThreads = defineStore('threads', {
         return
       }
       this.tabs[i] = next
+      if (this.groups[old]) this.groups[next] = this.groups[old]!
+      delete this.groups[old]
       for (const p of this.panes) if (p.threadId === old) p.threadId = next
       const diff = parseDiffTab(old)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
@@ -623,21 +665,32 @@ export const useThreads = defineStore('threads', {
       if (t && (t.status === 'working' || t.status === 'done')) t.seen = true
     },
 
-    /** Open a second pane to the right; shows `threadId` or the active project's next tab. */
+    /**
+     * Open a second pane to the right with its own tab strip, holding `threadId` or the active project's
+     * next tab (moved out of the left strip). Already split: show `threadId` in the right pane.
+     */
     split(threadId?: string) {
       if (this.panes.length > 1) {
         if (threadId) this.show(threadId, this.panes[1]!.id)
         return
       }
-      const current = this.activePane.threadId
-      const next = threadId ?? this.visibleTabs.find(id => id !== current) ?? null
+      const left = this.panes[0]!
+      const next = threadId ?? this.visibleTabs.find(id => id !== left.threadId) ?? null
+      if (next && !this.tabs.includes(next)) this.tabs.push(next)
+      // A fresh split: the project's tabs all start on the left, but the one moving right.
+      for (const id of this.visibleTabs) delete this.groups[id]
       this.panes.push({ id: 'pane-b', threadId: next })
+      if (next) this.groups[next] = 'pane-b'
       this.activePaneId = 'pane-b'
+      // It was on the left: the left pane shows its next tab (with none, there is nothing to split).
+      if (next && left.threadId === next) { left.threadId = null; this._refill(left.id, this.tabs.indexOf(next)) }
       this.persistLayout()
     },
 
+    /** Close a pane; its tabs join the other pane's strip. */
     closePane(paneId: string) {
       if (this.panes.length === 1) return
+      for (const id of this.visibleTabs) delete this.groups[id]
       this.panes = this.panes.filter(p => p.id !== paneId)
       this.panes[0]!.id = 'pane-a'
       this.activePaneId = 'pane-a'
