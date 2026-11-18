@@ -116,7 +116,13 @@ watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join
     }
   }
   if (threads.panes.length > 1 && threads.panes.every(p => !p.threadId)) threads.closePane('pane-b')
-  else if (moved) threads.persistLayout()
+  // An empty area while the project has tabs (what it showed moved to another window): show one.
+  const first = threads.panes[0]!
+  if (!first.threadId && threads.panes.length === 1) {
+    const next = tabs.value[0]?.id
+    if (next) { first.threadId = next; moved = true }
+  }
+  if (moved) threads.persistLayout()
 }, { immediate: true })
 
 /*
