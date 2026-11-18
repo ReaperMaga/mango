@@ -108,7 +108,7 @@ const actions = computed<Item[]>(() => {
   // Another window: on this project (it moves there), or a new one on the welcome screen.
   if (project && (win.isMain || ws.openProjects.length > 1)) {
     const blocked = win.moveBlocker(project)
-    items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked ? 'A chat is still working' : ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
+    items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked?.hint ?? ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
   }
   items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: [mod, alt, 'N'], keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(

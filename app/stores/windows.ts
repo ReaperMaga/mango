@@ -45,6 +45,13 @@ const PREVIEW_WHO_MS = 300
 const sameClaims = (a: Claim[] = [], b: Claim[] = []) =>
   a.length === b.length && a.every(c => b.some(d => d.kind === c.kind && d.key === c.key))
 
+/** Why a project's terminals keep it in this window, or null when it has none running here. */
+function terminalBlocker(path: string): string | null {
+  const n = useWorkspace().terminalsOf(path).length
+  if (!n) return null
+  return `${n === 1 ? 'A terminal is' : `${n} terminals are`} open for this project here, and terminals stay in their window. Close ${n === 1 ? 'it' : 'them'} first.`
+}
+
 const waiting = new Map<string, (m: Message) => void>()
 let reclaimTimer: ReturnType<typeof setTimeout> | null = null
 let syncing: Promise<void> = Promise.resolve()
@@ -186,6 +193,13 @@ export const useWindows = defineStore('windows', {
         const t = threads.byId(busy.rootId) ?? threads.byId(busy.id)
         return `“${t?.title ?? 'A chat'}” is still working in another window. Stop it there first, or wait until it is done.`
       }
+      // A project with shells open here stays here: a terminal cannot move to another window.
+      const ws = useWorkspace()
+      for (const p of ws.openProjects) {
+        const h = holderOf(next, { kind: 'project', key: p.path })
+        const shells = h && h !== this.self ? terminalBlocker(p.path) : null
+        if (shells) return shells
+      }
       if (lose.length) {
         await flushHistory()
         threads.release(lose.map(c => c.id))
@@ -193,7 +207,6 @@ export const useWindows = defineStore('windows', {
         void flushRemoteChats()
       }
       // Projects that go to another window leave this one.
-      const ws = useWorkspace()
       for (const p of [...ws.openProjects]) {
         const h = holderOf(next, { kind: 'project', key: p.path })
         if (h && h !== this.self) ws.lend(p.path)
@@ -307,12 +320,14 @@ export const useWindows = defineStore('windows', {
     },
 
     /**
-     * Why a project cannot move to another window now (a chat of it running here), or null.
-     * Shown on the menu items that would move it.
+     * Why a project cannot move to another window now (a chat of it running here, or its terminals
+     * open here), or null: a short `hint` for menu items and the full `reason`.
      */
-    moveBlocker(path: string): string | null {
+    moveBlocker(path: string): { hint: string; reason: string } | null {
       const t = useThreads().busyIn(path)
-      return t ? `“${t.title}” is still working. Stop it first, or wait until it is done.` : null
+      if (t) return { hint: 'A chat is still working', reason: `“${t.title}” is still working. Stop it first, or wait until it is done.` }
+      const shells = terminalBlocker(path)
+      return shells ? { hint: 'Its terminals stay in this window', reason: shells } : null
     },
 
     /**
@@ -324,7 +339,7 @@ export const useWindows = defineStore('windows', {
         const elsewhere = this.projectElsewhere(path)
         if (elsewhere) return this.focus(elsewhere)
         const blocked = this.moveBlocker(path)
-        if (blocked) throw new Error(blocked)
+        if (blocked) throw new Error(blocked.reason)
         // What is pending is on disk before the new window reads it.
         await flushHistory()
       }

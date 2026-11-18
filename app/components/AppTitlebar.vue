@@ -102,7 +102,7 @@ const projectItems = computed<MenuItem[]>(() => [
     : []),
 ])
 
-/* Moving a project with a chat at work would cut the run off: say why it waits instead. */
+/* Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead. */
 function moveItem(path: string): MenuItem {
   const blocked = win.moveBlocker(path)
   return {
@@ -110,7 +110,7 @@ function moveItem(path: string): MenuItem {
     icon: AppWindow,
     divider: true,
     disabled: !!blocked,
-    hint: blocked ? 'A chat is still working here' : undefined,
+    hint: blocked?.hint,
     onSelect: () => win.openInNewWindow(path),
   }
 }

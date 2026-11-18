@@ -3,13 +3,13 @@ import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types
 import type { PermissionMode } from '~/agents/types'
 import type { AgentId } from '~/types/chat'
 import { call } from '~/composables/useBackend'
-import { baseName } from '~/utils/paths'
+import { baseName, withTrailingSep } from '~/utils/paths'
 import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
-import { editorTabOf, placeBefore, terminalTabId } from '~/utils/terminalTabs'
+import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -575,6 +575,17 @@ export const useWorkspace = defineStore('workspace', {
     setWhere(where: EnvRemote | null) {
       this.where = where ? { hostId: where.hostId, instance: where.instance } : null
       this.persist()
+    },
+
+    /**
+     * The live terminals of a project in this window: opened in its folder (or a chat's worktree of it,
+     * or inside it), or shown as one of its tabs. A shell runs in the window that started it, so these
+     * keep the project in this window (`stores/windows.ts`).
+     */
+    terminalsOf(path: string): TerminalTab[] {
+      const threads = useThreads()
+      const inside = (dir: string | null) => !!dir && (dir === path || threads.ownerOf(dir) === path || dir.startsWith(withTrailingSep(path)))
+      return this.terminalTabs.filter(t => !t.exited && (inside(t.cwd) || threads.tabs.some(id => parseTerminalTab(id)?.terminalId === t.id && parseTerminalTab(id)?.projectPath === path)))
     },
 
     closeProject(path: string) {
