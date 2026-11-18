@@ -36,6 +36,7 @@ export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; d
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
+  { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'] },
   { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can open from Mango.', requires: ['base'] },
   { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
 ]
