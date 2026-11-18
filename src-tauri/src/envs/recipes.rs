@@ -149,12 +149,26 @@ put() {
   rm -f "$tmp"
 }
 need_systemd() { [ -d /run/systemd/system ] || fail "$1 needs systemd running in the environment."; }
+# Tell the agent, in a CLI's global instructions file ($1), how to show a picture in Mango's chat. Once.
+picture_note() {
+  grep -qs 'mango-pictures' "$1" && return 0
+  local dir; dir=$(dirname "$1")
+  [ -d "$dir" ] || install -d -o agent -g "$(id -gn agent)" -m 0700 "$dir"
+  cat >> "$1" <<'EOF'
+
+<!-- mango-pictures: added by Mango -->
+## Showing pictures
+When the user asks to see a screenshot or picture, save it as a file outside the project (for example under /tmp) and put it in your reply as markdown with its absolute path: `![what it shows](/tmp/shot.png)`. Mango shows the picture in the chat.
+EOF
+  chown agent:"$(id -gn agent)" "$1"
+}
 # Register the Chromium MCP server (when it is installed) with the agent user's Claude Code and Codex.
 register_chromium() {
   [ -x /usr/local/bin/mango-chromium-mcp ] || return 0
   if as_agent 'command -v claude' >/dev/null 2>&1; then
     as_agent 'claude mcp remove --scope user chromium >/dev/null 2>&1; claude mcp add --scope user chromium -- /usr/local/bin/mango-chromium-mcp' \
       || fail "could not add the Chromium MCP server to Claude Code."
+    picture_note /home/agent/.claude/CLAUDE.md
     echo "Claude Code has the chromium MCP server."
   fi
   if as_agent 'command -v codex' >/dev/null 2>&1; then
@@ -164,6 +178,7 @@ register_chromium() {
       printf '\n# Added by Mango: a headless Chromium for the agent (pages, screenshots).\n[mcp_servers.chromium]\ncommand = "/usr/local/bin/mango-chromium-mcp"\nstartup_timeout_sec = 30\n' >> "$cfg"
       chown agent:"$(id -gn agent)" "$cfg"
     fi
+    picture_note /home/agent/.codex/AGENTS.md
     echo "Codex has the chromium MCP server."
   fi
 }
@@ -662,6 +677,8 @@ mod tests {
         assert!(p.script.contains("--browser chromium --headless --isolated"));
         assert!(p.script.contains("claude mcp add --scope user chromium -- /usr/local/bin/mango-chromium-mcp"));
         assert!(p.script.contains("[mcp_servers.chromium]"));
+        assert!(p.script.contains("picture_note /home/agent/.claude/CLAUDE.md"));
+        assert!(p.script.contains("picture_note /home/agent/.codex/AGENTS.md"));
         // Node's script runs before Chromium's, and the register helper is defined before both.
         assert!(p.script.find("deb.nodesource.com").unwrap() < p.script.find("@playwright/mcp").unwrap());
         assert!(p.script.find("register_chromium() {").unwrap() < p.script.find("deb.nodesource.com").unwrap());
