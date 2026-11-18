@@ -14,7 +14,8 @@ import { useThreads } from '~/stores/threads'
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
  * so scrollback survives tab switches; `tab` is the store object and is
- * mutated in place (ptyId / exited).
+ * mutated in place (ptyId / exited). A terminal in the main area is the same
+ * view, teleported into its pane: moving it never restarts the shell.
  */
 const props = defineProps<{
   tab: TerminalTab
@@ -22,6 +23,8 @@ const props = defineProps<{
   active: boolean
   /** the terminal panel is open */
   visible: boolean
+  /** Where it is drawn ('panel' or a pane): a change moves the xterm's element, so it refits. */
+  place?: string
 }>()
 
 const ws = useWorkspace()
@@ -303,6 +306,16 @@ watch(() => props.active && props.visible, async (shown) => {
   requestAnimationFrame(() => {
     fitNow()
     term?.focus()
+  })
+})
+
+// Moved between the panel and a pane: the same xterm, in a box of another size.
+watch(() => props.place, async () => {
+  await nextTick()
+  requestAnimationFrame(() => {
+    fitNow()
+    term?.refresh(0, term.rows - 1)
+    if (props.active && props.visible) term?.focus()
   })
 })
 

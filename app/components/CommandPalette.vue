@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Plug, Server, SquareTerminal, Sun, History,
+  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -9,11 +9,13 @@ import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
+import { useWindows } from '~/stores/windows'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
 import { useOverlay } from '~/composables/useOverlay'
 import { useWorktrees } from '~/composables/useWorktrees'
+import { parseTerminalTab } from '~/utils/terminalTabs'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -23,6 +25,7 @@ const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
 const wts = useWorktrees()
+const win = useWindows()
 useOverlay(() => ws.paletteOpen)
 
 /** Environments known to be usable right now (from what the store already has). */
@@ -72,6 +75,7 @@ let carryError: string | null = null
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = modLabel()
 const shift = isMac ? '⇧' : 'Shift'
+const alt = isMac ? '⌥' : 'Alt'
 
 const tildify = (path: string) => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~')
 function errorText(e: unknown): string {
@@ -87,7 +91,7 @@ const actions = computed<Item[]>(() => {
   const inWorkspace = ws.hasProject
   const dark = ws.resolvedTheme() === 'dark'
   const items: Item[] = []
-  if (project) {
+  if (project && win.spec.kind !== 'chat') {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
       items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
@@ -101,6 +105,19 @@ const actions = computed<Item[]>(() => {
   // With environments around, say where these put the project (the remembered choice).
   const where = projectWhere()
   const whereDetail = envs.hosts.length ? (where ? envLabels(where.hostId, where.instance).where : 'This computer') : undefined
+  // Another window: on this project (it moves there), or a new one on the welcome screen.
+  if (project && (win.isMain || ws.openProjects.length > 1)) {
+    const blocked = win.moveBlocker(project)
+    items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked?.hint ?? ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
+  }
+  // The chat in front: out into a window of its own, or (its own window) back.
+  const chat = threads.activeThread
+  if (chat) {
+    const move = win.moveChatAction(chat.id)
+    const back = win.isOwnChat(chat.id)
+    items.push({ id: 'chat-window', group: 'Actions', label: back ? 'Return chat to main window' : 'Move chat to new window', detail: move.hint ?? chat.title, icon: AppWindow, keywords: 'window move separate detach tear off pop out second monitor screen', run: move.onSelect })
+  }
+  items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: [mod, alt, 'N'], keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(
     { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
     { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
@@ -128,9 +145,15 @@ const actions = computed<Item[]>(() => {
     { id: 'join-env', group: 'Actions', label: 'Join a shared environment', detail: 'With a link someone sent you', icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => envs.openJoin() },
   )
   if (inWorkspace) {
+    // Move the terminal in view between the panel and the main area.
+    const paneTerm = parseTerminalTab(threads.activePane.threadId)?.terminalId
+    if (paneTerm) items.push({ id: 'terminal-to-panel', group: 'Actions', label: 'Move terminal to panel', icon: PanelBottom, keywords: 'terminal shell dock bottom panel editor tab', run: () => ws.moveTerminalToPanel(paneTerm) })
+    const panelTerm = ws.terminalOpen ? ws.activeTerminalId : null
+    if (panelTerm) items.push({ id: 'terminal-to-editor', group: 'Actions', label: 'Move terminal to editor area', icon: PanelTop, keywords: 'terminal shell tab main pane editor area undock', run: () => ws.moveTerminalToEditor(panelTerm) })
     items.push(
       { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: [mod, '`'], keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
       { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: [mod, shift, 'T'], keywords: 'shell tab console', run: () => ws.newTerminal() },
+      { id: 'new-terminal-editor', group: 'Actions', label: 'New terminal in editor area', icon: SquareTerminal, keywords: 'shell tab console main pane editor', run: () => ws.newTerminal(undefined, undefined, true) },
       { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: [mod, 'Shift', 'H'], detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: [mod, 'Shift', 'E'], keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: [mod, 'Shift', 'G'], keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
@@ -198,6 +221,7 @@ const projectItems = computed<Item[]>(() =>
   ws.listedRecent.map((p, i) => {
     const isOpen = ws.openProjects.some(o => o.path === p.path)
     const current = p.path === ws.activeProjectPath
+    const elsewhere = !!win.projectElsewhere(p.path)
     // A remote project: where it runs, then its folder inside the instance.
     const remote = remotePlace(p.path)
     return {
@@ -206,7 +230,7 @@ const projectItems = computed<Item[]>(() =>
       label: p.name,
       detail: remote ? `${remote.where} · ${remote.dir}` : tildify(p.path),
       icon: remote ? Server : Folder,
-      badge: current ? 'Current' : isOpen ? 'Open' : undefined,
+      badge: current ? 'Current' : isOpen ? 'Open' : elsewhere ? 'Other window' : undefined,
       keywords: remote ? `${remote.where} ${remote.dir} remote environment` : `${p.path} ${p.branch ?? ''}`,
       rank: i,
       run: async () => {

@@ -1035,7 +1035,7 @@ export interface Commands {
    * access to Mango's commands. Page changes arrive as `browser://state`.
    */
   /**
-   * Create the webview (or, for an id that exists, move it and load `url`). `projectPath` is the
+   * Create the webview over the calling window (or, for an id that exists, move it and load `url`). `projectPath` is the
    * tab's project: in a remote environment (`env://…`) local addresses such as `localhost:3000` are
    * the environment's own, reached through an SSH tunnel; `browser://state` reports them as typed.
    */
@@ -1048,7 +1048,7 @@ export interface Commands {
   /** The webview's own developer tools. */
   browser_devtools: [{ id: string }, void]
   browser_close: [{ id: string }, void]
-  /** Close every browser webview (the frontend calls it when it starts: a reloaded UI leaves none behind). */
+  /** Close the calling window's browser webviews (the frontend calls it when it starts: a reloaded UI leaves none behind). */
   browser_reset: [Record<string, never>, void]
   /** The page as a PNG, base64. Linux only for now; elsewhere it rejects with a message saying so. */
   browser_screenshot: [{ id: string }, string]
@@ -1066,6 +1066,23 @@ export interface Commands {
    * names). Returns it as saved, new servers with their ids. Errors name the server, never a value.
    */
   mcp_servers_save: [{ servers: McpServerConfig[] }, McpServerConfig[]]
+
+  /**
+   * Open another window (see `utils/windows.ts`): on a project (`path`; none: the welcome screen) or on
+   * a chat (`threadId`, with its project in `path`). `x`/`y` place its top-left corner on the screen
+   * (logical pixels; omitted: centred), `width`/`height` default to the main window's. Returns its label
+   * (`w-<n>`). It looks like the main window (same settings, macOS titlebar included).
+   */
+  window_open: [{ kind: 'project' | 'chat'; path?: string | null; threadId?: string | null; x?: number; y?: number; width?: number; height?: number }, string]
+  /** Bring one of Mango's windows (`main`, `w-<n>`) to the front. */
+  window_focus: [{ label: string }, void]
+  /** The labels of Mango's open windows. */
+  window_list: [Record<string, never>, string[]]
+  /**
+   * The label of another of Mango's windows under a point of the screen (logical pixels, as a
+   * pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
+   */
+  window_at: [{ x: number; y: number }, string | null]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
@@ -1160,4 +1177,6 @@ export interface Events {
   'browser://agent-open': BrowserAgentOpen
   /** A `mango://join/…` link was opened (deep link): show the join dialog for it. */
   'envs://join': { link: string }
+  /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
+  'window://closed': { label: string }
 }

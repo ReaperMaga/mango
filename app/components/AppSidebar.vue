@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2 } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call } from '~/composables/useBackend'
 import { isEnvPath } from '~/utils/envPath'
@@ -16,9 +16,12 @@ import { worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { useWorktrees } from '~/composables/useWorktrees'
 import { useGit } from '~/stores/git'
+import { useWindows } from '~/stores/windows'
+import { cancelSidebarChat, sidebarChatAt, sidebarChatDrop } from '~/composables/useTabDrag'
 
 const ws = useWorkspace()
 const threads = useThreads()
+const win = useWindows()
 const now = useNow()
 const mod = ref('Ctrl')
 onMounted(() => (mod.value = modLabel()))
@@ -108,19 +111,31 @@ function open(t: Thread) {
 /* ---------- reorder by dragging ----------
  * Pointer events rather than HTML5 drag and drop: the desktop webview takes
  * over native drag and drop (for dropped files), which breaks it on Windows.
+ * Past the sidebar the drag becomes a tab drag (useTabDrag): onto the tab strip, a pane, or out of
+ * the window into a window of its own.
  */
 const drag = reactive({ id: null as string | null, overId: null as string | null, where: 'before' as 'before' | 'after' })
-let dragStart: { id: string; group: string; x: number; y: number } | null = null
+let dragStart: { id: string; group: string; x: number; y: number; el: HTMLElement; pointerId: number } | null = null
 let justDragged = false
+const rail = ref<HTMLElement | null>(null)
 
 function onRowPointerDown(t: Thread, e: PointerEvent) {
   if (e.button !== 0 || t.archived || renaming.value === t.id) return
   if ((e.target as HTMLElement).closest('.sb__actions, input')) return
   const group = (e.currentTarget as HTMLElement).dataset.group ?? ''
-  dragStart = { id: t.id, group, x: e.clientX, y: e.clientY }
+  dragStart = { id: t.id, group, x: e.clientX, y: e.clientY, el: e.currentTarget as HTMLElement, pointerId: e.pointerId }
   window.addEventListener('pointermove', onDragMove)
   window.addEventListener('pointerup', onDragEnd)
   window.addEventListener('pointercancel', onDragEnd)
+  window.addEventListener('keydown', onDragKey, true)
+}
+
+/** Escape drops nothing: the row stays where it was. */
+function onDragKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || !drag.id) return
+  e.preventDefault()
+  e.stopPropagation()
+  onDragEnd()
 }
 
 function onDragMove(e: PointerEvent) {
@@ -130,7 +145,13 @@ function onDragMove(e: PointerEvent) {
     if (Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y) < 6) return
     drag.id = dragStart.id
     document.body.classList.add('is-reordering')
+    // Moves (and the release) outside the window keep coming here.
+    try { dragStart.el.setPointerCapture(dragStart.pointerId) } catch { /* the row is gone */ }
   }
+  const box = rail.value?.getBoundingClientRect()
+  const away = !box || e.clientX < box.left || e.clientX >= box.right || e.clientY < box.top || e.clientY >= box.bottom
+  sidebarChatAt(e, drag.id, away)
+  if (away) { drag.overId = null; return }
   // Which row of the same section is the pointer over, and on which half?
   const rows = [...document.querySelectorAll<HTMLElement>(`.sb__thread[data-group="${CSS.escape(dragStart.group)}"]`)]
   let over: HTMLElement | null = null
@@ -151,12 +172,19 @@ function onDragMove(e: PointerEvent) {
   if (drag.overId === drag.id) drag.overId = null
 }
 
-function onDragEnd() {
+function onDragEnd(e?: PointerEvent) {
   window.removeEventListener('pointermove', onDragMove)
   window.removeEventListener('pointerup', onDragEnd)
   window.removeEventListener('pointercancel', onDragEnd)
+  window.removeEventListener('keydown', onDragKey, true)
+  if (dragStart?.el.hasPointerCapture(dragStart.pointerId)) dragStart.el.releasePointerCapture(dragStart.pointerId)
   if (drag.id) {
-    if (drag.overId) threads.reorder(drag.id, drag.overId, drag.where)
+    // Let go past the sidebar: the tab drag places it. Escape or a cancelled pointer drops nothing.
+    if (e?.type === 'pointerup') {
+      if (!sidebarChatDrop(e) && drag.overId) threads.reorder(drag.id, drag.overId, drag.where)
+    } else {
+      cancelSidebarChat()
+    }
     justDragged = true
     setTimeout(() => (justDragged = false), 0)
   }
@@ -165,7 +193,7 @@ function onDragEnd() {
   dragStart = null
   document.body.classList.remove('is-reordering')
 }
-onBeforeUnmount(onDragEnd)
+onBeforeUnmount(() => onDragEnd())
 
 /** Status first when it says something; otherwise who the chat is with. */
 /**
@@ -254,6 +282,7 @@ function threadMenu(t: Thread): MenuItem[] {
   return [
     { label: 'Rename', icon: Pencil, onSelect: () => startRename(t) },
     { label: 'Open to the side', icon: Columns2, onSelect: () => { ws.setActiveProject(t.projectPath); threads.split(t.id) } },
+    { ...win.moveChatAction(t.id), icon: AppWindow, divider: false },
     ...(t.archived ? [] : [
       { label: 'Move up', icon: ArrowUp, kbd: 'Alt+↑', divider: true, disabled: order.indexOf(t.id) <= 0, onSelect: () => threads.move(t.id, -1) },
       { label: 'Move down', icon: ArrowDown, kbd: 'Alt+↓', disabled: order.indexOf(t.id) === order.length - 1, onSelect: () => threads.move(t.id, 1) },
@@ -388,7 +417,7 @@ const codeItems = computed<MenuItem[]>(() => [
 </script>
 
 <template>
-  <aside class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" aria-label="Threads">
+  <aside ref="rail" class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" aria-label="Threads">
     <div class="sb__top">
       <button type="button" class="sb__new" @click="newChat()">
         <MessageSquarePlus />

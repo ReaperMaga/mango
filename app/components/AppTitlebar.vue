@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ChevronDown, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useUsage } from '~/stores/usage'
 import { useGit } from '~/stores/git'
+import { useWindows } from '~/stores/windows'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
@@ -13,6 +14,7 @@ import { isEnvPath } from '~/utils/envPath'
 const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
+const win = useWindows()
 const mod = ref('Ctrl')
 const native = ref(false)
 /* macOS draws its own traffic lights over the left of the titlebar (tauri.macos.conf.json). */
@@ -31,6 +33,10 @@ onMounted(() => {
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
 onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
+
+/** A window on one chat (stores/windows.ts): no project menu, a way back to the main window instead. */
+const chatWindow = computed(() => win.spec.kind === 'chat')
+const ownBusy = computed(() => win.spec.kind === 'chat' && threads.isBusyChat(win.spec.threadId))
 
 /** The active project when it is a folder inside a remote environment. */
 const remote = computed(() => remotePlace(ws.activeProjectPath))
@@ -82,7 +88,12 @@ const projectItems = computed<MenuItem[]>(() => [
     onSelect: () => ws.setActiveProject(p.path),
     remove: { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) },
   })),
-  { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: ws.openProjects.length > 0, onSelect: openFolderFlow },
+  // The active project in a window of its own (pointless when it is this window's only one).
+  ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
+    ? [moveItem(ws.activeProject.path)]
+    : []),
+  { label: 'New window', icon: AppWindow, kbd: `${mod.value}+Alt+N`, divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
+  { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: true, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
@@ -94,6 +105,19 @@ const projectItems = computed<MenuItem[]>(() => [
       ]
     : []),
 ])
+
+/* Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead. */
+function moveItem(path: string): MenuItem {
+  const blocked = win.moveBlocker(path)
+  return {
+    label: 'Open in new window',
+    icon: AppWindow,
+    divider: true,
+    disabled: !!blocked,
+    hint: blocked?.hint,
+    onSelect: () => win.openInNewWindow(path),
+  }
+}
 
 /* The quiet sync part of the branch widget: commits to push / pull and changed files of the working copy in view. */
 const gitStatus = computed(() => git.status(workdir.value))
@@ -117,7 +141,14 @@ const branchTitle = computed(() => {
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
 
-      <UiMenu :items="projectItems" :width="280" :max-width="440" label="Projects">
+      <!-- A chat window: its project, as a plain label, and the way back. -->
+      <template v-if="chatWindow">
+        <span class="tb__widget tb__project tb__project--still" :title="ws.activeProject?.path">
+          <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
+          <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+        </span>
+      </template>
+      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" label="Projects">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
@@ -172,7 +203,7 @@ const branchTitle = computed(() => {
     </div>
 
     <div class="tb__center" data-tauri-drag-region>
-      <button type="button" class="tb__search" @click="ws.paletteOpen = true">
+      <button type="button" class="tb__search" aria-label="Search threads or run a command" @click="ws.paletteOpen = true">
         <Search />
         <span class="tb__ph">Search threads or run a command</span>
         <span class="tb__keys"><kbd>{{ mod }}</kbd><kbd>K</kbd></span>
@@ -180,11 +211,22 @@ const branchTitle = computed(() => {
     </div>
 
     <div class="tb__right" data-tauri-drag-region>
+      <button
+        v-if="chatWindow"
+        type="button"
+        class="tb__widget tb__return"
+        :disabled="ownBusy"
+        aria-label="Return to main window"
+        :title="ownBusy ? 'Still working: it returns once it is done' : 'Close this window and show the chat in the main window again'"
+        @click="win.returnChat()"
+      >
+        <Undo2 aria-hidden="true" /><span class="tb__return-label">Return to main window</span>
+      </button>
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
-      <div class="tb__grp"><AppUsageMeter /></div>
+      <div class="tb__grp tb__usage"><AppUsageMeter /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
-        <button type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
+        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
         <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="`Toggle terminal (${mod}+\`)`" @click="ws.toggleTerminal()"><PanelBottom /></button>
         <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="`Toggle tool panel (${mod}+Alt+B)`" @click="ws.toggleToolPanel()"><PanelRight /></button>
       </div>
@@ -240,6 +282,12 @@ const branchTitle = computed(() => {
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
 
 .tb__project { font-weight: 500; max-width: 240px; }
+.tb__project--still { cursor: default; }
+.tb__project--still:hover { background: none; }
+.tb__return { color: var(--fg-muted); font-size: var(--text-xs); }
+.tb__return:hover:not(:disabled) { color: var(--fg); }
+.tb__return:disabled { opacity: 0.5; cursor: default; }
+.tb__return svg { width: 14px; height: 14px; flex: none; stroke-width: 1.85; }
 .tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .tb__remote { font-size: var(--text-xs); color: var(--fg-subtle); }
@@ -327,5 +375,12 @@ const branchTitle = computed(() => {
   .tb__ph { display: none; }
   .tb__keys { margin-left: auto; }
   .tb__search { max-width: 200px; }
+}
+/* A chat window may be as small as 640px: the search and the way back keep only their icons. */
+@media (max-width: 820px) {
+  .tb__keys, .tb__return-label, .tb__usage { display: none; }
+  .tb__search { width: 28px; flex: none; justify-content: center; padding: 0; }
+  .tb__return { width: 28px; justify-content: center; padding: 0; }
+  .tb__branch-name { max-width: 72px; }
 }
 </style>

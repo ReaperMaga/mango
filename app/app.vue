@@ -4,25 +4,39 @@ import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
+import { useWindows } from '~/stores/windows'
 import { on } from '~/composables/useBackend'
 
 const ws = useWorkspace()
 const threads = useThreads()
 const updater = useUpdater()
+const win = useWindows()
 const ready = ref(false)
 // Remote projects' chats, kept in their environments: looked at once the chats and projects are loaded.
 useRemoteChatSync(ready)
 
 onMounted(async () => {
+  // First what the other windows hold: this window loads only the chats it owns (stores/windows.ts).
+  await win.start()
   await threads.load()
   await ws.init()
+  // Claim the open projects (a new window takes its project over from the window that had it).
+  win.follow()
   ready.value = true
-  updater.start()
+  // Updates are the main window's business: one prompt, not one per window.
+  if (win.isMain) updater.start()
   // Drops the webviews a reloaded UI left behind, then listens for pages and agents.
   void useBrowser().init()
 })
 
 useShortcuts()
+
+/* Something this window could not take over (a chat still running in another window). */
+watch(() => win.refused, (reason) => {
+  if (!reason) return
+  ws.notify('Opened in another window', reason)
+  win.refused = null
+})
 
 /* An agent run probably changed files: let the changes panel catch up. */
 function onFilesChanged(e: Event) {
@@ -37,6 +51,8 @@ let unlistenJoin: (() => void) | undefined
 onMounted(async () => {
   // The backend repeats a link that started the app (the page may not have listened yet): act on each link once.
   const seen = new Map<string, number>()
+  // The main window shows the join dialog (the backend brings it to the front).
+  if (!win.isMain) return
   unlistenJoin = await on('envs://join', ({ link }) => {
     const now = Date.now()
     if (now - (seen.get(link) ?? -Infinity) < 15_000) return
