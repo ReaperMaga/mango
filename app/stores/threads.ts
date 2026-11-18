@@ -695,13 +695,15 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    /** Set a chat's status by hand: Working, or Settled (the sidebar mark). While an agent runs, the run owns the status. */
+    /** Set a chat's status by hand: Working, or Settled (the sidebar mark). While an agent runs, the run owns the status.
+     *  Settling puts the chat away: its tab (and a pane left empty by it) closes, as archiving does. */
     setStatus(id: string, status: 'working' | 'done') {
       const t = this.byId(id)
       if (!t || isBusy(t)) return
       t.status = status
       t.seen = true
       t.archived = false
+      if (status === 'done') this.closeTab(id)
       this.persist(id)
     },
 
