@@ -203,7 +203,7 @@ const branchTitle = computed(() => {
     </div>
 
     <div class="tb__center" data-tauri-drag-region>
-      <button type="button" class="tb__search" @click="ws.paletteOpen = true">
+      <button type="button" class="tb__search" aria-label="Search threads or run a command" @click="ws.paletteOpen = true">
         <Search />
         <span class="tb__ph">Search threads or run a command</span>
         <span class="tb__keys"><kbd>{{ mod }}</kbd><kbd>K</kbd></span>
@@ -216,14 +216,15 @@ const branchTitle = computed(() => {
         type="button"
         class="tb__widget tb__return"
         :disabled="ownBusy"
+        aria-label="Return to main window"
         :title="ownBusy ? 'Still working: it returns once it is done' : 'Close this window and show the chat in the main window again'"
         @click="win.returnChat()"
       >
-        <Undo2 aria-hidden="true" />Return to main window
+        <Undo2 aria-hidden="true" /><span class="tb__return-label">Return to main window</span>
       </button>
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
-      <div class="tb__grp"><AppUsageMeter /></div>
+      <div class="tb__grp tb__usage"><AppUsageMeter /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
         <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
         <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="`Toggle terminal (${mod}+\`)`" @click="ws.toggleTerminal()"><PanelBottom /></button>
@@ -374,5 +375,12 @@ const branchTitle = computed(() => {
   .tb__ph { display: none; }
   .tb__keys { margin-left: auto; }
   .tb__search { max-width: 200px; }
+}
+/* A chat window may be as small as 640px: the search and the way back keep only their icons. */
+@media (max-width: 820px) {
+  .tb__keys, .tb__return-label, .tb__usage { display: none; }
+  .tb__search { width: 28px; flex: none; justify-content: center; padding: 0; }
+  .tb__return { width: 28px; justify-content: center; padding: 0; }
+  .tb__branch-name { max-width: 72px; }
 }
 </style>
