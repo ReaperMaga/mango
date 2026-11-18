@@ -18,6 +18,11 @@ const PREFIX: &str = "w-";
 /// The smallest window Mango is laid out for (tauri.conf.json says the same for the main window).
 const MIN_W: f64 = 960.0;
 const MIN_H: f64 = 600.0;
+/// A chat window has no sidebar: it may be smaller, and starts smaller (`app/utils/windows.ts` agrees).
+const CHAT_MIN_W: f64 = 640.0;
+const CHAT_MIN_H: f64 = 480.0;
+const CHAT_W: f64 = 880.0;
+const CHAT_H: f64 = 820.0;
 
 static NEXT: AtomicU32 = AtomicU32::new(1);
 
@@ -122,11 +127,20 @@ pub async fn window_open(
     config.label = label.clone();
     config.url = WebviewUrl::App(format!("?{q}").into());
     let finite = |v: Option<f64>| v.filter(|v| v.is_finite());
+    let (min_w, min_h) = if kind == "chat" {
+        config.min_width = Some(CHAT_MIN_W);
+        config.min_height = Some(CHAT_MIN_H);
+        config.width = CHAT_W;
+        config.height = CHAT_H;
+        (CHAT_MIN_W, CHAT_MIN_H)
+    } else {
+        (MIN_W, MIN_H)
+    };
     if let Some(w) = finite(width) {
-        config.width = w.max(MIN_W);
+        config.width = w.max(min_w);
     }
     if let Some(h) = finite(height) {
-        config.height = h.max(MIN_H);
+        config.height = h.max(min_h);
     }
     match (finite(x), finite(y)) {
         (Some(x), Some(y)) => {
@@ -166,6 +180,51 @@ pub async fn window_list(app: AppHandle) -> Result<Vec<String>, String> {
     let mut labels: Vec<String> = app.webview_windows().into_keys().filter(|l| is_mango_window(l)).collect();
     labels.sort();
     Ok(labels)
+}
+
+/// A window's place on the screen, in physical pixels.
+#[derive(Clone, Copy)]
+struct Rect {
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+}
+
+impl Rect {
+    fn contains(&self, x: f64, y: f64) -> bool {
+        x >= self.x && y >= self.y && x < self.x + self.w && y < self.y + self.h
+    }
+}
+
+/// Of `windows` (label, place), the first one holding the point, the main window first.
+fn window_under(mut windows: Vec<(String, Rect)>, x: f64, y: f64) -> Option<String> {
+    windows.sort_by(|a, b| (a.0 != MAIN, &a.0).cmp(&(b.0 != MAIN, &b.0)));
+    windows.into_iter().find(|(_, r)| r.contains(x, y)).map(|(l, _)| l)
+}
+
+/// Another of Mango's windows under a point of the screen (`x`/`y` in the calling window's logical
+/// pixels, as a pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
+/// Hidden and minimised windows are left out.
+#[tauri::command]
+pub async fn window_at(window: tauri::Window, x: f64, y: f64) -> Result<Option<String>, String> {
+    if !x.is_finite() || !y.is_finite() {
+        return Ok(None);
+    }
+    let scale = window.scale_factor().unwrap_or(1.0);
+    let app = window.app_handle();
+    let mut places = Vec::new();
+    for (label, w) in app.webview_windows() {
+        if label == window.label() || !is_mango_window(&label) {
+            continue;
+        }
+        if !w.is_visible().unwrap_or(false) || w.is_minimized().unwrap_or(false) {
+            continue;
+        }
+        let (Ok(pos), Ok(size)) = (w.outer_position(), w.outer_size()) else { continue };
+        places.push((label, Rect { x: pos.x as f64, y: pos.y as f64, w: size.width as f64, h: size.height as f64 }));
+    }
+    Ok(window_under(places, x * scale, y * scale))
 }
 
 /// Window events, from `lib.rs`.
@@ -209,6 +268,19 @@ mod tests {
         assert!(!is_mango_window("w-x"));
         assert!(!is_mango_window("browser-abc"));
         assert!(!is_mango_window("mainx"));
+    }
+
+    #[test]
+    fn under_a_point() {
+        let r = |x, y, w, h| Rect { x, y, w, h };
+        let wins = vec![("w-2".to_string(), r(0.0, 0.0, 800.0, 600.0)), ("main".to_string(), r(400.0, 300.0, 800.0, 600.0))];
+        assert_eq!(window_under(wins.clone(), 10.0, 10.0).as_deref(), Some("w-2"));
+        // Both hold it: the main window wins.
+        assert_eq!(window_under(wins.clone(), 500.0, 400.0).as_deref(), Some("main"));
+        assert_eq!(window_under(wins.clone(), 1199.0, 899.0).as_deref(), Some("main"));
+        assert_eq!(window_under(wins.clone(), 1200.0, 900.0), None);
+        assert_eq!(window_under(wins, -1.0, 10.0), None);
+        assert_eq!(window_under(vec![], 0.0, 0.0), None);
     }
 
     #[test]

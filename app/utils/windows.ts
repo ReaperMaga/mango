@@ -131,3 +131,38 @@ export function claimsFor(spec: WindowSpec, openProjects: string[], chats: strin
     ...[...new Set(chats)].map(key => ({ kind: 'chat' as const, key })),
   ]
 }
+
+/* ---------- dragging a chat out of its window ---------- */
+
+/** How near the window's edge a dragged chat says that letting go outside opens a new window (CSS px). */
+export const TEAR_EDGE = 28
+
+/**
+ * Where a dragged tab is, against the window's page (`width` × `height`, CSS px): `outside` it (letting
+ * go there opens the chat in a window of its own), at its `edge`, or `inside`.
+ */
+export function dragPlace(x: number, y: number, width: number, height: number, edge = TEAR_EDGE): 'outside' | 'edge' | 'inside' {
+  if (x < 0 || y < 0 || x >= width || y >= height) return 'outside'
+  if (x < edge || y < edge || x >= width - edge || y >= height - edge) return 'edge'
+  return 'inside'
+}
+
+/** A chat window's size when nothing else is asked for, and the smallest it may be (CSS px). */
+export const CHAT_WINDOW = { width: 880, height: 820 }
+
+/**
+ * Where a torn-off chat's window opens, from the screen point it was let go at: its tab strip under
+ * the pointer, the way the tab was held.
+ */
+export function tearOffPlace(screenX: number, screenY: number, size = CHAT_WINDOW): WindowPlace {
+  return { x: Math.round(screenX - 120), y: Math.round(screenY - 56), width: size.width, height: size.height }
+}
+
+/**
+ * The chats a closed window gives back that should come up as tabs where they land: a chat window's
+ * chats (it held chats only). A project window's projects go back quietly.
+ */
+export function returningChats(claims: Claim[] | undefined): string[] {
+  if (!claims?.length || claims.some(c => c.kind !== 'chat')) return []
+  return claims.map(c => c.key)
+}

@@ -349,6 +349,8 @@ const mock = (() => {
       }
       case 'window_focus': return
       case 'window_list': return []
+      // Browser windows cannot see each other's place on the screen.
+      case 'window_at': return null
       case 'chats_remote_list':
         return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
       case 'chats_remote_fetch': {

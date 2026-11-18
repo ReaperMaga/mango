@@ -1078,6 +1078,11 @@ export interface Commands {
   window_focus: [{ label: string }, void]
   /** The labels of Mango's open windows. */
   window_list: [Record<string, never>, string[]]
+  /**
+   * The label of another of Mango's windows under a point of the screen (logical pixels, as a
+   * pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
+   */
+  window_at: [{ x: number; y: number }, string | null]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
