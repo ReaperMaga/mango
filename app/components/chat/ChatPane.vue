@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { MessageSquareText, Bug, GitPullRequestDraft, CornerLeftUp, Square } from 'lucide-vue-next'
+import { CornerLeftUp, Square } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
 import { useModels } from '~/stores/models'
@@ -61,12 +61,6 @@ async function start(text: string, attachments: Attachment[]) {
   if (threads.activePane.id !== props.pane.id) threads.show(t.id, props.pane.id)
   await threads.send(t.id, text, attachments)
 }
-
-const suggestions = [
-  { icon: MessageSquareText, text: 'Explain how this project is structured and where to start reading' },
-  { icon: Bug, text: 'Run the tests and fix whatever fails' },
-  { icon: GitPullRequestDraft, text: 'Review my uncommitted changes before I commit' },
-]
 
 /* ---------- scrolling: stick to bottom while new output arrives ---------- */
 const scroller = ref<HTMLElement | null>(null)
@@ -198,14 +192,6 @@ function onKey(e: KeyboardEvent) {
           :autofocus="active"
           @send="start"
         />
-        <ul class="pane__suggest" role="list">
-          <li v-for="s in suggestions" :key="s.text">
-            <button type="button" @click="draftText = s.text">
-              <component :is="s.icon" />
-              <span>{{ s.text }}</span>
-            </button>
-          </li>
-        </ul>
       </div>
     </div>
   </section>
@@ -284,23 +270,6 @@ function onKey(e: KeyboardEvent) {
   color: var(--fg-muted);
 }
 .pane__hello span { color: var(--fg); }
-.pane__suggest { list-style: none; margin: var(--space-4) 0 0; padding: 0; display: grid; gap: 2px; }
-.pane__suggest button {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  width: 100%;
-  min-height: 34px;
-  padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--fg-subtle);
-  text-align: left;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.pane__suggest button:hover { background: var(--bg-hover); color: var(--fg); }
-.pane__suggest svg { width: 15px; height: 15px; flex: none; stroke-width: 1.75; color: var(--fg-faint); }
-.pane__suggest button:hover svg { color: var(--accent-ink); }
 
 /* A message that arrives rises into place. Nothing on leave: a cleared chat should just be clear. */
 .msg-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
