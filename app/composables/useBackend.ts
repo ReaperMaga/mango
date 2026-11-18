@@ -15,17 +15,59 @@ import { isEnvPath } from '~/utils/envPath'
  * mock so the UI can be developed and screenshotted on its own.
  */
 
+/** This webview's label as Tauri gives it (undefined outside Tauri). */
+const tauriLabel = (): string | undefined =>
+  (window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } }).__TAURI_INTERNALS__?.metadata?.currentWebview?.label
+
 /**
- * Running as Mango's own window. Tauri injects its internals into every webview, browser tabs included
- * (`browser-<id>`, which get no IPC): a page there, such as the dev server opened by an agent, is a plain
- * browser and uses the mock.
+ * Running as one of Mango's own windows (`main`, or `w-<n>`, see `utils/windows.ts`). Tauri injects its
+ * internals into every webview, browser tabs included (`browser-<id>`, which get no IPC): a page there,
+ * such as the dev server opened by an agent, is a plain browser and uses the mock.
  */
 export const isTauri = (): boolean => {
   if (typeof window === 'undefined') return false
-  const internals = (window as { __TAURI_INTERNALS__?: { metadata?: { currentWebview?: { label?: string } } } }).__TAURI_INTERNALS__
-  if (!internals) return false
-  const label = internals.metadata?.currentWebview?.label
-  return label === undefined || label === 'main'
+  if (!(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__) return false
+  const label = tauriLabel()
+  return label === undefined || label === 'main' || /^w-\d+$/.test(label)
+}
+
+/** This window's label in the app (`main`, `w-<n>`); null in the browser preview. */
+export const windowLabel = (): string | null => (isTauri() ? tauriLabel() ?? 'main' : null)
+
+/**
+ * Messages between Mango's windows (`stores/windows.ts` is the only user): Tauri events inside the
+ * app, a BroadcastChannel in the browser preview (where each window is a browser tab). Every window
+ * gets every message, its own included.
+ */
+const WINDOWS_EVENT = 'mango://windows'
+let channel: BroadcastChannel | null = null
+const previewChannel = () => (channel ??= new BroadcastChannel('mango.windows'))
+
+export async function postWindows(message: unknown): Promise<void> {
+  if (isTauri()) {
+    const { emit } = await import('@tauri-apps/api/event')
+    await emit(WINDOWS_EVENT, message)
+  } else if (typeof BroadcastChannel !== 'undefined') {
+    // A BroadcastChannel does not deliver to its own sender: hand it to this window too.
+    previewChannel().postMessage(message)
+    window.dispatchEvent(new CustomEvent(WINDOWS_EVENT, { detail: message }))
+  }
+}
+
+export async function onWindows(handler: (message: unknown) => void): Promise<Unlisten> {
+  if (isTauri()) {
+    const { listen } = await import('@tauri-apps/api/event')
+    return listen<unknown>(WINDOWS_EVENT, e => handler(e.payload))
+  }
+  if (typeof BroadcastChannel === 'undefined') return () => {}
+  const fromOthers = (e: MessageEvent) => handler(e.data)
+  const fromSelf = (e: Event) => handler((e as CustomEvent).detail)
+  previewChannel().addEventListener('message', fromOthers)
+  window.addEventListener(WINDOWS_EVENT, fromSelf)
+  return () => {
+    previewChannel().removeEventListener('message', fromOthers)
+    window.removeEventListener(WINDOWS_EVENT, fromSelf)
+  }
 }
 
 type Args<K extends keyof Commands> = Commands[K][0]
@@ -108,9 +150,28 @@ export const appWindow = {
     await getCurrentWindow().toggleMaximize()
   },
   async close() {
-    if (!isTauri()) return
+    if (!isTauri()) {
+      // The browser preview: a window Mango opened (window.open) can close itself.
+      if (window.opener) window.close()
+      return
+    }
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().close()
+  },
+  /**
+   * Run `before` when the window is asked to close (titlebar, the OS, the main window closing),
+   * then close it. In the browser preview, when the tab goes (best effort: the page may be gone first).
+   */
+  async onClose(before: () => Promise<void>) {
+    if (!isTauri()) {
+      window.addEventListener('pagehide', () => { void before() })
+      return
+    }
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().onCloseRequested(async () => {
+      // Never keep a window open because saving failed: it closes either way.
+      await Promise.race([before().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
+    })
   },
 }
 
@@ -258,6 +319,14 @@ const mock = (() => {
   })
 
   async function call(cmd: string, args: any): Promise<any> {
+    // Saved at once, before the pretend latency: a window closing must not lose its last save.
+    if (cmd === 'chats_save') {
+      const raw = JSON.parse(localStorage.getItem(MOCK_CHATS) || 'null') ?? {}
+      const threads: Record<string, string> = raw.threads ?? {}
+      for (const r of args.upsert) threads[r.id] = r.data
+      for (const id of args.remove) delete threads[id]
+      localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
+    }
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
       case 'recent_projects': return [...recent]
@@ -266,14 +335,18 @@ const mock = (() => {
         const raw = JSON.parse(localStorage.getItem(MOCK_CHATS) || 'null') ?? {}
         return { threads: Object.values(raw.threads ?? {}), ui: raw.ui ?? null }
       }
-      case 'chats_save': {
-        const raw = JSON.parse(localStorage.getItem(MOCK_CHATS) || 'null') ?? {}
-        const threads: Record<string, string> = raw.threads ?? {}
-        for (const r of args.upsert) threads[r.id] = r.data
-        for (const id of args.remove) delete threads[id]
-        localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
-        return
+      case 'chats_save': return
+      // Windows are browser windows here: the same page with the same query, opened by window.open.
+      case 'window_open': {
+        const id = `w-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`
+        const q = new URLSearchParams({ window: args.kind, ...(args.threadId ? { thread: args.threadId } : {}), ...(args.path ? { path: args.path } : {}), id })
+        const size = `width=${Math.round(args.width ?? 1440)},height=${Math.round(args.height ?? 900)}`
+        const at = Number.isFinite(args.x) && Number.isFinite(args.y) ? `,left=${Math.round(args.x)},top=${Math.round(args.y)}` : ''
+        if (!window.open(`${location.pathname}?${q}`, id, size + at)) throw new Error('The browser blocked the new window. Allow pop-ups for this page.')
+        return id
       }
+      case 'window_focus': return
+      case 'window_list': return []
       case 'chats_remote_list':
         return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
       case 'chats_remote_fetch': {

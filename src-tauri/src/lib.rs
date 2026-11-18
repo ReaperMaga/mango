@@ -23,6 +23,7 @@ mod shells;
 mod updater;
 mod vcs;
 mod voice;
+mod windows;
 
 use tauri::webview::{PageLoadEvent, PermissionKind, PermissionResponse};
 use tauri::Manager;
@@ -39,10 +40,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         // Voice input records in the webview. Mango loads only its own pages, and recording
         // starts only when the user presses the microphone, so grant it without a second prompt
-        // (WebKitGTK would otherwise deny it outright). Only for Mango's own view: pages in the
-        // browser (`browser-*` webviews) get the webview's default answer.
+        // (WebKitGTK would otherwise deny it outright). Only for Mango's own views (`main`, `w-<n>`):
+        // pages in the browser (`browser-*` webviews) get the webview's default answer.
         .on_permission_request(|webview, kind| match kind {
-            PermissionKind::Microphone if webview.label() == "main" => PermissionResponse::Allow,
+            PermissionKind::Microphone if windows::is_mango_window(webview.label()) => PermissionResponse::Allow,
             _ => PermissionResponse::Default,
         })
         .manage(pty::PtyState::default())
@@ -61,6 +62,7 @@ pub fn run() {
             envs::join::setup_deep_link(app.handle());
             Ok(())
         })
+        .on_window_event(windows::on_event)
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
                 envs::join::page_loaded(webview.app_handle());
@@ -185,6 +187,9 @@ pub fn run() {
             browser_mcp::browser_mcp,
             mcp::mcp_servers,
             mcp::mcp_servers_save,
+            windows::window_open,
+            windows::window_focus,
+            windows::window_list,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

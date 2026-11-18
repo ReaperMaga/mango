@@ -3,6 +3,7 @@ import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
 import { useBrowser } from '~/stores/browser'
+import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
 
@@ -42,6 +43,7 @@ export async function openLocalFolder() {
  *   Mod+Shift+U  usage limits   Mod+Shift+P  pull requests panel
  *   Mod+Shift+H  environment panel (where the project runs)
  *   Mod+Shift+B  new browser tab   Mod+Alt+B  show or hide the tool window
+ *   Mod+Alt+N  new window
  */
 export function useShortcuts() {
   const ws = useWorkspace()
@@ -63,6 +65,7 @@ export function useShortcuts() {
     // Settings covers the workspace: its shortcuts must not act on what is hidden underneath.
     if (ws.settings) return
 
+    if (e.altKey && e.code === 'KeyN') { e.preventDefault(); void useWindows().openInNewWindow(null); return }
     if (k === 'n' && e.shiftKey) {
       // A chat whose worktree is made from its first message.
       e.preventDefault()

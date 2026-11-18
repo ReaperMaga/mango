@@ -9,6 +9,11 @@ import { noteSaved } from '~/utils/remoteChats'
  * serialised, and only the ones whose JSON actually differs from the last save are sent.
  * A sweep (no id given) compares every chat, and is the only thing that deletes rows.
  * Remote projects' chats saved here also go to their environment (`remoteChats.ts`).
+ *
+ * With several windows (`utils/windows.ts`) each one knows only the chats it holds: it loads those
+ * (`keep`), and a sweep deletes only rows it loaded or saved itself, never another window's chats.
+ * Chats it hands to another window are forgotten (`forgetHistory`), not deleted. Only a window
+ * given a `layout` saves one (the main window).
  */
 
 const DEBOUNCE_MS = 400
@@ -18,9 +23,12 @@ const MAX_WAIT_MS = 2000
 interface Source {
   threads: () => Thread[]
   byId: (id: string) => Thread | null
-  /** The layout to save (tabs, panes…): compared as JSON, so it can be rebuilt each time. */
-  layout: () => unknown
+  /** The layout to save (tabs, panes…): compared as JSON, so it can be rebuilt each time. None: never saved. */
+  layout?: () => unknown
 }
+
+/** Which saved chats this window takes (all of them, `all`, are given to find a chat's parents). */
+export type Keep = (t: Thread, all: Thread[]) => boolean
 
 /** Each saved chat's JSON as last sent: what a save compares against. */
 const saved = new Map<string, string>()
@@ -35,24 +43,53 @@ let firstChangeAt = 0
 let queue: Promise<boolean> = Promise.resolve(true)
 let reported = false
 
-/** The saved chats (parsed; unreadable rows dropped) and layout. Remembers what is on disk. */
-export async function loadHistory(): Promise<{ threads: Thread[]; layout: unknown }> {
-  const snap = await call('chats_load', {})
-  const threads: Thread[] = []
-  for (const json of snap.threads) {
+/** Every saved chat, parsed (unreadable rows dropped), with its JSON. */
+function parseRows(rows: string[]): { t: Thread; json: string }[] {
+  const out: { t: Thread; json: string }[] = []
+  for (const json of rows) {
     try {
       const t = JSON.parse(json) as Thread
-      if (t && typeof t.id === 'string' && Array.isArray(t.messages)) {
-        threads.push(t)
-        saved.set(t.id, json)
-        savedProject.set(t.id, t.projectPath)
-      }
+      if (t && typeof t.id === 'string' && Array.isArray(t.messages)) out.push({ t, json })
     } catch { /* a damaged row is skipped, not fatal */ }
   }
+  return out
+}
+
+/** Take these rows as this window's: from now on they are compared, saved and deleted here. */
+function remember(rows: { t: Thread; json: string }[], keep?: Keep): Thread[] {
+  const all = rows.map(r => r.t)
+  const out: Thread[] = []
+  for (const { t, json } of rows) {
+    if (keep && !keep(t, all)) continue
+    out.push(t)
+    saved.set(t.id, json)
+    savedProject.set(t.id, t.projectPath)
+  }
+  return out
+}
+
+/** The saved chats this window takes (`keep`; all when not given) and the layout. Remembers what is on disk. */
+export async function loadHistory(keep?: Keep): Promise<{ threads: Thread[]; layout: unknown }> {
+  const snap = await call('chats_load', {})
+  const threads = remember(parseRows(snap.threads), keep)
   savedLayout = snap.ui
   let layout: unknown = null
   try { layout = snap.ui ? JSON.parse(snap.ui) : null } catch { /* default layout */ }
   return { threads, layout }
+}
+
+/**
+ * Saved chats this window does not hold yet and now takes (`keep`): another window closed or
+ * gave them up. Read after that window saved them.
+ */
+export async function loadMoreHistory(keep: Keep): Promise<Thread[]> {
+  const snap = await call('chats_load', {})
+  return remember(parseRows(snap.threads).filter(r => !saved.has(r.t.id)), keep)
+}
+
+/** These chats now belong to another window: stop comparing and saving them here (they are not deleted). */
+export function forgetHistory(ids: Iterable<string>) {
+  for (const id of ids) { saved.delete(id); savedProject.delete(id); dirty.delete(id) }
 }
 
 /** Start saving. Nothing is saved before this, so a save can never overwrite what was not loaded yet. */
@@ -127,8 +164,8 @@ function collect(s: Source): { upsert: ChatRow[]; remove: string[]; ui: string |
   if (changed.length || removed.length) noteSaved(changed, removed)
   sweep = false
   dirty.clear()
-  const layout = JSON.stringify(s.layout())
-  const ui = layout === savedLayout ? null : layout
+  const layout = s.layout ? JSON.stringify(s.layout()) : null
+  const ui = layout === null || layout === savedLayout ? null : layout
   if (ui !== null) savedLayout = ui
   return upsert.length || remove.length || ui !== null ? { upsert, remove, ui } : null
 }

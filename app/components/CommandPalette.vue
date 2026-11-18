@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Plug, Server, SquareTerminal, Sun, History,
+  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -9,6 +9,7 @@ import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
+import { useWindows } from '~/stores/windows'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
@@ -23,6 +24,7 @@ const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
 const wts = useWorktrees()
+const win = useWindows()
 useOverlay(() => ws.paletteOpen)
 
 /** Environments known to be usable right now (from what the store already has). */
@@ -72,6 +74,7 @@ let carryError: string | null = null
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = modLabel()
 const shift = isMac ? '⇧' : 'Shift'
+const alt = isMac ? '⌥' : 'Alt'
 
 const tildify = (path: string) => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~')
 function errorText(e: unknown): string {
@@ -101,6 +104,12 @@ const actions = computed<Item[]>(() => {
   // With environments around, say where these put the project (the remembered choice).
   const where = projectWhere()
   const whereDetail = envs.hosts.length ? (where ? envLabels(where.hostId, where.instance).where : 'This computer') : undefined
+  // Another window: on this project (it moves there), or a new one on the welcome screen.
+  if (project && (win.isMain || ws.openProjects.length > 1)) {
+    const blocked = win.moveBlocker(project)
+    items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked ? 'A chat is still working' : ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
+  }
+  items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: [mod, alt, 'N'], keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(
     { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
     { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
@@ -198,6 +207,7 @@ const projectItems = computed<Item[]>(() =>
   ws.listedRecent.map((p, i) => {
     const isOpen = ws.openProjects.some(o => o.path === p.path)
     const current = p.path === ws.activeProjectPath
+    const elsewhere = !!win.projectElsewhere(p.path)
     // A remote project: where it runs, then its folder inside the instance.
     const remote = remotePlace(p.path)
     return {
@@ -206,7 +216,7 @@ const projectItems = computed<Item[]>(() =>
       label: p.name,
       detail: remote ? `${remote.where} · ${remote.dir}` : tildify(p.path),
       icon: remote ? Server : Folder,
-      badge: current ? 'Current' : isOpen ? 'Open' : undefined,
+      badge: current ? 'Current' : isOpen ? 'Open' : elsewhere ? 'Other window' : undefined,
       keywords: remote ? `${remote.where} ${remote.dir} remote environment` : `${p.path} ${p.branch ?? ''}`,
       rank: i,
       run: async () => {

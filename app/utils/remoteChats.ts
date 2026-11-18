@@ -20,6 +20,10 @@ import { parseEnvPath } from '~/utils/envPath'
  *
  * Chats are stored there with their place written as `env://@/…`: the server's id differs from
  * one computer to the next (a joined environment has its own), so each puts its own back in.
+ *
+ * Mango's windows (`utils/windows.ts`) share what is kept in localStorage: each window writes back
+ * only the entries it changed (`write`), so one window never undoes another's, and chats a window
+ * hands to another are let go without touching what is stored for them (`forgetRemote`).
  */
 
 const DEBOUNCE_MS = 3000
@@ -54,6 +58,8 @@ export interface RemoteSource {
 
 let source: RemoteSource | null = null
 let state: State = read()
+/** What this window last read or wrote to storage: `write` sends only what differs from it. */
+let stored: State = clone(state)
 /** Each chat's JSON as the environment last got it from here or gave it (this session only). */
 const sent = new Map<string, string>()
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -79,8 +85,59 @@ function read(): State {
   return { known: {}, put: [], remove: {} }
 }
 
+function clone(s: State): State {
+  return { known: { ...s.known }, put: [...s.put], remove: { ...s.remove } }
+}
+
+/** Write back the entries this window changed since it last wrote; other windows' stay as they are. */
 function write() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(state)) } catch { /* storage unavailable */ }
+  try {
+    const disk = read()
+    const ids = new Set([...Object.keys(state.known), ...Object.keys(stored.known), ...state.put, ...stored.put,
+      ...Object.keys(state.remove), ...Object.keys(stored.remove)])
+    for (const id of ids) {
+      if (state.known[id] !== stored.known[id]) {
+        if (id in state.known) disk.known[id] = state.known[id]!
+        else delete disk.known[id]
+      }
+      const putNow = state.put.includes(id)
+      if (putNow !== stored.put.includes(id)) {
+        if (putNow && !disk.put.includes(id)) disk.put.push(id)
+        else if (!putNow) disk.put = disk.put.filter(x => x !== id)
+      }
+      if (JSON.stringify(state.remove[id]) !== JSON.stringify(stored.remove[id])) {
+        if (state.remove[id]) disk.remove[id] = state.remove[id]!
+        else delete disk.remove[id]
+      }
+    }
+    localStorage.setItem(LS_KEY, JSON.stringify(disk))
+    stored = clone(state)
+  } catch { /* storage unavailable */ }
+}
+
+/** Not this window's chats (any more): leave them to the window that holds them, and what is stored for them as it is. */
+export function forgetRemote(ids: Iterable<string>) {
+  const gone = new Set(ids)
+  for (const s of [state, stored]) {
+    s.put = s.put.filter(id => !gone.has(id))
+    for (const id of gone) { delete s.known[id]; delete s.remove[id] }
+  }
+  for (const id of gone) sent.delete(id)
+}
+
+/** Chats this window takes over from another: pick up what is stored for them (revisions seen, sends still due). */
+export function adoptRemote(ids: Iterable<string>) {
+  const disk = read()
+  let due = false
+  for (const id of ids) {
+    for (const s of [state, stored]) {
+      if (id in disk.known) s.known[id] = disk.known[id]!
+      if (disk.put.includes(id) && !s.put.includes(id)) s.put.push(id)
+      if (disk.remove[id]) s.remove[id] = disk.remove[id]!
+    }
+    due ||= disk.put.includes(id) || !!disk.remove[id]
+  }
+  if (due && source) schedule()
 }
 
 /** The environment a chat's project is in; null for a folder on this computer. */
@@ -186,7 +243,9 @@ export function flushRemoteChats(): Promise<void> {
       const t = source?.byId(id)
       const env = envOf(t?.projectPath)
       const done = () => { state.put = state.put.filter(x => x !== id); write() }
-      if (!t || !env) { done(); continue }
+      // Not held here: another window's (deleted ones went through `state.remove` above).
+      if (!t) { forgetRemote([id]); continue }
+      if (!env) { done(); continue }
       const json = JSON.stringify(t)
       if (sent.get(id) === json) { done(); continue }
       const base = state.known[id] ?? 0

@@ -8,6 +8,7 @@ import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
+import { useWindows } from '~/stores/windows'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -70,7 +71,9 @@ export interface ProjectPrefs {
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
 /** A yes/no question before something is archived or deleted. */
-export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void }
+export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void
+  /** Only something to read: one button, no Cancel. */
+  info?: boolean }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
@@ -180,14 +183,27 @@ const whereOf = (v: unknown): EnvRemote | null => {
 
 let tabSeq = 0
 
-export const useWorkspace = defineStore('workspace', {
-  state: () => {
+/**
+ * Prefs that belong to one window: its layout and its projects. The main window keeps them in
+ * storage; another window (`stores/windows.ts`) keeps its own in memory and leaves the stored ones
+ * alone. Every other pref is shared: a change in one window reaches the others (`syncShared`).
+ */
+const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
+const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
+  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where'] as const
+
+const initialState = () => {
     const prefs = loadPrefs()
     const firstRun = isFirstRun()
     return {
       recent: [] as ProjectInfo[],
       /** Projects open in this window (sidebar groups). */
       openProjects: [] as ProjectInfo[],
+      /**
+       * The main window's projects that are open in another window for now: they come back when that
+       * window closes, and are remembered with the open ones.
+       */
+      lent: [] as ProjectInfo[],
       activeProjectPath: null as string | null,
       agents: [] as AgentInfo[],
 
@@ -268,7 +284,10 @@ export const useWorkspace = defineStore('workspace', {
        */
       setupSeen: (prefs.setupSeen ?? !firstRun) as boolean,
     }
-  },
+}
+
+export const useWorkspace = defineStore('workspace', {
+  state: initialState,
 
   getters: {
     /** The recent projects the lists show: archived ones are left out. */
@@ -286,7 +305,7 @@ export const useWorkspace = defineStore('workspace', {
   actions: {
     persist() {
       try {
-        localStorage.setItem(LS_KEY, JSON.stringify({
+        const all: Record<string, unknown> = {
           theme: this.theme,
           scheme: this.scheme,
           textSize: this.textSize,
@@ -317,10 +336,29 @@ export const useWorkspace = defineStore('workspace', {
           confirmDelete: this.confirmDelete,
           setupSeen: this.setupSeen,
           where: this.where,
-          openProjects: this.openProjects.map(p => p.path),
+          openProjects: [...this.openProjects, ...this.lent].map(p => p.path),
           activeProjectPath: this.activeProjectPath,
-        }))
+        }
+        // Another window writes the shared prefs only; the main window's layout and projects stay.
+        if (!useWindows().isMain) {
+          const stored = loadPrefs()
+          for (const k of WINDOW_KEYS) {
+            if (k in stored) all[k] = stored[k]
+            else delete all[k]
+          }
+        }
+        localStorage.setItem(LS_KEY, JSON.stringify(all))
       } catch { /* storage unavailable: prefs just don't persist */ }
+    },
+
+    /** Another window changed the shared prefs: take them over (the theme with them). */
+    syncShared() {
+      const fresh = initialState() as Record<string, unknown>
+      const self = this as unknown as Record<string, unknown>
+      for (const k of SHARED_KEYS) {
+        if (JSON.stringify(self[k]) !== JSON.stringify(fresh[k])) self[k] = fresh[k]
+      }
+      this.applyTheme()
     },
 
     async init() {
@@ -328,6 +366,9 @@ export const useWorkspace = defineStore('workspace', {
       // "System" follows the OS while the app is open.
       window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
       window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => this.applyTheme())
+      // Prefs changed in another window.
+      window.addEventListener('storage', (e) => { if (e.key === LS_KEY) this.syncShared() })
+      const win = useWindows()
       const [recent, agents] = await Promise.all([
         call('recent_projects').catch(() => [] as ProjectInfo[]),
         call('detect_agents').catch(() => [] as AgentInfo[]),
@@ -335,6 +376,7 @@ export const useWorkspace = defineStore('workspace', {
       this.recent = mergeRecent(recent)
       this.loadTerminalProfiles()
       this.agents = agents.map(a => ({ ...a, version: shortVersion(a.version) }))
+      if (!win.isMain) return this._initWindow()
       // Reopen the projects that were open last time.
       const prefs = loadPrefs()
       const paths: string[] = prefs.openProjects ?? []
@@ -344,16 +386,56 @@ export const useWorkspace = defineStore('workspace', {
         const info = this.recent.find(r => r.path === path)
         if (info) reopened.push(info)
       }
-      this.openProjects = reopened
+      // Ones open in another window wait for it to close.
+      this.openProjects = reopened.filter(p => !win.projectElsewhere(p.path))
+      this.lent = reopened.filter(p => win.projectElsewhere(p.path))
       loadHostsFor(this.recent)
       this.activeProjectPath = this.openProjects.find(p => p.path === prefs.activeProjectPath)?.path
         ?? this.openProjects[0]?.path ?? null
-      // First run: offer to install what is missing. Written now, so quitting
-      // halfway brings the dialog back next time.
+      // First run (the main window only): offer to install what is missing. Written now, so
+      // quitting halfway brings the dialog back next time.
       if (!this.setupSeen) {
         this.persist()
         this.dialog = 'setup'
       }
+    },
+
+    /**
+     * A window other than the main one: open what it was opened on. A chat window shows its chat's
+     * project (the project itself may stay open in another window: the chat is what it holds).
+     */
+    async _initWindow() {
+      const win = useWindows()
+      this.openProjects = []
+      this.activeProjectPath = null
+      const path = win.spec.kind === 'main' ? null : win.spec.path
+      if (!path) return
+      try {
+        await this._openHere(path)
+      } catch (e) {
+        win.refused = e instanceof Error ? e.message : String(e)
+      }
+    },
+
+    /** The main window's project went to another window: it comes back when that window closes. */
+    lend(path: string) {
+      const p = this.openProjects.find(o => o.path === path)
+      if (!p) return
+      this.openProjects = this.openProjects.filter(o => o.path !== path)
+      if (useWindows().isMain && !this.lent.some(l => l.path === path)) this.lent.push(p)
+      if (this.activeProjectPath === path) this.activeProjectPath = this.openProjects[0]?.path ?? null
+      this.persist()
+    },
+
+    /** Projects lent to another window that no window holds any more: open here again. */
+    takeBackLent() {
+      const win = useWindows()
+      const back = this.lent.filter(p => !win.projectElsewhere(p.path))
+      if (!back.length) return
+      this.lent = this.lent.filter(p => !back.includes(p))
+      for (const p of back) if (!this.openProjects.some(o => o.path === p.path)) this.openProjects.push(p)
+      this.activeProjectPath ??= this.openProjects[0]?.path ?? null
+      this.persist()
     },
 
     async refreshRecent() {
@@ -374,8 +456,21 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
-    /** Open a folder on this computer, or a remote project by its `env://` path. */
+    /**
+     * Open a folder on this computer, or a remote project by its `env://` path. Open in another
+     * window already: that window comes to the front instead.
+     */
     async openProject(path: string) {
+      const win = useWindows()
+      const elsewhere = win.projectElsewhere(path)
+      if (elsewhere) {
+        await win.focus(elsewhere)
+        return this.recent.find(r => r.path === path) ?? null
+      }
+      return this._openHere(path)
+    },
+
+    async _openHere(path: string) {
       const loc = parseEnvPath(path)
       if (loc) return this._openEnv(loc)
       const info = await call('open_project', { path })
@@ -389,6 +484,11 @@ export const useWorkspace = defineStore('workspace', {
      * `name` defaults to the folder's name (the instance's for `/`), or the name it was opened with before.
      */
     async openEnvProject(loc: EnvLocation, name?: string): Promise<void> {
+      const elsewhere = useWindows().projectElsewhere(envPath(loc))
+      if (elsewhere) {
+        this.settings = null
+        return useWindows().focus(elsewhere)
+      }
       this._openEnv(loc, name)
       // Opened from Settings > Environments: show the project.
       this.settings = null
@@ -603,6 +703,10 @@ export const useWorkspace = defineStore('workspace', {
     confirmThen(kind: 'archive' | 'delete', ask: Omit<ConfirmAsk, 'run'>, run: () => void) {
       if (!(kind === 'archive' ? this.confirmArchive : this.confirmDelete)) return run()
       this.confirm = { ...ask, run }
+    },
+    /** Tell the user something that did not happen and why (one OK button). */
+    notify(title: string, body: string) {
+      this.confirm = { title, body, label: 'OK', info: true, run: () => {} }
     },
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section

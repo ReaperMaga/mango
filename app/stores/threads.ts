@@ -18,8 +18,10 @@ import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils
 import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
 import { movedEnvPath } from '~/utils/envPath'
-import { attachHistory, flushHistory, loadHistory, markChanged } from '~/utils/chatHistory'
-import { attachRemoteChats } from '~/utils/remoteChats'
+import { attachHistory, flushHistory, forgetHistory, loadHistory, loadMoreHistory, markChanged, type Keep } from '~/utils/chatHistory'
+import { adoptRemote, attachRemoteChats, forgetRemote } from '~/utils/remoteChats'
+import { useWindows } from '~/stores/windows'
+import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -144,17 +146,21 @@ export const useThreads = defineStore('threads', {
     /**
      * Read the chat history (a SQLite file, see `utils/chatHistory.ts`) and start saving to it.
      * The first time, chats saved by older builds in localStorage move into it.
+     * Only the chats this window owns are read (`stores/windows.ts`); only the main window has a
+     * saved layout (tabs, panes): another window starts with its project's latest chat.
      */
     async load() {
+      const main = useWindows().isMain
       let threads: Thread[] = []
       let layout: any = null
       try {
-        ({ threads, layout } = await loadHistory())
+        ({ threads, layout } = await loadHistory(ownedKeep()))
+        if (!main) layout = null
       } catch (e) {
         console.error('Mango could not read the chat history:', e)
       }
       let migrating = false
-      if (!threads.length && !layout) {
+      if (main && !threads.length && !layout) {
         try {
           const old = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
           if (Array.isArray(old?.threads)) { threads = old.threads; layout = old; migrating = true }
@@ -173,7 +179,7 @@ export const useThreads = defineStore('threads', {
       attachHistory({
         threads: () => this.threads,
         byId: id => this.byId(id),
-        layout: () => ({
+        layout: !main ? undefined : () => ({
           // Diff and file tabs are views onto the disk, and a browser's page dies with the app:
           // none of them is something to restore next time.
           tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id) && !isBrowserTab(id)),
@@ -207,13 +213,96 @@ export const useThreads = defineStore('threads', {
       markChanged([])
     },
 
+    /* ---------- windows (see stores/windows.ts) ---------- */
+
+    /** The chats this window holds, as window ownership sees them. */
+    heldRefs(): ChatRef[] {
+      return chatRefs(this.threads)
+    },
+
+    /** A chat (or its top-level chat's run) is working here: it cannot move to another window now. */
+    isBusyChat(id: string): boolean {
+      const t = this.byId(id)
+      const root = this.rootOf(id)
+      return !!t && (isBusy(t) || isRunning(t.id) || (!!root && (isBusy(root) || isRunning(root.id))))
+    },
+
+    /** A chat of this project working in this window, if any. */
+    busyIn(projectPath: string): Thread | null {
+      return this.threads.find(t => t.projectPath === projectPath && this.isBusyChat(t.id)) ?? null
+    },
+
+    /**
+     * These chats now belong to another window (saved already): drop them here, with their tabs,
+     * without deleting them. Their project's other tabs (diffs, files, browsers) go too when no chat
+     * of it is left.
+     */
+    release(ids: string[]) {
+      const gone = new Set(ids)
+      if (!gone.size) return
+      const projects = new Set(this.threads.filter(t => gone.has(t.id)).map(t => t.projectPath))
+      this.threads = this.threads.filter(t => !gone.has(t.id))
+      for (const p of projects) if (this.threads.some(t => t.projectPath === p)) projects.delete(p)
+      const leaving = (tab: string) => gone.has(tab) || (!this.byId(tab) && projects.has(this.projectOf(tab) ?? ''))
+      for (const tab of this.tabs.filter(leaving)) {
+        const browser = parseBrowserTab(tab)
+        if (browser) useBrowser().forget(browser.browserId)
+        if (isFileTab(tab)) useFiles().forget(tab)
+      }
+      this.tabs = this.tabs.filter(tab => !leaving(tab))
+      for (const p of this.panes) if (p.threadId && leaving(p.threadId)) p.threadId = null
+      if (this.panes.length > 1) {
+        const kept = this.panes.filter(p => p.threadId !== null)
+        this.panes = kept.length ? kept : [this.panes[0]!]
+      }
+      if (!this.panes.some(p => p.id === this.activePaneId)) this.activePaneId = this.panes[0]!.id
+      for (const id of gone) { delete this.queue[id]; delete this.live[id]; held.delete(id) }
+      forgetHistory(gone)
+      forgetRemote(gone)
+      this.persistLayout()
+    },
+
+    /**
+     * Read the chats this window owns now but does not hold (another window closed or let them go),
+     * as saved by that window. A window other than the main one then shows its project's latest chat
+     * when nothing is on screen.
+     */
+    async reclaim() {
+      let more: Thread[] = []
+      try {
+        more = await loadMoreHistory(ownedKeep())
+      } catch (e) {
+        console.error('Mango could not read the chat history:', e)
+        return
+      }
+      const fresh = more.map(normalizeLoaded).filter(t => !this.byId(t.id))
+      if (fresh.length) {
+        this.threads.push(...fresh)
+        adoptRemote(fresh.map(t => t.id))
+        // Statuses changed by loading (a run cut off when its window closed) are saved too.
+        this.persist(fresh.map(t => t.id))
+      }
+      const win = useWindows()
+      if (win.isMain || this.panes.some(p => p.threadId)) return
+      const spec = win.spec
+      const pick = spec.kind === 'chat'
+        ? this.byId(spec.threadId)
+        : this.threads.filter(t => t.projectPath === useWorkspace().activeProjectPath && !t.archived && !t.parentId)
+            .sort((a, b) => b.updatedAt - a.updatedAt)[0]
+      if (pick) this.show(pick.id)
+    },
+
     /**
      * Chats from a remote project's environment (saved there by another computer, or by this one
      * before): new ones are added, newer copies replace the ones here. Nothing in them runs here.
      */
     _adoptRemote(incoming: Thread[]): Thread[] {
       const out: Thread[] = []
+      // Chats another window holds are that window's to take (same environment open in two windows).
+      const keep = ownedKeep()
+      const all = [...this.threads, ...incoming]
       for (const raw of incoming) {
+        if (!this.byId(raw.id) && !keep(raw, all)) continue
         const t = normalizeLoaded(raw)
         const i = this.threads.findIndex(x => x.id === t.id)
         if (i === -1) this.threads.push(t)
@@ -267,6 +356,8 @@ export const useThreads = defineStore('threads', {
         ...(awaitingWorktree && !worktree ? { awaitingWorktree: true as const } : {}),
       }
       this.threads.push(t)
+      // A window that does not hold the whole project (a chat window) claims the chats it starts.
+      useWindows().claimNew(t.id, projectPath)
       this.show(t.id)
       this.persist(t.id)
       return t
@@ -989,6 +1080,17 @@ function byListOrder(a: Thread, b: Thread) {
   if (a.order === undefined) return -1
   if (b.order === undefined) return 1
   return a.order - b.order
+}
+
+/** Which saved chats this window takes: the ones it owns (`utils/windows.ts`). */
+function ownedKeep(): Keep {
+  const win = useWindows()
+  let roots: Map<string, string> | null = null
+  let seen: Thread[] | null = null
+  return (t, all) => {
+    if (seen !== all) { roots = rootIds(all); seen = all }
+    return win.owns({ projectPath: t.projectPath, rootId: roots!.get(t.id) ?? t.id })
+  }
 }
 
 /** Running, starting or waiting for an approval: its status belongs to the run. */

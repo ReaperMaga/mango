@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { ChevronDown, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useUsage } from '~/stores/usage'
 import { useGit } from '~/stores/git'
+import { useWindows } from '~/stores/windows'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
@@ -13,6 +14,7 @@ import { isEnvPath } from '~/utils/envPath'
 const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
+const win = useWindows()
 const mod = ref('Ctrl')
 const native = ref(false)
 /* macOS draws its own traffic lights over the left of the titlebar (tauri.macos.conf.json). */
@@ -82,7 +84,12 @@ const projectItems = computed<MenuItem[]>(() => [
     onSelect: () => ws.setActiveProject(p.path),
     remove: { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) },
   })),
-  { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: ws.openProjects.length > 0, onSelect: openFolderFlow },
+  // The active project in a window of its own (pointless when it is this window's only one).
+  ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
+    ? [moveItem(ws.activeProject.path)]
+    : []),
+  { label: 'New window', icon: AppWindow, kbd: `${mod.value}+Alt+N`, divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
+  { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: true, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
@@ -94,6 +101,19 @@ const projectItems = computed<MenuItem[]>(() => [
       ]
     : []),
 ])
+
+/* Moving a project with a chat at work would cut the run off: say why it waits instead. */
+function moveItem(path: string): MenuItem {
+  const blocked = win.moveBlocker(path)
+  return {
+    label: 'Open in new window',
+    icon: AppWindow,
+    divider: true,
+    disabled: !!blocked,
+    hint: blocked ? 'A chat is still working here' : undefined,
+    onSelect: () => win.openInNewWindow(path),
+  }
+}
 
 /* The quiet sync part of the branch widget: commits to push / pull and changed files of the working copy in view. */
 const gitStatus = computed(() => git.status(workdir.value))

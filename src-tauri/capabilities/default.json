@@ -1,8 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions for the Mango main window",
-  "windows": ["main"],
+  "description": "Permissions for Mango's own windows: the main window and the ones opened on a project or chat (w-<n>)",
+  "windows": [
+    "main",
+    "w-*"
+  ],
   "permissions": [
     "core:default",
     "dialog:default",
@@ -12,6 +15,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-close",
     "core:window:allow-start-dragging",
-    "core:window:allow-is-maximized"
+    "core:window:allow-is-maximized",
+    "core:window:allow-destroy"
   ]
 }

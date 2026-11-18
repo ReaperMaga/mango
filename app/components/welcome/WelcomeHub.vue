@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { Download, FolderOpen, FolderPlus, GitBranch, GitFork, Server, Settings, X } from 'lucide-vue-next'
+import { AppWindow, Download, FolderOpen, FolderPlus, GitBranch, GitFork, Server, Settings, X } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
+import { useWindows } from '~/stores/windows'
 import type { ProjectInfo } from '~/types/ipc'
 
 /**
@@ -13,6 +14,7 @@ import type { ProjectInfo } from '~/types/ipc'
  */
 const ws = useWorkspace()
 const envs = useEnvironments()
+const win = useWindows()
 const where = computed(() => projectWhere())
 const whereName = computed(() => (where.value ? envLabels(where.value.hostId, where.value.instance).label : null))
 
@@ -261,7 +263,19 @@ onBeforeUnmount(() => {
                 </span>
                 <span class="recent__path" :title="shownPath(p.path)">{{ shownPath(p.path) }}</span>
               </span>
-              <span class="recent__time tabular">{{ ago(p.lastOpened) }}</span>
+              <span v-if="win.projectElsewhere(p.path)" class="recent__time">Other window</span>
+              <span v-else class="recent__time tabular">{{ ago(p.lastOpened) }}</span>
+            </button>
+            <button
+              v-if="!win.projectElsewhere(p.path)"
+              type="button"
+              class="recent__forget recent__window"
+              tabindex="-1"
+              :aria-label="`Open ${p.name} in a new window`"
+              title="Open in new window"
+              @click.stop="win.openInNewWindow(p.path)"
+            >
+              <AppWindow aria-hidden="true" />
             </button>
             <button
               type="button"
@@ -520,6 +534,8 @@ ul { list-style: none; margin: 0; padding: 0; }
 .recent__item:hover .recent__forget,
 .recent__item:focus-within .recent__forget { opacity: 1; }
 .recent__forget:hover { background: var(--bg-active); color: var(--fg); }
+/* Beside the forget button, left of it. */
+.recent__window { right: calc(var(--space-2) + 24px); }
 
 .recent__empty {
   margin: 0;

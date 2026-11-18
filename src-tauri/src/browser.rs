@@ -1,7 +1,7 @@
 //! The browser: web pages in tabs beside the chats, for the user and for the agents.
 //!
-//! Each browser is a native child webview (label `browser-<id>`) laid over the main window
-//! where the frontend's browser pane leaves room for it; the frontend keeps its bounds in step
+//! Each browser is a native child webview (label `browser-<id>`) laid over the window that opened
+//! it (the main window or another, see `windows.rs`) where the frontend's browser pane leaves room for it; the frontend keeps its bounds in step
 //! and hides it whenever its tab is not on screen or an HTML overlay (menu, dialog) would end up
 //! underneath it. Pages are untrusted:
 //! - only `http(s)` pages and `about:blank` load, never Mango's own UI (`tauri://`, the dev
@@ -27,7 +27,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Url, Webv
 
 use crate::git::blocking;
 
-/// Where a browser sits, in CSS pixels of the main window.
+/// Where a browser sits, in CSS pixels of its window.
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct Bounds {
     pub x: f64,
@@ -248,7 +248,7 @@ fn builder(app: &AppHandle, id: &str, url: Url) -> WebviewBuilder<tauri::Wry> {
         .on_download(|_, _| false)
 }
 
-/* ---------- placing the webview over the main window ---------- */
+/* ---------- placing the webview over its window ---------- */
 
 #[cfg(target_os = "linux")]
 mod gtk_overlay {
@@ -260,11 +260,6 @@ mod gtk_overlay {
     use gtk::glib;
     use gtk::glib::translate::ToGlibPtr;
     use gtk::prelude::*;
-    use std::cell::RefCell;
-
-    thread_local! {
-        static OVERLAY: RefCell<Option<gtk::Overlay>> = const { RefCell::new(None) };
-    }
 
     const PREFIX: &str = "mango-browser:";
 
@@ -301,29 +296,27 @@ mod gtk_overlay {
         true
     }
 
-    /// The overlay, made on first use from the box Tauri packed `child` into: Mango's own webview
-    /// (the box's other webview) becomes its main child.
+    /// The window's overlay, made on first use from the box Tauri packed `child` into: Mango's own
+    /// webview (the box's other webview) becomes its main child. Each window has its own, found
+    /// in that same box later on.
     fn overlay(child: &gtk::Widget) -> Result<gtk::Overlay, String> {
-        OVERLAY.with(|o| {
-            if let Some(o) = o.borrow().as_ref() {
-                return Ok(o.clone());
-            }
-            let vbox = child.parent().and_then(|p| p.downcast::<gtk::Box>().ok()).ok_or("The window has no layout box")?;
-            let main = vbox
-                .children()
-                .into_iter()
-                .find(|w| w != child && w.is::<webkit2gtk::WebView>())
-                .ok_or("Mango's own view was not found")?;
-            let overlay = gtk::Overlay::new();
-            // The signal must always answer (glib aborts otherwise): false leaves a child to GTK.
-            overlay.connect_local("get-child-position", false, |values| Some(position(values).to_value()));
-            vbox.remove(&main);
-            overlay.add(&main);
-            vbox.pack_start(&overlay, true, true, 0);
-            overlay.show_all();
-            *o.borrow_mut() = Some(overlay.clone());
-            Ok(overlay)
-        })
+        let vbox = child.parent().and_then(|p| p.downcast::<gtk::Box>().ok()).ok_or("The window has no layout box")?;
+        if let Some(o) = vbox.children().into_iter().find_map(|w| w.downcast::<gtk::Overlay>().ok()) {
+            return Ok(o);
+        }
+        let main = vbox
+            .children()
+            .into_iter()
+            .find(|w| w != child && w.is::<webkit2gtk::WebView>())
+            .ok_or("Mango's own view was not found")?;
+        let overlay = gtk::Overlay::new();
+        // The signal must always answer (glib aborts otherwise): false leaves a child to GTK.
+        overlay.connect_local("get-child-position", false, |values| Some(position(values).to_value()));
+        vbox.remove(&main);
+        overlay.add(&main);
+        vbox.pack_start(&overlay, true, true, 0);
+        overlay.show_all();
+        Ok(overlay)
     }
 
     /// Take `child` (a browser webview Tauri just packed into the window's box) into the overlay.
@@ -376,8 +369,7 @@ fn place(app: &AppHandle, webview: &Webview, bounds: Bounds, visible: bool) -> R
     }
 }
 
-fn create(app: &AppHandle, id: &str, project: &str, url: Url, bounds: Bounds, visible: bool) -> Result<(), String> {
-    let window = app.get_window("main").ok_or("Mango's main window is gone.")?;
+fn create(app: &AppHandle, window: &tauri::Window, id: &str, project: &str, url: Url, bounds: Bounds, visible: bool) -> Result<(), String> {
     let size = LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0));
     let shown = crate::browser_remote::display_url(app, project, url.as_str());
     update(app, id, |p| {
@@ -409,9 +401,11 @@ fn create(app: &AppHandle, id: &str, project: &str, url: Url, bounds: Bounds, vi
 
 /* ---------- commands for the frontend ---------- */
 
+/// Open a browser over the window that asks (`window`), or move an open one and load `url`.
 #[tauri::command]
 pub async fn browser_open(
     app: AppHandle,
+    window: tauri::Window,
     id: String,
     url: String,
     bounds: Bounds,
@@ -427,7 +421,7 @@ pub async fn browser_open(
                 place(&app, &w, bounds, visible)?;
                 w.navigate(url).map_err(|e| e.to_string())
             }
-            None => create(&app, &id, &project, url, bounds, visible),
+            None => create(&app, &window, &id, &project, url, bounds, visible),
         }
     })
     .await
@@ -484,17 +478,24 @@ pub async fn browser_close(app: AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Close the browsers a reloaded window left behind: the asking window's only, as other windows'
+/// browsers are still in use.
 #[tauri::command]
-pub async fn browser_reset(app: AppHandle) -> Result<(), String> {
-    app.state::<BrowserState>().with(|i| {
-        i.pages.clear();
-        i.agent_tabs.clear();
-    });
+pub async fn browser_reset(app: AppHandle, window: tauri::Window) -> Result<(), String> {
+    let mut gone = Vec::new();
     for (name, w) in app.webviews() {
-        if name.starts_with("browser-") {
+        let Some(id) = name.strip_prefix("browser-") else { continue };
+        if w.window().label() == window.label() {
+            gone.push(id.to_string());
             let _ = w.close();
         }
     }
+    app.state::<BrowserState>().with(|i| {
+        for id in &gone {
+            i.pages.remove(id);
+        }
+        i.agent_tabs.retain(|_, b| !gone.contains(b));
+    });
     Ok(())
 }
 
