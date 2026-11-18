@@ -1010,7 +1010,8 @@ export interface Commands {
   attachment_read: [{ path: string }, string]
   /**
    * A picture an agent's reply shows (`![alt](path)`): an absolute path anywhere on this computer,
-   * or relative to `base`, the chat's project folder. Only real PNG, JPEG, GIF, WebP, AVIF or BMP
+   * or relative to `base`, the chat's project folder. For a remote project (`base` is `env://…`) the
+   * path is inside its environment, read there as the agent user. Only real PNG, JPEG, GIF, WebP, AVIF or BMP
    * files are read (checked by their bytes, not their name), up to 25 MB.
    */
   chat_image: [{ path: string; base: string | null }, ChatImage]
