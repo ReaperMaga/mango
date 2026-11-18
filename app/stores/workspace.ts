@@ -8,6 +8,7 @@ import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
+import { editorTabOf, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -32,6 +33,18 @@ export interface TerminalTab {
   profileId: string | null
   /** Display name of that shell, e.g. "Zsh". */
   shell: string | null
+  /** Shown as a tab in the main area (see utils/terminalTabs.ts) instead of in the docked panel. */
+  inEditor?: boolean
+}
+
+/** Where a terminal moved into the main area shows: before a tab of the strip, in a pane, or in a new right pane. */
+export interface TerminalPlacement {
+  /** Put its tab before this one in the strip (null: at the end); left out, it goes after the tab in view. */
+  before?: string | null
+  /** The pane to show it in; left out, the active one. */
+  paneId?: string
+  /** Open a second pane on the right for it. */
+  split?: boolean
 }
 
 /**
@@ -281,6 +294,8 @@ export const useWorkspace = defineStore('workspace', {
       ?? s.terminalProfiles.find(p => p.isDefault)
       ?? s.terminalProfiles[0]
       ?? null,
+    /** The terminals in the docked panel, in order (the rest are tabs in the main area). */
+    panelTerminals: s => s.terminalTabs.filter(t => !t.inEditor),
   },
 
   actions: {
@@ -646,10 +661,10 @@ export const useWorkspace = defineStore('workspace', {
         // A remote project's terminal is a shell in its environment: show one (open it when there is none yet).
         const path = this.activeProjectPath
         if (isEnvPath(path)) {
-          const tab = this.terminalTabs.find(t => t.cwd === path && !t.exited)
+          const tab = this.panelTerminals.find(t => t.cwd === path && !t.exited)
           if (tab) this.activeTerminalId = tab.id
           else this.newTerminal()
-        } else if (this.terminalTabs.length === 0) this.newTerminal()
+        } else if (this.panelTerminals.length === 0) this.newTerminal()
       }
       this.persist()
     },
@@ -679,7 +694,7 @@ export const useWorkspace = defineStore('workspace', {
      * environment. Picking a local shell (`profileId`) always runs on this computer, in the home folder when the
      * project is remote.
      */
-    newTerminal(cwd?: string | null, profileId?: string | null) {
+    newTerminal(cwd?: string | null, profileId?: string | null, inEditor = false) {
       const id = `term-${++tabSeq}`
       let dir = cwd ?? useThreads().workdir ?? this.activeProjectPath
       if (profileId && isEnvPath(dir)) dir = null
@@ -695,17 +710,68 @@ export const useWorkspace = defineStore('workspace', {
         profileId: profile?.id ?? null,
         shell: profile?.name ?? null,
       })
+      if (inEditor && this.activeProjectPath) {
+        this.moveTerminalToEditor(id)
+        return id
+      }
       this.activeTerminalId = id
       this.terminalOpen = true
       return id
     },
+    /** Close a terminal wherever it is (the panel or a main-area tab) and end its shell. */
     closeTerminal(id: string) {
       const i = this.terminalTabs.findIndex(t => t.id === id)
       if (i === -1) return
       const [tab] = this.terminalTabs.splice(i, 1)
       if (tab?.ptyId && !tab.exited) call('pty_kill', { id: tab.ptyId }).catch(() => {})
-      if (this.activeTerminalId === id) this.activeTerminalId = this.terminalTabs[Math.max(0, i - 1)]?.id ?? null
-      if (this.terminalTabs.length === 0) this.terminalOpen = false
+      if (tab?.inEditor) {
+        const threads = useThreads()
+        const editorTab = editorTabOf(threads.tabs, id)
+        if (editorTab) threads.removeTab(editorTab)
+      }
+      this._afterPanelLeft(id, i)
+      this.persist()
+    },
+    /** A terminal left the panel (closed or moved to the main area): pick the next one, or hide the panel when it is empty. */
+    _afterPanelLeft(id: string, index: number) {
+      const panel = this.panelTerminals
+      if (this.activeTerminalId === id || !panel.some(t => t.id === this.activeTerminalId)) {
+        const before = this.terminalTabs.slice(0, index).filter(t => !t.inEditor)
+        this.activeTerminalId = before[before.length - 1]?.id ?? panel[0]?.id ?? null
+      }
+      if (panel.length === 0) this.terminalOpen = false
+    },
+    /**
+     * Show a terminal as a tab in the main area, with the same shell and scrollback (TerminalPanel
+     * keeps the xterm and moves it into the pane). Its tab belongs to the project in view.
+     */
+    moveTerminalToEditor(id: string, at: TerminalPlacement = {}) {
+      const tab = this.terminalTabs.find(t => t.id === id)
+      const project = this.activeProjectPath
+      if (!tab || !project) return
+      const threads = useThreads()
+      const tabId = editorTabOf(threads.tabs, id) ?? terminalTabId(project, id)
+      const wasInPanel = !tab.inEditor
+      tab.inEditor = true
+      if (at.before !== undefined) threads.placeTab(tabId, at.before)
+      else threads.addTab(tabId, threads.activePane.threadId)
+      threads.showOnly(tabId, at.split ? 'split' : at.paneId ?? threads.activePaneId)
+      if (wasInPanel) this._afterPanelLeft(id, this.terminalTabs.indexOf(tab))
+    },
+    /** Dock a main-area terminal in the panel again, before `before` (a terminal id; null or left out: at the end). */
+    moveTerminalToPanel(id: string, before: string | null = null) {
+      const tab = this.terminalTabs.find(t => t.id === id)
+      if (!tab) return
+      if (tab.inEditor) {
+        const threads = useThreads()
+        const editorTab = editorTabOf(threads.tabs, id)
+        if (editorTab) threads.removeTab(editorTab)
+        tab.inEditor = false
+      }
+      const target = before ? this.terminalTabs.find(t => t.id === before) ?? null : null
+      this.terminalTabs = placeBefore(this.terminalTabs, tab, target)
+      this.activeTerminalId = id
+      this.terminalOpen = true
       this.persist()
     },
   },
