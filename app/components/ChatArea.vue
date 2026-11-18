@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Archive, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, X, XCircle, PanelRightClose } from 'lucide-vue-next'
-import { useWorkspace } from '~/stores/workspace'
+import { Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
@@ -11,6 +11,9 @@ import { fileIcon } from '~/utils/fileIcons'
 import { useFiles } from '~/stores/files'
 import { browserTitle, useBrowser, type Browser } from '~/stores/browser'
 import { isBrowserTab, isBlank } from '~/utils/browserTabs'
+import { isTerminalTab, parseTerminalTab } from '~/utils/terminalTabs'
+import { dragJustEnded, pressTerminalTab, terminalDrag } from '~/composables/useTerminalDrag'
+import { isEnvPath } from '~/utils/envPath'
 import { openExternal } from '~/composables/useBackend'
 import { holdOverlay } from '~/composables/useOverlay'
 import { hasUnreadResult, type Thread } from '~/types/chat'
@@ -31,6 +34,7 @@ type Tab =
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
   | { id: string; kind: 'file'; title: string; file: string }
   | { id: string; kind: 'browser'; title: string; browser: Browser }
+  | { id: string; kind: 'terminal'; title: string; term: TerminalTab }
 
 /** Tabs belonging to the active project (chats, diffs, files); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
@@ -43,6 +47,12 @@ const tabs = computed<Tab[]>(() => {
     if (isBrowserTab(id)) {
       const b = browsers.forTab(id)
       if (b) out.push({ id, kind: 'browser', title: browserTitle(b), browser: b })
+      continue
+    }
+    const term = parseTerminalTab(id)
+    if (term) {
+      const tab = ws.terminalTabs.find(x => x.id === term.terminalId)
+      if (tab) out.push({ id, kind: 'terminal', title: tab.title, term: tab })
       continue
     }
     const t = threads.byId(id)
@@ -76,6 +86,10 @@ function tabTitle(t: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
   if (t.kind === 'file') return `${t.file}${keys}`
+  if (t.kind === 'terminal') {
+    const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
+    return `Terminal${where ? ` — ${where}` : ''}${t.term.exited ? ' (exited)' : ''}${keys}`
+  }
   if (t.kind === 'browser') {
     const owner = threads.byId(t.browser.threadId)
     const where = isBlank(t.browser.url) ? 'New tab' : t.browser.url
@@ -129,6 +143,16 @@ function onMove(e: PointerEvent) {
   split.value = Math.min(0.75, Math.max(0.25, (e.clientX - r.left) / r.width))
 }
 function onUp() { dragging = false; release() }
+
+function onTabClick(id: string) {
+  if (dragJustEnded()) return // the click that ends a drag is not a click
+  threads.show(id)
+}
+
+/** A terminal's tab can be dragged: within the strip, into a pane, or back to the panel. */
+function onTabPress(e: PointerEvent, t: Tab) {
+  if (t.kind === 'terminal') pressTerminalTab(e, t.term.id, 'editor')
+}
 
 function onTabAux(e: MouseEvent, id: string) {
   if (e.button === 1) { e.preventDefault(); threads.closeTab(id) }
@@ -188,6 +212,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     return items
   }
 
+  if (tab.kind === 'terminal') {
+    items.push(
+      { ...splitItem, onSelect: () => threads.showOnly(tab.id, threads.isSplit ? 'pane-b' : 'split') },
+      { label: 'Move to panel', icon: ArrowDownToLine, divider: true, onSelect: () => ws.moveTerminalToPanel(tab.term.id) },
+    )
+    return items
+  }
+
   if (tab.kind === 'browser') {
     const b = tab.browser
     const blank = isBlank(b.url)
@@ -216,7 +248,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 <template>
   <section class="ca">
     <div class="ca__tabs" role="tablist" aria-label="Open chats">
-      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'">
+      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'" data-term-drop="strip">
         <div
           v-for="(t, i) in tabs"
           :key="t.id"
@@ -225,12 +257,15 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             'is-active': threads.activePane.threadId === t.id,
             'is-shown': !!paneOf(t.id),
             'is-b': paneOf(t.id) === 'pane-b',
+            'is-dragged': t.kind === 'terminal' && terminalDrag.id === t.term.id,
           }"
           role="tab"
           tabindex="0"
+          :data-tab-id="t.id"
           :aria-selected="threads.activePane.threadId === t.id"
           :title="tabTitle(t, i)"
-          @click="threads.show(t.id)"
+          @click="onTabClick(t.id)"
+          @pointerdown="onTabPress($event, t)"
           @keydown.enter.prevent="threads.show(t.id)"
           @auxclick="onTabAux($event, t.id)"
           @contextmenu.prevent="onTabContext($event, t.id)"
@@ -245,6 +280,11 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
             <span class="ca__tab-title">{{ t.title }}</span>
             <span v-if="t.staged" class="ca__tab-note">staged</span>
+          </template>
+          <template v-else-if="t.kind === 'terminal'">
+            <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
+            <span class="ca__tab-title">{{ t.title }}</span>
+            <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
           </template>
           <template v-else-if="t.kind === 'browser'">
             <span v-if="t.browser.loading" class="ca__tab-spin" aria-hidden="true" />
@@ -303,6 +343,20 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          data-term-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <TerminalPane
+          v-else-if="isTerminalTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          data-term-drop="pane"
+          :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
         />
@@ -313,6 +367,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          data-term-drop="pane"
+          :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
         />
@@ -323,6 +379,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          data-term-drop="pane"
+          :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
         />
@@ -332,6 +390,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
+          data-term-drop="pane"
+          :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
         />
@@ -398,6 +458,9 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 .ca__tab.is-shown { color: var(--fg-muted); box-shadow: inset 0 0 0 1px var(--line); }
 .ca__tab.is-active { color: var(--fg); background: var(--bg-canvas); box-shadow: inset 0 0 0 1px var(--line); }
 .ca__tab-icon { width: 14px; height: 14px; flex: none; stroke-width: 1.75; color: var(--fg-subtle); }
+.ca__tab-icon.is-exited { color: var(--fg-faint); }
+/* A terminal's tab while it is dragged: it stays put, faded, until it is dropped. */
+.ca__tab.is-dragged { opacity: 0.45; }
 .ca__tab-note { flex: none; font-size: var(--text-2xs); color: var(--fg-faint); }
 /* A browser tab while its page loads: a small ring in ripening mango where the globe was. */
 .ca__tab-spin {

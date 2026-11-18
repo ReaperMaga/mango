@@ -9,6 +9,7 @@ import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { isBrowserTab, parseBrowserTab } from '~/utils/browserTabs'
+import { isTerminalTab, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { useBrowser } from '~/stores/browser'
 import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
@@ -180,10 +181,10 @@ export const useThreads = defineStore('threads', {
         threads: () => this.threads,
         byId: id => this.byId(id),
         layout: !main ? undefined : () => ({
-          // Diff and file tabs are views onto the disk, and a browser's page dies with the app:
-          // none of them is something to restore next time.
-          tabs: this.tabs.filter(id => !isDiffTab(id) && !isFileTab(id) && !isBrowserTab(id)),
-          panes: this.panes.map(p => (isDiffTab(p.threadId) || isFileTab(p.threadId) || isBrowserTab(p.threadId) ? { ...p, threadId: null } : p)),
+          // Diff and file tabs are views onto the disk, and a browser's page and a terminal's shell die
+          // with the app: none of them is something to restore next time.
+          tabs: this.tabs.filter(id => !isViewTab(id)),
+          panes: this.panes.map(p => (isViewTab(p.threadId) ? { ...p, threadId: null } : p)),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }),
       })
@@ -516,13 +517,23 @@ export const useThreads = defineStore('threads', {
         useFiles().askClose(id)
         return
       }
-      const project = this.projectOf(id)
-      this.tabs.splice(i, 1)
       const diff = parseDiffTab(id)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
       if (isFileTab(id)) useFiles().forget(id)
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
+      this.removeTab(id)
+      // Closing a terminal's tab ends its shell, as closing it in the panel does.
+      const term = parseTerminalTab(id)
+      if (term) useWorkspace().closeTerminal(term.terminalId)
+    },
+
+    /** Take a tab out of the strip and the panes, with nothing else: what it showed lives on (a terminal moving back to the panel). */
+    removeTab(id: string) {
+      const i = this.tabs.indexOf(id)
+      if (i === -1) return
+      const project = this.projectOf(id)
+      this.tabs.splice(i, 1)
       // The neighbouring tab of the same project takes its place. Another project's chat
       // would show in the pane with no tab and no sidebar row, and a message sent there
       // would run in that other project's folder.
@@ -534,6 +545,35 @@ export const useThreads = defineStore('threads', {
         const empty = this.panes.find(p => p.threadId === null)
         if (empty) this.closePane(empty.id)
       }
+      this.persistLayout()
+    },
+
+    /** Put a tab in the strip before `before` (null: at the end), moving it when it is open already. */
+    placeTab(id: string, before: string | null) {
+      this.tabs = placeBefore(this.tabs, id, before)
+      this.persistLayout()
+    },
+
+    /**
+     * Show a tab in one pane only (a terminal can be drawn in one place): a pane that showed it
+     * already takes the target pane's old tab. 'split' opens it in a new pane on the right.
+     */
+    showOnly(id: string, paneId: string | 'split') {
+      if (!this.tabs.includes(id)) this.tabs.push(id)
+      if (paneId === 'split' && this.panes.length === 1) {
+        const left = this.panes[0]!
+        if (left.threadId === id) left.threadId = this.visibleTabs.find(x => x !== id) ?? null
+        this.panes.push({ id: 'pane-b', threadId: id })
+        this.activePaneId = 'pane-b'
+        this.persistLayout()
+        return
+      }
+      const target = this.panes.find(p => p.id === (paneId === 'split' ? 'pane-b' : paneId)) ?? this.activePane
+      const other = this.panes.find(p => p.id !== target.id && p.threadId === id)
+      if (other) other.threadId = target.threadId === id ? null : target.threadId
+      target.threadId = id
+      this.activePaneId = target.id
+      if (other && !other.threadId) this.closePane(other.id)
       this.persistLayout()
     },
 
@@ -632,7 +672,14 @@ export const useThreads = defineStore('threads', {
      * it close: their ids carry the old place.
      */
     moveEnvInstance(hostId: string, from: string, to: string) {
-      for (const id of [...this.tabs]) if (movedEnvPath(tabProject(id), hostId, from, to)) this.closeTab(id)
+      for (const id of [...this.tabs]) {
+        const moved = movedEnvPath(tabProject(id), hostId, from, to)
+        if (!moved) continue
+        // A terminal's shell keeps running: its tab follows the project instead of closing.
+        const term = parseTerminalTab(id)
+        if (term) this.replaceTab(id, terminalTabId(moved, term.terminalId))
+        else this.closeTab(id)
+      }
       for (const t of this.threads) {
         const path = movedEnvPath(t.projectPath, hostId, from, to)
         if (path) t.projectPath = path
@@ -1102,6 +1149,9 @@ const held = new Set<string>()
 export const stopFlags = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
+/** A tab that shows something other than a chat; none of them is saved with the layout. */
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id)
+
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'
   // Any id the CLI offered is fine (the list comes from the CLI); only junk falls back.

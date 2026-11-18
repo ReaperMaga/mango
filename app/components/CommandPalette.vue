@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
+  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -15,6 +15,7 @@ import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
 import { useOverlay } from '~/composables/useOverlay'
 import { useWorktrees } from '~/composables/useWorktrees'
+import { parseTerminalTab } from '~/utils/terminalTabs'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -137,9 +138,15 @@ const actions = computed<Item[]>(() => {
     { id: 'join-env', group: 'Actions', label: 'Join a shared environment', detail: 'With a link someone sent you', icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => envs.openJoin() },
   )
   if (inWorkspace) {
+    // Move the terminal in view between the panel and the main area.
+    const paneTerm = parseTerminalTab(threads.activePane.threadId)?.terminalId
+    if (paneTerm) items.push({ id: 'terminal-to-panel', group: 'Actions', label: 'Move terminal to panel', icon: PanelBottom, keywords: 'terminal shell dock bottom panel editor tab', run: () => ws.moveTerminalToPanel(paneTerm) })
+    const panelTerm = ws.terminalOpen ? ws.activeTerminalId : null
+    if (panelTerm) items.push({ id: 'terminal-to-editor', group: 'Actions', label: 'Move terminal to editor area', icon: PanelTop, keywords: 'terminal shell tab main pane editor area undock', run: () => ws.moveTerminalToEditor(panelTerm) })
     items.push(
       { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: [mod, '`'], keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
       { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: [mod, shift, 'T'], keywords: 'shell tab console', run: () => ws.newTerminal() },
+      { id: 'new-terminal-editor', group: 'Actions', label: 'New terminal in editor area', icon: SquareTerminal, keywords: 'shell tab console main pane editor', run: () => ws.newTerminal(undefined, undefined, true) },
       { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: [mod, 'Shift', 'H'], detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: [mod, 'Shift', 'E'], keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: [mod, 'Shift', 'G'], keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronDown, Maximize2, Minimize2, Plus, RefreshCw, Server, Settings, SquareTerminal, X } from 'lucide-vue-next'
+import { ArrowUpToLine, ChevronDown, Maximize2, Minimize2, Plus, RefreshCw, Server, Settings, SquareTerminal, X } from 'lucide-vue-next'
 import type { MenuItem } from '~/types/ui'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { envPath, isEnvPath, parseEnvPath } from '~/utils/envPath'
@@ -7,6 +7,9 @@ import { whereItems } from '~/composables/usePlace'
 import { refreshEnvs } from '~/composables/envProjects'
 import { useEnvironments } from '~/stores/environments'
 import { holdOverlay } from '~/composables/useOverlay'
+import { useThreads } from '~/stores/threads'
+import { dragJustEnded, pressTerminalTab, terminalDrag, terminalSlot } from '~/composables/useTerminalDrag'
+import { parseTerminalTab } from '~/utils/terminalTabs'
 
 /**
  * Docked terminal panel at the bottom of the main column.
@@ -15,6 +18,7 @@ import { holdOverlay } from '~/composables/useOverlay'
 const props = defineProps<{ container: HTMLElement | null }>()
 
 const ws = useWorkspace()
+const threads = useThreads()
 
 /** Hover text: the shell and folder, or for a shell in a remote environment, where it runs. */
 function tabTitle(tab: TerminalTab) {
@@ -107,11 +111,12 @@ function endDrag(e: PointerEvent) {
 /* ---------- tabs ---------- */
 // Visible with no tabs (e.g. restored as open on launch): start a shell.
 watch(() => ws.terminalOpen, (open) => {
-  if (open && ws.terminalTabs.length === 0) ws.newTerminal()
+  if (open && ws.panelTerminals.length === 0) ws.newTerminal()
 }, { immediate: true })
 
 const views = ref<Record<string, { focus: () => void } | null>>({})
 function activate(id: string) {
+  if (dragJustEnded()) return // the click that ends a drag is not a click
   ws.activeTerminalId = id
   // Clicking a tab means "I want to type there", also when it was already the active one.
   nextTick(() => views.value[id]?.focus())
@@ -132,7 +137,7 @@ function onStripWheel(e: WheelEvent) {
 }
 
 function onTabKey(e: KeyboardEvent, index: number) {
-  const tabs = ws.terminalTabs
+  const tabs = ws.panelTerminals
   let next = -1
   if (e.key === 'ArrowRight') next = (index + 1) % tabs.length
   else if (e.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
@@ -149,6 +154,43 @@ function onTabKey(e: KeyboardEvent, index: number) {
 onBeforeUnmount(() => {
   clearTimeout(animTimer)
   if (dragging.value) document.body.style.cursor = ''
+})
+
+/* ---------- terminals in the main area ---------- */
+
+/*
+ * Every terminal's view lives here, also the ones shown as tabs in the main area: those are
+ * teleported into their pane (see useTerminalDrag), so moving one keeps its shell and scrollback.
+ * A main-area terminal no pane shows waits here, hidden.
+ */
+const slotOf = (tab: TerminalTab) => (tab.inEditor ? terminalSlot(tab.id) : null)
+/** Where a terminal is drawn: the panel, a pane (and how many there are: a split resizes it), or nowhere. */
+function placeOf(tab: TerminalTab) {
+  if (!tab.inEditor) return 'panel'
+  const pane = threads.panes.find(p => parseTerminalTab(p.threadId)?.terminalId === tab.id)
+  return slotOf(tab) && pane ? `${pane.id}/${threads.panes.length}` : 'parked'
+}
+/** The terminal in the active pane, if it is one. */
+const paneTerminal = computed(() => parseTerminalTab(threads.activePane.threadId)?.terminalId ?? null)
+
+const canMoveToEditor = computed(() => !!ws.activeProjectPath)
+const moveLabel = 'Move to editor area'
+
+/* Right-click on a terminal's tab. */
+const tabMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
+const menuTermId = ref<string | null>(null)
+async function onTabContext(e: MouseEvent, id: string) {
+  menuTermId.value = id
+  await nextTick()
+  tabMenu.value?.showAt(e.clientX, e.clientY)
+}
+const tabMenuItems = computed<MenuItem[]>(() => {
+  const id = menuTermId.value
+  if (!id) return []
+  return [
+    { label: moveLabel, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.moveTerminalToEditor(id) },
+    { label: 'Close', icon: X, divider: true, onSelect: () => ws.closeTerminal(id) },
+  ]
 })
 
 /** The active project's environment, when it is remote: what a plain "new terminal" opens. */
@@ -206,6 +248,7 @@ const profileItems = computed<MenuItem[]>(() => {
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
     aria-label="Terminal"
+    data-term-drop="panel"
     @transitionend="onPanelTransitionEnd"
   >
     <div
@@ -229,19 +272,23 @@ const profileItems = computed<MenuItem[]>(() => {
         class="terminal-panel__tabs"
         role="tablist"
         aria-label="Terminals"
+        data-term-strip
         @wheel="onStripWheel"
       >
         <div
-          v-for="(tab, i) in ws.terminalTabs"
+          v-for="(tab, i) in ws.panelTerminals"
           :key="tab.id"
           class="term-tab"
-          :class="{ 'is-active': tab.id === ws.activeTerminalId, 'is-exited': tab.exited }"
+          :class="{ 'is-active': tab.id === ws.activeTerminalId, 'is-exited': tab.exited, 'is-dragged': terminalDrag.id === tab.id }"
           role="tab"
           :data-tab-id="tab.id"
+          :data-term-id="tab.id"
           :aria-selected="tab.id === ws.activeTerminalId"
           :tabindex="tab.id === ws.activeTerminalId ? 0 : -1"
           :title="tabTitle(tab)"
           @click="activate(tab.id)"
+          @pointerdown="pressTerminalTab($event, tab.id, 'panel')"
+          @contextmenu.prevent="onTabContext($event, tab.id)"
           @mousedown.middle.prevent
           @auxclick.middle.prevent="ws.closeTerminal(tab.id)"
           @keydown.enter.prevent="activate(tab.id)"
@@ -286,6 +333,14 @@ const profileItems = computed<MenuItem[]>(() => {
       </div>
 
       <div class="terminal-panel__actions">
+        <UiIconButton
+          :label="moveLabel"
+          size="sm"
+          :disabled="!canMoveToEditor || !ws.activeTerminalId"
+          @click="ws.activeTerminalId && ws.moveTerminalToEditor(ws.activeTerminalId)"
+        >
+          <ArrowUpToLine />
+        </UiIconButton>
         <UiIconButton :label="isMaximized ? 'Restore panel size' : 'Maximize panel'" size="sm" @click="toggleMaximize">
           <Minimize2 v-if="isMaximized" />
           <Maximize2 v-else />
@@ -296,17 +351,20 @@ const profileItems = computed<MenuItem[]>(() => {
       </div>
     </header>
 
-    <div class="terminal-panel__body">
-      <TerminalView
-        v-for="tab in ws.terminalTabs"
-        v-show="tab.id === ws.activeTerminalId"
-        :key="tab.id"
-        :ref="(el: any) => { views[tab.id] = el }"
-        :tab="tab"
-        :active="tab.id === ws.activeTerminalId"
-        :visible="ws.terminalOpen"
-      />
+    <div class="terminal-panel__body" data-term-body>
+      <Teleport v-for="tab in ws.terminalTabs" :key="tab.id" :to="slotOf(tab) ?? 'body'" :disabled="!slotOf(tab)">
+        <TerminalView
+          v-show="slotOf(tab) || (!tab.inEditor && tab.id === ws.activeTerminalId)"
+          :ref="(el: any) => { views[tab.id] = el }"
+          :tab="tab"
+          :active="slotOf(tab) ? paneTerminal === tab.id : tab.id === ws.activeTerminalId"
+          :visible="slotOf(tab) ? true : ws.terminalOpen && !tab.inEditor"
+          :place="placeOf(tab)"
+        />
+      </Teleport>
     </div>
+
+    <UiMenu ref="tabMenu" :items="tabMenuItems" :width="220" label="Terminal actions" />
   </section>
 </template>
 
@@ -410,6 +468,10 @@ const profileItems = computed<MenuItem[]>(() => {
 }
 .term-tab:focus-visible {
   outline-offset: -1px;
+}
+/* Being dragged out: the tab stays put, faded, until it is dropped. */
+.term-tab.is-dragged {
+  opacity: 0.45;
 }
 
 .term-tab__icon {
