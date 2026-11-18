@@ -17,6 +17,13 @@
 //! The desktop is a contract with `remote.rs`: `mango-vnc.service` (Xvnc :1 on
 //! 127.0.0.1:5901, no VNC password, XFCE session) and `mango-novnc.service`
 //! (websockify serving /usr/share/novnc on 127.0.0.1:6080 -> 5901).
+//!
+//! Chromium is for the agents, not for people: Playwright's headless Chromium in
+//! `/opt/mango/ms-playwright` (installed by the Playwright that `@playwright/mcp` brings, so the
+//! two always match) and `/usr/local/bin/mango-chromium-mcp`, which starts that MCP server. It is
+//! registered as `chromium` in the agent user's Claude Code and Codex configs, so every chat in
+//! the environment can open pages, read them and take screenshots without anyone watching. The
+//! Claude Code and Codex recipes register it too, for when they come after it.
 
 use std::time::Duration;
 
@@ -28,7 +35,7 @@ use super::{hosts, ssh, valid_instance, valid_master_path, valid_tag, EnvHost};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvComponent {
-    /// "base" | "claude" | "codex" | "gh" | "node" | "desktop" | "tailscale"
+    /// "base" | "claude" | "codex" | "gh" | "node" | "chromium" | "desktop" | "tailscale"
     pub id: String,
     pub name: String,
     pub description: String,
@@ -84,6 +91,13 @@ pub(crate) const RECIPES: &[Recipe] = &[
         script: CODEX,
     },
     Recipe {
+        id: "chromium",
+        name: "Chromium for agents",
+        description: "A headless Chromium the agents drive through Playwright's MCP server: they open pages, read them and take screenshots.",
+        requires: &["base", "node"],
+        script: CHROMIUM,
+    },
+    Recipe {
         id: "desktop",
         name: "Desktop",
         description: "An XFCE desktop you can open from Mango (VNC and noVNC, reachable only through Mango).",
@@ -135,6 +149,39 @@ put() {
   rm -f "$tmp"
 }
 need_systemd() { [ -d /run/systemd/system ] || fail "$1 needs systemd running in the environment."; }
+# Tell the agent, in a CLI's global instructions file ($1), how to show a picture in Mango's chat. Once.
+picture_note() {
+  grep -qs 'mango-pictures' "$1" && return 0
+  local dir; dir=$(dirname "$1")
+  [ -d "$dir" ] || install -d -o agent -g "$(id -gn agent)" -m 0700 "$dir"
+  cat >> "$1" <<'EOF'
+
+<!-- mango-pictures: added by Mango -->
+## Showing pictures
+When the user asks to see a screenshot or picture, save it as a file outside the project (for example under /tmp) and put it in your reply as markdown with its absolute path: `![what it shows](/tmp/shot.png)`. Mango shows the picture in the chat.
+EOF
+  chown agent:"$(id -gn agent)" "$1"
+}
+# Register the Chromium MCP server (when it is installed) with the agent user's Claude Code and Codex.
+register_chromium() {
+  [ -x /usr/local/bin/mango-chromium-mcp ] || return 0
+  if as_agent 'command -v claude' >/dev/null 2>&1; then
+    as_agent 'claude mcp remove --scope user chromium >/dev/null 2>&1; claude mcp add --scope user chromium -- /usr/local/bin/mango-chromium-mcp' \
+      || fail "could not add the Chromium MCP server to Claude Code."
+    picture_note /home/agent/.claude/CLAUDE.md
+    echo "Claude Code has the chromium MCP server."
+  fi
+  if as_agent 'command -v codex' >/dev/null 2>&1; then
+    local cfg=/home/agent/.codex/config.toml
+    if ! grep -qs '^\[mcp_servers\.chromium\]' "$cfg"; then
+      [ -d /home/agent/.codex ] || install -d -o agent -g "$(id -gn agent)" -m 0700 /home/agent/.codex
+      printf '\n# Added by Mango: a headless Chromium for the agent (pages, screenshots).\n[mcp_servers.chromium]\ncommand = "/usr/local/bin/mango-chromium-mcp"\nstartup_timeout_sec = 30\n' >> "$cfg"
+      chown agent:"$(id -gn agent)" "$cfg"
+    fi
+    picture_note /home/agent/.codex/AGENTS.md
+    echo "Codex has the chromium MCP server."
+  fi
+}
 "##;
 
 const BASE: &str = r##"say "Base system: the agent user, git, curl and build tools"
@@ -189,11 +236,46 @@ gh --version | head -n 1
 const CLAUDE: &str = r##"say "Claude Code (install or update)"
 as_agent 'curl -fsSL https://claude.ai/install.sh | bash'
 as_agent 'claude --version'
+register_chromium
 "##;
 
 const CODEX: &str = r##"say "Codex (install or update)"
 as_agent 'curl -fsSL https://chatgpt.com/codex/install.sh | CODEX_NON_INTERACTIVE=1 sh'
 as_agent 'codex --version'
+register_chromium
+"##;
+
+const CHROMIUM: &str = r##"say "Chromium for agents: headless Chromium and Playwright's MCP server"
+command -v npm >/dev/null 2>&1 || fail "npm is missing. Install the Node.js component first."
+npm install -g --no-fund --no-audit --loglevel=error @playwright/mcp@latest
+mcp=$(npm root -g)/@playwright/mcp
+[ -f "$mcp/cli.js" ] || fail "the Playwright MCP server did not install into $mcp."
+pw=$(node -p 'require("path").dirname(require.resolve("playwright/package.json", { paths: [process.argv[1]] }))' "$mcp")/cli.js
+export PLAYWRIGHT_BROWSERS_PATH=/opt/mango/ms-playwright
+install -d -m 0755 /opt/mango "$PLAYWRIGHT_BROWSERS_PATH"
+say "Chromium and the libraries it needs (Playwright's own build)"
+node "$pw" install --with-deps chromium
+chmod -R a+rX "$PLAYWRIGHT_BROWSERS_PATH"
+chrome=$(find "$PLAYWRIGHT_BROWSERS_PATH" -path '*/chromium-*/chrome-linux*/chrome' -type f 2>/dev/null | sort -V | tail -n 1 || true)
+[ -n "$chrome" ] || fail "Playwright did not leave a Chromium in $PLAYWRIGHT_BROWSERS_PATH."
+install -d -m 0755 /usr/local/lib/mango
+ln -sfn "$chrome" /usr/local/lib/mango/chromium
+# A plain `chromium` for scripts (`chromium --headless --screenshot`), unless one of someone else's is there.
+if [ ! -e /usr/local/bin/chromium ] || [ "$(readlink /usr/local/bin/chromium)" = /usr/local/lib/mango/chromium ]; then
+  ln -sfn /usr/local/lib/mango/chromium /usr/local/bin/chromium
+fi
+node_bin=$(command -v node)
+put /usr/local/bin/mango-chromium-mcp 0755 <<EOF || true
+#!/bin/sh
+# Added by Mango: Playwright's MCP server with a headless Chromium, for the agents.
+# Isolated profile, so several chats can use it at once; files it names itself go to /tmp.
+export PLAYWRIGHT_BROWSERS_PATH=$PLAYWRIGHT_BROWSERS_PATH
+exec $node_bin $mcp/cli.js --browser chromium --headless --isolated --no-sandbox \\
+  --viewport-size 1440x900 --output-dir "\${TMPDIR:-/tmp}/mango-chromium-\$(id -u)" "\$@"
+EOF
+as_agent '/usr/local/lib/mango/chromium --version'
+register_chromium
+echo "Agents in this environment can use the chromium MCP tools (open a page, snapshot, screenshot)."
 "##;
 
 const DESKTOP: &str = r##"say "Desktop: XFCE, TigerVNC and noVNC (localhost only)"
@@ -427,6 +509,10 @@ if id -u agent >/dev/null 2>&1 && [ -d /home/agent/work ] && command -v git >/de
 fi
 command -v node >/dev/null 2>&1 && row node "$(node --version 2>/dev/null | first)"
 command -v gh >/dev/null 2>&1 && row gh "$(gh --version 2>/dev/null | first)"
+if [ -x /usr/local/bin/mango-chromium-mcp ]; then
+  v=$(/usr/local/lib/mango/chromium --version 2>/dev/null | first)
+  row chromium "${v:-installed}"
+fi
 if [ -f /etc/systemd/system/mango-vnc.service ] && [ -f /etc/systemd/system/mango-novnc.service ] && command -v Xvnc >/dev/null 2>&1; then
   row desktop "$(dpkg-query -W -f='${Version}' xfce4-session 2>/dev/null || echo installed)"
 fi
@@ -581,6 +667,28 @@ mod tests {
     }
 
     #[test]
+    fn chromium_installs_with_node_and_registers_the_mcp_server() {
+        assert_eq!(order(&["chromium"]), ["base", "node", "chromium"]);
+        // Asked together, the agents come first, so the Chromium step registers with both.
+        assert_eq!(order(&["chromium", "codex", "claude"]), ["base", "node", "claude", "codex", "chromium"]);
+        let p = install_plan(&host(None), "dev", &ids(&["chromium"])).unwrap();
+        assert!(p.script.contains("@playwright/mcp@latest"));
+        assert!(p.script.contains("install --with-deps chromium"));
+        assert!(p.script.contains("--browser chromium --headless --isolated"));
+        assert!(p.script.contains("claude mcp add --scope user chromium -- /usr/local/bin/mango-chromium-mcp"));
+        assert!(p.script.contains("[mcp_servers.chromium]"));
+        assert!(p.script.contains("picture_note /home/agent/.claude/CLAUDE.md"));
+        assert!(p.script.contains("picture_note /home/agent/.codex/AGENTS.md"));
+        // Node's script runs before Chromium's, and the register helper is defined before both.
+        assert!(p.script.find("deb.nodesource.com").unwrap() < p.script.find("@playwright/mcp").unwrap());
+        assert!(p.script.find("register_chromium() {").unwrap() < p.script.find("deb.nodesource.com").unwrap());
+        // Claude Code and Codex installed later still pick it up.
+        let p = install_plan(&host(None), "dev", &ids(&["claude"])).unwrap();
+        assert!(p.script.contains("claude --version'\nregister_chromium\n"));
+        assert!(!p.script.contains("@playwright/mcp"));
+    }
+
+    #[test]
     fn tailscale_tags_and_key() {
         let ts = EnvTailscale { tags: vec!["tag:mango".into(), "tag:dev".into()], auth_key_file: Some("~/.ts-key".into()) };
         let p = install_plan(&host(Some(ts)), "dev-1", &ids(&["tailscale"])).unwrap();
@@ -662,7 +770,7 @@ mod tests {
     #[test]
     fn probe_output() {
         let out = "base\tUbuntu 24.04.1 LTS\nclaude\t2.0.31 (Claude Code)\ncodex\tcodex-cli 0.46.0\nnode\tv22.11.0\n\
-                   gh\tgh version 2.62.0 (2024-11-14)\ndesktop\t4.18.3-1ubuntu1\nnoise line\n";
+                   gh\tgh version 2.62.0 (2024-11-14)\nchromium\tChromium 143.0.7499.4 \ndesktop\t4.18.3-1ubuntu1\nnoise line\n";
         let c = parse_probe(out);
         let get = |id: &str| c.iter().find(|x| x.id == id).unwrap();
         assert_eq!(c.len(), RECIPES.len());
@@ -672,6 +780,11 @@ mod tests {
         assert_eq!(get("node").version.as_deref(), Some("22.11.0"));
         assert_eq!(get("gh").version.as_deref(), Some("2.62.0"));
         assert_eq!(get("desktop").version.as_deref(), Some("4.18.3"));
+        assert_eq!(get("chromium").version.as_deref(), Some("143.0.7499.4"));
+        assert_eq!(get("chromium").requires, ["base", "node"]);
+        let c = parse_probe("chromium\tinstalled\n");
+        let chromium = c.iter().find(|x| x.id == "chromium").unwrap();
+        assert!(chromium.installed && chromium.version.is_none());
         assert!(!get("tailscale").installed && get("tailscale").version.is_none());
         assert_eq!(get("claude").requires, ["base"]);
         assert_eq!(upstream_version("1:2.3-4"), "2.3");

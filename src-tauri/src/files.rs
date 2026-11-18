@@ -593,7 +593,7 @@ printf 'deleted\n'
     }
 
     /// `<size> <mtime>\n` and what follows it.
-    pub(super) fn header(body: &[u8]) -> Option<(u64, u64, &[u8])> {
+    pub(crate) fn header(body: &[u8]) -> Option<(u64, u64, &[u8])> {
         let nl = body.iter().position(|b| *b == b'\n')?;
         let line = std::str::from_utf8(&body[..nl]).ok()?;
         let (size, mtime) = line.split_once(' ')?;

@@ -1,9 +1,10 @@
 import { call } from '~/composables/useBackend'
 
 /**
- * Pictures in agent replies: `![alt](path)` pointing at a file on this computer. Web
- * addresses are never fetched (a picture URL can carry data out of the chat), only local
- * files, read through `chat_image`, which accepts real raster images and nothing else.
+ * Pictures in agent replies: `![alt](path)` pointing at a file on this computer, or inside
+ * the environment for a remote project (`env://…`). Web addresses are never fetched (a picture
+ * URL can carry data out of the chat), only files, read through `chat_image`, which accepts
+ * real raster images and nothing else.
  */
 
 export type ChatImageState =
@@ -42,9 +43,6 @@ export function localImagePath(href: string): string | null {
   if (/^[a-z][a-z0-9+.-]*:/i.test(h) || h.startsWith('//')) return null
   return h
 }
-
-/** Can pictures be read for a chat in `base`? Not for remote projects (`env://…`): their files are not on this computer. */
-export const localBase = (base: string | null | undefined) => !base || !/^[a-z][a-z0-9+.-]*:\/\//i.test(base)
 
 const keyOf = (path: string, base: string | null) => `${base ?? ''}\n${path}`
 

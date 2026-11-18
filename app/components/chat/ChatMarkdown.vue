@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Marked } from 'marked'
 import type { Attachment } from '~/types/chat'
-import { chatImage, localBase, localImagePath } from '~/utils/chatImages'
+import { chatImage, localImagePath } from '~/utils/chatImages'
 import { openImage } from '~/utils/imageViewer'
 import { baseName } from '~/utils/paths'
 import { useBrowser } from '~/stores/browser'
@@ -9,8 +9,8 @@ import { useBrowser } from '~/stores/browser'
 /**
  * Renders agent markdown. Raw HTML in the source is escaped, never injected:
  * agent output is untrusted text. Pictures (`![alt](path)`) are shown only from
- * files on this computer, never fetched from the web; `base` is the chat's project
- * folder, for relative paths. A link to a dev server on this computer (localhost and the
+ * files on this computer, or inside the environment for a remote project, never fetched
+ * from the web; `base` is the chat's project folder, for relative paths. A link to a dev server on this computer (localhost and the
  * like) opens in Mango's browser beside the chat; other links open as they always have.
  */
 const props = defineProps<{ text: string; streaming?: boolean; base?: string | null; threadId?: string | null }>()
@@ -30,7 +30,7 @@ const md = new Marked({
       return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${text}</a>`
     },
     image({ href, text }) {
-      const path = localBase(props.base) ? localImagePath(href) : null
+      const path = localImagePath(href)
       if (!path) return escape(text)
       const name = text.trim() || baseName(path)
       const s = chatImage(path, props.base ?? null)
