@@ -10,6 +10,7 @@ import { ChatQuestion } from './ChatQuestion'
 import { ChatSteps, ChatThinking, type Step } from './ChatSteps'
 import { ChatTool } from './ChatTool'
 import { formatDuration } from './time'
+import { useThreads } from '@/state/threads'
 
 /** Which tool rows show, as the desktop's Settings > Behaviour. Approvals, questions and errors always show. */
 export type ToolCallsMode = 'all' | 'hide-ok' | 'hide' | 'zen'
@@ -76,6 +77,8 @@ function formatSize(bytes: number): string {
  * "Worked for" line once the turn is over.
  */
 export function ChatMessage({ message, thread, last = false, toolCalls = 'all', onResolveApproval, onAnswerQuestion, onOpenChild }: ChatMessageProps) {
+  // Pictures in replies are read where the chat works: its worktree, else the project.
+  const pictureBase = useThreads(st => st.workdirFor(thread.id)) ?? thread.projectPath
   const t = useTheme()
   const s = useStyles()
   const agentName = AGENTS[thread.agent].name
@@ -141,7 +144,7 @@ export function ChatMessage({ message, thread, last = false, toolCalls = 'all', 
           case 'text':
             return (
               <View key={seg.key} style={s.text}>
-                <ChatMarkdown text={p.text} streaming={live && seg.i === lastTextIndex && seg.i === parts.length - 1} />
+                <ChatMarkdown text={p.text} base={pictureBase} streaming={live && seg.i === lastTextIndex && seg.i === parts.length - 1} />
               </View>
             )
         }

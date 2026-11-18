@@ -14,6 +14,7 @@ import {
   AGENT_HOME, asAgent, asAgentPlain, inInstance, line, remotePrefix, utcText,
   validEnvKey, validInstance, validInstanceDir,
 } from './shell'
+import { IMAGE_READ, MAX_IMAGE_BYTES, checkedPicturePath, parsePicture } from './images'
 import { GH_ENV, ghFailure, ghItemArgv, parseGhItem } from './github'
 import type {
   Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
@@ -908,6 +909,15 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       const r = await exec(at, true, GIT_ENV, ['git', ...GIT_OPTS, ...worktreeAddArgs(name, folder)], { timeoutMs: SLOW_TIMEOUT })
       if (r.code !== 0) throw new Error(explainWorktreeAdd(failure(r, 'git worktree add'), name, shown))
       return { path: shown, branch: name, isMain: false }
+    },
+
+    async chatImage(projectPath, path) {
+      const file = checkedPicturePath(path)
+      // Through the batch runner: it hands back stdout as bytes (base64 on the wire), so the picture arrives intact.
+      const [o] = await runAll(placeOf(projectPath), [
+        { argv: ['sh', '-c', IMAGE_READ, 'sh', file, String(MAX_IMAGE_BYTES)], cap: MAX_IMAGE_BYTES + 256 },
+      ])
+      return parsePicture(file, o!)
     },
 
     async ghItem(projectPath, ref) {

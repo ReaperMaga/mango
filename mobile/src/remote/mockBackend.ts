@@ -5,6 +5,8 @@ import { ghFailure, ghItemArgv } from './github'
 import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
+import { checkedPicturePath } from './images'
+import { MOCK_SHOT_PATH, MOCK_SHOT_PNG } from './mockPictures'
 import { parseProjectPath } from './sshBackend'
 import { validInstance, validInstanceDir } from './shell'
 import { safeRef, worktreeFolder } from './git'
@@ -400,6 +402,14 @@ export function createMockBackend(): RemoteBackend {
       if (added.some(w => w.dir === folder)) throw new Error(`${shown} already exists; pick another branch name`)
       worktrees.set(key, [...added, { dir: folder, branch: name }])
       return { path: shown, branch: name, isMain: false }
+    },
+
+    async chatImage(projectPath, path) {
+      parseProjectPath(projectPath)
+      checkedPicturePath(path)
+      await wait(200, 500)
+      if (path !== MOCK_SHOT_PATH) throw new Error(`Could not read ${path}: it does not exist in the environment`)
+      return { data: MOCK_SHOT_PNG, mime: 'image/png', size: Math.floor(MOCK_SHOT_PNG.length * 3 / 4) }
     },
 
     async ghItem(projectPath, ref) {

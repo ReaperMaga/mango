@@ -134,7 +134,7 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   user watches. The frontend only names a tool id; never build an install command line from webview input.
 - Agent output is untrusted text: `ChatMarkdown.vue` escapes raw HTML. Do not weaken that. Pictures in a
   reply (`![alt](path)`) come only from local files (or, in a remote project, files inside its environment)
-  through `chat_image`, which reads nothing but real raster images; never fetch a picture URL from the web (it can carry data out of the chat). A pull request's
+  through `chat_image`, which reads nothing but real raster images (the phone app runs the same script, `mobile/src/remote/images.ts`: keep them in step); never fetch a picture URL from the web (it can carry data out of the chat). A pull request's
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
   trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.

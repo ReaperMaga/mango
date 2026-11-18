@@ -1,5 +1,7 @@
 import { call } from '~/composables/useBackend'
 
+export { localImagePath } from './imagePaths'
+
 /**
  * Pictures in agent replies: `![alt](path)` pointing at a file on this computer, or inside
  * the environment for a remote project (`env://…`). Web addresses are never fetched (a picture
@@ -19,30 +21,6 @@ const RETRY_MS = 5000
 const settled = shallowReactive(new Map<string, ChatImageState>())
 /** Loads in flight. Not reactive: starting a load must not dirty the render that asked for it. */
 const inFlight = new Set<string>()
-
-/**
- * The local file a markdown image points at; null for web addresses, data URLs and anything
- * else that is not a plain path. Takes `file://` URLs, Windows and POSIX absolute paths, and
- * relative paths (resolved against the chat's project folder by the backend).
- */
-export function localImagePath(href: string): string | null {
-  let h = href.trim()
-  if (!h) return null
-  if (/^file:/i.test(h)) {
-    try {
-      const u = new URL(h)
-      let p = decodeURIComponent(u.pathname)
-      if (/^\/[a-z]:\//i.test(p)) p = p.slice(1)
-      return u.host ? `//${u.host}${p}` : p
-    } catch {
-      return null
-    }
-  }
-  try { h = decodeURIComponent(h) } catch { /* keep it as written */ }
-  if (/^[a-z]:[\\/]/i.test(h)) return h
-  if (/^[a-z][a-z0-9+.-]*:/i.test(h) || h.startsWith('//')) return null
-  return h
-}
 
 const keyOf = (path: string, base: string | null) => `${base ?? ''}\n${path}`
 

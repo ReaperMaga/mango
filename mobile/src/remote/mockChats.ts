@@ -1,6 +1,7 @@
 import type { LinkedItem, Message, Part, Thread } from '~/types/chat'
 import type { GhState } from './github'
 import { demoThreads } from '~/utils/demoThreads'
+import { MOCK_SHOT_PATH } from './mockPictures'
 
 /**
  * The chats the web preview's environments hold before anyone writes one: a few per project, each
@@ -228,6 +229,13 @@ const SEEDS: Record<string, Seed[]> = {
           [
             { type: 'tool', tool: 'edit', target: 'src/components/ReviewList.tsx', status: 'ok', summary: '+14 −1' },
             { type: 'text', text: 'Added: three skeleton rows, the same height as a review, while a page loads. They respect reduced motion (no shimmer).' },
+          ],
+        ],
+        [
+          'Show me how it looks on a phone.',
+          [
+            { type: 'tool', tool: 'web', target: 'browser_take_screenshot', status: 'ok', summary: '360×480' },
+            { type: 'text', text: `The product page at 360 px wide, with the first reviews and the skeleton rows below them:\n\n![Product page on a phone](${MOCK_SHOT_PATH})\n\nThe reviews start below the fold, so the page paints before any of them load.` },
           ],
         ],
       ],

@@ -4,19 +4,25 @@ import { Check } from 'lucide-react-native'
 import { lexer, type Token, type Tokens } from 'marked'
 import { fonts, fontSize, makeStyles, radius, space, useReducedMotion, type, useTheme } from '@/theme'
 import { Text } from '@/ui'
+import { localImagePath } from '~/utils/imagePaths'
+import { ChatPicture } from './ChatPicture'
 
 /**
  * Agent markdown, drawn natively by walking `marked`'s tokens (the desktop renders the same
  * tokens to HTML in `ChatMarkdown.vue`). Agent output is untrusted text, so:
  * - raw HTML is shown as the literal text it is, never interpreted;
  * - links open only when they are http(s), in the system browser; anything else stays text;
- * - pictures (`![alt](src)`) show their alt text only: nothing is fetched, a remote picture URL
- *   could carry data out of the chat.
+ * - pictures (`![alt](path)`) are shown only from files inside the chat's environment (a
+ *   screenshot the agent took there), read through `backend.chatImage`, which accepts nothing but
+ *   real raster images. Web addresses are never fetched (a picture URL can carry data out of the
+ *   chat): those, and every picture when there is no `base`, show their alt text only.
  */
 export interface ChatMarkdownProps {
   text: string
   /** Still being written: a Ripe Mango caret blinks at the end. */
   streaming?: boolean
+  /** The chat's folder in its environment (`env://…`): pictures are read there. None: alt text only. */
+  base?: string | null
 }
 
 const SAFE_LINK = /^https?:\/\//i
@@ -34,7 +40,7 @@ function decode(s: string): string {
   })
 }
 
-export function ChatMarkdown({ text, streaming = false }: ChatMarkdownProps) {
+export function ChatMarkdown({ text, streaming = false, base = null }: ChatMarkdownProps) {
   const s = useStyles()
   const tokens = useMemo(() => {
     try {
@@ -45,28 +51,73 @@ export function ChatMarkdown({ text, streaming = false }: ChatMarkdownProps) {
   }, [text])
   if (!tokens) return <Text variant="chat" selectable>{text}</Text>
   const blocks = tokens.filter(t => t.type !== 'space' && t.type !== 'def')
-  return <View style={s.root}>{renderBlocks(blocks, s, streaming)}</View>
+  return <View style={s.root}>{renderBlocks(blocks, { s, base }, streaming)}</View>
 }
 
 type S = ReturnType<typeof useStyles>
+/** What every block needs: the styles, and where pictures are read. */
+interface Ctx { s: S; base: string | null }
+
+/** A picture the environment can show: a local path in a chat that has one. */
+function pictureOf(tk: Token, base: string | null): { path: string; name: string } | null {
+  if (tk.type !== 'image' || !base) return null
+  const t = tk as Tokens.Image
+  const path = localImagePath(t.href)
+  if (!path) return null
+  return { path, name: t.text.trim() || path.split('/').filter(Boolean).pop() || 'Picture' }
+}
+
+type Run = { kind: 'text'; tokens: Token[] } | { kind: 'picture'; path: string; name: string }
+
+/** A paragraph's inline tokens, split around its pictures (a picture cannot sit inside a line of text here). */
+function runsOf(tokens: Token[], base: string | null): Run[] {
+  const runs: Run[] = []
+  for (const tk of tokens) {
+    const pic = pictureOf(tk, base)
+    if (pic) { runs.push({ kind: 'picture', ...pic }); continue }
+    const last = runs[runs.length - 1]
+    if (last?.kind === 'text') last.tokens.push(tk)
+    else runs.push({ kind: 'text', tokens: [tk] })
+  }
+  // The line breaks and spaces between pictures are not text of their own.
+  return runs.filter(r => r.kind === 'picture' || r.tokens.some(t => t.raw.trim() !== ''))
+}
 
 /** Blocks in order; the caret goes at the end of the last one that is text, else on its own after. */
-function renderBlocks(tokens: Token[], s: S, caret: boolean): ReactNode[] {
+function renderBlocks(tokens: Token[], c: Ctx, caret: boolean): ReactNode[] {
   const out: ReactNode[] = []
   tokens.forEach((tk, i) => {
     const last = i === tokens.length - 1
-    out.push(block(tk, `b${i}`, s, caret && last, i === 0, last))
+    out.push(block(tk, `b${i}`, c, caret && last, i === 0, last))
   })
   if (caret && !tokens.length) out.push(<Caret key="caret" />)
   return out
 }
 
-function block(tk: Token, key: string, s: S, caret: boolean, first: boolean, last: boolean): ReactNode {
+function block(tk: Token, key: string, c: Ctx, caret: boolean, first: boolean, last: boolean): ReactNode {
+  const { s } = c
   const edge = [first && s.first, last && s.last]
   switch (tk.type) {
     case 'paragraph':
     case 'text': {
       const t = tk as Tokens.Paragraph | Tokens.Text
+      const runs = t.tokens && c.base ? runsOf(t.tokens, c.base) : null
+      if (runs?.some(r => r.kind === 'picture')) {
+        const end = runs[runs.length - 1]!
+        return (
+          <View key={key} style={[s.p, ...edge]}>
+            {runs.map((r, i) => r.kind === 'picture'
+              ? <ChatPicture key={i} base={c.base!} path={r.path} name={r.name} />
+              : (
+                  <Text key={i} variant="chat" selectable>
+                    {inline(r.tokens, s, `${key}-${i}`)}
+                    {caret && r === end ? <CaretText /> : null}
+                  </Text>
+                ))}
+            {caret && end.kind === 'picture' ? <Caret /> : null}
+          </View>
+        )
+      }
       return (
         <Text key={key} variant="chat" selectable style={[s.p, ...edge]}>
           {t.tokens ? inline(t.tokens, s, key) : decode(t.text)}
@@ -98,7 +149,7 @@ function block(tk: Token, key: string, s: S, caret: boolean, first: boolean, las
       const t = tk as Tokens.Blockquote
       return (
         <View key={key} style={[s.quote, ...edge]}>
-          {renderBlocks(t.tokens.filter(x => x.type !== 'space'), s, caret)}
+          {renderBlocks(t.tokens.filter(x => x.type !== 'space'), c, caret)}
         </View>
       )
     }
@@ -115,7 +166,7 @@ function block(tk: Token, key: string, s: S, caret: boolean, first: boolean, las
                 {item.task
                   ? <TaskBox checked={!!item.checked} />
                   : <Text variant="chat" style={s.marker} tabular>{t.ordered ? `${start + i}.` : '•'}</Text>}
-                <View style={s.itemBody}>{renderBlocks(body, s, caret && lastItem)}</View>
+                <View style={s.itemBody}>{renderBlocks(body, c, caret && lastItem)}</View>
               </View>
             )
           })}
@@ -208,7 +259,7 @@ function inline(tokens: Token[], s: S, prefix: string): ReactNode[] {
         )
       }
       case 'image': {
-        // Alt text only: never fetch a picture from the agent's output.
+        // Alt text only: a web picture is never fetched, and a local one shows only on its own (runsOf).
         const alt = (tk as Tokens.Image).text.trim()
         return <Text key={key} style={s.alt}>{alt || 'Picture'}</Text>
       }
