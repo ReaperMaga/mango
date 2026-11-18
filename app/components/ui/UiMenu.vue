@@ -15,6 +15,8 @@ const props = withDefaults(defineProps<{
   label?: string
   /** Cap on the list's height; longer lists scroll. Without it the menu may fill the space to the window edge. */
   maxHeight?: number
+  /** Grow past `width` to fit the longest row, up to this many pixels (and the window). Without it the width is fixed. */
+  maxWidth?: number
 }>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
 
 const open = ref(false)
@@ -23,6 +25,8 @@ useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
 const list = ref<HTMLElement | null>(null)
 const active = ref(-1)
+/* Set once the keyboard moves the highlight: only then does the highlighted row show its remove button (the pointer shows it on hover). */
+const keyed = ref(false)
 const pos = ref<{ left: number; top?: number; bottom?: number; origin: string; maxHeight: number }>({ left: 0, top: 0, origin: 'top left', maxHeight: 400 })
 
 const hasIcons = computed(() => props.items.some(i => i.icon))
@@ -42,7 +46,9 @@ function place() {
     : el.getBoundingClientRect()
   const vw = window.innerWidth
   const vh = window.innerHeight
-  const width = Math.min(props.width, vw - MARGIN * 2)
+  // A menu that fits its rows is measured once it is in the page; before that it is placed at its minimum.
+  const measured = props.maxWidth && list.value ? list.value.offsetWidth : props.width
+  const width = Math.min(measured, vw - MARGIN * 2)
   const wantTop = props.placement.startsWith('top')
   const alignEnd = props.placement.endsWith('end')
   const spaceBelow = vh - r.bottom - GAP - MARGIN
@@ -71,6 +77,7 @@ function showAt(x: number, y: number) {
 }
 async function show(at: { x: number; y: number } | null = null) {
   point = at
+  keyed.value = false
   place()
   open.value = true
   active.value = props.items.findIndex(i => i.checked && !i.disabled)
@@ -110,6 +117,7 @@ function runRemove(i: number) {
 function onKey(e: KeyboardEvent) {
   if ((e.key === 'Delete' || e.key === 'Backspace') && props.items[active.value]?.remove) { e.preventDefault(); runRemove(active.value); return }
   const at = enabled.value.indexOf(active.value)
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) keyed.value = true
   if (e.key === 'ArrowDown') { e.preventDefault(); active.value = enabled.value[(at + 1) % enabled.value.length] ?? -1 }
   else if (e.key === 'ArrowUp') { e.preventDefault(); active.value = enabled.value[(at - 1 + enabled.value.length) % enabled.value.length] ?? -1 }
   else if (e.key === 'Home') { e.preventDefault(); active.value = enabled.value[0] ?? -1 }
@@ -158,8 +166,11 @@ defineExpose({ show: () => show(), showAt, close, toggle })
           v-if="open"
           ref="list"
           class="menu__pop"
+          :class="{ 'is-fit': maxWidth, 'is-keyed': keyed }"
           :style="{
-            width: `${Math.min(width, 9999)}px`,
+            width: maxWidth ? 'max-content' : `${Math.min(width, 9999)}px`,
+            minWidth: maxWidth ? `${Math.min(width, maxWidth)}px` : undefined,
+            maxWidth: maxWidth ? `min(${maxWidth}px, calc(100vw - 16px))` : undefined,
             left: `${pos.left}px`,
             top: pos.top != null ? `${pos.top}px` : undefined,
             bottom: pos.bottom != null ? `${pos.bottom}px` : undefined,
@@ -188,19 +199,25 @@ defineExpose({ show: () => show(), showAt, close, toggle })
               </span>
               <span class="menu__text">
                 <span class="menu__label">{{ it.label }}</span>
-                <span v-if="it.hint" class="menu__hint">{{ it.hint }}</span>
+                <span v-if="it.hint" class="menu__hint" :class="{ 'is-mono': it.hintMono }">{{ it.hint }}</span>
               </span>
               <span v-if="it.aside" class="menu__aside" :class="{ 'is-mono': it.asideMono }">{{ it.aside }}</span>
-              <Check v-if="it.checked" class="menu__check" />
-              <span v-else-if="it.kbd" class="menu__kbd">{{ it.kbd }}</span>
-              <!-- Not a nested <button> (invalid inside the row); the keyboard reaches it with Delete. -->
-              <span
-                v-if="it.remove"
-                class="menu__remove"
-                :title="`${it.remove.label} (Delete)`"
-                :aria-label="it.remove.label"
-                @click.stop="runRemove(i)"
-              ><X /></span>
+              <!-- A row that can be removed keeps one slot at its end: the check, which gives way to the remove
+                   button while the row is hovered or focused. Not a nested <button> (invalid inside the row);
+                   the keyboard reaches it with Delete. -->
+              <span v-if="it.remove" class="menu__end">
+                <Check v-if="it.checked" class="menu__check" />
+                <span
+                  class="menu__remove"
+                  :title="`${it.remove.label} (Delete)`"
+                  :aria-label="it.remove.label"
+                  @click.stop="runRemove(i)"
+                ><X /></span>
+              </span>
+              <template v-else>
+                <Check v-if="it.checked" class="menu__check" />
+                <span v-else-if="it.kbd" class="menu__kbd">{{ it.kbd }}</span>
+              </template>
             </button>
           </template>
         </div>
@@ -260,21 +277,25 @@ defineExpose({ show: () => show(), showAt, close, toggle })
 .menu__text { flex: 1; min-width: 0; display: grid; }
 .menu__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu__hint { font-size: var(--text-xs); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu__aside { flex: 0 1 auto; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
-.menu__aside.is-mono { font-family: var(--font-mono); }
+.menu__aside { flex: 0 1 auto; text-align: right; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
+.menu__aside.is-mono, .menu__hint.is-mono { font-family: var(--font-mono); }
+/* A menu that fits its rows gives the label its full length; the aside gives way first when the cap is reached. */
+.is-fit .menu__text { flex: 1 1 auto; }
+.is-fit .menu__aside { max-width: none; flex-shrink: 1000; min-width: 64px; }
+.menu__end { flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin-right: -2px; }
+.menu__end > * { grid-area: 1 / 1; }
 .menu__remove {
-  flex: none;
   display: grid;
   place-items: center;
   width: 20px;
   height: 20px;
-  margin-right: -4px;
   border-radius: var(--radius-xs);
   color: var(--fg-subtle);
   visibility: hidden;
 }
 .menu__remove svg { width: 13px; height: 13px; stroke-width: 2; }
-.menu__item.is-active .menu__remove { visibility: visible; }
+.menu__item:hover .menu__remove, .is-keyed .menu__item.is-active .menu__remove { visibility: visible; }
+.menu__item:hover .menu__end .menu__check, .is-keyed .menu__item.is-active .menu__end .menu__check { visibility: hidden; }
 .menu__remove:hover { background: var(--bg-active); color: var(--fg); }
 .menu__check { width: 14px; height: 14px; color: var(--accent-ink); flex: none; }
 .menu__kbd { font-size: var(--text-xs); color: var(--fg-faint); flex: none; }

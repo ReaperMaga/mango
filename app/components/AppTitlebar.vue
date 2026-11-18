@@ -74,9 +74,9 @@ function chooseWhere() {
 const projectItems = computed<MenuItem[]>(() => [
   ...ws.openProjects.map(p => ({
     label: p.name,
-    // One line each: the branch beside the name, or for a remote project where it runs.
-    aside: remotePlace(p.path)?.where ?? (p.branch || undefined),
-    asideMono: !remotePlace(p.path) && !!p.branch,
+    // Under the name: the branch, or for a remote project where it runs.
+    hint: remotePlace(p.path)?.where ?? (p.branch || undefined),
+    hintMono: !remotePlace(p.path) && !!p.branch,
     icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
     checked: p.path === ws.activeProjectPath,
     onSelect: () => ws.setActiveProject(p.path),
@@ -117,7 +117,7 @@ const branchTitle = computed(() => {
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
 
-      <UiMenu :items="projectItems" :width="280" label="Projects">
+      <UiMenu :items="projectItems" :width="280" :max-width="440" label="Projects">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">

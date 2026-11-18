@@ -3,6 +3,8 @@ import type { Component } from 'vue'
 export interface MenuItem {
   label: string
   hint?: string
+  /** `hint` is code (a branch, a path): set it in the monospace face */
+  hintMono?: boolean
   icon?: Component
   checked?: boolean
   disabled?: boolean
