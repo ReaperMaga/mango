@@ -54,7 +54,9 @@ agent adapters and chat types are shared, not copied. Only import types and plai
 - **Security** as on the desktop: host keys are always pinned (share links carry them; a server's is confirmed by
   its fingerprint once); private keys never leave the native side; every value from the UI, a link or a chat file
   passes a validator and reaches the shell only through `quote`; agent output is untrusted (`ChatMarkdown` renders no
-  HTML, opens only http(s) links and fetches no images).
+  HTML, opens only http(s) links and never fetches a picture from the web; a reply's `![alt](path)` is read only from a
+  file inside the environment through `backend.chatImage`, the desktop's `chat_image` script, and shown only when its
+  bytes are a raster image: `src/remote/images.ts`, `src/chat/ChatPicture.tsx`).
 - **iOS kills sockets in the background.** The lifecycle (`src/screens/lifecycle.ts`) flushes chats on the way out
   and resets connections and syncs on the way back; a run cut off must end, never stay "Working".
 - **Design:** tokens only (`src/theme/tokens.ts`, kept in step with `tokens.css`), the impeccable process from the

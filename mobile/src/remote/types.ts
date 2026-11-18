@@ -2,6 +2,7 @@ import type { AgentId } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { SshEndpoint } from '@/ssh/types'
 import type { GhRef, GhState } from './github'
+import type { ChatPicture } from './images'
 
 /**
  * The contract between the app's state/screens and a remote environment. Implemented over SSH
@@ -170,6 +171,13 @@ export interface RemoteBackend {
    * missing or signed out there, or the item is not on github.com.
    */
   ghItem(projectPath: string, ref: GhRef): Promise<GhState>
+
+  /**
+   * A picture an agent's reply points at (`![alt](path)`): a file inside the project's environment,
+   * `path` absolute or relative to `projectPath`. Only real raster images are read (by their bytes,
+   * `images.ts`); rejects with a message a person can act on. The desktop's `chat_image`.
+   */
+  chatImage(projectPath: string, path: string): Promise<ChatPicture>
 
   /**
    * The adapters' process bridge for one agent CLI in a project folder (or the agent's home
