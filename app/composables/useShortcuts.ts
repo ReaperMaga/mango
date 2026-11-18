@@ -66,6 +66,8 @@ export function useShortcuts() {
     if (ws.settings) return
 
     if (e.altKey && e.code === 'KeyN') { e.preventDefault(); void useWindows().openInNewWindow(null); return }
+    // A chat window holds its one chat: new chats are made in a project's window.
+    if (k === 'n' && useWindows().spec.kind === 'chat') { e.preventDefault(); return }
     if (k === 'n' && e.shiftKey) {
       // A chat whose worktree is made from its first message.
       e.preventDefault()

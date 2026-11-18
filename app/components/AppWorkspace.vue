@@ -2,9 +2,11 @@
 import { useWorkspace } from '~/stores/workspace'
 import { ArrowDownToLine } from 'lucide-vue-next'
 import { useFilesSync } from '~/composables/useFilesSync'
-import { terminalDrag } from '~/composables/useTerminalDrag'
+import { draggedTerminal } from '~/composables/useTabDrag'
+import { useWindows } from '~/stores/windows'
 
 const ws = useWorkspace()
+const win = useWindows()
 const column = ref<HTMLElement | null>(null)
 useFilesSync()
 </script>
@@ -12,7 +14,8 @@ useFilesSync()
 <template>
   <div class="workspace">
     <Transition name="rail">
-      <AppSidebar v-if="ws.sidebarOpen" />
+      <!-- A chat window shows its chat alone: no list of the project's chats. -->
+      <AppSidebar v-if="ws.sidebarOpen && win.spec.kind !== 'chat'" />
     </Transition>
     <div ref="column" class="workspace__main">
       <ChatArea class="workspace__chat" />
@@ -21,9 +24,9 @@ useFilesSync()
       </Transition>
       <!-- A terminal dragged out of the main area while the panel is hidden: drop it here to dock it. -->
       <div
-        v-if="terminalDrag.id && terminalDrag.from === 'editor' && !ws.terminalOpen"
+        v-if="draggedTerminal()?.from === 'editor' && !ws.terminalOpen"
         class="workspace__dock-drop"
-        data-term-drop="panel"
+        data-tab-drop="panel"
       >
         <ArrowDownToLine aria-hidden="true" />Move to the terminal panel
       </div>
@@ -32,7 +35,7 @@ useFilesSync()
       <AppToolPanel v-if="ws.toolPanel" />
     </Transition>
     <AppToolStrip />
-    <TerminalDragLayer />
+    <TabDragLayer />
   </div>
 </template>
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
@@ -12,7 +12,8 @@ import { useFiles } from '~/stores/files'
 import { browserTitle, useBrowser, type Browser } from '~/stores/browser'
 import { isBrowserTab, isBlank } from '~/utils/browserTabs'
 import { isTerminalTab, parseTerminalTab } from '~/utils/terminalTabs'
-import { dragJustEnded, pressTerminalTab, terminalDrag } from '~/composables/useTerminalDrag'
+import { dragJustEnded, pressChatTab, pressTerminalTab, tabDrag } from '~/composables/useTabDrag'
+import { useWindows } from '~/stores/windows'
 import { isEnvPath } from '~/utils/envPath'
 import { openExternal } from '~/composables/useBackend'
 import { holdOverlay } from '~/composables/useOverlay'
@@ -26,6 +27,7 @@ const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
 const browsers = useBrowser()
+const win = useWindows()
 const mod = ref('Ctrl')
 onMounted(() => (mod.value = modLabel()))
 
@@ -155,10 +157,15 @@ function onTabClick(id: string) {
   threads.show(id)
 }
 
-/** A terminal's tab can be dragged: within the strip, into a pane, or back to the panel. */
+/**
+ * A terminal's tab can be dragged within the strip, into a pane, or back to the panel; a chat's within
+ * the strip, into a pane, or out of the window into a window of its own.
+ */
 function onTabPress(e: PointerEvent, t: Tab) {
   if (t.kind === 'terminal') pressTerminalTab(e, t.term.id, 'editor')
+  else if (t.kind === 'chat') pressChatTab(e, t.id)
 }
+const isDragged = (t: Tab) => !!tabDrag.item && tabDrag.item.id === (t.kind === 'terminal' ? t.term.id : t.kind === 'chat' ? t.id : null)
 
 function onTabAux(e: MouseEvent, id: string) {
   if (e.button === 1) { e.preventDefault(); threads.closeTab(id) }
@@ -212,6 +219,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     const busy = isBusy(tab.thread)
     items.push(
       splitItem,
+      { ...win.moveChatAction(tab.id), icon: AppWindow },
       { label: 'Mark as settled', icon: CircleCheck, divider: true, disabled: busy || tab.thread.status === 'done', onSelect: () => threads.setStatus(tab.id, 'done') },
       { label: 'Archive chat', icon: Archive, disabled: busy, hint: busy ? 'Still working' : undefined, onSelect: () => ws.confirmThen('archive', { title: 'Archive chat?', body: `“${tab.thread.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(tab.id)) },
     )
@@ -254,7 +262,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 <template>
   <section class="ca">
     <div class="ca__tabs" role="tablist" aria-label="Open chats">
-      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'" data-term-drop="strip">
+      <TransitionGroup tag="div" class="ca__strip" :name="tabMotion ? 'ca-tab' : 'ca-tab-still'" data-tab-drop="strip">
         <div
           v-for="(t, i) in tabs"
           :key="t.id"
@@ -263,7 +271,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             'is-active': threads.activePane.threadId === t.id,
             'is-shown': !!paneOf(t.id),
             'is-b': paneOf(t.id) === 'pane-b',
-            'is-dragged': t.kind === 'terminal' && terminalDrag.id === t.term.id,
+            'is-dragged': isDragged(t),
           }"
           role="tab"
           tabindex="0"
@@ -310,7 +318,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
             @click.stop="threads.closeTab(t.id)"
           ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
         </div>
-        <UiIconButton key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
+        <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat"><Plus /></UiIconButton>
       </TransitionGroup>
       <div class="ca__tools">
         <UiIconButton size="sm" label="New browser tab" :shortcut="`${mod}+Shift+B`" @click="browsers.openNew()"><Globe /></UiIconButton>
@@ -349,7 +357,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
-          data-term-drop="pane"
+          data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
@@ -361,7 +369,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
-          data-term-drop="pane"
+          data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
@@ -373,7 +381,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
-          data-term-drop="pane"
+          data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
@@ -385,7 +393,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
-          data-term-drop="pane"
+          data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"
@@ -396,7 +404,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
           :split="threads.isSplit"
           :active="threads.activePaneId === pane.id"
           :style="threads.isSplit ? { flexBasis: i === 0 ? `calc(${split * 100}% - 0.5px)` : `calc(${(1 - split) * 100}% - 0.5px)` } : undefined"
-          data-term-drop="pane"
+          data-tab-drop="pane"
           :data-pane-id="pane.id"
           @mousedown="threads.focusPane(pane.id)"
           @focusin="threads.focusPane(pane.id)"

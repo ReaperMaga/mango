@@ -91,7 +91,7 @@ const actions = computed<Item[]>(() => {
   const inWorkspace = ws.hasProject
   const dark = ws.resolvedTheme() === 'dark'
   const items: Item[] = []
-  if (project) {
+  if (project && win.spec.kind !== 'chat') {
     items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
       items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
@@ -109,6 +109,13 @@ const actions = computed<Item[]>(() => {
   if (project && (win.isMain || ws.openProjects.length > 1)) {
     const blocked = win.moveBlocker(project)
     items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked?.hint ?? ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
+  }
+  // The chat in front: out into a window of its own, or (its own window) back.
+  const chat = threads.activeThread
+  if (chat) {
+    const move = win.moveChatAction(chat.id)
+    const back = win.isOwnChat(chat.id)
+    items.push({ id: 'chat-window', group: 'Actions', label: back ? 'Return chat to main window' : 'Move chat to new window', detail: move.hint ?? chat.title, icon: AppWindow, keywords: 'window move separate detach tear off pop out second monitor screen', run: move.onSelect })
   }
   items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: [mod, alt, 'N'], keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(

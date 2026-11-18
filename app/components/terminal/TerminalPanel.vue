@@ -8,7 +8,8 @@ import { refreshEnvs } from '~/composables/envProjects'
 import { useEnvironments } from '~/stores/environments'
 import { holdOverlay } from '~/composables/useOverlay'
 import { useThreads } from '~/stores/threads'
-import { dragJustEnded, pressTerminalTab, terminalDrag, terminalSlot } from '~/composables/useTerminalDrag'
+import { terminalSlot } from '~/composables/useTerminalDrag'
+import { dragJustEnded, draggedTerminal, pressTerminalTab } from '~/composables/useTabDrag'
 import { parseTerminalTab } from '~/utils/terminalTabs'
 
 /**
@@ -248,7 +249,7 @@ const profileItems = computed<MenuItem[]>(() => {
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
     aria-label="Terminal"
-    data-term-drop="panel"
+    data-tab-drop="panel"
     @transitionend="onPanelTransitionEnd"
   >
     <div
@@ -279,7 +280,7 @@ const profileItems = computed<MenuItem[]>(() => {
           v-for="(tab, i) in ws.panelTerminals"
           :key="tab.id"
           class="term-tab"
-          :class="{ 'is-active': tab.id === ws.activeTerminalId, 'is-exited': tab.exited, 'is-dragged': terminalDrag.id === tab.id }"
+          :class="{ 'is-active': tab.id === ws.activeTerminalId, 'is-exited': tab.exited, 'is-dragged': draggedTerminal()?.id === tab.id }"
           role="tab"
           :data-tab-id="tab.id"
           :data-term-id="tab.id"

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { appWindow, call, isTauri, on, onWindows, postWindows, windowLabel } from '~/composables/useBackend'
 import {
-  MAIN_WINDOW, claimsFor, holderOf, lostChats, ownerOf, parseWindowQuery, withClaims, withoutWindow,
+  MAIN_WINDOW, claimsFor, holderOf, lostChats, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
   type ChatRef, type Claim, type ClaimTable, type WindowPlace, type WindowSpec,
 } from '~/utils/windows'
 import { flushHistory } from '~/utils/chatHistory'
@@ -54,6 +54,8 @@ function terminalBlocker(path: string): string | null {
 
 const waiting = new Map<string, (m: Message) => void>()
 let reclaimTimer: ReturnType<typeof setTimeout> | null = null
+/** Chats coming back from a chat window that closed: shown as tabs once they are read (`_reclaim`). */
+let returning: string[] = []
 let syncing: Promise<void> = Promise.resolve()
 
 export const useWindows = defineStore('windows', {
@@ -115,6 +117,25 @@ export const useWindows = defineStore('windows', {
     follow() {
       const ws = useWorkspace()
       watch(() => ws.openProjects.map(p => p.path).join('\n'), () => { void this.sync() }, { immediate: true })
+      if (this.spec.kind === 'chat') this._followOwnTab(this.spec.threadId)
+    },
+
+    /** A chat window lives for its chat: closing its tab (or deleting it) gives it back and closes the window. */
+    _followOwnTab(id: string) {
+      const threads = useThreads()
+      let seen = false
+      watch(() => threads.tabs.includes(id), (open) => {
+        if (open) { seen = true; return }
+        if (!seen) return
+        const t = threads.byId(id)
+        if (t && threads.isBusyChat(id)) {
+          // A run cannot follow the chat to another window: keep it here until it is done.
+          threads.show(id)
+          useWorkspace().notify('Still working', `“${t.title}” stays in this window until it is done. Stop it first to return it.`)
+          return
+        }
+        void this.returnChat()
+      }, { immediate: true })
     },
 
     /** Claim what this window has open; give up what it closed. Runs one at a time. */
@@ -193,9 +214,11 @@ export const useWindows = defineStore('windows', {
         const t = threads.byId(busy.rootId) ?? threads.byId(busy.id)
         return `“${t?.title ?? 'A chat'}” is still working in another window. Stop it there first, or wait until it is done.`
       }
-      // A project with shells open here stays here: a terminal cannot move to another window.
+      // A chat window shows its chat's project without holding it: that project stays open there.
       const ws = useWorkspace()
-      for (const p of ws.openProjects) {
+      const projects = this.spec.kind === 'chat' ? [] : [...ws.openProjects]
+      // A project with shells open here stays here: a terminal cannot move to another window.
+      for (const p of projects) {
         const h = holderOf(next, { kind: 'project', key: p.path })
         const shells = h && h !== this.self ? terminalBlocker(p.path) : null
         if (shells) return shells
@@ -207,7 +230,7 @@ export const useWindows = defineStore('windows', {
         void flushRemoteChats()
       }
       // Projects that go to another window leave this one.
-      for (const p of [...ws.openProjects]) {
+      for (const p of projects) {
         const h = holderOf(next, { kind: 'project', key: p.path })
         if (h && h !== this.self) ws.lend(p.path)
       }
@@ -216,8 +239,32 @@ export const useWindows = defineStore('windows', {
 
     /** Read the chats this window now owns but does not hold yet, and take back projects lent out. */
     async _reclaim() {
-      await useThreads().reclaim()
+      const threads = useThreads()
+      await threads.reclaim()
       useWorkspace().takeBackLent()
+      const back = returning
+      returning = []
+      await this._reveal(back.filter(id => threads.byId(id)))
+    },
+
+    /** Chats that came back from their own window: their tabs open here, the last one in front. */
+    async _reveal(ids: string[]) {
+      if (!ids.length || this.spec.kind === 'chat') return
+      const threads = useThreads()
+      const ws = useWorkspace()
+      for (const id of ids) {
+        const t = threads.byId(id)
+        if (!t) continue
+        // Its project was not open here (closed meanwhile): open it again.
+        if (!ws.openProjects.some(p => p.path === t.projectPath)) {
+          try { await ws.openProject(t.projectPath) } catch { continue }
+        }
+        threads.addTab(id)
+      }
+      const last = threads.byId(ids[ids.length - 1])
+      if (!last || !ws.openProjects.some(p => p.path === last.projectPath)) return
+      ws.setActiveProject(last.projectPath)
+      threads.show(last.id)
     },
 
     _reclaimSoon() {
@@ -231,6 +278,7 @@ export const useWindows = defineStore('windows', {
     /** A window is gone: forget its claims; what it held goes to whoever owns it next. */
     _gone(id: string) {
       if (!(id in this.table)) return
+      returning = [...new Set([...returning, ...returningChats(this.table[id])])]
       this.table = withoutWindow(this.table, id)
       this._reclaimSoon()
     },
@@ -371,6 +419,63 @@ export const useWindows = defineStore('windows', {
       if (threads.isBusyChat(root.id)) throw new Error(`“${root.title}” is still working. Stop it first, or wait until it is done.`)
       await flushHistory()
       await call('window_open', { kind: 'chat', threadId: root.id, path: root.projectPath, ...place })
+    },
+
+    /* ---------- a chat in a window of its own ---------- */
+
+    /** Whether `id` is (a sub-agent chat of) this chat window's own chat. */
+    isOwnChat(id: string): boolean {
+      return this.spec.kind === 'chat' && useThreads().rootOf(id)?.id === this.spec.threadId
+    },
+
+    /** The menu entry that moves a chat to a window of its own, or (its own window) back. */
+    moveChatAction(id: string): { label: string; hint?: string; disabled?: boolean; divider?: boolean; onSelect: () => void } {
+      if (this.isOwnChat(id)) return { label: 'Return to main window', divider: true, onSelect: () => void this.returnChat() }
+      const busy = useThreads().isBusyChat(id)
+      return {
+        label: 'Move to new window',
+        divider: true,
+        disabled: busy,
+        hint: busy ? 'Still working' : undefined,
+        onSelect: () => void this.moveChatToWindow(id),
+      }
+    },
+
+    /** `openChatWindow` for a menu, a command or a drop: when it cannot, the user is told why. */
+    async moveChatToWindow(id: string, place: WindowPlace = {}) {
+      try {
+        await this.openChatWindow(id, place)
+      } catch (e) {
+        useWorkspace().notify('Not moved to a new window', e instanceof Error ? e.message : String(e))
+      }
+    },
+
+    /**
+     * A chat's tab was let go outside the window, at `screen`. Its own window's chat goes back when it
+     * lands on another Mango window; any other chat opens in a new window at `place`.
+     */
+    async tearOff(id: string, place: WindowPlace, screen: { x: number; y: number }) {
+      if (!this.isOwnChat(id)) return this.moveChatToWindow(id, place)
+      const under = isTauri() ? await call('window_at', screen).catch(() => null) : null
+      if (under) await this.returnChat()
+    },
+
+    /**
+     * This chat window gives its chat back: to the window that has its project (the main window when
+     * none has), where its tab opens again. The window then closes.
+     */
+    async returnChat() {
+      if (this.spec.kind !== 'chat') return
+      const threads = useThreads()
+      const root = threads.byId(this.spec.threadId)
+      if (root && threads.isBusyChat(root.id)) {
+        useWorkspace().notify('Not returned yet', `“${root.title}” is still working. Stop it first, or wait until it is done.`)
+        return
+      }
+      await flushHistory()
+      const to = root ? ownerOf(withoutWindow(this.table, this.self), { projectPath: root.projectPath, rootId: root.id }) : MAIN_WINDOW
+      await this.focus(to)
+      await appWindow.close()
     },
   },
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AppWindow, ChevronDown, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -33,6 +33,10 @@ onMounted(() => {
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
 onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
+
+/** A window on one chat (stores/windows.ts): no project menu, a way back to the main window instead. */
+const chatWindow = computed(() => win.spec.kind === 'chat')
+const ownBusy = computed(() => win.spec.kind === 'chat' && threads.isBusyChat(win.spec.threadId))
 
 /** The active project when it is a folder inside a remote environment. */
 const remote = computed(() => remotePlace(ws.activeProjectPath))
@@ -137,7 +141,14 @@ const branchTitle = computed(() => {
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
 
-      <UiMenu :items="projectItems" :width="280" :max-width="440" label="Projects">
+      <!-- A chat window: its project, as a plain label, and the way back. -->
+      <template v-if="chatWindow">
+        <span class="tb__widget tb__project tb__project--still" :title="ws.activeProject?.path">
+          <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
+          <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+        </span>
+      </template>
+      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" label="Projects">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
@@ -200,11 +211,21 @@ const branchTitle = computed(() => {
     </div>
 
     <div class="tb__right" data-tauri-drag-region>
+      <button
+        v-if="chatWindow"
+        type="button"
+        class="tb__widget tb__return"
+        :disabled="ownBusy"
+        :title="ownBusy ? 'Still working: it returns once it is done' : 'Close this window and show the chat in the main window again'"
+        @click="win.returnChat()"
+      >
+        <Undo2 aria-hidden="true" />Return to main window
+      </button>
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
       <div class="tb__grp"><AppUsageMeter /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
-        <button type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
+        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
         <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="`Toggle terminal (${mod}+\`)`" @click="ws.toggleTerminal()"><PanelBottom /></button>
         <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="`Toggle tool panel (${mod}+Alt+B)`" @click="ws.toggleToolPanel()"><PanelRight /></button>
       </div>
@@ -260,6 +281,12 @@ const branchTitle = computed(() => {
 .tb__chev { width: 14px; height: 14px; color: var(--fg-subtle); flex: none; }
 
 .tb__project { font-weight: 500; max-width: 240px; }
+.tb__project--still { cursor: default; }
+.tb__project--still:hover { background: none; }
+.tb__return { color: var(--fg-muted); font-size: var(--text-xs); }
+.tb__return:hover:not(:disabled) { color: var(--fg); }
+.tb__return:disabled { opacity: 0.5; cursor: default; }
+.tb__return svg { width: 14px; height: 14px; flex: none; stroke-width: 1.85; }
 .tb__project-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .tb__remote { font-size: var(--text-xs); color: var(--fg-subtle); }
