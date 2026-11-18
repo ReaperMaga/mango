@@ -43,7 +43,9 @@ const WINDOWS_EVENT = 'mango://windows'
 let channel: BroadcastChannel | null = null
 const previewChannel = () => (channel ??= new BroadcastChannel('mango.windows'))
 
-export async function postWindows(message: unknown): Promise<void> {
+export async function postWindows(raw: unknown): Promise<void> {
+  // Plain data only: a store's reactive proxies cannot be cloned into another window.
+  const message: unknown = JSON.parse(JSON.stringify(raw))
   if (isTauri()) {
     const { emit } = await import('@tauri-apps/api/event')
     await emit(WINDOWS_EVENT, message)
