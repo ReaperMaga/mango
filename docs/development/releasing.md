@@ -80,7 +80,20 @@ A run for a tag can only restore caches saved on that tag or on `main`, so a rel
 
 ### macOS signing
 
-The macOS app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"` in `src-tauri/tauri.macos.conf.json`), which Apple Silicon needs to run it at all, but it is not signed with a Developer ID or notarized, so users confirm the first launch in System Settings (see the [install page](../guide/install#macos)). To ship a notarized build, get an Apple Developer ID Application certificate, add Tauri's `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` as secrets and pass them to the macOS builds' `tauri-action` step, and drop `signingIdentity` from the config; see [Tauri's macOS signing guide](https://tauri.app/distribute/sign/macos/).
+The release builds sign the macOS app with a Developer ID Application certificate and notarize it, using these repository secrets (the "Apple signing secrets" step exports only the ones that are set; see [Tauri's macOS signing guide](https://tauri.app/distribute/sign/macos/)):
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | the certificate and its private key as a `.p12`, base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` |
+| `KEYCHAIN_PASSWORD` | any random string, for the build's temporary keychain |
+| `APPLE_ID`, `APPLE_PASSWORD` | the team's Apple ID and an app-specific password for it (appleid.apple.com), for notarization |
+| `APPLE_TEAM_ID` | the 10-character team ID |
+
+Without `APPLE_CERTIFICATE` the app is unsigned; without the notarization secrets it is signed but not notarized, and the run warns either way. The hardened runtime that notarization requires blocks the microphone unless the app asks for it, so `src-tauri/Entitlements.plist` carries `com.apple.security.device.audio-input` for dictation. Local builds are not signed.
+
+Make the `.p12` with `openssl pkcs12 -export -legacy …` (macOS cannot read OpenSSL 3's default format) and encode it with `base64 -i cert.p12`. The certificate expires (the date shows in Keychain Access): before then, create a new one at developer.apple.com and replace the first three secrets.
 
 ## Documentation
 

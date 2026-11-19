@@ -6,7 +6,8 @@
 #
 # The tag must match package.json (`pnpm bump X.Y.Z` sets every copy of the version).
 # Needs the repository secret TAURI_SIGNING_PRIVATE_KEY (and _PASSWORD if the key has
-# one): the in-app updater only installs bundles signed with it.
+# one): the in-app updater only installs bundles signed with it. The macOS app is signed and
+# notarized with the APPLE_* secrets (see docs/development/releasing.md).
 name: Release
 
 on:
@@ -152,6 +153,31 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # Developer ID signing and notarization. Only the secrets that are set are exported:
+      # Tauri treats an empty APPLE_ID as set and would fail to notarize with it.
+      - name: Apple signing secrets
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD \
+                      APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
+            value="${!name}"
+            [ -n "$value" ] || continue
+            { echo "$name<<APPLE_EOF"; echo "$value"; echo "APPLE_EOF"; } >> "$GITHUB_ENV"
+          done
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::No APPLE_CERTIFICATE secret: the macOS app is not signed."
+          elif [ -z "$APPLE_ID" ] || [ -z "$APPLE_PASSWORD" ] || [ -z "$APPLE_TEAM_ID" ]; then
+            echo "::warning::APPLE_ID, APPLE_PASSWORD or APPLE_TEAM_ID missing: the macOS app is signed but not notarized."
+          fi
+
       - name: Build and upload
         uses: tauri-apps/tauri-action@v1
         env:
@@ -162,7 +188,7 @@ jobs:
         with:
           tauriScript: pnpm tauri
           # Updater bundles + .sig files are made only here, so local builds need no key.
-          # macOS is ad-hoc signed (tauri.macos.conf.json), not notarized.
+          # macOS is signed with the Developer ID and notarized (the step above).
           args: --config src-tauri/tauri.updater.conf.json ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
           releaseId: ${{ needs.prepare.outputs.release-id }}
           # latest.json: what the in-app updater reads from the latest release.
