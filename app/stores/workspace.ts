@@ -509,6 +509,31 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
+    /**
+     * The main window was closed while others are open (it is hidden, see `stores/windows.ts`):
+     * it lets go of its projects, so the other windows may open them, and of the ones it lent.
+     */
+    park() {
+      this.openProjects = []
+      this.lent = []
+      this.activeProjectPath = null
+      this.settings = null
+      this.persist()
+    },
+
+    /**
+     * The last window on screen is closing while the main window is parked: its projects become
+     * the ones the main window reopens next time Mango starts.
+     */
+    handOverSession() {
+      try {
+        const stored = loadPrefs()
+        stored.openProjects = this.openProjects.map(p => p.path)
+        stored.activeProjectPath = this.activeProjectPath
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to reopen */ }
+    },
+
     async refreshRecent() {
       this.recent = mergeRecent(await call('recent_projects').catch(() => this.recent))
     },
