@@ -18,6 +18,12 @@ export interface SpawnHandlers {
   onLine(line: string): void
   onStderr?(line: string): void
   onExit?(code: number | null): void
+  /**
+   * A run in a remote environment lost its connection (`'lost'`) and is reattaching, or got it
+   * back (`'back'`). The run keeps going in the environment meanwhile: no output is lost, and
+   * `onExit` comes only when it really ends. Adapters need not handle this; the runner shows it.
+   */
+  onConnection?(state: 'lost' | 'back'): void
 }
 
 /** Starts the agent's CLI with `args` in `cwd`. Handlers are attached before any output can arrive. */

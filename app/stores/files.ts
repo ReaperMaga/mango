@@ -68,6 +68,9 @@ export interface OpenFile {
 
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
 
+/** The backend's words for a folder that is not there (any more): unlike a failed connection, not passing. */
+const gone = (why: string) => /no longer exists|is not a folder|links to a place outside/.test(why)
+
 const newTree = (): ProjectTree => ({ dirs: {}, expanded: [], selected: null })
 const newDir = (): DirState => ({ entries: null, loading: false, error: null, truncated: false, ahead: false, readAt: 0 })
 
@@ -166,12 +169,16 @@ export const useFiles = defineStore('files', {
         if (ahead) state.ahead = true
         for (const sub of got.ahead ?? []) this._seed(projectPath, sub, asked)
       } catch (e) {
-        // A folder that went away (deleted, branch switched) closes quietly.
-        if (dir && quiet) {
+        const why = reason(e)
+        if (quiet && state.entries && !gone(why)) {
+          // A connection that dropped (a remote project) or another passing failure: keep what is
+          // shown, the next refresh (or the connection coming back) reads it again.
+        } else if (dir && quiet) {
+          // A folder that went away (deleted, branch switched) closes quietly.
           delete tree.dirs[dir]
           tree.expanded = tree.expanded.filter(d => d !== dir && !d.startsWith(`${dir}/`))
         } else {
-          state.error = reason(e)
+          state.error = why
         }
       } finally {
         state.loading = false

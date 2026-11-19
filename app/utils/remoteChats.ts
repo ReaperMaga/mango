@@ -179,6 +179,15 @@ function report(e: EnvRemote, what: string, err: unknown) {
   console.warn(`Mango could not ${what} the chats kept in ${e.instance}:`, err)
 }
 
+/**
+ * The connection to `hostId` is back: failures from now on are worth a warning again (each is
+ * reported once), and what waits to be sent goes now rather than at the end of its retry wait.
+ */
+export function connectionBack(hostId: string): Promise<void> {
+  for (const key of [...reported]) if (key.startsWith(`${hostId}/`)) reported.delete(key)
+  return flushRemoteChats()
+}
+
 /** Start mirroring; sends left over from last time go out soon. */
 export function attachRemoteChats(s: RemoteSource) {
   source = s

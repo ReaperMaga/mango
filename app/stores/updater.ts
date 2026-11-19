@@ -37,6 +37,8 @@ export const useUpdater = defineStore('updater', {
     lastChecked: null as number | null,
     autoCheck: loadPrefs().autoCheck ?? true,
     started: false,
+    /** The last background check failed (offline, most likely): checked again when the network is back. */
+    missed: false,
   }),
 
   getters: {
@@ -82,6 +84,7 @@ export const useUpdater = defineStore('updater', {
       try {
         this.update = await call('update_check')
         this.lastChecked = Date.now()
+        this.missed = false
         this.error = null
         this.installFailed = false
         this.phase = this.update ? 'available' : 'idle'
@@ -92,8 +95,14 @@ export const useUpdater = defineStore('updater', {
           this.phase = 'error'
         } else {
           this.phase = before === 'checking' ? 'idle' : before
+          this.missed = true
         }
       }
+    },
+
+    /** The network is back: a background check that failed meanwhile goes again now, not in an hour. */
+    recheck() {
+      if (this.missed && this.autoCheck && !import.meta.dev) void this.check()
     },
 
     /** Download, install and restart. Only resolves if something went wrong. */

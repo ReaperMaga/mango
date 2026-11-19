@@ -5,6 +5,7 @@ import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
 import { useWindows } from '~/stores/windows'
+import { useConnectivity } from '~/stores/connectivity'
 import { on } from '~/composables/useBackend'
 
 const ws = useWorkspace()
@@ -14,6 +15,10 @@ const win = useWindows()
 const ready = ref(false)
 // Remote projects' chats, kept in their environments: looked at once the chats and projects are loaded.
 useRemoteChatSync(ready)
+// Which environments' servers are reachable; what a dropped connection broke picks up when one is back.
+const connectivity = useConnectivity()
+onMounted(() => { void connectivity.start() })
+onBeforeUnmount(() => connectivity.stop())
 
 onMounted(async () => {
   // First what the other windows hold: this window loads only the chats it owns (stores/windows.ts).
