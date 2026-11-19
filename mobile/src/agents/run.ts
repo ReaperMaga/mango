@@ -1,4 +1,4 @@
-import type { AgentId, Attachment, QuestionAnswers } from '~/types/chat'
+import type { AgentId, Attachment, ContextUsage, QuestionAnswers } from '~/types/chat'
 import type { AgentAdapter, AgentRun, SpawnFn } from '~/agents/types'
 import { claudeAdapter } from '~/agents/claude'
 import { codexAdapter } from '~/agents/codex'
@@ -55,6 +55,15 @@ export function steerRun(threadId: string, text: string, attachments: Attachment
 }
 
 /** Stop one background task or sub-agent of the chat's run (the id of its task or of the call that started it). */
+/**
+ * How full the conversation `sessionId` is, read in `workdir` without a turn (the desktop's
+ * `readAgentContext`). Null for agents that cannot say without one (Codex).
+ */
+export function readAgentContext(agent: AgentId, workdir: string, sessionId: string, model: string): Promise<ContextUsage | null> {
+  const adapter = adapters[agent]
+  return adapter.readContext ? adapter.readContext(backend.spawnFor(agent, workdir), sessionId, model) : Promise.resolve(null)
+}
+
 export function stopTask(threadId: string, id: string) {
   runs.get(threadId)?.run.stopTask?.(id)
 }

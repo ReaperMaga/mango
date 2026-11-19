@@ -64,6 +64,13 @@ export const darkColors: Colors = {
   chipError: 'rgba(255, 125, 124, 0.14)',
 
   brandClaude: '#d97757',
+
+  fileBlue: '#5eaceb',
+  fileYellow: '#e7c952',
+  fileOrange: '#f78955',
+  fileGreen: '#6fc884',
+  filePurple: '#b093e5',
+  fileRed: '#ed7473',
 }
 
 export const lightColors: Colors = {
@@ -125,6 +132,13 @@ export const lightColors: Colors = {
   chipError: 'rgba(183, 24, 36, 0.14)',
 
   brandClaude: '#d97757',
+
+  fileBlue: '#1f74bf',
+  fileYellow: '#c28f00',
+  fileOrange: '#d16022',
+  fileGreen: '#2d8949',
+  filePurple: '#8059bb',
+  fileRed: '#c8393a',
 }
 
 export const darkShadows: Shadows = {

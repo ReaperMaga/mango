@@ -48,6 +48,9 @@ pub struct EnvCreateInput {
     pub disk_gib: Option<u32>,
     /// Component ids to install once it is up (see `recipes`).
     pub components: Vec<String>,
+    /// Versions picked for some of them (Node.js, Java), by component id.
+    #[serde(default)]
+    pub versions: recipes::Versions,
 }
 
 /* ---------- listing ---------- */
@@ -600,7 +603,7 @@ fn create_plan(host: &EnvHost, input: &EnvCreateInput, now_ms: u64) -> Result<Cr
     let install = if input.components.is_empty() {
         None
     } else {
-        Some(recipes::install_plan(host, name, &input.components)?)
+        Some(recipes::install_plan(host, name, &input.components, &input.versions)?)
     };
 
     let mut launch = vec![if vm { vm_image(image) } else { image.to_string() }, ssh::target(host, name)];
@@ -818,6 +821,7 @@ mod tests {
             memory_gib: Some(8),
             disk_gib: Some(40),
             components: vec!["claude".into(), "tailscale".into()],
+            versions: Default::default(),
         }
     }
 

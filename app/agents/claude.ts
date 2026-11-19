@@ -1,7 +1,8 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
+import { claudeContext, claudeRequestTokens } from './context.ts'
 
 /**
  * Claude Code adapter.
@@ -364,6 +365,11 @@ function run(options: AgentRunOptions): AgentRun {
 
   /** Control requests this adapter sent and waits on (`get_task_output`). */
   const requests = new Map<string, (response: any) => void>()
+  /**
+   * The turn is over and the run ends as soon as the context window has been read: nothing
+   * new goes in meanwhile (a message sent now becomes the next turn).
+   */
+  let closing = false
 
   const end = (status: 'done' | 'error' | 'stopped', error?: string) => {
     if (ended) return
@@ -393,7 +399,7 @@ function run(options: AgentRunOptions): AgentRun {
   /** Nothing is left running: end now, or give Claude Code a moment to answer a task that just finished. */
   const settle = () => {
     clearTimeout(settleTimer)
-    settleTimer = setTimeout(() => { if (idle && !runningTasks()) end('done') }, RESUME_GRACE_MS)
+    settleTimer = setTimeout(() => { if (idle && !runningTasks()) finishTurn() }, RESUME_GRACE_MS)
   }
 
   /** Claude Code started a turn: after `result`, that is it answering a finished background task. */
@@ -450,12 +456,16 @@ function run(options: AgentRunOptions): AgentRun {
 
   function onStreamEvent(e: any) {
     switch (e.type) {
-      case 'message_start':
+      case 'message_start': {
         onTurnActivity()
+        // Every request carries the whole conversation: its prompt size is the context in use now.
+        const used = claudeRequestTokens(e.message?.usage)
+        if (used !== null) emit({ type: 'context', usage: { used, max: 0, at: Date.now() } })
         messageId = e.message?.id ?? `m${++seq}`
         streamedMessages.add(messageId)
         blocks.clear()
         break
+      }
       case 'content_block_start': {
         const b = e.content_block ?? {}
         if (b.type === 'text') {
@@ -754,6 +764,19 @@ function run(options: AgentRunOptions): AgentRun {
     })
   }
 
+  /** What `/context` shows, read without a turn; the reading goes out as a `context` event. */
+  const readContext = () => controlRequest({ subtype: 'get_context_usage' }, 5000).then((r) => {
+    const usage = r && claudeContext(r)
+    if (usage && !ended) emit({ type: 'context', usage })
+  })
+
+  /** The turn finished while the CLI still runs: read the context window, then end. */
+  const finishTurn = () => {
+    if (ended || closing) return
+    closing = true
+    void readContext().finally(() => end('done'))
+  }
+
   const stopTaskById = (taskId: string) =>
     send({ type: 'control_request', request_id: `mango-stop-${++seq}`, request: { subtype: 'stop_task', task_id: taskId } })
 
@@ -796,12 +819,13 @@ function run(options: AgentRunOptions): AgentRun {
           // Background work goes on, and Claude Code will answer it: stay open.
           idle = true
           emit({ type: 'answered' })
+          void readContext()
         } else if ([...tasks.values()].some(t => t.shown && (t.endedAt ?? 0) >= requestStartedAt)) {
           // A task finished while this answer was being written: Claude Code may take it up next.
           idle = true
           finishedWhileIdle = []
           settle()
-        } else end('done')
+        } else finishTurn()
         break
       }
     }
@@ -833,6 +857,7 @@ function run(options: AgentRunOptions): AgentRun {
     onExit: (code) => {
       if (ended) return
       if (interrupted) end('stopped')
+      else if (closing) end('done')
       else if (idle && code === 0) end('done')
       else end('error', friendlyError(lastStderr || `Claude Code exited with code ${code ?? 'unknown'} before finishing.`))
     },
@@ -854,7 +879,7 @@ function run(options: AgentRunOptions): AgentRun {
   return {
     async steer(input) {
       // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
-      if (ended || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
+      if (ended || closing || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
       // A command runs as a turn of its own, not in the middle of this one.
       if (isSlash(input.prompt)) return false
       // Waiting on background tasks: the message starts the next turn, which the caller already shows as one.
@@ -870,7 +895,8 @@ function run(options: AgentRunOptions): AgentRun {
       decide(id, answers)
     },
     interrupt() {
-      if (ended || interrupted) return
+      // A run that is closing has finished its turn: it ends in a moment by itself.
+      if (ended || closing || interrupted) return
       interrupted = true
       for (const [id, pending] of pendingApprovals) {
         send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: pending.stopped } })
@@ -1132,5 +1158,42 @@ function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
   })
 }
 
-export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage, listCommands }
+/**
+ * What `/context` shows for a conversation, without a turn: Claude Code resumes the session,
+ * answers `get_context_usage` and is stopped. No message is sent, so nothing is added to the
+ * conversation (Claude Code may note its own bookkeeping in the session file).
+ */
+function readContext(spawn: SpawnFn, sessionId: string, model: string): Promise<ContextUsage> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    const finish = (usage: ContextUsage | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (usage) resolve(usage)
+      else reject(new Error(why ?? 'Claude Code did not report the context window.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Claude Code took too long to report the context window.'), 30_000)
+    const args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--resume', sessionId]
+    if (model && model !== 'default') args.push('--model', model)
+    spawn(args, {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-context') return
+        if (m.response.subtype !== 'success') return finish(null, String(m.response.error || 'Claude Code did not report the context window.'))
+        finish(claudeContext(m.response.response), 'Claude Code reported no context window.')
+      },
+      onExit: () => finish(null, 'Claude Code exited before reporting the context window.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-context', request: { subtype: 'get_context_usage' } })).catch(() => {})
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
+export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage, readContext, listCommands }
 export default claudeAdapter

@@ -405,10 +405,13 @@ base="$HOME/.cache/mango/runs" dir="$HOME/.cache/mango/runs/$id"
 gone() { echo "mango-run:gone" >&2; exit 1; }
 case $mode in
 start)
+  # The run folder is private; the CLI (and every build it starts) keeps the login's umask.
+  login_umask=$(umask)
   umask 077
   mkdir -p "$base" || exit 1
   find "$base" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
   mkdir "$dir" && mkfifo "$dir/in" && : >"$dir/out" && : >"$dir/err" && touch "$dir/alive" || exit 1
+  umask "$login_umask"
   setsid sh -c '
     dir=$1; shift
     echo $$ >"$dir/pid.tmp" && mv "$dir/pid.tmp" "$dir/pid"
@@ -1275,7 +1278,7 @@ exit 0"#;
             // The phone app embeds the same bytes (mobile/src/remote/sshBackend.ts): keep them in step.
             use sha2::{Digest, Sha256};
             let hex: String = Sha256::digest(RUN_SCRIPT.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
-            assert_eq!(hex, "338dba48fba498e81524ad8a79688ab786d911741e84698a4475a299a73e81b9");
+            assert_eq!(hex, "a4fec8b7fecfdbe1e0b69ce6b08ccd071fdc684d2dcb27f36d26dc4a8a267760");
         }
 
         #[test]
@@ -1428,7 +1431,7 @@ exit 0"#;
             use std::os::unix::fs::PermissionsExt;
             use std::os::unix::process::CommandExt;
 
-            const FAKE_CLI: &str = "#!/bin/sh\necho \"env=$MANGO_RUN\"\nwhile read -r l; do echo \"got:$l\"; echo \"err:$l\" >&2; [ \"$l\" = quit ] && exit 7; done\necho \"eof\"; exit 3\n";
+            const FAKE_CLI: &str = "#!/bin/sh\necho \"env=$MANGO_RUN umask=$(umask)\"\nwhile read -r l; do echo \"got:$l\"; echo \"err:$l\" >&2; [ \"$l\" = quit ] && exit 7; done\necho \"eof\"; exit 3\n";
             let home = std::env::temp_dir().join(format!("mango-run-test-{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&home).unwrap();
             let cli = home.join("fake-cli.sh");
@@ -1439,7 +1442,7 @@ exit 0"#;
             let run = |args: &[&str]| {
                 let mut c = Command::new("sh");
                 c.arg("-c")
-                    .arg("echo 'profile says hi'; echo 'profile warns' >&2; exec sh -c \"$MANGO_SCRIPT\" mango-run \"$@\"")
+                    .arg("umask 022; echo 'profile says hi'; echo 'profile warns' >&2; exec sh -c \"$MANGO_SCRIPT\" mango-run \"$@\"")
                     .arg("login")
                     .args(args);
                 c.env("HOME", &home).env(RUN_TAG, id).env("MANGO_SCRIPT", RUN_SCRIPT);
@@ -1499,7 +1502,11 @@ exit 0"#;
             let err = lines(Box::new(a.stderr.take().unwrap()));
             writeln!(stdin, "one").unwrap();
             let (o1, o2, e1) = (next(&out, "start: env"), next(&out, "start: got:one"), next(&err, "start: err:one"));
-            assert_eq!((o1.as_slice(), o2.as_slice(), e1.as_slice()), (&b"env=t-1\n"[..], &b"got:one\n"[..], &b"err:one\n"[..]));
+            // The CLI keeps the login's umask (builds it starts make files other users can read),
+            // while the run folder stays private.
+            assert_eq!((o1.as_slice(), o2.as_slice(), e1.as_slice()), (&b"env=t-1 umask=0022\n"[..], &b"got:one\n"[..], &b"err:one\n"[..]));
+            let mode = std::fs::metadata(home.join(".cache/mango/runs").join(id)).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
             // The connection drops: everything of this attach goes, the run stays.
             Command::new("kill").args(["-KILL", "--", &format!("-{}", a.id())]).status().unwrap();
             ends(&mut a, "the dropped attach going away");

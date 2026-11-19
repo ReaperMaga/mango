@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import {
-  CircleCheck, CircleDashed, Ellipsis, FolderGit2, Gauge, Info, Link2, MonitorPlay, Pencil, Play, RefreshCw, RotateCw, Share2, Square,
+  ChevronDown, CircleCheck, CircleDashed, Ellipsis, FolderGit2, Gauge, Info, Link2, MonitorPlay, Pencil, Play, RefreshCw, RotateCw, Share2, Square,
   SquareTerminal, Trash2, TriangleAlert, X,
 } from 'lucide-vue-next'
 import { directProblem, directState, instanceKey, shareDay, useEnvironments } from '~/stores/environments'
-import type { EnvComponent, EnvComponentId, EnvInstanceAction, EnvLoginTool } from '~/types/ipc'
+import type { EnvComponent, EnvComponentId, EnvInstanceAction, EnvLoginTool, EnvVersions } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { useNow } from '~/utils/time'
 import EnvStatus from './EnvStatus.vue'
@@ -16,6 +16,7 @@ import EnvSharing from './EnvSharing.vue'
 import EnvShareDialog from './EnvShareDialog.vue'
 import EnvRenameDialog from './EnvRenameDialog.vue'
 import EnvResizeDialog from './EnvResizeDialog.vue'
+import EnvVersionPicker from './EnvVersionPicker.vue'
 
 /**
  * One instance: its state and power actions, ways into it (project, shell,
@@ -191,16 +192,22 @@ function closeJob() {
 
 const busyTitle = computed(() => (jobRunning.value ? 'Finish or stop the job below first' : undefined))
 
-function install(list: EnvComponent[]) {
+function install(list: EnvComponent[], versions?: EnvVersions) {
   if (!list.length) return
-  const names = list.length === 1 ? list[0]!.name : list.length === installedOnes.value.length && list.every(c => c.installed) ? 'everything' : `${list.length} components`
-  const updating = list.every(c => c.installed)
+  const one = list.length === 1 ? list[0]! : null
+  const picked = one ? versions?.[one.id] : undefined
+  const names = one ? (picked ? `${one.name} ${picked}` : one.name) : list.length === installedOnes.value.length && list.every(c => c.installed) ? 'everything' : `${list.length} components`
+  // A picked version other than the installed one replaces it (Node.js) or becomes the default (Java).
+  const switching = !!(one?.installed && picked && picked !== one.version)
+  const updating = !switching && list.every(c => c.installed)
+  const [doing, done] = switching ? ['Switching', 'Switched'] : updating ? ['Updating', 'Updated'] : ['Installing', 'Installed']
+  const what = switching ? `${one!.name} to ${picked}` : names
   run({
-    title: `${updating ? 'Updating' : 'Installing'} ${names}…`,
-    doneTitle: `${updating ? 'Updated' : 'Installed'} ${names}`,
-    failedTitle: `${updating ? 'Updating' : 'Installing'} didn't finish`,
-    label: `${updating ? 'Updating' : 'Installing'} ${names} in ${props.name}`,
-    start: (cols, rows) => envs.install(props.hostId, props.name, list.map(c => c.id), cols, rows),
+    title: `${doing} ${what}…`,
+    doneTitle: `${done} ${what}`,
+    failedTitle: `${doing} didn't finish`,
+    label: `${doing} ${what} in ${props.name}`,
+    start: (cols, rows) => envs.install(props.hostId, props.name, list.map(c => c.id), cols, rows, versions),
     rows: 12,
     after: () => loadComponents(true),
   })
@@ -527,15 +534,39 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
               </span>
               <span class="comp__desc">{{ c.description }}</span>
             </span>
-            <UiButton
-              :variant="c.installed ? 'ghost' : 'secondary'"
-              size="sm"
-              :disabled="!running || jobRunning"
-              :title="busyTitle"
-              @click="install([c])"
-            >
-              {{ c.installed ? 'Update' : 'Install' }}
-            </UiButton>
+            <span class="comp__actions">
+              <EnvVersionPicker
+                v-if="c.versioned"
+                :component="c.id"
+                :name="c.name"
+                :installed="c.installed ? c.version : null"
+                placement="bottom-end"
+                @pick="(v) => v && install([c], { [c.id]: v })"
+              >
+                <template #default="{ toggle, open }">
+                  <UiButton
+                    variant="ghost"
+                    size="sm"
+                    :disabled="!running || jobRunning"
+                    :title="busyTitle ?? (c.installed ? `Install another ${c.name} version, or switch to one` : `Pick the ${c.name} version to install`)"
+                    aria-haspopup="dialog"
+                    :aria-expanded="open"
+                    @click="toggle"
+                  >
+                    Version<ChevronDown class="comp__chev" />
+                  </UiButton>
+                </template>
+              </EnvVersionPicker>
+              <UiButton
+                :variant="c.installed ? 'ghost' : 'secondary'"
+                size="sm"
+                :disabled="!running || jobRunning"
+                :title="busyTitle"
+                @click="install([c])"
+              >
+                {{ c.installed ? 'Update' : 'Install' }}
+              </UiButton>
+            </span>
           </li>
         </ul>
         <ul v-else-if="loadingComponents" class="comps" aria-busy="true" aria-label="Checking components">
@@ -746,6 +777,8 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
 .comp__version { min-width: 0; font-size: var(--text-xs); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .comp__state { font-size: var(--text-xs); font-weight: 560; color: var(--fg-subtle); }
 .comp__desc { font-size: var(--text-xs); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comp__actions { display: inline-flex; align-items: center; gap: var(--space-1); }
+.comp__actions .comp__chev { width: 13px; height: 13px; margin-right: -2px; color: var(--fg-subtle); }
 
 .comp--skeleton { grid-template-columns: 14px 1fr; }
 .bone { height: 10px; border-radius: var(--radius-xs); background: var(--bg-hover); }

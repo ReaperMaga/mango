@@ -1,5 +1,6 @@
 import type { AgentId, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
+import { normalizeContext } from '~/agents/context'
 
 /**
  * Pure helpers about chats, ported 1:1 from the desktop's `app/stores/threads.ts` (where they are
@@ -60,7 +61,8 @@ export function normalizeLoaded(t: Thread): Thread {
   const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree }
+  const context = normalizeContext(t.context)
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context }
 }
 
 /** The reason in a rejected call or a thrown error, without a trailing period. */

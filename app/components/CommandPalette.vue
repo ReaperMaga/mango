@@ -234,7 +234,7 @@ const projectItems = computed<Item[]>(() =>
       rank: i,
       run: async () => {
         if (isOpen) ws.setActiveProject(p.path)
-        else await ws.openProject(p.path)
+        else await ws.openProjectAsking(p.path)
       },
     }
   }),

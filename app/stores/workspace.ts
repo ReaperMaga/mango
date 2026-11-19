@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { toRaw } from 'vue'
 import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types/ipc'
 import type { PermissionMode } from '~/agents/types'
 import type { AgentId } from '~/types/chat'
@@ -12,6 +13,7 @@ import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
+import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -93,6 +95,8 @@ const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPr
 export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void
   /** Only something to read: one button, no Cancel. */
   info?: boolean }
+/** "Open project: this window or a new one?" waiting for its answer (null: cancelled). */
+export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog'
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
@@ -126,6 +130,8 @@ const MAX_ENV_PROJECTS = 30
 
 /** A remote project's name when none is given: its folder, or the instance for `/`. */
 export const envProjectName = (loc: EnvLocation) => (loc.dir === '/' ? loc.instance : baseName(loc.dir))
+/** A project's own name before it has one: its folder's (or its instance's). */
+const folderName = (path: string) => { const loc = parseEnvPath(path); return loc ? envProjectName(loc) : baseName(path) }
 
 const envInfo = (loc: EnvLocation, name: string, lastOpened: number): ProjectInfo =>
   ({ path: envPath(loc), name, isGit: false, vcs: null, branch: null, lastOpened })
@@ -209,7 +215,8 @@ let tabSeq = 0
  */
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
-  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where'] as const
+  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
+  'openProjectIn'] as const
 
 const initialState = () => {
     const prefs = loadPrefs()
@@ -283,6 +290,10 @@ const initialState = () => {
       confirmDelete: (prefs.confirmDelete ?? true) as boolean,
       /** The question on screen (ConfirmDialog); null when none. Not persisted. */
       confirm: null as null | ConfirmAsk,
+      /** Opening a project in a window that holds others: this window or a new one (Settings > Preferences). */
+      openProjectIn: openProjectInOf(prefs.openProjectIn),
+      /** The "This window or New window" question on screen (OpenWhereDialog); null when none. Not persisted. */
+      openWhere: null as null | OpenWhereAsk,
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
@@ -382,6 +393,7 @@ export const useWorkspace = defineStore('workspace', {
           confirmDelete: this.confirmDelete,
           setupSeen: this.setupSeen,
           where: this.where,
+          openProjectIn: this.openProjectIn,
           openProjects: [...this.openProjects, ...this.lent].map(p => p.path),
           activeProjectPath: this.activeProjectPath,
         }
@@ -484,6 +496,31 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
+    /**
+     * The main window was closed while others are open (it is hidden, see `stores/windows.ts`):
+     * it lets go of its projects, so the other windows may open them, and of the ones it lent.
+     */
+    park() {
+      this.openProjects = []
+      this.lent = []
+      this.activeProjectPath = null
+      this.settings = null
+      this.persist()
+    },
+
+    /**
+     * The last window on screen is closing while the main window is parked: its projects become
+     * the ones the main window reopens next time Mango starts.
+     */
+    handOverSession() {
+      try {
+        const stored = loadPrefs()
+        stored.openProjects = this.openProjects.map(p => p.path)
+        stored.activeProjectPath = this.activeProjectPath
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to reopen */ }
+    },
+
     async refreshRecent() {
       this.recent = mergeRecent(await call('recent_projects').catch(() => this.recent))
     },
@@ -525,19 +562,103 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /**
+     * `openProject` for the user's own Open (recent list, palette, Open folder): in a window that
+     * already holds other projects, it goes where the user says (`chooseWhere`).
+     */
+    async openProjectAsking(path: string) {
+      const where = await this.chooseWhere(path, this.recent.find(r => r.path === path)?.name ?? folderName(path))
+      if (where === 'this') return this.openProject(path)
+      if (where === 'new') await this.openInWindow(path)
+      return null
+    },
+
+    /**
+     * Where the project the user is opening goes: this window, a new one, or nowhere (null: the
+     * question was cancelled). Asks only when there is a choice (`whereToOpen`) and none was remembered.
+     */
+    async chooseWhere(path: string, name: string): Promise<'this' | 'new' | null> {
+      const win = useWindows()
+      const decided = whereToOpen({
+        pref: this.openProjectIn,
+        windowKind: win.spec.kind,
+        openHere: this.openProjects.map(p => p.path),
+        path,
+        elsewhere: !!win.projectElsewhere(path),
+      })
+      if (decided !== 'ask') return decided
+      this.openWhere?.answer(null)
+      return new Promise((resolve) => {
+        const ask: OpenWhereAsk = {
+          name,
+          answer: (choice) => {
+            // The store holds it behind a reactive proxy: compare the object itself.
+            if (this.openWhere && toRaw(this.openWhere) === ask) this.openWhere = null
+            resolve(choice)
+          },
+        }
+        this.openWhere = ask
+        this.paletteOpen = false
+      })
+    },
+
+    /** The question's answer; `remember` keeps it for next time (Settings > Preferences sets it back). */
+    answerWhere(choice: 'this' | 'new' | null, remember = false) {
+      if (choice && remember) {
+        this.openProjectIn = choice
+        this.persist()
+      }
+      this.openWhere?.answer(choice)
+    },
+
+    /** A project the user chose to open in a new window; when it cannot move now, they are told why. */
+    async openInWindow(path: string) {
+      this.dialog = null
+      try {
+        await useWindows().openProjectWindow(path)
+      } catch (e) {
+        this.notify('Not opened in a new window', e instanceof Error ? e.message : String(e))
+      }
+    },
+
+    /** A project just created or cloned (`info` from the backend): open it where the user says. */
+    async placeProject(info: ProjectInfo): Promise<'this' | 'new' | null> {
+      this.dialog = null
+      const where = await this.chooseWhere(info.path, info.name)
+      if (where === 'this') this.adopt(info)
+      else if (where === 'new') await this.openInWindow(info.path)
+      else await this.refreshRecent()
+      return where
+    },
+
+    /**
      * Open (or switch to) a folder inside a remote environment as a project. Nothing on this
      * computer's disk is involved: chats run their agent in the instance, terminals open a shell there.
      * `name` defaults to the folder's name (the instance's for `/`), or the name it was opened with before.
+     * In a window that holds other projects it goes where the user says (`chooseWhere`); the result
+     * says where it went (null: nowhere, the question was cancelled).
      */
-    async openEnvProject(loc: EnvLocation, name?: string): Promise<void> {
-      const elsewhere = useWindows().projectElsewhere(envPath(loc))
+    async openEnvProject(loc: EnvLocation, name?: string): Promise<'this' | 'new' | null> {
+      const path = envPath(loc)
+      const elsewhere = useWindows().projectElsewhere(path)
       if (elsewhere) {
         this.settings = null
-        return useWindows().focus(elsewhere)
+        await useWindows().focus(elsewhere)
+        return 'new'
+      }
+      const known = this.recent.find(r => r.path === path)
+      const where = await this.chooseWhere(path, name?.trim() || known?.name || envProjectName(loc))
+      if (!where) return null
+      if (where === 'new') {
+        // The new window opens it by its path alone: the name it was given travels in the saved list.
+        const info = envInfo(loc, name?.trim() || known?.name || envProjectName(loc), Date.now())
+        saveEnvProjects([info, ...loadEnvProjects().filter(r => r.path !== path)])
+        await this.openInWindow(path)
+        return 'new'
       }
       this._openEnv(loc, name)
       // Opened from Settings > Environments: show the project.
       this.settings = null
+      return 'this'
     },
 
     _openEnv(loc: EnvLocation, name?: string): ProjectInfo {

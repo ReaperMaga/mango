@@ -227,10 +227,13 @@ base="$HOME/.cache/mango/runs" dir="$HOME/.cache/mango/runs/$id"
 gone() { echo "mango-run:gone" >&2; exit 1; }
 case $mode in
 start)
+  # The run folder is private; the CLI (and every build it starts) keeps the login's umask.
+  login_umask=$(umask)
   umask 077
   mkdir -p "$base" || exit 1
   find "$base" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
   mkdir "$dir" && mkfifo "$dir/in" && : >"$dir/out" && : >"$dir/err" && touch "$dir/alive" || exit 1
+  umask "$login_umask"
   setsid sh -c '
     dir=$1; shift
     echo $$ >"$dir/pid.tmp" && mv "$dir/pid.tmp" "$dir/pid"

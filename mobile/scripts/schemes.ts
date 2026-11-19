@@ -145,6 +145,7 @@ const COLOR_TOKENS = [
   'ripe-queued-fg', 'ripe-running-fg', 'ripe-waiting-fg', 'ripe-done-fg', 'ripe-error-fg',
   'diff-add-bg', 'diff-add-fg', 'diff-del-bg', 'diff-del-fg',
   'scrim', 'selection', 'focus-ring',
+  'file-blue', 'file-yellow', 'file-orange', 'file-green', 'file-purple', 'file-red',
 ]
 
 export type Palette = Record<string, string>

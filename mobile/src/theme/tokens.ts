@@ -90,6 +90,14 @@ export interface Colors {
 
   /** Claude's brand orange: only the agent logo uses it, as on the desktop (`--brand-claude`). */
   brandClaude: string
+
+  /** `--file-*`: file-type marks, also the categories of a context window's breakdown. */
+  fileBlue: string
+  fileYellow: string
+  fileOrange: string
+  fileGreen: string
+  filePurple: string
+  fileRed: string
 }
 
 /**

@@ -170,6 +170,7 @@ pub fn run() {
             envs::server::env_server_setup,
             envs::recipes::env_components,
             envs::recipes::env_install,
+            envs::recipes::env_versions,
             envs::remote::env_shell,
             envs::remote::env_login,
             envs::remote::env_prepare_dir,
@@ -196,6 +197,7 @@ pub fn run() {
             windows::window_focus,
             windows::window_list,
             windows::window_at,
+            windows::window_alone,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

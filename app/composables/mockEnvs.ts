@@ -1,6 +1,6 @@
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvDirListing, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvProbe, EnvShare, EnvShareLink, EnvShareVia,
+  EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
 
 /**
@@ -35,9 +35,10 @@ const AGENT_HOME = '/home/agent'
 const WORK_DIR = `${AGENT_HOME}/work`
 
 /** What can be installed, in install order. */
-const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version'> & { latest: string }> = [
+const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version' | 'versioned'> & { latest: string; versioned?: boolean }> = [
   { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [], latest: '2026.11' },
-  { id: 'node', name: 'Node.js', description: 'The current LTS, with npm.', requires: ['base'], latest: 'v24.11.1' },
+  { id: 'node', name: 'Node.js', description: 'Node.js and npm, official builds from nodejs.org: the current LTS, or the version you pick.', requires: ['base'], latest: '24.11.1', versioned: true },
+  { id: 'java', name: 'Java', description: 'A JDK through SDKMAN, for the agent user: the current Temurin LTS, or any vendor and version you pick.', requires: ['base'], latest: '25.0.5.1+2-tem', versioned: true },
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'], latest: '2.4.1' },
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'], latest: '0.98.0' },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'], latest: '2.83.1' },
@@ -150,7 +151,7 @@ const hosts: MockHost[] = [
       {
         name: 'ci-runner', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261020_07:42)',
         addr: '10.12.4.7', tsIp: null, cpus: 2, memory: '4GiB', createdAt: now - 40 * DAY,
-        installed: all(['base', 'node', 'gh', 'codex']),
+        installed: { ...all(['base', 'node', 'gh', 'codex']), node: '22.21.1', java: '21.0.13+11-tem' },
       },
       {
         name: 'staging', kind: 'vm', status: 'stopped', image: 'Debian trixie amd64 cloud (20261002_05:24)',
@@ -233,6 +234,54 @@ const view = (i: MockInstance): EnvInstance => ({
   disk: i.disk ?? null,
   createdAt: i.createdAt,
 })
+
+/** Made-up versions in the shape `env_versions` returns (the real lists come from nodejs.org and SDKMAN). */
+function mockVersions(component: EnvComponentId): EnvVersion[] {
+  if (component === 'node') {
+    const lines: Array<[number, string | null, number, string]> = [
+      [26, null, 3, '2026-11'], [25, null, 9, '2026-03'], [24, 'Krypton', 11, '2026-11'], [23, null, 11, '2025-04'],
+      [22, 'Jod', 21, '2026-10'], [21, null, 7, '2024-04'], [20, 'Iron', 19, '2026-04'], [18, 'Hydrogen', 20, '2025-03'],
+      [16, 'Gallium', 20, '2023-08'], [14, 'Fermium', 21, '2023-02'],
+    ]
+    const out: EnvVersion[] = []
+    for (const [major, lts, minors, last] of lines) {
+      for (let m = minors; m >= 0; m--) {
+        const patch = m === minors ? 1 : (major + m) % 3
+        const [y, mo] = last.split('-').map(Number) as [number, number]
+        const back = minors - m
+        const date = new Date(Date.UTC(y, mo - 1 - Math.floor(back * 0.7), 10 + (m % 17)))
+        out.push({
+          id: `${major}.${m}.${patch}`, version: `${major}.${m}.${patch}`, group: `Node.js ${major}`,
+          note: lts && m >= Math.floor(minors / 2) ? `LTS ${lts}` : null, date: date.toISOString().slice(0, 10), default: false,
+        })
+      }
+    }
+    out.find(v => v.note)!.default = true
+    return out
+  }
+  if (component === 'java') {
+    const vendors: Array<[string, string, string[]]> = [
+      ['Corretto', 'amzn', ['27.0.1.1.4', '25.0.5.1.2', '21.0.13.1.2', '17.0.21.1.2', '11.0.33.1.1', '8.514.1.1']],
+      ['GraalVM CE', 'graalce', ['25.5.5.0+3', '21.0.2', '17.0.9']],
+      ['GraalVM Oracle', 'graal', ['25.5.5.0+3', '25.0.5.1', '21.0.0.0', '17.0.12']],
+      ['Java.net', 'open', ['28.0.0.0+ea.24', '27.0.1.1', '26.0.0.0+35', '25.0.2.0+10']],
+      ['JetBrains', 'jbr', ['25.0.5.0.3+70017', '21.0.11.0+1163125', '17.0.14']],
+      ['Liberica', 'librca', ['27.0.1.1+5', '25.0.5.1+2', '25.0.5.1.fx+2', '21.0.13+2', '21.0.13.fx+2', '17.0.21+2', '11.0.33+2', '8.0.512+2']],
+      ['Microsoft', 'ms', ['25.0.5', '21.0.13', '17.0.21', '11.0.33']],
+      ['Oracle', 'oracle', ['27.0.1', '25.0.5', '21.0.13', '17.0.17']],
+      ['SapMachine', 'sapmchn', ['27.0.1', '25.0.5', '21.0.13', '17.0.21', '11.0.33']],
+      ['Semeru', 'sem', ['25.0.5', '21.0.13', '17.0.21', '11.0.33', '8.0.512']],
+      ['Temurin', 'tem', ['27.0.1+8', '25.0.5.1+2', '21.0.13+11', '17.0.21+10', '11.0.33+8', '8.0.512+7']],
+      ['Zulu', 'zulu', ['27.0.1.1+5', '25.0.5.1+2', '25.0.5.0-fx+3.1', '21.0.13.1+2', '21.0.13.0-fx+3.1', '21.0.13.0-crac+3.1', '17.0.21.1+2', '11.0.33.1+1', '8.0.514.0+1']],
+    ]
+    return vendors.flatMap(([group, dist, versions]) => versions.map(version => ({
+      id: `${version}-${dist}`, version, group,
+      note: /fx/i.test(version) ? 'JavaFX' : /crac/i.test(version) ? 'CRaC' : /ea/.test(version) ? 'Early access' : null,
+      date: null, default: `${version}-${dist}` === '25.0.5.1+2-tem',
+    })))
+  }
+  throw new Error(`${CATALOG.find(c => c.id === component)?.name ?? component} has no versions to pick from.`)
+}
 
 /** `ids` plus what they require, in install order. */
 function withRequired(ids: EnvComponentId[]): EnvComponentId[] {
@@ -377,14 +426,17 @@ export function createMockEnvs(ctx: MockEnvContext) {
   const head = (s: string) => `\x1b[1m==> ${s}\x1b[0m`
 
   /** The output of installing `ids` (already with what they require), marking each installed as it finishes. */
-  function installSteps(id: string, i: MockInstance, ids: EnvComponentId[]): Array<[number, string | (() => void)]> {
+  function installSteps(id: string, i: MockInstance, ids: EnvComponentId[], versions: EnvVersions = {}): Array<[number, string | (() => void)]> {
     const steps: Array<[number, string | (() => void)]> = []
     for (const cid of ids) {
       const c = CATALOG.find(x => x.id === cid)!
       const had = i.installed[cid]
+      // A picked version, else what is there (an update keeps it), else the default.
+      const to = versions[cid] ?? (c.versioned && had ? had : c.latest)
       steps.push([300, head(had ? `Updating ${c.name}` : `Installing ${c.name}`)])
       if (cid === 'base') steps.push([500, dim('apt-get install -y git curl ca-certificates build-essential sudo')], [700, 'Setting up git (1:2.47.1-1) ...'])
-      else if (cid === 'node') steps.push([450, dim('curl -fsSL https://deb.nodesource.com/setup_24.x | bash -')], [650, 'Setting up nodejs (24.11.1-1nodesource1) ...'])
+      else if (cid === 'node') steps.push([450, dim(`curl -fsSL https://nodejs.org/dist/v${to}/node-v${to}-linux-x64.tar.xz`)], [650, `node-v${to}-linux-x64.tar.xz: OK`], [300, `Node.js v${to}, npm 11.6.2`])
+      else if (cid === 'java') steps.push([450, dim(had ? 'sdk selfupdate' : 'curl -fsSL "https://get.sdkman.io?ci=true" | bash')], [650, `Installing: java ${to}`], [500, 'Done installing!'], [300, `Setting java ${to} as default.`])
       else if (cid === 'claude') steps.push([450, dim('curl -fsSL https://claude.ai/install.sh | bash')], [600, `Installing Claude Code to ${AGENT_HOME}/.local/bin`])
       else if (cid === 'codex') steps.push([450, dim('curl -fsSL https://chatgpt.com/codex/install.sh | sh')], [600, `Installed codex to ${AGENT_HOME}/.local/bin/codex`])
       else if (cid === 'gh') steps.push([450, dim('apt-get install -y gh')], [500, 'Setting up gh (2.83.1) ...'])
@@ -393,8 +445,8 @@ export function createMockEnvs(ctx: MockEnvContext) {
       else if (cid === 'docker') steps.push([450, dim('apt-get install -y docker-ce docker-compose-plugin')], [600, 'Setting up docker-ce (5:29.0.2-1~ubuntu.24.04~noble) ...'], [300, 'The agent user can run docker (in new shells and chats).'])
       else if (cid === 'tailscale') steps.push([450, dim('curl -fsSL https://tailscale.com/install.sh | sh')], [600, 'Installing Tailscale for ubuntu noble'])
       steps.push([350, () => {
-        i.installed[cid] = c.latest
-        out(id, ok(`${c.name} ${c.latest}`))
+        i.installed[cid] = to
+        out(id, ok(`${c.name} ${to}`))
       }])
     }
     return steps
@@ -576,10 +628,14 @@ export function createMockEnvs(ctx: MockEnvContext) {
         await latency(600)
         mustRun(h, i)
         return CATALOG.map(c => ({
-          id: c.id, name: c.name, description: c.description, requires: [...c.requires],
+          id: c.id, name: c.name, description: c.description, requires: [...c.requires], versioned: !!c.versioned,
           installed: !!i.installed[c.id], version: i.installed[c.id] ?? null,
         })) satisfies EnvComponent[]
       }
+
+      case 'env_versions':
+        await latency(500)
+        return mockVersions(args.component as EnvComponentId)
 
       case 'env_create': {
         const input = args.input as EnvCreateInput
@@ -613,7 +669,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
           [700, () => { h.instances.push(inst); out(id, 'Retrieving image: Unpack: 100% (4.41GB/s)') }],
           [vm ? 1800 : 900, `Starting ${name}`],
           [700, () => { inst.status = 'running'; out(id, `Waiting for the network… ${inst.addr}`) }],
-          ...installSteps(id, inst, ids),
+          ...installSteps(id, inst, ids, input.versions),
           [300, ok(`${name} is ready ${dim('(simulated: the browser preview creates nothing)')}`)],
         ])
         return id
@@ -628,7 +684,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
         const id = ctx.newPty()
         play(id, [
           [0, dim(`$ incus exec ${i.name} -- mango-install ${ids.join(' ')}`)],
-          ...installSteps(id, i, ids),
+          ...installSteps(id, i, ids, args.versions),
           [300, ok(`Done ${dim('(simulated: the browser preview installs nothing)')}`)],
         ])
         return id

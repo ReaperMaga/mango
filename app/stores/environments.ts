@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia,
+  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
@@ -29,10 +29,11 @@ export const ENV_HOME_DIR = '/home/agent'
  * The one-click components, for choosing them before an instance exists (the create dialog).
  * Once an instance runs, `env_components` is the source of truth for names, versions and requirements.
  */
-export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; description: string; requires: EnvComponentId[] }> = [
+export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; description: string; requires: EnvComponentId[]; versioned?: boolean }> = [
   // Same order and requirements as the backend's recipes (src-tauri/src/envs/recipes.rs).
   { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [] },
-  { id: 'node', name: 'Node.js', description: 'The current LTS release, with npm.', requires: ['base'] },
+  { id: 'node', name: 'Node.js', description: 'Node.js and npm from nodejs.org.', requires: ['base'], versioned: true },
+  { id: 'java', name: 'Java', description: 'A JDK through SDKMAN, any vendor.', requires: ['base'], versioned: true },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
@@ -41,6 +42,12 @@ export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; d
   { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose, for the agent user. A container gets nesting turned on.', requires: ['base'] },
   { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
 ]
+
+/** What a versioned component installs when no version is picked. */
+export const ENV_DEFAULT_VERSION: Partial<Record<EnvComponentId, string>> = {
+  node: 'Latest LTS',
+  java: 'Temurin LTS',
+}
 
 /**
  * Where Settings > Environments is: a server's page, or one instance on it.
@@ -156,6 +163,10 @@ export const useEnvironments = defineStore('environments', {
     errors: {} as Record<string, string | null>,
     /** Per instance (see `instanceKey`). */
     components: {} as Record<string, EnvComponent[]>,
+    /** What Node.js and Java can install, by component id (fetched once per session, on demand). */
+    versions: {} as Partial<Record<EnvComponentId, EnvVersion[]>>,
+    loadingVersions: {} as Partial<Record<EnvComponentId, boolean>>,
+    versionErrors: {} as Partial<Record<EnvComponentId, string | null>>,
     loadingComponents: {} as Record<string, boolean>,
     componentErrors: {} as Record<string, string | null>,
     /** Instances with an action in flight, and which. */
@@ -372,6 +383,20 @@ export const useEnvironments = defineStore('environments', {
       }
     },
 
+    /** The versions a component can install; fetched once, again with `force` (or after a failure). */
+    async loadVersions(component: EnvComponentId, force = false) {
+      if (this.loadingVersions[component] || (!force && this.versions[component])) return
+      this.loadingVersions[component] = true
+      this.versionErrors[component] = null
+      try {
+        this.versions[component] = await call('env_versions', { component })
+      } catch (e) {
+        this.versionErrors[component] = message(e)
+      } finally {
+        this.loadingVersions[component] = false
+      }
+    },
+
     /* Terminal-based: each returns the pty id to attach a terminal view to. */
     /** Install, initialise or update Incus on the server, in a terminal. Probe again when it exits. */
     setupServer(hostId: string, cols: number, rows: number) {
@@ -380,8 +405,8 @@ export const useEnvironments = defineStore('environments', {
     create(input: EnvCreateInput, cols: number, rows: number) {
       return call('env_create', { input, cols, rows })
     },
-    install(hostId: string, instance: string, components: EnvComponentId[], cols: number, rows: number) {
-      return call('env_install', { hostId, instance, components, cols, rows })
+    install(hostId: string, instance: string, components: EnvComponentId[], cols: number, rows: number, versions?: EnvVersions) {
+      return call('env_install', { hostId, instance, components, ...(versions && Object.keys(versions).length ? { versions } : {}), cols, rows })
     },
     shell(hostId: string, instance: string, cwd: string | null, cols: number, rows: number) {
       return call('env_shell', { hostId, instance, cwd, cols, rows })

@@ -732,7 +732,7 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId
@@ -742,6 +742,27 @@ export interface EnvComponent {
   version: string | null
   /** Installed along with it when missing. */
   requires: EnvComponentId[]
+  /** A version can be picked for it (`env_versions` lists them): Node.js and Java. */
+  versioned: boolean
+}
+
+/** Versions picked for components that take one, by component id; a missing one takes the default. */
+export type EnvVersions = Partial<Record<EnvComponentId, string>>
+
+/** One version a component can install (`env_versions`). */
+export interface EnvVersion {
+  /** What the install takes: `22.11.0`, or an SDKMAN identifier such as `21.0.5-tem`. */
+  id: string
+  /** The version as people read it. */
+  version: string
+  /** The release line (`Node.js 22`) or Java's vendor (`Temurin`). */
+  group: string
+  /** Node.js's LTS name (`LTS Jod`), or a Java build's flavour (`JavaFX`, `CRaC`, `Early access`). */
+  note: string | null
+  /** `2024-10-28`, when known. */
+  date: string | null
+  /** What the install takes when no version is picked. */
+  default: boolean
 }
 
 export interface EnvCreateInput {
@@ -754,6 +775,8 @@ export interface EnvCreateInput {
   memoryGib: number | null
   diskGib: number | null
   components: EnvComponentId[]
+  /** Versions picked for some of them. */
+  versions?: EnvVersions
 }
 
 /** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
@@ -1096,6 +1119,8 @@ export interface Commands {
    * pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
    */
   window_at: [{ x: number; y: number }, string | null]
+  /** Whether no other Mango window is on screen (closing this one ends the app). */
+  window_alone: [Record<string, never>, boolean]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
@@ -1147,8 +1172,13 @@ export interface Commands {
   env_resize: [{ hostId: string; instance: string; input: EnvResizeInput }, string | null]
   /** Which components are installed, with versions (runs a probe inside the instance). */
   env_components: [{ hostId: string; instance: string }, EnvComponent[]]
-  /** Install or update components (with what they require), in a terminal; returns the pty id. */
-  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; cols: number; rows: number }, string]
+  /**
+   * Install or update components (with what they require), in a terminal; returns the pty id. `versions` picks
+   * versions for Node.js and Java; without one they install the default, or keep what is installed on an update.
+   */
+  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; versions?: EnvVersions; cols: number; rows: number }, string]
+  /** The versions a component can install, newest first (read from nodejs.org or SDKMAN, not from an environment). */
+  env_versions: [{ component: EnvComponentId }, EnvVersion[]]
   /** A login shell as the agent user inside the instance; returns the pty id. */
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
@@ -1195,4 +1225,6 @@ export interface Events {
   'envs://join': { link: string }
   /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
   'window://closed': { label: string }
+  /** The main window was closed while others are open: it is hidden and lets go of its projects. */
+  'window://parked': Record<string, never>
 }

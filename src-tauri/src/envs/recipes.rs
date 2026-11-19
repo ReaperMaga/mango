@@ -30,18 +30,28 @@
 //! registered as `chromium` in the agent user's Claude Code and Codex configs, so every chat in
 //! the environment can open pages, read them and take screenshots without anyone watching. The
 //! Claude Code and Codex recipes register it too, for when they come after it.
+//!
+//! Node.js and Java take a version the user picks (`install_plan`'s `versions`, checked by
+//! `valid_node_version` / `valid_java_version` and handed over quoted as `MANGO_NODE_VERSION` /
+//! `MANGO_JAVA_VERSION`); without one they install the current LTS, or keep what is there on an
+//! update. Node.js is the official build from nodejs.org (checked against its SHASUMS256.txt) in
+//! /usr/local, replacing an earlier NodeSource package unless something still runs on it. Java is
+//! SDKMAN for the agent user, with its current JDK on every login shell's PATH
+//! (`/etc/profile.d/mango-java.sh`). `env_versions` lists what can be picked, read on this computer
+//! from nodejs.org's index and SDKMAN's API (Linux x64 builds).
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
-use super::{hosts, ssh, valid_instance, valid_master_path, valid_tag, EnvHost};
+use super::{hosts, ssh, valid_instance, valid_java_version, valid_master_path, valid_node_version, valid_tag, EnvHost};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvComponent {
-    /// "base" | "claude" | "codex" | "gh" | "node" | "chromium" | "desktop" | "docker" | "tailscale"
+    /// "base" | "claude" | "codex" | "gh" | "node" | "java" | "chromium" | "desktop" | "docker" | "tailscale"
     pub id: String,
     pub name: String,
     pub description: String,
@@ -49,6 +59,8 @@ pub struct EnvComponent {
     pub version: Option<String>,
     /// Components this one needs first (installed along with it).
     pub requires: Vec<String>,
+    /// A version can be picked for it (`env_versions` lists them).
+    pub versioned: bool,
 }
 
 pub(crate) struct Recipe {
@@ -57,6 +69,8 @@ pub(crate) struct Recipe {
     pub description: &'static str,
     pub requires: &'static [&'static str],
     script: &'static str,
+    /// The script variable that carries a picked version, for components that take one.
+    version_var: Option<&'static str>,
 }
 
 /// In install order: a recipe only requires recipes listed before it.
@@ -67,13 +81,23 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "The agent user with passwordless sudo, git, curl, build tools and a work folder.",
         requires: &[],
         script: BASE,
+        version_var: None,
     },
     Recipe {
         id: "node",
         name: "Node.js",
-        description: "The current LTS release, from NodeSource.",
+        description: "Node.js and npm, official builds from nodejs.org: the current LTS, or the version you pick.",
         requires: &["base"],
         script: NODE,
+        version_var: Some("MANGO_NODE_VERSION"),
+    },
+    Recipe {
+        id: "java",
+        name: "Java",
+        description: "A JDK through SDKMAN, for the agent user: the current Temurin LTS, or any vendor and version you pick.",
+        requires: &["base"],
+        script: JAVA,
+        version_var: Some("MANGO_JAVA_VERSION"),
     },
     Recipe {
         id: "gh",
@@ -81,6 +105,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "gh, from GitHub's apt repository.",
         requires: &["base"],
         script: GH,
+        version_var: None,
     },
     Recipe {
         id: "claude",
@@ -88,6 +113,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "Anthropic's coding agent, installed for the agent user.",
         requires: &["base"],
         script: CLAUDE,
+        version_var: None,
     },
     Recipe {
         id: "codex",
@@ -95,6 +121,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "OpenAI's coding agent, installed for the agent user.",
         requires: &["base"],
         script: CODEX,
+        version_var: None,
     },
     Recipe {
         id: "chromium",
@@ -102,6 +129,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "A headless Chromium the agents drive through Playwright's MCP server: they open pages, read them and take screenshots.",
         requires: &["base", "node"],
         script: CHROMIUM,
+        version_var: None,
     },
     Recipe {
         id: "desktop",
@@ -109,6 +137,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "An XFCE desktop you can open from Mango (VNC and noVNC, reachable only through Mango).",
         requires: &["base"],
         script: DESKTOP,
+        version_var: None,
     },
     Recipe {
         id: "docker",
@@ -116,6 +145,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "Docker Engine with Compose and Buildx, from Docker's apt repository; the agent user can run it. A container gets nesting turned on first, which restarts it once.",
         requires: &["base"],
         script: DOCKER,
+        version_var: None,
     },
     Recipe {
         id: "tailscale",
@@ -123,6 +153,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "Joins the environment to your tailnet, with Tailscale SSH.",
         requires: &["base"],
         script: TAILSCALE,
+        version_var: None,
     },
 ];
 
@@ -225,13 +256,101 @@ EOF
 echo "The agent user works in /home/agent/work."
 "##;
 
-const NODE: &str = r##"say "Node.js (LTS, from NodeSource)"
-curl -fsSL https://deb.nodesource.com/setup_lts.x -o /tmp/mango-nodesource.sh
-bash /tmp/mango-nodesource.sh
-rm -f /tmp/mango-nodesource.sh
-APT_FRESH=1
-apt_get install nodejs
-echo "Node.js $(node --version)"
+const NODE: &str = r##"say "Node.js (official build from nodejs.org)"
+case "$(uname -m)" in
+  x86_64|amd64) node_arch=x64 ;;
+  aarch64|arm64) node_arch=arm64 ;;
+  *) fail "nodejs.org has no Linux build of Node.js for $(uname -m)." ;;
+esac
+node_want=${MANGO_NODE_VERSION:-}
+node_had=
+[ -x /usr/local/bin/node ] && node_had=$(/usr/local/bin/node --version 2>/dev/null || true)
+# An update without a picked version keeps the release line that is installed (the newest of its major).
+if [ -z "$node_want" ] && [ -n "$node_had" ]; then node_want=${node_had#v}; node_want=${node_want%%.*}; fi
+node_tmp=$(mktemp -d)
+curl -fsSL https://nodejs.org/dist/index.json -o "$node_tmp/index.json"
+if [ -z "$node_want" ]; then
+  node_v=$(jq -r --arg a "linux-$node_arch" '[.[] | select(.lts != false and (.version | test("-") | not) and (.files | any(. == $a)))][0].version // empty' "$node_tmp/index.json")
+  [ -n "$node_v" ] || fail "could not find the current Node.js LTS in nodejs.org's index."
+else
+  node_v=$(jq -r --arg w "v$node_want" --arg a "linux-$node_arch" '[.[] | select((.version == $w or (.version | startswith($w + "."))) and (.version | test("-") | not) and (.files | any(. == $a)))][0].version // empty' "$node_tmp/index.json")
+  [ -n "$node_v" ] || fail "nodejs.org has no Linux $node_arch build of Node.js $node_want."
+fi
+if [ "$node_had" = "$node_v" ]; then
+  echo "Node.js $node_v is installed and up to date."
+else
+  node_file="node-$node_v-linux-$node_arch.tar.xz"
+  echo "Downloading $node_file"
+  curl -fsSL "https://nodejs.org/dist/$node_v/$node_file" -o "$node_tmp/$node_file"
+  curl -fsSL "https://nodejs.org/dist/$node_v/SHASUMS256.txt" -o "$node_tmp/SHASUMS256.txt"
+  grep "  $node_file\$" "$node_tmp/SHASUMS256.txt" > "$node_tmp/sum" || fail "nodejs.org lists no checksum for $node_file."
+  (cd "$node_tmp" && sha256sum -c --quiet sum) || fail "$node_file does not match nodejs.org's checksum. Nothing was changed."
+  # npm and corepack come with Node.js: replace them whole rather than unpack over an older copy.
+  rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack
+  tar -xJf "$node_tmp/$node_file" -C /usr/local --strip-components=1 --no-same-owner
+  hash -r
+fi
+rm -rf "$node_tmp"
+# Mango used NodeSource's package before: remove it, unless Chromium for agents still runs on it
+# or another package needs it (dpkg refuses then).
+if dpkg-query -W -f='${Version}' nodejs 2>/dev/null | grep -q nodesource; then
+  if grep -qs '/usr/bin/node' /usr/local/bin/mango-chromium-mcp; then
+    echo "Kept the earlier Node.js package from NodeSource: Chromium for agents runs on it. Updating Chromium for agents moves it to this Node.js."
+  elif dpkg --purge nodejs; then
+    rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/sources.list.d/nodesource.sources /etc/apt/keyrings/nodesource.gpg /usr/share/keyrings/nodesource.gpg
+    echo "Removed the earlier Node.js package from NodeSource."
+  else
+    echo "Kept the earlier Node.js package from NodeSource: other packages need it. /usr/local/bin/node comes first on the PATH."
+  fi
+fi
+echo "Node.js $(/usr/local/bin/node --version), npm $(/usr/local/bin/npm --version)"
+"##;
+
+const JAVA: &str = r##"say "Java (SDKMAN, for the agent user)"
+apt_install zip unzip curl ca-certificates
+sdk_init='source ~/.sdkman/bin/sdkman-init.sh'
+if [ -s /home/agent/.sdkman/bin/sdkman-init.sh ]; then
+  as_agent "$sdk_init && sdk selfupdate" || echo "SDKMAN could not update itself; carrying on with this copy."
+else
+  as_agent 'curl -fsSL "https://get.sdkman.io?ci=true&rcupdate=true" | bash'
+  [ -s /home/agent/.sdkman/bin/sdkman-init.sh ] || fail "SDKMAN did not install into /home/agent/.sdkman."
+fi
+# Never stop to ask (yes to "make it the default?"), and let Mango's Update be what updates SDKMAN.
+sdk_cfg=/home/agent/.sdkman/etc/config
+touch "$sdk_cfg"
+for kv in sdkman_auto_answer=true sdkman_selfupdate_feature=false; do
+  if grep -q "^${kv%%=*}=" "$sdk_cfg"; then sed -i "s/^${kv%%=*}=.*/$kv/" "$sdk_cfg"; else echo "$kv" >> "$sdk_cfg"; fi
+done
+chown agent:"$(id -gn agent)" "$sdk_cfg"
+java_dir=/home/agent/.sdkman/candidates/java
+java_had=$(readlink "$java_dir/current" 2>/dev/null || true)
+java_had=${java_had%/}
+java_had=${java_had##*/}
+java_want=${MANGO_JAVA_VERSION:-}
+if [ -n "$java_want" ]; then
+  java_q=$(printf %q "$java_want")
+  if [ -d "$java_dir/$java_want" ]; then
+    echo "Java $java_want is installed already."
+  else
+    as_agent "$sdk_init && sdk install java $java_q"
+  fi
+  [ -d "$java_dir/$java_want" ] || fail "SDKMAN did not install Java $java_want (see above). Pick another version, or try again."
+  as_agent "$sdk_init && sdk default java $java_q"
+elif [ -n "$java_had" ]; then
+  echo "Keeping Java $java_had. Pick a version in Mango to install another one or switch to it."
+else
+  echo "Installing SDKMAN's default Java (the current Temurin LTS)."
+  as_agent "$sdk_init && sdk install java"
+fi
+put /etc/profile.d/mango-java.sh 0644 <<'EOF' || true
+# Added by Mango: SDKMAN's current Java for every login shell (the sdk command itself comes with ~/.bashrc).
+if [ -d "$HOME/.sdkman/candidates/java/current" ]; then
+  JAVA_HOME="$HOME/.sdkman/candidates/java/current"
+  case ":$PATH:" in *":$JAVA_HOME/bin:"*) ;; *) PATH="$JAVA_HOME/bin:$PATH" ;; esac
+  export JAVA_HOME PATH
+fi
+EOF
+as_agent 'java -version 2>&1 | head -n 1'
 "##;
 
 const GH: &str = r##"say "GitHub CLI (from GitHub's apt repository)"
@@ -502,9 +621,28 @@ pub(crate) struct InstallPlan {
     pub nesting: bool,
 }
 
-/// Build the install script for `ids` (with their requirements) in `instance`.
-pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String]) -> Result<InstallPlan, String> {
+/// Versions picked for components that take one (`Recipe::version_var`), by component id.
+pub(crate) type Versions = BTreeMap<String, String>;
+
+/// Check a picked version for a component; only versioned components take one.
+fn valid_version(id: &str, v: &str) -> Result<(), String> {
+    match id {
+        "node" => valid_node_version(v),
+        "java" => valid_java_version(v),
+        _ => match recipe(id) {
+            Some(r) => Err(format!("{} has no versions to pick from.", r.name)),
+            None => Err(format!("Mango doesn't know a component called \"{id}\".")),
+        },
+    }
+}
+
+/// Build the install script for `ids` (with their requirements) in `instance`, with the
+/// `versions` picked for some of them (none: the default, or what is installed on an update).
+pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String], versions: &Versions) -> Result<InstallPlan, String> {
     valid_instance(instance)?;
+    for (id, v) in versions {
+        valid_version(id, v)?;
+    }
     let recipes = resolve(ids)?;
     let tailscale = recipes.iter().any(|r| r.id == "tailscale");
     let nesting = recipes.iter().any(|r| r.id == "docker");
@@ -525,6 +663,12 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String]) -> Re
         }
         s.push_str(&format!("MANGO_TS_HOSTNAME={}\n", ssh::quote(instance)));
         s.push_str(&format!("MANGO_TS_TAGS={}\n", ssh::quote(&tags.join(","))));
+    }
+    for r in &recipes {
+        if let Some(var) = r.version_var {
+            let v = versions.get(r.id).map(String::as_str).unwrap_or("");
+            s.push_str(&format!("{var}={}\n", ssh::quote(v)));
+        }
     }
     s.push_str(HEADER);
     for r in &recipes {
@@ -571,6 +715,12 @@ if id -u agent >/dev/null 2>&1 && [ -d /home/agent/work ] && command -v git >/de
   row codex "$(ag 'command -v codex >/dev/null && codex --version')"
 fi
 command -v node >/dev/null 2>&1 && row node "$(node --version 2>/dev/null | first)"
+if [ -d /home/agent/.sdkman/candidates/java/current ]; then
+  j=$(readlink /home/agent/.sdkman/candidates/java/current 2>/dev/null || true)
+  j=${j%/}
+  row java "${j##*/}"
+  [ -n "$j" ] || row java installed
+fi
 command -v gh >/dev/null 2>&1 && row gh "$(gh --version 2>/dev/null | first)"
 if [ -x /usr/local/bin/mango-chromium-mcp ]; then
   v=$(/usr/local/lib/mango/chromium --version 2>/dev/null | first)
@@ -607,7 +757,7 @@ pub(crate) fn parse_probe(out: &str) -> Vec<EnvComponent> {
         .map(|r| {
             let raw = found.iter().find(|(k, _)| *k == r.id).map(|(_, v)| *v);
             let version = raw.and_then(|v| match r.id {
-                "base" => Some(v.to_string()).filter(|v| v != "installed"),
+                "base" | "java" => Some(v.to_string()).filter(|v| v != "installed"),
                 "desktop" => Some(upstream_version(v)).filter(|v| v != "installed"),
                 _ => version_token(v),
             });
@@ -618,6 +768,7 @@ pub(crate) fn parse_probe(out: &str) -> Vec<EnvComponent> {
                 installed: raw.is_some(),
                 version,
                 requires: r.requires.iter().map(|s| s.to_string()).collect(),
+                versioned: r.version_var.is_some(),
             }
         })
         .collect()
@@ -657,6 +808,7 @@ pub async fn env_install(
     host_id: String,
     instance: String,
     components: Vec<String>,
+    versions: Option<Versions>,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
@@ -664,9 +816,152 @@ pub async fn env_install(
         return Err("Pick at least one component to install.".into());
     }
     let host = hosts::get(&app, &host_id)?;
-    let plan = install_plan(&host, &instance, &components)?;
+    let plan = install_plan(&host, &instance, &components, &versions.unwrap_or_default())?;
     let argv = ssh::argv(&host, ssh::Mode::Tty, &install_remote(&host, &instance, &plan)?)?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
+}
+
+/* ---------- the versions Node.js and Java offer ---------- */
+
+/// One version a component can install.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvVersion {
+    /// What the install takes (`versions` in `env_install`): `22.11.0`, or an SDKMAN identifier.
+    pub id: String,
+    /// The version as people read it: `22.11.0`, `21.0.5`.
+    pub version: String,
+    /// What it belongs to: the release line (`Node.js 22`) or Java's vendor (`Temurin`).
+    pub group: String,
+    /// A short note: Node.js's LTS name, or a Java build's flavour (`JavaFX`, `CRaC`).
+    pub note: Option<String>,
+    /// The day it came out (`2024-10-28`), when known.
+    pub date: Option<String>,
+    /// What the install takes when no version is picked.
+    pub default: bool,
+}
+
+const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+const SDKMAN_JAVA_LIST: &str = "https://api.sdkman.io/2/candidates/java/linuxx64/versions/list?installed=";
+const SDKMAN_JAVA_DEFAULT: &str = "https://api.sdkman.io/2/candidates/default/java";
+
+#[derive(Deserialize)]
+struct NodeRelease {
+    version: String,
+    #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
+    files: Vec<String>,
+    /// `false`, or the LTS line's name.
+    #[serde(default)]
+    lts: serde_json::Value,
+}
+
+/// nodejs.org's `index.json` (newest first) as versions: stable releases with a Linux x64 build.
+/// The newest LTS is the default, as in the install script.
+pub(crate) fn parse_node_index(json: &str) -> Result<Vec<EnvVersion>, String> {
+    let releases: Vec<NodeRelease> =
+        serde_json::from_str(json).map_err(|e| format!("nodejs.org sent a version list Mango can't read ({e})."))?;
+    let mut out: Vec<EnvVersion> = releases
+        .into_iter()
+        .filter_map(|r| {
+            let v = r.version.strip_prefix('v')?.to_string();
+            if valid_node_version(&v).is_err() || v.split('.').count() != 3 || !r.files.iter().any(|f| f == "linux-x64") {
+                return None;
+            }
+            let major = v.split('.').next().unwrap_or_default().to_string();
+            let lts = r.lts.as_str().map(|n| format!("LTS {n}"));
+            Some(EnvVersion { id: v.clone(), version: v, group: format!("Node.js {major}"), note: lts, date: r.date, default: false })
+        })
+        .collect();
+    if let Some(first_lts) = out.iter_mut().find(|v| v.note.is_some()) {
+        first_lts.default = true;
+    }
+    Ok(out)
+}
+
+/// SDKMAN's Java list (the table `sdk list java` prints) as versions, in its order (by vendor,
+/// newest first). The vendor column is only filled on each vendor's first row.
+pub(crate) fn parse_sdkman_java(text: &str, default: &str) -> Vec<EnvVersion> {
+    let mut vendor = String::new();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let cols: Vec<&str> = line.split('|').map(str::trim).collect();
+        if cols.len() < 4 {
+            continue;
+        }
+        let (first, version, id) = (cols[0], cols[2], cols[cols.len() - 1]);
+        if first == "Vendor" {
+            continue;
+        }
+        if !first.is_empty() {
+            vendor = first.to_string();
+        }
+        if vendor.is_empty() || version.is_empty() || valid_java_version(id).is_err() {
+            continue;
+        }
+        let lower = version.to_ascii_lowercase();
+        let note = if lower.contains("-fx") || lower.contains(".fx") {
+            Some("JavaFX")
+        } else if lower.contains("crac") {
+            Some("CRaC")
+        } else if lower.contains("ea") {
+            Some("Early access")
+        } else {
+            None
+        };
+        out.push(EnvVersion {
+            id: id.to_string(),
+            version: version.to_string(),
+            group: vendor.clone(),
+            note: note.map(String::from),
+            date: None,
+            default: id == default,
+        });
+    }
+    out
+}
+
+async fn fetch_text(client: &reqwest::Client, url: &str, what: &str) -> Result<String, String> {
+    let unreachable = |e: reqwest::Error| format!("Could not reach {what} to list its versions. Check this computer's connection. ({e})");
+    let res = client.get(url).send().await.map_err(unreachable)?;
+    if !res.status().is_success() {
+        return Err(format!("{what} answered {} when asked for its versions. Try again later.", res.status()));
+    }
+    res.text().await.map_err(unreachable)
+}
+
+/// The versions `component` can install (Node.js or Java), newest first, read from the source
+/// the install script uses. Nothing here touches an environment.
+#[tauri::command]
+pub async fn env_versions(component: String) -> Result<Vec<EnvVersion>, String> {
+    if !matches!(component.as_str(), "node" | "java") {
+        return Err(match recipe(&component) {
+            Some(r) => format!("{} has no versions to pick from.", r.name),
+            None => format!("Mango doesn't know a component called \"{component}\"."),
+        });
+    }
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("Mango/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(45))
+        .build()
+        .map_err(|e| format!("Could not list the versions: {e}"))?;
+    if component == "node" {
+        let json = fetch_text(&client, NODE_INDEX, "nodejs.org").await?;
+        return parse_node_index(&json);
+    }
+    let list = fetch_text(&client, SDKMAN_JAVA_LIST, "SDKMAN").await?;
+    // Only marks a row: without it the list is still whole.
+    let default = fetch_text(&client, SDKMAN_JAVA_DEFAULT, "SDKMAN").await.unwrap_or_default();
+    let out = parse_sdkman_java(&list, default.trim());
+    if out.is_empty() {
+        return Err("SDKMAN sent a Java list Mango can't read. Try again later.".into());
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -718,7 +1013,7 @@ mod tests {
 
     #[test]
     fn script_holds_what_was_asked() {
-        let p = install_plan(&host(None), "dev", &ids(&["desktop"])).unwrap();
+        let p = install_plan(&host(None), "dev", &ids(&["desktop"]), &Versions::new()).unwrap();
         assert!(p.script.starts_with("set -Eeuo pipefail\n"));
         assert!(p.script.contains("useradd --create-home --home-dir /home/agent"));
         assert!(p.script.contains("mango-vnc.service") && p.script.contains("mango-novnc.service"));
@@ -735,7 +1030,7 @@ mod tests {
         assert_eq!(order(&["chromium"]), ["base", "node", "chromium"]);
         // Asked together, the agents come first, so the Chromium step registers with both.
         assert_eq!(order(&["chromium", "codex", "claude"]), ["base", "node", "claude", "codex", "chromium"]);
-        let p = install_plan(&host(None), "dev", &ids(&["chromium"])).unwrap();
+        let p = install_plan(&host(None), "dev", &ids(&["chromium"]), &Versions::new()).unwrap();
         assert!(p.script.contains("@playwright/mcp@latest"));
         assert!(p.script.contains("install --with-deps chromium"));
         assert!(p.script.contains("--browser chromium --headless --isolated"));
@@ -744,10 +1039,10 @@ mod tests {
         assert!(p.script.contains("picture_note /home/agent/.claude/CLAUDE.md"));
         assert!(p.script.contains("picture_note /home/agent/.codex/AGENTS.md"));
         // Node's script runs before Chromium's, and the register helper is defined before both.
-        assert!(p.script.find("deb.nodesource.com").unwrap() < p.script.find("@playwright/mcp").unwrap());
-        assert!(p.script.find("register_chromium() {").unwrap() < p.script.find("deb.nodesource.com").unwrap());
+        assert!(p.script.find("nodejs.org/dist/index.json").unwrap() < p.script.find("@playwright/mcp").unwrap());
+        assert!(p.script.find("register_chromium() {").unwrap() < p.script.find("nodejs.org/dist/index.json").unwrap());
         // Claude Code and Codex installed later still pick it up.
-        let p = install_plan(&host(None), "dev", &ids(&["claude"])).unwrap();
+        let p = install_plan(&host(None), "dev", &ids(&["claude"]), &Versions::new()).unwrap();
         assert!(p.script.contains("claude --version'\nregister_chromium\n"));
         assert!(!p.script.contains("@playwright/mcp"));
     }
@@ -755,7 +1050,7 @@ mod tests {
     #[test]
     fn docker_installs_from_its_repository_and_asks_for_nesting() {
         assert_eq!(order(&["docker"]), ["base", "docker"]);
-        let p = install_plan(&host(None), "dev", &ids(&["docker"])).unwrap();
+        let p = install_plan(&host(None), "dev", &ids(&["docker"]), &Versions::new()).unwrap();
         assert!(p.nesting && !p.tailscale);
         assert!(p.script.contains("https://download.docker.com/linux/$os $codename stable"));
         assert!(p.script.contains("docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"));
@@ -764,13 +1059,120 @@ mod tests {
         let remote = install_remote(&host(None), "dev", &p).unwrap();
         assert_eq!(remote[8], "1");
         assert!(remote[2].contains("security.nesting=true security.syscalls.intercept.mknod=true"));
-        assert!(!install_plan(&host(None), "dev", &ids(&["node"])).unwrap().nesting);
+        assert!(!install_plan(&host(None), "dev", &ids(&["node"]), &Versions::new()).unwrap().nesting);
+    }
+
+    fn picked(v: &[(&str, &str)]) -> Versions {
+        v.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn node_and_java_take_a_picked_version() {
+        assert_eq!(order(&["java"]), ["base", "java"]);
+        let both = picked(&[("node", "22.11.0"), ("java", "25.0.5.0-fx+3.1-zulu")]);
+        let p = install_plan(&host(None), "dev", &ids(&["node", "java"]), &both).unwrap();
+        assert!(p.script.contains("MANGO_NODE_VERSION=22.11.0\n"), "{}", &p.script[..200]);
+        assert!(p.script.contains(&format!("MANGO_JAVA_VERSION={}\n", ssh::quote("25.0.5.0-fx+3.1-zulu"))));
+        // The values come before the scripts that read them; Node.js before Java (table order).
+        assert!(p.script.find("MANGO_NODE_VERSION=").unwrap() < p.script.find("say() {").unwrap());
+        assert!(p.script.find("nodejs.org/dist/index.json").unwrap() < p.script.find("get.sdkman.io").unwrap());
+        assert!(p.script.contains("sha256sum -c --quiet sum"));
+        assert!(p.script.contains("/etc/profile.d/mango-java.sh"));
+
+        // No pick: the variables are there, empty (the scripts take the default or keep what is installed).
+        let p = install_plan(&host(None), "dev", &ids(&["java"]), &Versions::new()).unwrap();
+        assert!(p.script.contains("MANGO_JAVA_VERSION=''\n"));
+        assert!(!p.script.contains("MANGO_NODE_VERSION"));
+        // A pick for something not being installed is checked, then left out.
+        let p = install_plan(&host(None), "dev", &ids(&["claude"]), &picked(&[("node", "22")])).unwrap();
+        assert!(!p.script.contains("MANGO_NODE_VERSION"));
+
+        // Bad values and components without versions are refused, not interpolated.
+        for bad in [("node", "22; reboot"), ("node", "v22"), ("java", "21.0.5-tem$(id)"), ("java", "x"), ("docker", "29"), ("rm -rf", "1")] {
+            assert!(install_plan(&host(None), "dev", &ids(&["node", "java"]), &picked(&[bad])).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn node_versions_from_the_index() {
+        let json = r#"[
+          {"version":"v27.0.0-alpha.0.1.1","date":"2026-11-16","files":["linux-x64"],"lts":false},
+          {"version":"v26.3.0","date":"2026-11-10","files":["linux-arm64","linux-x64"],"lts":false},
+          {"version":"v24.11.1","date":"2026-11-02","files":["linux-x64","win-x64-zip"],"lts":"Krypton"},
+          {"version":"v22.11.0","date":"2024-10-29","files":["linux-x64"],"lts":"Jod"},
+          {"version":"v0.1.14","date":"2011-08-26","files":["src"],"lts":false}
+        ]"#;
+        let v = parse_node_index(json).unwrap();
+        assert_eq!(v.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(), ["26.3.0", "24.11.1", "22.11.0"]);
+        assert_eq!(v[1].group, "Node.js 24");
+        assert_eq!(v[1].note.as_deref(), Some("LTS Krypton"));
+        assert_eq!(v[1].date.as_deref(), Some("2026-11-02"));
+        assert!(v[1].default && !v[0].default && !v[2].default);
+        assert!(v[0].note.is_none());
+        assert!(parse_node_index("<html>").is_err());
+    }
+
+    #[test]
+    fn java_versions_from_sdkman() {
+        let text = "================================================================================
+Available Java Versions for Linux 64bit
+================================================================================
+ Vendor         | Use | Version            | Identifier
+--------------------------------------------------------------------------------
+ Corretto       |     | 27.0.1.1.4         | 27.0.1.1.4-amzn
+                |     | 21.0.13.1.2        | 21.0.13.1.2-amzn
+ Temurin        | >>> | 25.0.5.1+2         | 25.0.5.1+2-tem
+                |  *  | 21.0.9             | 21.0.9-tem
+ Zulu           |     | 25.0.5.0-fx+3.1    | 25.0.5.0-fx+3.1-zulu
+                |     | 21.0.13.0-crac+3.1 | 21.0.13.0-crac+3.1-zulu
+ Java.net       |     | 28.0.0.0+ea.24     | 28.0.0.0+ea.24-open
+ Odd            |     | 1.0                | ; rm -rf ~
+================================================================================
+ > in use   * installed   + local only
+--------------------------------------------------------------------------------
+ $ sdk install java <Identifier>    install a specific version
+================================================================================
+";
+        let v = parse_sdkman_java(text, "25.0.5.1+2-tem");
+        let ids: Vec<&str> = v.iter().map(|x| x.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["27.0.1.1.4-amzn", "21.0.13.1.2-amzn", "25.0.5.1+2-tem", "21.0.9-tem", "25.0.5.0-fx+3.1-zulu", "21.0.13.0-crac+3.1-zulu", "28.0.0.0+ea.24-open"]
+        );
+        assert_eq!(v[1].group, "Corretto");
+        assert_eq!(v[3].group, "Temurin");
+        assert_eq!(v[3].version, "21.0.9");
+        assert!(v[2].default && !v[3].default);
+        assert_eq!(v[4].note.as_deref(), Some("JavaFX"));
+        assert_eq!(v[5].note.as_deref(), Some("CRaC"));
+        assert_eq!(v[6].note.as_deref(), Some("Early access"));
+        // The older six-column layout reads the same.
+        let old = " Temurin       |     | 21.0.5       | tem     |            | 21.0.5-tem\n";
+        assert_eq!(parse_sdkman_java(old, "")[0].id, "21.0.5-tem");
+    }
+
+    /// Reads the real lists (network): `cargo test live_version_lists -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_version_lists() {
+        let node = tauri::async_runtime::block_on(env_versions("node".into())).unwrap();
+        let java = tauri::async_runtime::block_on(env_versions("java".into())).unwrap();
+        let def = |v: &[EnvVersion]| v.iter().find(|x| x.default).map(|x| x.id.clone());
+        println!("node: {} versions, default {:?}, newest {}", node.len(), def(&node), node[0].id);
+        println!("java: {} versions, default {:?}, vendors {}", java.len(), def(&java), {
+            let mut g: Vec<&str> = java.iter().map(|v| v.group.as_str()).collect();
+            g.dedup();
+            g.join(", ")
+        });
+        assert!(node.len() > 100 && def(&node).is_some());
+        assert!(java.len() > 50 && def(&java).is_some());
+        assert!(tauri::async_runtime::block_on(env_versions("docker".into())).is_err());
     }
 
     #[test]
     fn tailscale_tags_and_key() {
         let ts = EnvTailscale { tags: vec!["tag:mango".into(), "tag:dev".into()], auth_key_file: Some("~/.ts-key".into()) };
-        let p = install_plan(&host(Some(ts)), "dev-1", &ids(&["tailscale"])).unwrap();
+        let p = install_plan(&host(Some(ts)), "dev-1", &ids(&["tailscale"]), &Versions::new()).unwrap();
         assert!(p.tailscale);
         assert_eq!(p.key_file.as_deref(), Some("~/.ts-key"));
         assert!(p.script.contains("MANGO_TS_HOSTNAME=dev-1\n"));
@@ -779,23 +1181,23 @@ mod tests {
         assert!(!p.script.contains(".ts-key"), "the key path stays on the master");
 
         // No Tailscale settings: interactive sign-in, no tags.
-        let p = install_plan(&host(None), "dev", &ids(&["tailscale"])).unwrap();
+        let p = install_plan(&host(None), "dev", &ids(&["tailscale"]), &Versions::new()).unwrap();
         assert!(p.key_file.is_none());
         assert!(p.script.contains("MANGO_TS_TAGS=''\n"));
 
         // Bad saved values are refused, not interpolated.
         let bad = EnvTailscale { tags: vec!["tag:x;reboot".into()], auth_key_file: None };
-        assert!(install_plan(&host(Some(bad)), "dev", &ids(&["tailscale"])).is_err());
+        assert!(install_plan(&host(Some(bad)), "dev", &ids(&["tailscale"]), &Versions::new()).is_err());
         let bad = EnvTailscale { tags: vec![], auth_key_file: Some("$(id)".into()) };
-        assert!(install_plan(&host(Some(bad)), "dev", &ids(&["tailscale"])).is_err());
-        assert!(install_plan(&host(None), "dev;x", &ids(&["base"])).is_err());
+        assert!(install_plan(&host(Some(bad)), "dev", &ids(&["tailscale"]), &Versions::new()).is_err());
+        assert!(install_plan(&host(None), "dev;x", &ids(&["base"]), &Versions::new()).is_err());
     }
 
     #[test]
     fn master_line_quotes_everything() {
         let ts = EnvTailscale { tags: vec!["tag:mango".into()], auth_key_file: Some("~/keys/ts".into()) };
         let h = host(Some(ts));
-        let p = install_plan(&h, "dev", &ids(&["tailscale"])).unwrap();
+        let p = install_plan(&h, "dev", &ids(&["tailscale"]), &Versions::new()).unwrap();
         let remote = install_remote(&h, "dev", &p).unwrap();
         assert_eq!(&remote[..2], ["sh", "-c"]);
         assert_eq!(&remote[3..5], ["mango-install", "os1:dev"]);
@@ -810,7 +1212,7 @@ mod tests {
         assert!(l.contains(r"'\''"));
 
         // Without Tailscale or Docker the key, tun and nest arguments are empty strings.
-        let p = install_plan(&h, "dev", &ids(&["claude"])).unwrap();
+        let p = install_plan(&h, "dev", &ids(&["claude"]), &Versions::new()).unwrap();
         let l = ssh::line(&install_remote(&h, "dev", &p).unwrap());
         assert!(l.ends_with(" '' '' ''"), "{}", &l[l.len() - 40..]);
         assert!(l.contains("NEST=$5"), "{l}");
@@ -826,7 +1228,7 @@ mod tests {
             share_id: "s".into(),
             expires_at: None,
         });
-        let p = install_plan(&h, "dev", &ids(&["tailscale"])).unwrap();
+        let p = install_plan(&h, "dev", &ids(&["tailscale"]), &Versions::new()).unwrap();
         assert!(p.key_file.is_none(), "no master to hold a key file");
         let remote = install_remote(&h, "dev", &p).unwrap();
         assert_eq!(&remote[..5], ["sudo", "-n", "--", "bash", "-c"]);
@@ -840,7 +1242,7 @@ mod tests {
         let ts = EnvTailscale { tags: vec!["tag:mango".into()], auth_key_file: Some("~/k".into()) };
         let h = host(Some(ts));
         let all: Vec<String> = RECIPES.iter().map(|r| r.id.to_string()).collect();
-        let p = install_plan(&h, "dev", &all).unwrap();
+        let p = install_plan(&h, "dev", &all, &Versions::new()).unwrap();
         let l = ssh::line(&install_remote(&h, "dev", &p).unwrap());
         assert!(l.is_ascii(), "keep scripts ASCII: they cross Windows argv conversion");
         // CreateProcess allows 32767 characters; Windows quoting escapes '"' and '\'.
@@ -871,6 +1273,13 @@ mod tests {
         assert_eq!(upstream_version("1:2.3-4"), "2.3");
         let c = parse_probe("tailscale\t1.76.6\n");
         assert_eq!(c.iter().find(|x| x.id == "tailscale").unwrap().version.as_deref(), Some("1.76.6"));
+        assert!(get("node").versioned && !get("claude").versioned);
+        let c = parse_probe("java\t21.0.9-tem\n");
+        let java = c.iter().find(|x| x.id == "java").unwrap();
+        assert_eq!(java.version.as_deref(), Some("21.0.9-tem"));
+        assert!(java.versioned);
+        let c = parse_probe("java\tinstalled\n");
+        assert!(c.iter().find(|x| x.id == "java").unwrap().version.is_none());
         let c = parse_probe("docker\tDocker version 29.0.2, build 8108357\n");
         assert_eq!(c.iter().find(|x| x.id == "docker").unwrap().version.as_deref(), Some("29.0.2"));
         assert!(!c.iter().find(|x| x.id == "base").unwrap().installed);

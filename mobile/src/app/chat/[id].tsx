@@ -7,7 +7,7 @@ import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } fr
 import { AGENTS, type BackgroundTask, type LinkedItem, type Message, type Thread } from '~/types/chat'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
-import { ChatComposer, ChatMessage, ChatWorking } from '@/chat'
+import { ChatComposer, ChatContextSheet, ChatMessage, ChatWorking } from '@/chat'
 import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
 import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
@@ -42,6 +42,9 @@ export default function ChatScreen() {
   const queue = useThreads(st => st.queue[id])
   const live = useThreads(st => st.live[id])
   const toolCalls = usePrefs(st => st.toolCalls)
+  const contextPending = useThreads(st => st.contextReading[id])
+  // A chat from before Mango kept context readings gets one when it opens (no turn is run).
+  useEffect(() => { void useThreads.getState().readContext(id) }, [id])
   // A sub-agent's chat shows the links of the chat that started it, as on the desktop.
   const root = useThreads(st => (st.threads[id] ? st.rootOf(id) : null))
   const links = root?.links ?? NO_LINKS
@@ -54,6 +57,7 @@ export default function ChatScreen() {
   const [attachMenu, setAttachMenu] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [linksOpen, setLinksOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
   const linkDetails = useLinkDetails(root?.id ?? id, root?.projectPath ?? null, links, linksOpen)
   const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
@@ -220,6 +224,9 @@ export default function ChatScreen() {
           attachments={files.files}
           onAttach={readOnly ? undefined : () => setAttachMenu(true)}
           onRemoveAttachment={files.remove}
+          context={readOnly ? undefined : thread.context ?? null}
+          contextPending={!!contextPending}
+          onContext={() => setContextOpen(true)}
         />
       </View>
       <Sheet visible={attachMenu} onClose={() => setAttachMenu(false)} title="Attach">
@@ -237,6 +244,16 @@ export default function ChatScreen() {
         readOutput={readOutput}
         childOf={subagentChat}
         onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
+      />
+      <ChatContextSheet
+        visible={contextOpen}
+        onClose={() => setContextOpen(false)}
+        usage={thread.context ?? null}
+        pending={!!contextPending}
+        agentName={agentName}
+        running={busy}
+        // Not through `send`: the draft and its attachments stay for the next message.
+        onCompact={() => { atBottom.current = true; void store.send(id, '/compact') }}
       />
       <ChatLinksSheet
         visible={linksOpen}
