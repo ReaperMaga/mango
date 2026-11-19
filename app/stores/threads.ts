@@ -801,12 +801,13 @@ export const useThreads = defineStore('threads', {
       this.persist()
     },
 
-    setAgent(id: string, agent: AgentId) {
+    /** `model`: the new agent's model to run (its first one when left out). */
+    setAgent(id: string, agent: AgentId, model?: string) {
       const t = this.byId(id)
       if (!t) return
       if (t.agent !== agent) {
         t.agent = agent
-        t.model = AGENTS[agent].models[0]!.id
+        t.model = model ?? AGENTS[agent].models[0]!.id
         t.effort = null
         // Each CLI keeps its own conversation; the other agent starts fresh.
         t.sessionId = null
