@@ -103,8 +103,8 @@ export function useShortcuts() {
       return
     }
     if (/^[1-9]$/.test(e.key)) {
-      // Numbered as the tab strip shows them: the active project's tabs only.
-      const id = threads.visibleTabs[Number(e.key) - 1]
+      // Numbered as the active pane's tab strip shows them: the active project's tabs in that pane only.
+      const id = threads.groupTabs(threads.activePaneId)[Number(e.key) - 1]
       if (id) { e.preventDefault(); threads.show(id) }
     }
   }
