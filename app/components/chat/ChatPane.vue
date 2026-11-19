@@ -103,6 +103,9 @@ watch(scroller, (el) => {
 }, { immediate: true, flush: 'post' })
 onBeforeUnmount(() => ro?.disconnect())
 
+/* A chat from before Mango kept context readings gets one when it is shown (no turn is run). */
+watch(() => thread.value?.id, (id) => { if (id) void threads.readContext(id) }, { immediate: true })
+
 /* Switching chats: the new one fades in over the old instead of swapping in one frame. */
 watch(() => thread.value?.id, (id, was) => {
   if (!id || !was) return
@@ -167,7 +170,10 @@ function onKey(e: KeyboardEvent) {
           :effort="thread.effort ?? null"
           :busy="busy"
           :autofocus="active"
+          :context="thread.context ?? null"
+          :context-pending="!!threads.contextReading[thread.id]"
           @send="(text, attachments, opposite) => threads.send(thread!.id, text, attachments, opposite)"
+          @compact="threads.send(thread!.id, '/compact')"
           @stop="threads.stop(thread!.id)"
           @update:model="m => threads.setModel(thread!.id, m)"
           @update:mode="m => threads.setMode(thread!.id, m)"
