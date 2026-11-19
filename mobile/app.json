@@ -2,13 +2,14 @@
   "expo": {
     "name": "Mango",
     "slug": "mango",
+    "owner": "averix-enterprise",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "dev.mango.mobile",
+      "bundleIdentifier": "info.averix.mango.ios",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -21,7 +22,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "dev.mango.mobile"
+      "package": "info.averix.mango"
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -81,6 +82,11 @@
     "scheme": "mango",
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "eas": {
+        "projectId": "38af9993-62b5-46f5-973e-e03a539b2ae2"
+      }
     }
   }
 }
