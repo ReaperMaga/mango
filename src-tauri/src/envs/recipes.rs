@@ -18,6 +18,12 @@
 //! 127.0.0.1:5901, no VNC password, XFCE session) and `mango-novnc.service`
 //! (websockify serving /usr/share/novnc on 127.0.0.1:6080 -> 5901).
 //!
+//! Docker in an Incus container needs nesting: before installing it, the master turns on
+//! `security.nesting` and the mknod/setxattr syscall interception for a container that lacks
+//! them and restarts it once (`MASTER_INSTALL`; a new container gets them at launch, see
+//! `incus::create_plan`). A VM needs nothing. A joined environment has no master to ask, so the
+//! script says what the server's owner has to change when Docker does not start.
+//!
 //! Chromium is for the agents, not for people: Playwright's headless Chromium in
 //! `/opt/mango/ms-playwright` (installed by the Playwright that `@playwright/mcp` brings, so the
 //! two always match) and `/usr/local/bin/mango-chromium-mcp`, which starts that MCP server. It is
@@ -35,7 +41,7 @@ use super::{hosts, ssh, valid_instance, valid_master_path, valid_tag, EnvHost};
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvComponent {
-    /// "base" | "claude" | "codex" | "gh" | "node" | "chromium" | "desktop" | "tailscale"
+    /// "base" | "claude" | "codex" | "gh" | "node" | "chromium" | "desktop" | "docker" | "tailscale"
     pub id: String,
     pub name: String,
     pub description: String,
@@ -103,6 +109,13 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "An XFCE desktop you can open from Mango (VNC and noVNC, reachable only through Mango).",
         requires: &["base"],
         script: DESKTOP,
+    },
+    Recipe {
+        id: "docker",
+        name: "Docker",
+        description: "Docker Engine with Compose and Buildx, from Docker's apt repository; the agent user can run it. A container gets nesting turned on first, which restarts it once.",
+        requires: &["base"],
+        script: DOCKER,
     },
     Recipe {
         id: "tailscale",
@@ -359,6 +372,35 @@ fi
 echo "The desktop is running. Open it from Mango."
 "##;
 
+const DOCKER: &str = r##"say "Docker Engine (from Docker's apt repository)"
+need_systemd "Docker"
+os=$(. /etc/os-release && echo "${ID:-}")
+codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-}")
+case "$os" in debian|ubuntu) ;; *) fail "Docker's packages are for Debian and Ubuntu; this environment runs ${os:-an unknown system}." ;; esac
+[ -n "$codename" ] || fail "could not tell which $os release this is (no VERSION_CODENAME in /etc/os-release)."
+install -d -m 0755 /etc/apt/keyrings
+curl -fsSL "https://download.docker.com/linux/$os/gpg" -o /tmp/mango-docker.asc
+install -m 0644 /tmp/mango-docker.asc /etc/apt/keyrings/docker.asc
+rm -f /tmp/mango-docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/$os $codename stable" > /etc/apt/sources.list.d/docker.list
+apt_get update
+APT_FRESH=1
+apt_get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+usermod -aG docker agent
+systemctl enable --now docker.service || true
+for _ in $(seq 40); do docker info >/dev/null 2>&1 && break; sleep 0.5; done
+if ! docker info >/dev/null 2>&1; then
+  systemctl --no-pager status docker.service || true
+  if systemd-detect-virt --container --quiet 2>/dev/null; then
+    fail "Docker did not start. In an Incus container it needs nesting: on the server, run incus config set <this environment> security.nesting=true security.syscalls.intercept.mknod=true security.syscalls.intercept.setxattr=true, restart it, and install again."
+  fi
+  fail "Docker did not start (see the service status above)."
+fi
+docker --version
+docker compose version
+echo "The agent user can run docker (in new shells and chats)."
+"##;
+
 const TAILSCALE: &str = r##"say "Tailscale"
 need_systemd "Tailscale"
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -393,10 +435,27 @@ say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n\033[1;31mMango: %s\033[0m\n' "$*" >&2; exit 1; }
 "##;
 
-/// Runs the instance script `$SCRIPT` in `$T`. With `$TUN` = 1 (Tailscale) it first
-/// makes sure the instance has `/dev/net/tun`; with `$KEY` (a path on the master) it
-/// hands the Tailscale auth key to the instance as a root-only file in /run.
-pub(crate) const MASTER_INSTALL: &str = r##"if [ "$TUN" = 1 ] && ! incus exec "$T" -- test -c /dev/net/tun; then
+/// Runs the instance script `$SCRIPT` in `$T`. With `$NEST` = 1 (Docker) a container
+/// gets nesting and syscall interception, and restarts once if it lacked them. With
+/// `$TUN` = 1 (Tailscale) it makes sure the instance has `/dev/net/tun`; with `$KEY`
+/// (a path on the master) it hands the Tailscale auth key to the instance as a
+/// root-only file in /run.
+pub(crate) const MASTER_INSTALL: &str = r##"if [ "$NEST" = 1 ] \
+  && incus info "$T" 2>/dev/null | grep -q '^[[:space:]]*Type:[[:space:]]*container' \
+  && [ "$(incus config get "$T" security.nesting 2>/dev/null)" != true ]; then
+  say "Letting $T run Docker: turning on nesting, which restarts it once"
+  incus config set "$T" security.nesting=true security.syscalls.intercept.mknod=true security.syscalls.intercept.setxattr=true \
+    || fail "could not turn on nesting for $T (see above)."
+  incus restart "$T" || fail "could not restart $T (see above)."
+  start=$(date +%s)
+  until incus exec "$T" -- sh -c 'getent hosts download.docker.com >/dev/null 2>&1'; do
+    el=$(( $(date +%s) - start ))
+    [ "$el" -lt 180 ] || fail "$T did not come back with a working network within 3 minutes of its restart."
+    echo "    waiting for $T (${el} s)"
+    sleep 3
+  done
+fi
+if [ "$TUN" = 1 ] && ! incus exec "$T" -- test -c /dev/net/tun; then
   say "Adding /dev/net/tun to $T for Tailscale"
   incus config device add "$T" mango-tun unix-char source=/dev/net/tun path=/dev/net/tun \
     || echo "Could not add /dev/net/tun; Tailscale may not start in $T." >&2
@@ -439,6 +498,8 @@ pub(crate) struct InstallPlan {
     pub tailscale: bool,
     /// The auth key file on the master, when Tailscale is part of it and one is set up.
     pub key_file: Option<String>,
+    /// Docker is part of it (a container needs nesting, which the master turns on).
+    pub nesting: bool,
 }
 
 /// Build the install script for `ids` (with their requirements) in `instance`.
@@ -446,6 +507,7 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String]) -> Re
     valid_instance(instance)?;
     let recipes = resolve(ids)?;
     let tailscale = recipes.iter().any(|r| r.id == "tailscale");
+    let nesting = recipes.iter().any(|r| r.id == "docker");
     let mut s = String::from("set -Eeuo pipefail\n");
     let mut key_file = None;
     if tailscale {
@@ -469,16 +531,17 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String]) -> Re
         s.push_str(r.script);
     }
     s.push_str(FOOTER);
-    Ok(InstallPlan { script: s, tailscale, key_file })
+    Ok(InstallPlan { script: s, tailscale, key_file, nesting })
 }
 
-/// The values `MASTER_INSTALL` reads, as positional arguments: T SCRIPT KEY TUN.
+/// The values `MASTER_INSTALL` reads, as positional arguments: T SCRIPT KEY TUN NEST.
 pub(crate) fn master_install_args(target: &str, plan: &InstallPlan) -> Vec<String> {
     vec![
         target.to_string(),
         plan.script.clone(),
         plan.key_file.clone().unwrap_or_default(),
         if plan.tailscale { "1".into() } else { String::new() },
+        if plan.nesting { "1".into() } else { String::new() },
     ]
 }
 
@@ -488,7 +551,7 @@ pub(crate) fn install_remote(host: &EnvHost, instance: &str, plan: &InstallPlan)
         let inner = ["bash".to_string(), "-c".into(), plan.script.clone()];
         return ssh::in_instance(host, instance, ssh::Mode::Tty, &inner);
     }
-    let script = format!("{MASTER_PRELUDE}T=$1 SCRIPT=$2 KEY=$3 TUN=$4\n{MASTER_INSTALL}");
+    let script = format!("{MASTER_PRELUDE}T=$1 SCRIPT=$2 KEY=$3 TUN=$4 NEST=$5\n{MASTER_INSTALL}");
     let mut a = vec!["sh".to_string(), "-c".into(), script, "mango-install".into()];
     a.extend(master_install_args(&ssh::target(host, instance), plan));
     Ok(a)
@@ -516,6 +579,7 @@ fi
 if [ -f /etc/systemd/system/mango-vnc.service ] && [ -f /etc/systemd/system/mango-novnc.service ] && command -v Xvnc >/dev/null 2>&1; then
   row desktop "$(dpkg-query -W -f='${Version}' xfce4-session 2>/dev/null || echo installed)"
 fi
+command -v docker >/dev/null 2>&1 && row docker "$(docker --version 2>/dev/null | first)"
 command -v tailscale >/dev/null 2>&1 && row tailscale "$(tailscale version 2>/dev/null | first)"
 exit 0
 "##;
@@ -689,6 +753,21 @@ mod tests {
     }
 
     #[test]
+    fn docker_installs_from_its_repository_and_asks_for_nesting() {
+        assert_eq!(order(&["docker"]), ["base", "docker"]);
+        let p = install_plan(&host(None), "dev", &ids(&["docker"])).unwrap();
+        assert!(p.nesting && !p.tailscale);
+        assert!(p.script.contains("https://download.docker.com/linux/$os $codename stable"));
+        assert!(p.script.contains("docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin"));
+        assert!(p.script.contains("usermod -aG docker agent"));
+        assert!(p.script.find("useradd").unwrap() < p.script.find("download.docker.com").unwrap());
+        let remote = install_remote(&host(None), "dev", &p).unwrap();
+        assert_eq!(remote[8], "1");
+        assert!(remote[2].contains("security.nesting=true security.syscalls.intercept.mknod=true"));
+        assert!(!install_plan(&host(None), "dev", &ids(&["node"])).unwrap().nesting);
+    }
+
+    #[test]
     fn tailscale_tags_and_key() {
         let ts = EnvTailscale { tags: vec!["tag:mango".into(), "tag:dev".into()], auth_key_file: Some("~/.ts-key".into()) };
         let p = install_plan(&host(Some(ts)), "dev-1", &ids(&["tailscale"])).unwrap();
@@ -725,14 +804,16 @@ mod tests {
         let l = ssh::line(&remote);
         assert!(l.starts_with("sh -c 'set -eu\n"), "{l}");
         assert!(l.contains(" mango-install os1:dev 'set -Eeuo pipefail\n"), "{l}");
-        assert!(l.ends_with(" '~/keys/ts' 1"), "{}", &l[l.len() - 60..]);
+        assert_eq!(remote[8], "");
+        assert!(l.ends_with(" '~/keys/ts' 1 ''"), "{}", &l[l.len() - 60..]);
         // Single quotes inside the scripts are closed and escaped.
         assert!(l.contains(r"'\''"));
 
-        // Without Tailscale the key and tun arguments are empty strings.
+        // Without Tailscale or Docker the key, tun and nest arguments are empty strings.
         let p = install_plan(&h, "dev", &ids(&["claude"])).unwrap();
         let l = ssh::line(&install_remote(&h, "dev", &p).unwrap());
-        assert!(l.ends_with(" '' ''"), "{}", &l[l.len() - 40..]);
+        assert!(l.ends_with(" '' '' ''"), "{}", &l[l.len() - 40..]);
+        assert!(l.contains("NEST=$5"), "{l}");
     }
 
     #[test]
@@ -790,6 +871,8 @@ mod tests {
         assert_eq!(upstream_version("1:2.3-4"), "2.3");
         let c = parse_probe("tailscale\t1.76.6\n");
         assert_eq!(c.iter().find(|x| x.id == "tailscale").unwrap().version.as_deref(), Some("1.76.6"));
+        let c = parse_probe("docker\tDocker version 29.0.2, build 8108357\n");
+        assert_eq!(c.iter().find(|x| x.id == "docker").unwrap().version.as_deref(), Some("29.0.2"));
         assert!(!c.iter().find(|x| x.id == "base").unwrap().installed);
     }
 

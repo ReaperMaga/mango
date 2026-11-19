@@ -732,7 +732,7 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'chromium' | 'desktop' | 'tailscale'
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId

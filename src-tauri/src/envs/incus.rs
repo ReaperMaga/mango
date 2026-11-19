@@ -540,9 +540,9 @@ pub async fn env_resize(app: AppHandle, host_id: String, instance: String, input
 /* ---------- create ---------- */
 
 /// Launches `$T` (`incus launch "$@"`), waits for it to answer and reach the network,
-/// then installs (`recipes::MASTER_INSTALL`). Arguments: T SCRIPT KEY TUN, launch args.
-const CREATE: &str = r##"T=$1 SCRIPT=$2 KEY=$3 TUN=$4
-shift 4
+/// then installs (`recipes::MASTER_INSTALL`). Arguments: T SCRIPT KEY TUN NEST, launch args.
+const CREATE: &str = r##"T=$1 SCRIPT=$2 KEY=$3 TUN=$4 NEST=$5
+shift 5
 command -v incus >/dev/null 2>&1 || fail "this server has no incus command."
 if incus info "$T" >/dev/null 2>&1; then
   fail "an instance called $T already exists. Pick another name."
@@ -616,6 +616,12 @@ fn create_plan(host: &EnvHost, input: &EnvCreateInput, now_ms: u64) -> Result<Cr
     if let Some(n) = input.disk_gib {
         launch.extend(["-d".into(), format!("root,size={n}GiB")]);
     }
+    if !vm && install.as_ref().is_some_and(|p| p.nesting) {
+        // Docker in a container; set at launch so the install needs no restart.
+        for c in ["security.nesting=true", "security.syscalls.intercept.mknod=true", "security.syscalls.intercept.setxattr=true"] {
+            launch.extend(["-c".into(), c.into()]);
+        }
+    }
     launch.extend(["-c".into(), format!("user.mango.created={now_ms}")]);
     Ok(CreatePlan { launch, install })
 }
@@ -630,7 +636,7 @@ fn create_remote(host: &EnvHost, name: &str, plan: &CreatePlan) -> Vec<String> {
     let mut a = vec!["sh".to_string(), "-c".into(), script, "mango-create".into()];
     match &plan.install {
         Some(p) => a.extend(recipes::master_install_args(&ssh::target(host, name), p)),
-        None => a.extend([ssh::target(host, name), String::new(), String::new(), String::new()]),
+        None => a.extend([ssh::target(host, name), String::new(), String::new(), String::new(), String::new()]),
     }
     a.extend(plan.launch.iter().cloned());
     a
@@ -831,9 +837,10 @@ mod tests {
         assert!(remote[2].contains("incus launch \"$@\"") && remote[2].contains("incus exec \"$T\" -t -- bash -c"));
         assert_eq!(&remote[3..5], ["mango-create", "os1:dev"]);
         assert_eq!(remote[7], "1");
-        assert_eq!(remote[8], "images:ubuntu/24.04/cloud");
+        assert_eq!(remote[8], "");
+        assert_eq!(remote[9], "images:ubuntu/24.04/cloud");
         let l = ssh::line(&remote);
-        assert!(l.ends_with(" 1 images:ubuntu/24.04/cloud os1:dev --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=40GiB -c user.mango.created=42"), "{l}");
+        assert!(l.ends_with(" 1 '' images:ubuntu/24.04/cloud os1:dev --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=40GiB -c user.mango.created=42"), "{l}");
 
         // A container with nothing to install: no flags it didn't ask for, empty install args.
         let mut i = input();
@@ -846,7 +853,23 @@ mod tests {
         assert_eq!(p.launch, ["images:ubuntu/24.04", "os1:dev", "-c", "user.mango.created=1"]);
         assert!(p.install.is_none());
         let remote = create_remote(&host(), "dev", &p);
-        assert_eq!(&remote[4..8], ["os1:dev", "", "", ""]);
+        assert_eq!(&remote[4..9], ["os1:dev", "", "", "", ""]);
+
+        // Docker in a container: nesting at launch. In a VM: nothing extra.
+        i.components = vec!["docker".into()];
+        let p = create_plan(&host(), &i, 1).unwrap();
+        assert_eq!(
+            p.launch,
+            [
+                "images:ubuntu/24.04", "os1:dev", "-c", "security.nesting=true", "-c",
+                "security.syscalls.intercept.mknod=true", "-c", "security.syscalls.intercept.setxattr=true", "-c",
+                "user.mango.created=1"
+            ]
+        );
+        assert_eq!(create_remote(&host(), "dev", &p)[8], "1");
+        i.kind = "vm".into();
+        let p = create_plan(&host(), &i, 1).unwrap();
+        assert!(!p.launch.iter().any(|a| a.starts_with("security.")));
     }
 
     #[test]
@@ -859,7 +882,7 @@ mod tests {
             Box::new(|i| i.cpus = Some(65)),
             Box::new(|i| i.memory_gib = Some(513)),
             Box::new(|i| i.disk_gib = Some(3)),
-            Box::new(|i| i.components = vec!["docker".into()]),
+            Box::new(|i| i.components = vec!["kubernetes".into()]),
         ];
         for f in bad {
             let mut i = input();
