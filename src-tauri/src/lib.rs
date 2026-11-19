@@ -15,6 +15,7 @@ mod git;
 mod github;
 mod images;
 mod mcp;
+mod notify;
 mod plastic;
 mod projects;
 mod pty;
@@ -38,6 +39,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
         // Voice input records in the webview. Mango loads only its own pages, and recording
         // starts only when the user presses the microphone, so grant it without a second prompt
         // (WebKitGTK would otherwise deny it outright). Only for Mango's own views (`main`, `w-<n>`):
@@ -90,6 +92,7 @@ pub fn run() {
             attachments::attachment_import,
             attachments::attachment_read,
             images::chat_image,
+            notify::notify,
             chats::chats_load,
             chats::chats_save,
             chats_remote::chats_remote_list,

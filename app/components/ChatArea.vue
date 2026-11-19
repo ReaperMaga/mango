@@ -216,7 +216,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (!strip || !tab) return []
   const ids = strip.tabs.map(t => t.id)
   const items: MenuItem[] = [
-    { label: 'Close', icon: X, kbd: `${mod.value}+W`, onSelect: () => threads.closeTab(tab.id) },
+    { label: 'Close', icon: X, kbd: ws.keyLabel('close-tab'), onSelect: () => threads.closeTab(tab.id) },
     { label: 'Close others', icon: XCircle, disabled: ids.length < 2, onSelect: () => closeMany(ids.filter(x => x !== tab.id)) },
     { label: 'Close to the right', icon: ArrowRightToLine, disabled: at >= ids.length - 1, onSelect: () => closeMany(ids.slice(at + 1)) },
     { label: 'Close all', icon: ListX, onSelect: () => closeMany(ids) },
@@ -356,14 +356,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 @click.stop="threads.closeTab(t.id)"
               ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
             </div>
-            <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="`${mod}+N`" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
+            <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="ws.keyLabel('new-chat')" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
           </TransitionGroup>
           <div v-if="si === strips.length - 1" class="ca__tools">
-            <UiIconButton size="sm" label="New browser tab" :shortcut="`${mod}+Shift+B`" @click="browsers.openNew()"><Globe /></UiIconButton>
+            <UiIconButton size="sm" label="New browser tab" :shortcut="ws.keyLabel('new-browser')" @click="browsers.openNew()"><Globe /></UiIconButton>
             <UiIconButton
               size="sm"
               :label="threads.isSplit ? 'Close split' : 'Split right'"
-              :shortcut="`${mod}+\\`"
+              :shortcut="ws.keyLabel('split')"
               :active="threads.isSplit"
               @click="threads.isSplit ? threads.closePane('pane-b') : threads.split()"
             >

@@ -20,6 +20,8 @@ tauri = { version = "2", features = ["unstable", "devtools"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-shell = "2"
 tauri-plugin-updater = "2"
+# Desktop notifications: a chat finished, or needs you (`notify.rs`).
+tauri-plugin-notification = "2"
 # mango:// share links: a second instance hands its link to the running one.
 tauri-plugin-deep-link = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }

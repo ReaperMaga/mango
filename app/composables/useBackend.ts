@@ -453,6 +453,14 @@ const mock = (() => {
         return data
       }
       case 'chat_image': return mockChatImage(args.path, args.base)
+      case 'notify': {
+        // No system service in the browser preview: the page's own notifications stand in.
+        if (typeof Notification === 'undefined') throw new Error('This browser cannot show notifications.')
+        if (Notification.permission === 'default') await Notification.requestPermission()
+        if (Notification.permission !== 'granted') throw new Error('Notifications are blocked for this page. Allow them in the site settings of your browser.')
+        new Notification(args.title, { body: args.body, silent: !args.sound })
+        return
+      }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)

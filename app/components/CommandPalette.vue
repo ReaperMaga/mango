@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
-  FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
+  Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -73,9 +73,6 @@ let returnFocus: HTMLElement | null = null
 let carryError: string | null = null
 
 const isMac = /Mac|iPhone|iPad/.test(navigator.platform)
-const mod = modLabel()
-const shift = isMac ? '⇧' : 'Shift'
-const alt = isMac ? '⌥' : 'Alt'
 
 const tildify = (path: string) => path.replace(/^\/(?:home|Users)\/[^/]+(?=\/|$)/, '~')
 function errorText(e: unknown): string {
@@ -92,15 +89,15 @@ const actions = computed<Item[]>(() => {
   const dark = ws.resolvedTheme() === 'dark'
   const items: Item[] = []
   if (project && win.spec.kind !== 'chat') {
-    items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: [mod, 'N'], keywords: 'thread conversation agent', run: () => threads.create(project) })
+    items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: ws.keyParts('new-chat'), keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
-      items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: [mod, shift, 'N'], keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
+      items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: ws.keyParts('new-chat-worktree'), keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
       for (const w of wts.linked.value) {
         if (w.prunable) continue
         items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to ${wts.term.value} ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree workspace switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
       }
     }
-    items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: [mod, shift, 'B'], keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
+    items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: ws.keyParts('new-browser'), keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
   }
   // With environments around, say where these put the project (the remembered choice).
   const where = projectWhere()
@@ -117,9 +114,9 @@ const actions = computed<Item[]>(() => {
     const back = win.isOwnChat(chat.id)
     items.push({ id: 'chat-window', group: 'Actions', label: back ? 'Return chat to main window' : 'Move chat to new window', detail: move.hint ?? chat.title, icon: AppWindow, keywords: 'window move separate detach tear off pop out second monitor screen', run: move.onSelect })
   }
-  items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: [mod, alt, 'N'], keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
+  items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: ws.keyParts('new-window'), keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(
-    { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: [mod, 'O'], keywords: 'project directory', run: openFolderFlow },
+    { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: ws.keyParts('open-folder'), keywords: 'project directory', run: openFolderFlow },
     { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
     { id: 'clone', group: 'Actions', label: 'Clone repository…', detail: whereDetail, icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
   )
@@ -151,17 +148,17 @@ const actions = computed<Item[]>(() => {
     const panelTerm = ws.terminalOpen ? ws.activeTerminalId : null
     if (panelTerm) items.push({ id: 'terminal-to-editor', group: 'Actions', label: 'Move terminal to editor area', icon: PanelTop, keywords: 'terminal shell tab main pane editor area undock', run: () => ws.moveTerminalToEditor(panelTerm) })
     items.push(
-      { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: [mod, '`'], keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
-      { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: [mod, shift, 'T'], keywords: 'shell tab console', run: () => ws.newTerminal() },
+      { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: ws.keyParts('terminal'), keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
+      { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: ws.keyParts('new-terminal'), keywords: 'shell tab console', run: () => ws.newTerminal() },
       { id: 'new-terminal-editor', group: 'Actions', label: 'New terminal in editor area', icon: SquareTerminal, keywords: 'shell tab console main pane editor', run: () => ws.newTerminal(undefined, undefined, true) },
-      { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: [mod, 'Shift', 'H'], detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
-      { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: [mod, 'Shift', 'E'], keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
-      { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: [mod, 'Shift', 'G'], keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
-      { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: [mod, 'Shift', 'P'], keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
-      { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: [mod, 'B'], keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
+      { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: ws.keyParts('env'), detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
+      { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: ws.keyParts('files'), keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
+      { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
+      { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
+      { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
-        ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: [mod, '\\'], keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
-        : { id: 'split', group: 'Actions', label: 'Split chat right', icon: Columns2, keys: [mod, '\\'], keywords: 'split pane side by side', run: () => threads.split() },
+        ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
+        : { id: 'split', group: 'Actions', label: 'Split chat right', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split pane side by side', run: () => threads.split() },
     )
   }
   if (ws.activeProject) {
@@ -174,14 +171,16 @@ const actions = computed<Item[]>(() => {
   }
   items.push({ id: 'settings-mcp', group: 'Actions', label: 'MCP servers', icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
+  items.push({ id: 'settings-notifications', group: 'Actions', label: 'Notification settings', icon: Bell, keywords: 'notifications notify alert sound desktop finished approval fails background', run: () => ws.openSettings('notifications') })
+  items.push({ id: 'settings-shortcuts', group: 'Actions', label: 'Keyboard shortcuts', icon: Keyboard, keywords: 'keyboard shortcuts keys keybindings bindings hotkeys rebind remap', run: () => ws.openSettings('shortcuts') })
   const up = useUpdater()
   items.push(up.update
     ? { id: 'update', group: 'Actions', label: `Update to ${up.update.version} and restart`, icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
     : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('maintenance'); up.check(true) } })
-  items.push({ id: 'usage', group: 'Actions', label: 'Usage limits', detail: '5-hour and weekly', icon: Gauge, keys: [mod, shift, 'U'], keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
+  items.push({ id: 'usage', group: 'Actions', label: 'Usage limits', detail: '5-hour and weekly', icon: Gauge, keys: ws.keyParts('usage'), keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
   items.push({ id: 'setup', group: 'Actions', label: 'Get started', detail: 'Install and sign in to agents', icon: Download, keywords: 'setup install onboarding first run claude code codex git cli agents download sign in login', run: () => ws.openSetup() })
   items.push({ id: 'changelog', group: 'Actions', label: 'Changelog', icon: History, keywords: 'changelog release notes what is new whats new versions history', run: () => ws.openSettings('changelog') })
-  items.push({ id: 'settings', group: 'Actions', label: 'Open settings', icon: Settings, keys: [mod, ','], keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
+  items.push({ id: 'settings', group: 'Actions', label: 'Open settings', icon: Settings, keys: ws.keyParts('settings'), keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
   items.push({
     id: 'theme',
     group: 'Actions',

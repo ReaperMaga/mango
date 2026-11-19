@@ -8,7 +8,6 @@ import { parseFileTab } from '~/utils/fileTabs'
 import { editorModel, setEditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
-import { modLabel } from '~/composables/useShortcuts'
 import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
 import { changeMarkers, type ChangeMarkers } from '~/composables/changeMarkers'
 import { useGit } from '~/stores/git'
@@ -27,7 +26,6 @@ const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
 const git = useGit()
-const mod = ref('Ctrl')
 
 const tab = computed(() => parseFileTab(props.tabId))
 const file = computed(() => files.file(props.tabId))
@@ -169,7 +167,6 @@ async function setUp() {
 }
 
 onMounted(() => {
-  mod.value = modLabel()
   if (editable.value) void setUp()
 })
 
@@ -292,7 +289,7 @@ const state = computed(() => {
           <Code />Code
         </button>
       </div>
-      <UiButton v-if="kind !== 'raster'" size="sm" :disabled="!f?.dirty || f?.saving" :title="`Save (${mod}+S)`" @click="save"><Save />Save</UiButton>
+      <UiButton v-if="kind !== 'raster'" size="sm" :disabled="!f?.dirty || f?.saving" :title="ws.withKey('Save', 'save-file')" @click="save"><Save />Save</UiButton>
       <UiIconButton size="sm" label="Show in Files" @click="revealInTree"><FolderTree /></UiIconButton>
       <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>

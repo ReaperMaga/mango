@@ -2,7 +2,7 @@
 
 Open Settings with <kbd>Ctrl</kbd> <kbd>,</kbd>, the **Settings** button at the bottom of the sidebar, or the command palette. Press <kbd>Ctrl</kbd> <kbd>,</kbd> again or <kbd>Esc</kbd> to close it. Settings covers the workspace while it is open, so workspace shortcuts pause until you close it.
 
-The list on the left has two headlines: **General** (Preferences, Projects, Appearance, Voice) and **Technical** (Environments, Terminal, Behaviour, Maintenance). Agents, Archive and Changelog sit at the bottom. <kbd>↑</kbd> and <kbd>↓</kbd> move between sections.
+The list on the left has two headlines: **General** (Preferences, Projects, Appearance, Notifications, Voice) and **Technical** (Environments, Terminal, Shortcuts, Behaviour, Maintenance). Agents, Archive and Changelog sit at the bottom. <kbd>↑</kbd> and <kbd>↓</kbd> move between sections.
 
 ## Preferences
 
@@ -34,6 +34,21 @@ Settings for one project at a time: pick it at the top ("Applying settings for")
 - **Send shortcut**: Enter sends and <kbd>Shift</kbd> <kbd>Enter</kbd> breaks the line (the default), or <kbd>Ctrl/⌘</kbd> <kbd>Enter</kbd> sends and Enter breaks the line.
 - **Follow-up behavior**: what happens to a message you write while the agent works. **Queue** (the default) holds it until the turn ends; **Steer** hands it to the running turn, which reads it at its next step. The other key combination does the opposite for one message: <kbd>Ctrl/⌘</kbd> <kbd>Enter</kbd> with Enter as the send shortcut, or <kbd>Ctrl/⌘</kbd> <kbd>Shift</kbd> <kbd>Enter</kbd> with the other.
 - **Tool calls in chat**: **Show all**, **Hide successful** (failures stay), **Hide all**, or **Zen** (only the final answers). Approvals, questions and errors always show.
+
+## Notifications
+
+Mango can tell you about a chat while you are in another window, so you can leave an agent to work.
+
+- **Desktop notifications** is the master switch. Off, nothing below applies.
+- **Notify me when**: a chat **needs you** (an approval is waiting), **finishes**, or **fails**. A sub-agent's chat never sends its own; its parent speaks for it, and stopping a run yourself is not a failure.
+- **Only when Mango is in the background** keeps quiet while the window is in front. Switched off, you still hear nothing about the chat you are looking at.
+- **Show the chat and its reply**: the notification carries the chat's title and the start of the agent's last reply or the command it wants to run. Off, it only says that a chat finished, which keeps your work off a shared screen.
+- **Play a sound** uses the system's notification sound.
+- **Send a test** shows a notification right away and tells you if the system refused it. On macOS and Windows, notifications must also be allowed for Mango in the system settings.
+
+## Shortcuts
+
+Every shortcut in the [shortcut list](./shortcuts) can be changed. Select a key, then press the new combination: it must include <kbd>Ctrl/⌘</kbd>, and Mango refuses a combination that another action has, or that the system and text fields use (copy, paste, undo and the like). <kbd>Backspace</kbd> clears a shortcut, <kbd>Esc</kbd> cancels, the arrow button beside a changed key puts the default back, and **Reset all to defaults** undoes every change. Tooltips, menus and the command palette show the keys you chose. <kbd>Ctrl/⌘</kbd> <kbd>1</kbd> to <kbd>9</kbd> (switch tab) and <kbd>Ctrl/⌘</kbd> <kbd>J</kbd> (terminal) stay as they are.
 
 ## Agents
 

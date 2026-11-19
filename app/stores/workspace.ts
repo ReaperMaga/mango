@@ -10,6 +10,7 @@ import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
+import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -65,6 +66,36 @@ export type FollowUp = 'queue' | 'steer'
 /** Tool calls in a chat: all, only the failed ones, none, or only the final answers (Zen). */
 export type ToolCalls = 'all' | 'hide-ok' | 'hide' | 'zen'
 export type CursorStyle = 'bar' | 'block' | 'underline'
+/** What Mango tells you about while you are elsewhere (Settings > Notifications). */
+export interface NotifyPrefs {
+  /** Master switch. */
+  enabled: boolean
+  /** A chat finished its turn. */
+  done: boolean
+  /** A chat needs an approval or an answer. */
+  needsYou: boolean
+  /** A chat's run failed. */
+  failed: boolean
+  /** Only while Mango's window is in the background or minimised. */
+  backgroundOnly: boolean
+  /** Name the chat and quote the reply; off, the notification only says what happened. */
+  preview: boolean
+  /** The system's notification sound. */
+  sound: boolean
+}
+const notifyOf = (raw: unknown): NotifyPrefs => {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
+  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
+  return {
+    enabled: on(o.enabled, true),
+    done: on(o.done, true),
+    needsYou: on(o.needsYou, true),
+    failed: on(o.failed, true),
+    backgroundOnly: on(o.backgroundOnly, true),
+    preview: on(o.preview, true),
+    sound: on(o.sound, false),
+  }
+}
 /** What one project overrides (Settings > Projects). Anything missing follows the global default. */
 export interface ProjectPrefs {
   /** Shown instead of the folder name. */
@@ -88,7 +119,7 @@ export interface ConfirmAsk { title: string; body: string; label: string; danger
   /** Only something to read: one button, no Cancel. */
   info?: boolean }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'maintenance' | 'archive' | 'changelog'
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog'
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -265,6 +296,11 @@ const initialState = () => {
       sendKey: (prefs.sendKey === 'mod-enter' ? 'mod-enter' : 'enter') as SendKey,
       followUp: (prefs.followUp === 'steer' ? 'steer' : 'queue') as FollowUp,
       toolCalls: (['all', 'hide-ok', 'hide', 'zen'].includes(prefs.toolCalls) ? prefs.toolCalls : 'all') as ToolCalls,
+      notify: notifyOf(prefs.notify),
+      /** Keys the user changed, by action id (Settings > Shortcuts); `''` is a cleared key. Defaults live in utils/shortcuts. */
+      shortcuts: cleanOverrides(prefs.shortcuts),
+      /** A key is being recorded in Settings > Shortcuts: the shortcuts stand still. Not persisted. */
+      recordingShortcut: false,
       /** Per-project overrides, by project path (Settings > Projects). */
       projectPrefs: projectPrefsOf(),
       /** Ask before archiving / deleting a chat (Settings > Preferences). */
@@ -307,6 +343,8 @@ export const useWorkspace = defineStore('workspace', {
     listedRecent: s => s.recent.filter(p => !s.projectPrefs[p.path]?.archived),
     activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
     hasProject: s => s.openProjects.length > 0,
+    /** Every action's key in force. */
+    bindings: s => resolveBindings(s.shortcuts),
     /** The shell a plain "new terminal" starts: the user's choice if it still exists, else the system default. */
     defaultTerminalProfile: s =>
       s.terminalProfiles.find(p => p.id === s.terminalProfileId)
@@ -318,6 +356,22 @@ export const useWorkspace = defineStore('workspace', {
   },
 
   actions: {
+    /** An action's key written for a tooltip (`Ctrl+Shift+G`), or '' when it has none. Follows Settings > Shortcuts. */
+    keyLabel(id: string): string {
+      const k = this.bindings[id]
+      return k ? comboLabel(k) : ''
+    },
+    /** The same, one string per key, for the palette's key caps. */
+    keyParts(id: string): string[] {
+      const k = this.bindings[id]
+      return k ? comboParts(k) : []
+    },
+    /** `Label (Ctrl+N)`, or just the label when the action has no key. */
+    withKey(label: string, id: string): string {
+      const k = this.keyLabel(id)
+      return k ? `${label} (${k})` : label
+    },
+
     persist() {
       try {
         const all: Record<string, unknown> = {
@@ -347,6 +401,8 @@ export const useWorkspace = defineStore('workspace', {
           sendKey: this.sendKey,
           followUp: this.followUp,
           toolCalls: this.toolCalls,
+          notify: this.notify,
+          shortcuts: this.shortcuts,
           confirmArchive: this.confirmArchive,
           confirmDelete: this.confirmDelete,
           setupSeen: this.setupSeen,
