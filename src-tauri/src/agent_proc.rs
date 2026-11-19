@@ -113,9 +113,10 @@ pub fn binary_for(agent: &str) -> Result<&'static str, String> {
 fn kill_tree(pid: u32, child: &Arc<Mutex<Child>>) {
     #[cfg(unix)]
     {
-        // The child leads its own process group (see `process_group(0)` below).
+        // The child leads its own process group (see `process_group(0)` below). The `--` matters:
+        // procps-ng 3.3.17 (Ubuntu 22.04) misreads `kill -TERM -<pgid>` and kills only itself.
         let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{pid}")])
+            .args(["-TERM", "--", &format!("-{pid}")])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1484,7 +1485,7 @@ exit 0"#;
                     }
                     if t.elapsed() > Duration::from_secs(20) {
                         let r = report(stage);
-                        let _ = Command::new("kill").args(["-KILL", &format!("-{}", c.id())]).status();
+                        let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", c.id())]).status();
                         let _ = c.wait();
                         panic!("{r}");
                     }
@@ -1500,8 +1501,8 @@ exit 0"#;
             let (o1, o2, e1) = (next(&out, "start: env"), next(&out, "start: got:one"), next(&err, "start: err:one"));
             assert_eq!((o1.as_slice(), o2.as_slice(), e1.as_slice()), (&b"env=t-1\n"[..], &b"got:one\n"[..], &b"err:one\n"[..]));
             // The connection drops: everything of this attach goes, the run stays.
-            Command::new("kill").args(["-KILL", &format!("-{}", a.id())]).status().unwrap();
-            let _ = a.wait();
+            Command::new("kill").args(["-KILL", "--", &format!("-{}", a.id())]).status().unwrap();
+            ends(&mut a, "the dropped attach going away");
             drop(stdin);
 
             // Offsets: only the run's bytes, the profile's and the marker's left out.
