@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { Box, ChevronDown, CircleAlert, FolderOpen, LogIn, Monitor } from 'lucide-vue-next'
-import { ENV_COMPONENTS, ENV_IMAGES, instanceKey, useEnvironments } from '~/stores/environments'
-import type { EnvComponentId, EnvCreateInput, EnvKind } from '~/types/ipc'
+import { ENV_COMPONENTS, ENV_DEFAULT_VERSION, ENV_IMAGES, instanceKey, useEnvironments } from '~/stores/environments'
+import type { EnvComponentId, EnvCreateInput, EnvKind, EnvVersions } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import SettingsSegmented from '~/components/settings/SettingsSegmented.vue'
 import EnvTerminal from './EnvTerminal.vue'
+import EnvVersionPicker from './EnvVersionPicker.vue'
 
 /**
  * New environment: name, image, container or VM, size, and the components to
@@ -27,6 +28,8 @@ const memory = ref('')
 const disk = ref('')
 /** What the user ticked; requirements are added on top (see `effective`). */
 const picked = ref<Set<EnvComponentId>>(new Set())
+/** Versions picked for Node.js and Java; a missing one installs the default. */
+const versions = ref<EnvVersions>({})
 
 type Phase = 'form' | 'running' | 'done' | 'failed'
 const phase = ref<Phase>('form')
@@ -54,6 +57,7 @@ watch(open, (isOpen) => {
   const defaults: EnvComponentId[] = ['base', 'claude', 'gh']
   if (host.value?.tailscale) defaults.push('tailscale')
   picked.value = new Set(defaults)
+  versions.value = {}
   phase.value = 'form'
   touched.value = false
   notice.value = null
@@ -117,6 +121,14 @@ function neededBy(id: EnvComponentId): string | null {
   return null
 }
 
+function setVersion(id: EnvComponentId, v: string | null) {
+  const next = { ...versions.value }
+  if (v) next[id] = v
+  else delete next[id]
+  versions.value = next
+}
+const versionLabel = (id: EnvComponentId) => versions.value[id] ?? ENV_DEFAULT_VERSION[id] ?? 'Default'
+
 function toggle(id: EnvComponentId) {
   const next = new Set(picked.value)
   if (next.has(id)) next.delete(id)
@@ -168,6 +180,8 @@ function submit() {
     diskGib: num(disk.value),
     // In the order of the catalogue, so requirements come first.
     components: ENV_COMPONENTS.map(c => c.id).filter(id => effective.value.has(id)),
+    // Only for what gets installed.
+    versions: Object.fromEntries(Object.entries(versions.value).filter(([id]) => effective.value.has(id as EnvComponentId))),
   }
   phase.value = 'running'
 }
@@ -284,7 +298,7 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
       <fieldset class="ec__comps">
         <legend class="ec__label">Install</legend>
         <ul class="ec__list">
-          <li v-for="c in ENV_COMPONENTS" :key="c.id">
+          <li v-for="c in ENV_COMPONENTS" :key="c.id" class="ec__item">
             <label class="ec__comp" :class="{ 'is-locked': !!neededBy(c.id) }">
               <input
                 type="checkbox"
@@ -302,6 +316,31 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
                 </span>
               </span>
             </label>
+            <!-- Outside the label: a click on it must not tick the box. -->
+            <EnvVersionPicker
+              v-if="c.versioned && effective.has(c.id)"
+              class="ec__ver-anchor"
+              :component="c.id"
+              :name="c.name"
+              :selected="versions[c.id] ?? null"
+              allow-default
+              @pick="(v) => setVersion(c.id, v)"
+            >
+              <template #default="{ toggle: toggleVersions, open: versionsOpen }">
+                <button
+                  type="button"
+                  class="ec__ver"
+                  :class="{ 'is-open': versionsOpen }"
+                  aria-haspopup="dialog"
+                  :aria-expanded="versionsOpen"
+                  :aria-label="`${c.name} version: ${versionLabel(c.id)}`"
+                  @click="toggleVersions"
+                >
+                  <span class="ec__ver-label" :class="{ 'is-picked': !!versions[c.id] }">{{ versionLabel(c.id) }}</span>
+                  <ChevronDown aria-hidden="true" />
+                </button>
+              </template>
+            </EnvVersionPicker>
           </li>
         </ul>
       </fieldset>
@@ -441,6 +480,30 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
 .ec__comp-text { display: grid; min-width: 0; }
 .ec__comp-name { font-size: var(--text-sm); font-weight: 560; color: var(--fg); }
 .ec__comp-desc { font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
+
+/* A versioned component's version, under its text (checkbox 14px + the gap). */
+.ec__item { display: grid; justify-items: start; }
+.ec__item > .ec__ver-anchor { margin: 0 0 6px calc(14px + var(--space-2)); max-width: calc(100% - 14px - var(--space-2)); }
+.ec__ver {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  height: 24px;
+  padding: 0 6px 0 var(--space-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--fg-muted);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+.ec__ver:hover { border-color: var(--line-strong); }
+.ec__ver.is-open { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.ec__ver:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.ec__ver-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ec__ver-label.is-picked { color: var(--fg); }
+.ec__ver svg { flex: none; width: 13px; height: 13px; color: var(--fg-subtle); }
 
 /* 13px inset square that fills with Ripe Mango and a Mango Stone Ink tick. */
 .ec__check {

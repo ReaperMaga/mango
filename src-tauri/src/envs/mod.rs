@@ -9,8 +9,9 @@
 //! - `ssh`:     building and running `ssh … incus …` command lines, quoting
 //! - `hosts`:   the saved masters (`environments.json`), validation, probing
 //! - `incus`:   listing, creating, starting/stopping/deleting instances
-//! - `recipes`: one-click components (agents, gh, desktop, Tailscale) and their
-//!              install/update scripts, run in a PTY the user watches
+//! - `recipes`: one-click components (agents, gh, Node.js, Java, desktop, Tailscale)
+//!              and their install/update scripts, run in a PTY the user watches;
+//!              the versions Node.js and Java offer
 //! - `remote`:  a shell or sign-in terminal inside an instance, and the
 //!              desktop (noVNC) tunnel
 //! - `server`:  installing, updating and initialising Incus itself on the master
@@ -242,6 +243,24 @@ pub fn valid_instance_dir(s: &str) -> Result<(), String> {
     ok.then_some(()).ok_or_else(|| format!("\"{s}\" is not an absolute folder path inside the environment."))
 }
 
+/// A Node.js version to install: `22`, `22.11` or `22.11.0` (no `v`, no pre-releases).
+pub fn valid_node_version(s: &str) -> Result<(), String> {
+    let parts: Vec<&str> = s.split('.').collect();
+    let ok = (1..=3).contains(&parts.len())
+        && parts.iter().all(|p| (1..=4).contains(&p.len()) && all_chars(p, |c| c.is_ascii_digit()));
+    ok.then_some(()).ok_or_else(|| format!("\"{s}\" is not a Node.js version. Use one such as 22.11.0, or 22 for the newest 22.x."))
+}
+
+/// An SDKMAN Java identifier such as `21.0.5-tem` or `25.0.5.0-fx+3.1-zulu`.
+pub fn valid_java_version(s: &str) -> Result<(), String> {
+    let ok = s.len() <= 64
+        && s.chars().next().is_some_and(|c| c.is_ascii_digit())
+        && s.contains('-')
+        && !s.ends_with('-')
+        && all_chars(s, |c| c.is_ascii_alphanumeric() || "._+-".contains(c));
+    ok.then_some(()).ok_or_else(|| format!("\"{s}\" is not an SDKMAN Java identifier. They look like 21.0.5-tem."))
+}
+
 /// An environment variable name for an agent run.
 pub fn valid_env_key(s: &str) -> bool {
     !s.is_empty()
@@ -290,6 +309,22 @@ mod tests {
         assert!(valid_remote("a:b").is_err());
         assert!(valid_env_key("CLAUDE_CODE_X"));
         assert!(!valid_env_key("A=B"));
+    }
+
+    #[test]
+    fn component_versions() {
+        for ok in ["22", "22.11", "22.11.0", "8.17.0"] {
+            assert!(valid_node_version(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "v22", "22.", "22.11.0.1", "27.0.0-alpha.1", "22;id", "lts", "12345"] {
+            assert!(valid_node_version(bad).is_err(), "{bad:?}");
+        }
+        for ok in ["21.0.5-tem", "25.0.5.0-fx+3.1-zulu", "26.0.2.0+11.1-amzn", "22.1.0.r21-grl"] {
+            assert!(valid_java_version(ok).is_ok(), "{ok}");
+        }
+        for bad in ["", "tem", "21", "21-", "21.0.5-tem;id", "21.0.5-tem/../x", "21 -tem", "-21-tem", &format!("1-{}", "a".repeat(64))] {
+            assert!(valid_java_version(bad).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

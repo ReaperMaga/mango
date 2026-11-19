@@ -170,6 +170,7 @@ pub fn run() {
             envs::server::env_server_setup,
             envs::recipes::env_components,
             envs::recipes::env_install,
+            envs::recipes::env_versions,
             envs::remote::env_shell,
             envs::remote::env_login,
             envs::remote::env_prepare_dir,
