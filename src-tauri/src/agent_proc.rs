@@ -1458,14 +1458,46 @@ exit 0"#;
                 });
                 rx
             };
-            let next = |rx: &mpsc::Receiver<Vec<u8>>| rx.recv_timeout(Duration::from_secs(10)).expect("a line in time");
+            // On a stall, say where, with what the run folder and the processes looked like (CI has no shell).
+            let report = |stage: &str| -> String {
+                let dir = home.join(".cache/mango/runs").join(id);
+                let mut s = format!("stalled at {stage}\n");
+                for f in ["pid", "code", "closed", "out", "err"] {
+                    let v = std::fs::read_to_string(dir.join(f)).unwrap_or_else(|e| format!("<{e}>"));
+                    s.push_str(&format!("{f}: {v:?}\n"));
+                }
+                if let Ok(o) = Command::new("ps").args(["-eo", "pid,ppid,pgid,sid,stat,args"]).output() {
+                    s.push_str(&String::from_utf8_lossy(&o.stdout));
+                }
+                s
+            };
+            let next = |rx: &mpsc::Receiver<Vec<u8>>, stage: &str| match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(l) => l,
+                Err(_) => panic!("{}", report(stage)),
+            };
+            // A child that must end by itself, bounded so a stall fails the test instead of hanging CI.
+            let ends = |c: &mut std::process::Child, stage: &str| -> std::process::ExitStatus {
+                let t = std::time::Instant::now();
+                loop {
+                    if let Some(st) = c.try_wait().unwrap() {
+                        return st;
+                    }
+                    if t.elapsed() > Duration::from_secs(20) {
+                        let r = report(stage);
+                        let _ = Command::new("kill").args(["-KILL", &format!("-{}", c.id())]).status();
+                        let _ = c.wait();
+                        panic!("{r}");
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            };
 
             let mut a = run(&["start", id, cli.to_str().unwrap()]);
             let mut stdin = a.stdin.take().unwrap();
             let out = lines(Box::new(a.stdout.take().unwrap()));
             let err = lines(Box::new(a.stderr.take().unwrap()));
             writeln!(stdin, "one").unwrap();
-            let (o1, o2, e1) = (next(&out), next(&out), next(&err));
+            let (o1, o2, e1) = (next(&out, "start: env"), next(&out, "start: got:one"), next(&err, "start: err:one"));
             assert_eq!((o1.as_slice(), o2.as_slice(), e1.as_slice()), (&b"env=t-1\n"[..], &b"got:one\n"[..], &b"err:one\n"[..]));
             // The connection drops: everything of this attach goes, the run stays.
             Command::new("kill").args(["-KILL", &format!("-{}", a.id())]).status().unwrap();
@@ -1481,19 +1513,22 @@ exit 0"#;
             writeln!(stdin, "two").unwrap();
             writeln!(stdin, "quit").unwrap();
             // Nothing from before the drop comes again.
-            assert_eq!(next(&out), b"got:two\n");
-            assert_eq!(next(&out), b"got:quit\n");
-            assert_eq!(next(&err), b"err:two\n");
-            assert_eq!(next(&err), b"err:quit\n");
-            let marker = String::from_utf8(next(&err)).unwrap();
+            assert_eq!(next(&out, "attach: got:two"), b"got:two\n");
+            assert_eq!(next(&out, "attach: got:quit"), b"got:quit\n");
+            assert_eq!(next(&err, "attach: err:two"), b"err:two\n");
+            assert_eq!(next(&err, "attach: err:quit"), b"err:quit\n");
+            let marker = String::from_utf8(next(&err, "attach: exit marker")).unwrap();
             assert_eq!(split_marker(marker.trim_end()), ("", Some(Marker::Exit(7))));
             // The channel ends by itself after the run, with its stdin still open.
-            assert_eq!(b.wait().unwrap().code(), Some(7));
+            assert_eq!(ends(&mut b, "attach: channel end after exit").code(), Some(7));
             assert!(out.recv_timeout(Duration::from_secs(1)).is_err());
             drop(stdin);
 
             // A run that is not there: `gone` on stderr, after the profile's noise.
-            let c = run(&["attach", "nope", "0", "0"]).wait_with_output().unwrap();
+            let mut c = run(&["attach", "nope", "0", "0"]);
+            drop(c.stdin.take());
+            ends(&mut c, "gone");
+            let c = c.wait_with_output().unwrap();
             assert_eq!(String::from_utf8_lossy(&c.stderr), "profile warns\nmango-run:gone\n");
             let _ = std::fs::remove_dir_all(&home);
         }
