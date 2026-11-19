@@ -43,6 +43,7 @@ const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version'> & { latest: str
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'], latest: '2.83.1' },
   { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'], latest: '143.0.7499.4' },
   { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can view in Mango.', requires: ['base'], latest: 'xfce 4.20' },
+  { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose. A container restarts once to allow it.', requires: ['base'], latest: '29.0.2' },
   { id: 'tailscale', name: 'Tailscale', description: "Joins the server's tailnet.", requires: ['base'], latest: '1.90.6' },
 ]
 
@@ -389,6 +390,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
       else if (cid === 'gh') steps.push([450, dim('apt-get install -y gh')], [500, 'Setting up gh (2.83.1) ...'])
       else if (cid === 'chromium') steps.push([450, dim('npm install -g @playwright/mcp@latest')], [800, 'Downloading Chromium 143.0.7499.4 (playwright build)'], [400, 'Claude Code has the chromium MCP server.'])
       else if (cid === 'desktop') steps.push([500, dim('apt-get install -y xfce4 tigervnc-standalone-server novnc chromium')], [900, 'Setting up xfce4 (4.20) ...'], [400, 'noVNC listening on 127.0.0.1:6080'])
+      else if (cid === 'docker') steps.push([450, dim('apt-get install -y docker-ce docker-compose-plugin')], [600, 'Setting up docker-ce (5:29.0.2-1~ubuntu.24.04~noble) ...'], [300, 'The agent user can run docker (in new shells and chats).'])
       else if (cid === 'tailscale') steps.push([450, dim('curl -fsSL https://tailscale.com/install.sh | sh')], [600, 'Installing Tailscale for ubuntu noble'])
       steps.push([350, () => {
         i.installed[cid] = c.latest
