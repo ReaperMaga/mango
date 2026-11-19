@@ -5,7 +5,7 @@ import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
 import { AGENTS, type BackgroundTask, type LinkedItem, type Message, type Thread } from '~/types/chat'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
 import { ChatComposer, ChatMessage, ChatWorking } from '@/chat'
 import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
@@ -15,6 +15,8 @@ import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
 import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
+import { usePrefs } from '@/state/prefs'
+import type { ToolCalls } from '@/state/prefsModel'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { useAttachments, type AttachSource } from '@/screens/useAttachments'
 import { placeOf, projectName, reconnectingText } from '@/screens/names'
@@ -39,6 +41,7 @@ export default function ChatScreen() {
   const draft = useThreads(st => st.drafts[id] ?? '')
   const queue = useThreads(st => st.queue[id])
   const live = useThreads(st => st.live[id])
+  const toolCalls = usePrefs(st => st.toolCalls)
   // A sub-agent's chat shows the links of the chat that started it, as on the desktop.
   const root = useThreads(st => (st.threads[id] ? st.rootOf(id) : null))
   const links = root?.links ?? NO_LINKS
@@ -147,6 +150,7 @@ export default function ChatScreen() {
             message={item}
             thread={thread}
             last={index === thread.messages.length - 1}
+            toolCalls={toolCalls}
             onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
           />
         )}
@@ -262,19 +266,20 @@ function subagentChat(task: BackgroundTask): string | null {
  * One message. Kept from re-rendering while another message streams: a chat's snapshot changes on
  * every chunk, but only the message being written (and the last one's live state) needs drawing.
  */
-const Item = memo(function Item({ message, thread, last, onOpenChild }: { message: Message; thread: Thread; last: boolean; onOpenChild: (id: string) => void }) {
+const Item = memo(function Item({ message, thread, last, toolCalls, onOpenChild }: { message: Message; thread: Thread; last: boolean; toolCalls: ToolCalls; onOpenChild: (id: string) => void }) {
   const store = useThreads.getState()
   return (
     <ChatMessage
       message={message}
       thread={thread}
       last={last}
+      toolCalls={toolCalls}
       onResolveApproval={(i, allow) => store.resolveApproval(thread.id, message.id, i, allow)}
       onAnswerQuestion={(i, answers) => store.answerQuestion(thread.id, message.id, i, answers)}
       onOpenChild={onOpenChild}
     />
   )
-}, (a, b) => a.message === b.message && a.last === b.last && a.thread.agent === b.thread.agent
+}, (a, b) => a.message === b.message && a.last === b.last && a.toolCalls === b.toolCalls && a.thread.agent === b.thread.agent
   && (!b.last || a.thread.status === b.thread.status))
 
 /** A message written while the agent works: it goes out when the turn ends, or now if asked. */
@@ -313,8 +318,8 @@ const useStyles = makeStyles(t => ({
     maxWidth: '88%',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: radius.xs,
+    borderRadius: t.radius.lg,
+    borderBottomRightRadius: t.radius.xs,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderStyle: 'dashed',

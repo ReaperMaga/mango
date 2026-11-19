@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Animated, View } from 'react-native'
 import { AGENTS, waitingFor, type Thread } from '~/types/chat'
-import { easeInOut, fonts, makeStyles, space, touch, useReducedMotion } from '@/theme'
+import { easeInOut, makeStyles, space, touch, useReducedMotion } from '@/theme'
 import { RipenessDot, Text } from '@/ui'
 import { formatDuration } from './time'
 
@@ -108,7 +108,7 @@ function Dots() {
 
 const useStyles = makeStyles(t => ({
   row: { flexDirection: 'row', alignItems: 'center', gap: space[2], minHeight: touch.min - 8 },
-  label: { fontFamily: fonts.medium, flexShrink: 1 },
+  label: { ...t.fonts.medium, flexShrink: 1 },
   dots: { flexDirection: 'row', gap: 3, marginLeft: -3, marginRight: space[1] },
   dot: { width: 3.5, height: 3.5, borderRadius: 2, backgroundColor: t.colors.fg },
 }))

@@ -70,6 +70,7 @@
           "microphonePermission": "Mango uses the microphone while you dictate a message."
         }
       ],
+      "expo-notifications",
       [
         "expo-speech-recognition",
         {

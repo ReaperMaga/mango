@@ -15,6 +15,7 @@ import {
   AGENT_HOME, asAgent, asAgentPlain, inInstance, line, remotePrefix, utcText,
   validEnvKey, validInstance, validInstanceDir,
 } from './shell'
+import { AUTH_SCRIPT, parseAuthOutput } from './auth'
 import { IMAGE_READ, MAX_IMAGE_BYTES, checkedPicturePath, parsePicture } from './images'
 import { GH_ENV, ghFailure, ghItemArgv, parseGhItem } from './github'
 import type {
@@ -834,6 +835,14 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       if (r.code !== 0) throw new Error(explain(env, r.code, r.stderr, r.stdout, now()))
       const found = new Set(r.stdout.split('\n').map(l => l.trim()))
       return (['claude', 'codex'] as AgentId[]).filter(a => found.has(a))
+    },
+
+    async agentAuth(env, instance) {
+      used.set(env.id, env)
+      validInstance(instance)
+      const r = await exec({ env, instance, dir: AGENT_HOME }, true, [], ['sh', '-c', AUTH_SCRIPT], { timeoutMs: 40_000 })
+      if (r.code !== 0) throw new Error(explain(env, r.code, r.stderr, r.stdout, now()))
+      return parseAuthOutput(r.stdout)
     },
 
     async chatsList(at) {

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread } from '~/types/chat'
+import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread, ThreadStatus } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
 import { createdBy } from '~/utils/githubLinks'
 import { createPrPrompt } from '~/utils/createPr'
@@ -9,6 +9,7 @@ import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
 import { answerQuestion as answerRun, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
 import { chatFiles } from '@/state/chatFiles'
+import type { FollowUp } from '@/state/prefsModel'
 import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
 
 /**
@@ -50,8 +51,7 @@ export interface LiveState {
   reconnecting?: boolean
 }
 
-/** What a message sent during a turn does: wait for the turn to end, or go to the agent right away. */
-export type FollowUp = 'queue' | 'steer'
+export type { FollowUp }
 
 export interface NewChat {
   projectPath: string
@@ -194,6 +194,12 @@ function draftOf(t: Thread, msgIds?: readonly string[] | 'all'): Thread {
     messages: t.messages.map(m => (own === null || own.has(m.id) ? { ...m, parts: m.parts.map(p => ({ ...p })) } : m)),
   }
 }
+
+/** What a status change hands to whoever listens (the app listens to notify; tests and Node do not). */
+export type StatusHook = (t: Thread, before: ThreadStatus, outcome: Message['outcome'] | undefined, ctx: { viewing: string | null; queued: number }) => void
+let statusHook: StatusHook | null = null
+/** Listen to chats' status changes (one listener; null stops). A listener that throws never breaks a chat. */
+export function setStatusHook(hook: StatusHook | null) { statusHook = hook }
 
 let history: ChatHistory | null = null
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
@@ -793,6 +799,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (!t) return
     // A run just ended: note on its message how long the whole turn took.
     const wasBusy = isBusy(t)
+    const before = t.status
     const last = t.messages[t.messages.length - 1]
     get().edit(id, (d) => {
       d.status = status
@@ -808,6 +815,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       d.updatedAt = Date.now()
     }, last ? [last.id] : [])
     get().persist(id)
+    const now = get().byId(id)
+    if (now && statusHook) {
+      try { statusHook(now, before, outcome, { viewing: get().viewing, queued: get().queue[id]?.length ?? 0 }) } catch { /* a notification must never break the chat */ }
+    }
   },
 
   _touch(id) {

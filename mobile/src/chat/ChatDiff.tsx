@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import type { DiffLine } from '~/types/chat'
-import { fonts, fontSize, makeStyles, radius, space } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Spinner, Text } from '@/ui'
 
 /**
@@ -94,11 +94,13 @@ function numberLines(lines: DiffLine[]): Row[] {
 }
 
 const SIGN: Record<Kind, string> = { add: '+', del: '−', ctx: ' ', hunk: '', meta: '' }
-/** JetBrains Mono's advance is 0.6em. */
-const CH = fontSize.mono * 0.6
+/** A monospace advance is about 0.6em (JetBrains Mono's, and close for the others). */
+const ADVANCE = 0.6
 
 export function ChatDiff({ lines, text, error, fill = false, style }: ChatDiffProps) {
   const s = useStyles()
+  const t = useTheme()
+  const CH = t.fontSize.mono * ADVANCE
   const [shown, setShown] = useState(PAGE)
 
   const parsed = useMemo(() => {
@@ -163,7 +165,7 @@ const useStyles = makeStyles(t => ({
   box: {
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     backgroundColor: t.colors.bgInset,
     overflow: 'hidden',
@@ -176,7 +178,7 @@ const useStyles = makeStyles(t => ({
   lines: { flexGrow: 1, paddingVertical: 6 },
   line: { flexDirection: 'row', paddingRight: space[3] },
   // Ligatures off, as the desktop's diff: `::` and `->` stay the characters they are.
-  mono: { fontFamily: fonts.mono, fontSize: fontSize.mono, lineHeight: Math.round(fontSize.mono * 1.7), fontVariant: ['no-common-ligatures', 'no-contextual'] },
+  mono: { ...t.fonts.mono, fontSize: t.fontSize.mono, lineHeight: Math.round(t.fontSize.mono * 1.7), fontVariant: ['no-common-ligatures', 'no-contextual'] },
   num: { textAlign: 'right', paddingRight: 2, color: t.colors.fgFaint },
   sign: { width: 18, textAlign: 'center', color: t.colors.fgFaint },
   text: { color: t.colors.fgMuted },

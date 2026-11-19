@@ -1,7 +1,7 @@
 import { Children, createContext, Fragment, isValidElement, useContext, type ReactNode } from 'react'
 import { Pressable, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native'
 import { Check, ChevronRight } from 'lucide-react-native'
-import { makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Text } from './Text'
 
 /**
@@ -62,6 +62,8 @@ export interface ListRowProps {
   subtitleTone?: 'subtle' | 'faint' | 'waiting' | 'error' | 'running' | 'queued' | 'done'
   /** The second line is machine text (a branch, a host): mono. */
   subtitleMono?: boolean
+  /** Lines the second line may take before it is cut off (1 by default; a sentence of explanation wants 3). */
+  subtitleLines?: number
   /** Paths, hosts and branches set the title in mono (The Machine Text Rule). */
   mono?: boolean
   /** A 28pt column at the left: an icon, a ripeness dot, an agent mark. */
@@ -79,7 +81,7 @@ export interface ListRowProps {
   accessibilityHint?: string
 }
 
-export function ListRow({ title, subtitle, subtitleTone = 'subtle', subtitleMono, mono, leading, detail, trailing, accessory, destructive, disabled, onPress, onLongPress, accessibilityHint }: ListRowProps) {
+export function ListRow({ title, subtitle, subtitleTone = 'subtle', subtitleMono, subtitleLines = 1, mono, leading, detail, trailing, accessory, destructive, disabled, onPress, onLongPress, accessibilityHint }: ListRowProps) {
   const t = useTheme()
   const s = useStyles()
   const { first } = useContext(RowPosition)
@@ -97,7 +99,7 @@ export function ListRow({ title, subtitle, subtitleTone = 'subtle', subtitleMono
           >
             {title}
           </Text>
-          {subtitle ? <Text variant={subtitleMono ? 'mono' : 'caption'} tone={subtitleTone} numberOfLines={1}>{subtitle}</Text> : null}
+          {subtitle ? <Text variant={subtitleMono ? 'mono' : 'caption'} tone={subtitleTone} numberOfLines={subtitleLines}>{subtitle}</Text> : null}
         </View>
         {detail ? <Text variant="bodySm" tone="subtle" numberOfLines={1} tabular style={s.detail}>{detail}</Text> : null}
         {trailing}
@@ -129,7 +131,7 @@ const useStyles = makeStyles(t => ({
   headTitle: { flex: 1 },
   group: {
     backgroundColor: t.colors.bgPanel,
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.lineSoft,

@@ -10,6 +10,7 @@ import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
+import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 
 export type Theme = 'dark' | 'light' | 'system'
@@ -67,35 +68,9 @@ export type FollowUp = 'queue' | 'steer'
 export type ToolCalls = 'all' | 'hide-ok' | 'hide' | 'zen'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 /** What Mango tells you about while you are elsewhere (Settings > Notifications). */
-export interface NotifyPrefs {
-  /** Master switch. */
-  enabled: boolean
-  /** A chat finished its turn. */
-  done: boolean
-  /** A chat needs an approval or an answer. */
-  needsYou: boolean
-  /** A chat's run failed. */
-  failed: boolean
-  /** Only while Mango's window is in the background or minimised. */
-  backgroundOnly: boolean
-  /** Name the chat and quote the reply; off, the notification only says what happened. */
-  preview: boolean
-  /** The system's notification sound. */
-  sound: boolean
-}
-const notifyOf = (raw: unknown): NotifyPrefs => {
-  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
-  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
-  return {
-    enabled: on(o.enabled, true),
-    done: on(o.done, true),
-    needsYou: on(o.needsYou, true),
-    failed: on(o.failed, true),
-    backgroundOnly: on(o.backgroundOnly, true),
-    preview: on(o.preview, true),
-    sound: on(o.sound, false),
-  }
-}
+/** Notification preferences: the type and the loader live in `utils/notifications.ts` (the phone shares them). */
+export type { NotifyPrefs }
+const notifyOf = notifyPrefsOf
 /** What one project overrides (Settings > Projects). Anything missing follows the global default. */
 export interface ProjectPrefs {
   /** Shown instead of the folder name. */

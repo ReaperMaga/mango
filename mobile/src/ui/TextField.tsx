@@ -1,6 +1,6 @@
 import { useState, type ComponentRef, type Ref } from 'react'
 import { Platform, TextInput, View, type StyleProp, type TextInputProps, type ViewStyle } from 'react-native'
-import { fonts, fontSize, makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Text } from './Text'
 
 export interface TextFieldProps extends Omit<TextInputProps, 'style'> {
@@ -55,18 +55,18 @@ const useStyles = makeStyles(t => ({
     minHeight: touch.min,
     paddingHorizontal: space[3],
     paddingVertical: 10,
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.line,
     backgroundColor: t.colors.bgInset,
     color: t.colors.fg,
-    fontFamily: fonts.regular,
-    fontSize: fontSize.body,
+    ...t.fonts.regular,
+    fontSize: t.fontSize.body,
   },
   /** The browser's own focus outline: the border and halo above already show focus. */
   web: { outlineStyle: 'solid', outlineWidth: 0 },
-  mono: { fontFamily: fonts.mono, fontSize: fontSize.code },
+  mono: { ...t.fonts.mono, fontSize: t.fontSize.code },
   multi: { minHeight: 96, textAlignVertical: 'top', paddingTop: space[3] },
   focused: { borderColor: t.colors.accentLine, boxShadow: `0px 0px 0px 3px ${t.colors.accentSoft}` },
   invalid: { borderColor: t.colors.errorLineStrong },

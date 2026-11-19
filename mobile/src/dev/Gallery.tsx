@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { FolderGit2, Inbox, Moon, Plus, RefreshCw, Server, Settings, Smartphone, Sun } from 'lucide-react-native'
 import type { AgentQuestion, Message, PermissionMode, Thread } from '~/types/chat'
 import { demoThreads } from '~/utils/demoThreads'
-import { makeStyles, radius, space, useAppearance, useTheme, type Appearance } from '@/theme'
+import { makeStyles, space, useAppearance, useTheme, type Appearance } from '@/theme'
 import { OFFLINE, reconnectingText } from '@/screens/names'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, MangoMark, RipenessDot, Segmented, Sheet, Spinner, Text, TextField, type DotStatus } from '@/ui'
 import { ChangeRow, ChatComposer, ChatDiff, ChatMessage, ChatWorking, ThreadRow, useNow, type ChangeRowFile } from '@/chat'
@@ -301,5 +301,5 @@ const useStyles = makeStyles(t => ({
   dots: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: space[3] },
   dotCell: { alignItems: 'center', gap: space[1], minWidth: 40 },
   chat: { gap: space[5] },
-  panel: { backgroundColor: t.colors.bgPanel, borderRadius: radius.lg, borderWidth: 1, borderColor: t.colors.lineSoft },
+  panel: { backgroundColor: t.colors.bgPanel, borderRadius: t.radius.lg, borderWidth: 1, borderColor: t.colors.lineSoft },
 }))

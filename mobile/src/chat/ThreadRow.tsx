@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native'
 import { ChevronRight, FolderGit2 } from 'lucide-react-native'
 import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type Thread } from '~/types/chat'
-import { fonts, makeStyles, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { RipenessDot, Text, dotStatus, type TextTone } from '@/ui'
 import { shortAgo } from './time'
 
@@ -108,7 +108,7 @@ const useStyles = makeStyles(t => ({
   text: { flex: 1, minWidth: 0, gap: 2 },
   line: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
   title: { flex: 1, color: t.colors.fgMuted },
-  titleOn: { color: t.colors.fg, fontFamily: fonts.medium },
+  titleOn: { color: t.colors.fg, ...t.fonts.medium },
   titleArchived: { color: t.colors.fgSubtle },
   time: { flexShrink: 0 },
   sub: { flex: 1, minWidth: 0 },

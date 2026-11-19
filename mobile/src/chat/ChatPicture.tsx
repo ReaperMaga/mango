@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Image, Modal, Pressable, ScrollView, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { X } from 'lucide-react-native'
-import { makeStyles, radius, space } from '@/theme'
+import { makeStyles, space } from '@/theme'
 import { IconButton, Text } from '@/ui'
 import { pictures, usePicture } from './usePicture'
 
@@ -120,7 +120,7 @@ const useStyles = makeStyles(t => ({
     backgroundColor: t.colors.bgInset,
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
   },
   pressed: { borderColor: t.colors.lineStrong, opacity: 0.9 },

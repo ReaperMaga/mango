@@ -1,7 +1,7 @@
 import { Image, View } from 'react-native'
 import { CircleAlert, FileText } from 'lucide-react-native'
 import { AGENTS, type Message, type Part, type QuestionAnswers, type Thread } from '~/types/chat'
-import { fonts, makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { ChatApproval } from './ChatApproval'
 import { ChatChanges } from './ChatChanges'
@@ -11,9 +11,10 @@ import { ChatSteps, ChatThinking, type Step } from './ChatSteps'
 import { ChatTool } from './ChatTool'
 import { formatDuration } from './time'
 import { useThreads } from '@/state/threads'
+import type { ToolCalls } from '@/state/prefsModel'
 
 /** Which tool rows show, as the desktop's Settings > Behaviour. Approvals, questions and errors always show. */
-export type ToolCallsMode = 'all' | 'hide-ok' | 'hide' | 'zen'
+export type ToolCallsMode = ToolCalls
 
 export interface ChatMessageProps {
   message: Message
@@ -169,8 +170,8 @@ const useStyles = makeStyles(t => ({
     maxWidth: '88%',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: radius.xs,
+    borderRadius: t.radius.lg,
+    borderBottomRightRadius: t.radius.xs,
     borderCurve: 'continuous',
     backgroundColor: t.colors.bgPanel,
     borderWidth: 1,
@@ -187,12 +188,12 @@ const useStyles = makeStyles(t => ({
     paddingRight: space[3],
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     backgroundColor: t.colors.bgPanel,
   },
   fileMeta: { minWidth: 0, flexShrink: 1 },
-  fileName: { fontFamily: fonts.medium, color: t.colors.fg },
-  thumb: { width: 140, height: 100, borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.lineSoft, backgroundColor: t.colors.bgInset },
+  fileName: { ...t.fonts.medium, color: t.colors.fg },
+  thumb: { width: 140, height: 100, borderRadius: t.radius.md, borderWidth: 1, borderColor: t.colors.lineSoft, backgroundColor: t.colors.bgInset },
   agent: { gap: 2 },
   text: { marginTop: 6, marginBottom: 2 },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2], marginTop: 6 },
