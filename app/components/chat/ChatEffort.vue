@@ -1,13 +1,13 @@
 <script setup lang="ts">
 import { effortLabel } from '~/types/chat'
-import { useOverlay } from '~/composables/useOverlay'
 
 /**
  * Reasoning effort as a slider: one stop per level the model accepts, lowest on the
  * left. "Default" leaves it to the CLI; the slider then shows the CLI's own level
  * (when it says), and moving it picks a level explicitly. Only a placeholder
  * position (the CLI never said) is drawn in a muted tone.
- * The popover is teleported to <body> with fixed coordinates, like UiMenu.
+ * A panel, shown inside the composer's run menu (ChatRunMenu); Escape or Enter hands
+ * the keyboard back to it (`done`).
  */
 const props = defineProps<{
   efforts: string[]
@@ -17,17 +17,9 @@ const props = defineProps<{
   fallback?: string
   agentName: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [effort: string | null] }>()
+const emit = defineEmits<{ 'update:modelValue': [effort: string | null]; done: [] }>()
 
-const open = ref(false)
-useOverlay(() => open.value)
-const root = ref<HTMLElement | null>(null)
-const pop = ref<HTMLElement | null>(null)
 const range = ref<HTMLInputElement | null>(null)
-const pos = ref({ left: 0, bottom: 0 })
-const WIDTH = 300
-const GAP = 6
-const MARGIN = 8
 
 const last = computed(() => Math.max(1, props.efforts.length - 1))
 const isDefault = computed(() => !props.modelValue)
@@ -64,143 +56,81 @@ function set(i: number) {
 }
 const onInput = (e: Event) => set(Number((e.target as HTMLInputElement).value))
 
-function place() {
-  const r = root.value?.getBoundingClientRect()
-  if (!r) return
-  const left = Math.max(MARGIN, Math.min(r.left, window.innerWidth - WIDTH - MARGIN))
-  pos.value = { left, bottom: window.innerHeight - r.top + GAP }
-}
-async function show() {
-  place()
-  open.value = true
-  await nextTick()
-  range.value?.focus({ preventScroll: true })
-}
-function close(refocus = false) {
-  if (!open.value) return
-  open.value = false
-  if (refocus) root.value?.querySelector<HTMLElement>('button')?.focus()
-}
-const toggle = () => (open.value ? close() : show())
-
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' || e.key === 'Enter') {
-    // Escape here closes the popover; it must not reach the pane, which would stop the agent.
+    // Escape here goes back to the menu; it must not reach the pane, which would stop the agent.
     e.preventDefault()
     e.stopPropagation()
-    close(true)
-  } else if (e.key === 'Tab' && !e.shiftKey && e.target === pop.value?.querySelector('.ef__default')) {
-    e.preventDefault()
-    close(true)
+    emit('done')
   }
 }
-function onDocDown(e: MouseEvent) {
-  const t = e.target as Node
-  if (open.value && !root.value?.contains(t) && !pop.value?.contains(t)) close()
-}
-function onViewportChange(e: Event) {
-  if (!open.value || (e.type === 'scroll' && pop.value?.contains(e.target as Node))) return
-  close()
-}
-onMounted(() => {
-  document.addEventListener('mousedown', onDocDown, true)
-  window.addEventListener('scroll', onViewportChange, true)
-  window.addEventListener('resize', onViewportChange)
-  window.addEventListener('blur', onViewportChange)
-})
-onBeforeUnmount(() => {
-  document.removeEventListener('mousedown', onDocDown, true)
-  window.removeEventListener('scroll', onViewportChange, true)
-  window.removeEventListener('resize', onViewportChange)
-  window.removeEventListener('blur', onViewportChange)
-})
+
+defineExpose({ focus: () => range.value?.focus({ preventScroll: true }) })
 </script>
 
 <template>
-  <div ref="root" class="ef-anchor">
-    <slot :open="open" :toggle="toggle" />
-    <Teleport to="body">
-      <Transition name="ef">
-        <div
-          v-if="open"
-          ref="pop"
-          class="ef"
-          :class="{ 'is-unknown': isUnknown }"
-          role="dialog"
-          aria-label="Reasoning effort"
-          :style="{ width: `${WIDTH}px`, left: `${pos.left}px`, bottom: `${pos.bottom}px`, '--f': fraction }"
-          @keydown="onKey"
-        >
-          <div class="ef__head">
-            <span class="ef__title">Effort</span>
-            <span class="ef__value" aria-live="polite">{{ valueText }}</span>
-          </div>
-          <input
-            ref="range"
-            class="ef__range"
-            type="range"
-            min="0"
-            :max="efforts.length - 1"
-            step="1"
-            :value="index"
-            :aria-valuetext="valueText"
-            aria-label="Effort level"
-            @input="onInput"
-          >
-          <div class="ef__ticks">
-            <button
-              v-for="(level, i) in efforts"
-              :key="level"
-              type="button"
-              tabindex="-1"
-              class="ef__tick"
-              :class="{ 'is-on': !isDefault && i === index, 'is-first': i === 0, 'is-last': i === efforts.length - 1 }"
-              :style="{ '--at': i / last }"
-              @click="set(i)"
-            >
-              {{ effortLabel(level) }}
-            </button>
-          </div>
-          <div class="ef__foot">
-            <span class="ef__hint">{{ hint }}</span>
-            <button
-              type="button"
-              class="ef__default"
-              :aria-pressed="isDefault"
-              :title="`Let ${agentName} decide`"
-              @click="emit('update:modelValue', null)"
-            >
-              Default
-            </button>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+  <div
+    class="ef"
+    :class="{ 'is-unknown': isUnknown }"
+    role="group"
+    aria-label="Reasoning effort"
+    :style="{ '--f': fraction }"
+    @keydown="onKey"
+  >
+    <div class="ef__head">
+      <span class="ef__title">Effort</span>
+      <span class="ef__value" aria-live="polite">{{ valueText }}</span>
+    </div>
+    <input
+      ref="range"
+      class="ef__range"
+      type="range"
+      min="0"
+      :max="efforts.length - 1"
+      step="1"
+      :value="index"
+      :aria-valuetext="valueText"
+      aria-label="Effort level"
+      @input="onInput"
+    >
+    <div class="ef__ticks">
+      <button
+        v-for="(level, i) in efforts"
+        :key="level"
+        type="button"
+        tabindex="-1"
+        class="ef__tick"
+        :class="{ 'is-on': !isDefault && i === index, 'is-first': i === 0, 'is-last': i === efforts.length - 1 }"
+        :style="{ '--at': i / last }"
+        @click="set(i)"
+      >
+        {{ effortLabel(level) }}
+      </button>
+    </div>
+    <div class="ef__foot">
+      <span class="ef__hint">{{ hint }}</span>
+      <button
+        type="button"
+        class="ef__default"
+        :aria-pressed="isDefault"
+        :title="`Let ${agentName} decide`"
+        @click="emit('update:modelValue', null)"
+      >
+        Default
+      </button>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.ef-anchor { display: inline-flex; min-width: 0; }
-</style>
-
-<!-- The popover lives in <body>, outside this component's scoped subtree. -->
-<style>
 .ef {
   --thumb: 14px;
   --fill: var(--accent);
-  position: fixed;
-  z-index: 80;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-width: calc(100vw - 16px);
-  padding: var(--space-3) var(--space-3) var(--space-2);
-  background: var(--bg-raised);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-pop);
+  padding: var(--space-2) var(--space-2) var(--space-1);
   font-size: var(--text-sm);
-  transform-origin: bottom left;
 }
 .ef.is-unknown { --fill: var(--fg-faint); }
 .ef__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); }
@@ -287,10 +217,7 @@ onBeforeUnmount(() => {
 .ef__default[aria-pressed='true'] { background: var(--bg-active); color: var(--fg); border-color: var(--line-strong); }
 .ef__default:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
-.ef-enter-active, .ef-leave-active { transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
-.ef-enter-from, .ef-leave-to { opacity: 0; transform: scale(0.97); }
-
 @media (prefers-reduced-motion: reduce) {
-  .ef__range::-webkit-slider-thumb, .ef__tick, .ef__default, .ef-enter-active, .ef-leave-active { transition: none; }
+  .ef__range::-webkit-slider-thumb, .ef__tick, .ef__default { transition: none; }
 }
 </style>
