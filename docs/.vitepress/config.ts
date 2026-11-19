@@ -61,6 +61,7 @@ export default defineConfigWithTheme<ThemeConfig>({
           { text: 'Building from source', link: '/development/building' },
           { text: 'Architecture', link: '/development/architecture' },
           { text: 'Releasing', link: '/development/releasing' },
+          { text: 'Shipping the iOS app', link: '/development/mobile-release' },
         ],
       },
       { text: 'Changelog', link: '/changelog' },

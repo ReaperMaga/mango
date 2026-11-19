@@ -1,0 +1,112 @@
+# Builds the iOS app in mobile/ with EAS Build (in Expo's cloud, so no macOS runner) and
+# ships it to TestFlight.
+#
+#   Tag push mobile-vX.Y.Z  ->  typecheck, test, production build, submit to TestFlight.
+#   Manual run              ->  the same from any branch; untick "submit" to only build.
+#
+# A tag rather than every push to main: each build spends EAS build minutes and becomes a
+# TestFlight build testers get. The phone app has its own version (`expo.version` in
+# mobile/app.json, the one the App Store shows), separate from the desktop's vX.Y.Z tags, and
+# the tag must match it. EAS counts the build number up on its own (eas.json).
+#
+# Needs the repository secret EXPO_TOKEN. The signing certificate, provisioning profile and
+# App Store Connect API key live in EAS, set up once with `eas credentials` (see
+# docs/development/mobile-release.md). The job waits for EAS and fails if the build or the
+# upload does; the build's logs are on expo.dev (the link is in this job's log).
+name: Mobile (iOS)
+
+on:
+  push:
+    tags: ['mobile-v*']
+  workflow_dispatch:
+    inputs:
+      submit:
+        description: Submit the build to TestFlight (untick to only build it).
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+# One iOS build at a time; a new one waits instead of cancelling (cancelling this job would
+# not stop the build in EAS anyway).
+concurrency:
+  group: mobile-ios
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 24
+  PNPM_VERSION: 10
+
+jobs:
+  ios:
+    name: Build and submit (iOS)
+    runs-on: ubuntu-latest
+    # Mostly waiting on EAS: its queue plus a build and the upload to App Store Connect.
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - name: The Expo token is set
+        env:
+          TOKEN: ${{ secrets.EXPO_TOKEN }}
+        working-directory: .
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Add the EXPO_TOKEN repository secret (see docs/development/mobile-release.md)."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      # mobile/ is its own package with its own lockfile.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: mobile/pnpm-lock.yaml
+
+      - name: The tag matches the app version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./app.json').expo.version")
+          if [ "$GITHUB_REF_NAME" != "mobile-v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match expo.version in mobile/app.json ($version). Set the version there or retag."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      # Installs the EAS CLI and signs it in with the token for the steps after it.
+      - uses: expo/expo-github-action@v9
+        with:
+          eas-version: latest
+          packager: pnpm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      # EAS uploads the whole repository (mobile/ imports the desktop's app/agents and
+      # app/types) and builds in its cloud. With --auto-submit it hands the finished build
+      # to the production submit profile, which uploads it to App Store Connect with the API
+      # key stored in EAS; the command waits for both and fails if either does.
+      - name: Build (and submit to TestFlight)
+        env:
+          SUBMIT: ${{ github.event_name != 'workflow_dispatch' || inputs.submit }}
+        run: |
+          args=(--platform ios --profile production --non-interactive)
+          args+=(--message "$GITHUB_REF_NAME ${GITHUB_SHA::7}")
+          if [ "$SUBMIT" = "true" ]; then
+            args+=(--auto-submit)
+          fi
+          eas build "${args[@]}"

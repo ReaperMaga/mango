@@ -112,6 +112,9 @@ pnpm typecheck && pnpm test
 npx eas-cli@latest build --profile development --platform ios   # or build it in the cloud with EAS
 ```
 
+TestFlight builds ship from GitHub Actions on a `mobile-vX.Y.Z` tag; see
+[Shipping the iOS app](https://reapermaga.github.io/mango/development/mobile-release).
+
 ## Shortcuts
 
 | Keys | Action |
