@@ -1,6 +1,6 @@
 # Keyboard shortcuts
 
-Mango is built to be driven from the keyboard. On macOS, <kbd>⌘</kbd> replaces <kbd>Ctrl</kbd> in every shortcut below.
+Mango is built to be driven from the keyboard. On macOS, <kbd>⌘</kbd> replaces <kbd>Ctrl</kbd> in every shortcut below. The keys under **Global** are the defaults: change any of them in [Settings > Shortcuts](./settings#shortcuts).
 
 ## Global
 

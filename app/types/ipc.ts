@@ -1026,6 +1026,8 @@ export interface Commands {
    * files are read (checked by their bytes, not their name), up to 25 MB.
    */
   chat_image: [{ path: string; base: string | null }, ChatImage]
+  /** A system notification (text is cut to what systems show). Fails when the system refuses it. */
+  notify: [{ title: string; body: string; sound: boolean }, void]
   /** Every saved chat and the layout, from the chat history database. */
   chats_load: [Record<string, never>, ChatSnapshot]
   /** Save the chats that changed and delete the removed ones, in one transaction; `ui` only when it changed. */

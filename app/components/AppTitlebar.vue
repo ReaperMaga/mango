@@ -7,7 +7,7 @@ import { useUsage } from '~/stores/usage'
 import { useGit } from '~/stores/git'
 import { useWindows } from '~/stores/windows'
 import { appWindow, isTauri } from '~/composables/useBackend'
-import { openFolderFlow, modLabel } from '~/composables/useShortcuts'
+import { openFolderFlow } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
 import { isEnvPath } from '~/utils/envPath'
 
@@ -15,7 +15,6 @@ const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
 const win = useWindows()
-const mod = ref('Ctrl')
 const native = ref(false)
 /* macOS draws its own traffic lights over the left of the titlebar (tauri.macos.conf.json). */
 const mac = ref(false)
@@ -26,7 +25,6 @@ const USAGE_POLL_MS = 15 * 60_000
 let usageTimer: ReturnType<typeof setInterval> | undefined
 let usageFirst: ReturnType<typeof setTimeout> | undefined
 onMounted(() => {
-  mod.value = modLabel()
   native.value = isTauri()
   mac.value = native.value && /Mac/.test(navigator.platform)
   usageFirst = setTimeout(() => void usage.refreshReadable(), 4000)
@@ -92,8 +90,8 @@ const projectItems = computed<MenuItem[]>(() => [
   ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
     ? [moveItem(ws.activeProject.path)]
     : []),
-  { label: 'New window', icon: AppWindow, kbd: `${mod.value}+Alt+N`, divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
-  { label: 'Open folder…', icon: FolderOpen, kbd: `${mod.value}+O`, divider: true, onSelect: openFolderFlow },
+  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
+  { label: 'Open folder…', icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
@@ -206,7 +204,7 @@ const branchTitle = computed(() => {
       <button type="button" class="tb__search" aria-label="Search threads or run a command" @click="ws.paletteOpen = true">
         <Search />
         <span class="tb__ph">Search threads or run a command</span>
-        <span class="tb__keys"><kbd>{{ mod }}</kbd><kbd>K</kbd></span>
+        <span class="tb__keys"><kbd v-for="k in ws.keyParts('palette')" :key="k">{{ k }}</kbd></span>
       </button>
     </div>
 
@@ -226,11 +224,11 @@ const branchTitle = computed(() => {
       <div class="tb__grp"><AppActivity /></div>
       <div class="tb__grp tb__usage"><AppUsageMeter /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
-        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="`Toggle sidebar (${mod}+B)`" @click="ws.toggleSidebar()"><PanelLeft /></button>
-        <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="`Toggle terminal (${mod}+\`)`" @click="ws.toggleTerminal()"><PanelBottom /></button>
-        <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="`Toggle tool panel (${mod}+Alt+B)`" @click="ws.toggleToolPanel()"><PanelRight /></button>
+        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="ws.withKey('Toggle sidebar', 'sidebar')" @click="ws.toggleSidebar()"><PanelLeft /></button>
+        <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="ws.withKey('Toggle terminal', 'terminal')" @click="ws.toggleTerminal()"><PanelBottom /></button>
+        <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="ws.withKey('Toggle tool panel', 'tool-panel')" @click="ws.toggleToolPanel()"><PanelRight /></button>
       </div>
-      <UiIconButton label="Settings" :shortcut="`${mod}+,`" :active="!!ws.settings" size="sm" @click="ws.openSettings()">
+      <UiIconButton label="Settings" :shortcut="ws.keyLabel('settings')" :active="!!ws.settings" size="sm" @click="ws.openSettings()">
         <Settings />
       </UiIconButton>
 

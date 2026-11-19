@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Bot, Folder, History, MessageSquareMore, Mic, Plug, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bell, Bot, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
@@ -10,7 +10,9 @@ import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
 import SettingsMcp from './SettingsMcp.vue'
+import SettingsNotifications from './SettingsNotifications.vue'
 import SettingsProjects from './SettingsProjects.vue'
+import SettingsShortcuts from './SettingsShortcuts.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
 import { useOverlay } from '~/composables/useOverlay'
@@ -41,6 +43,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'general', label: 'Preferences', icon: SlidersHorizontal },
       { id: 'projects', label: 'Projects', icon: Folder },
       { id: 'appearance', label: 'Appearance', icon: SunMoon },
+      { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'voice', label: 'Voice', icon: Mic },
     ],
   },
@@ -50,6 +53,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'environments', label: 'Environments', icon: Server },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
       { id: 'mcp', label: 'MCP servers', icon: Plug },
+      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
       { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     ],
@@ -263,6 +267,8 @@ onBeforeUnmount(() => {
                 <SettingsTerminal v-if="section === 'terminal'" />
                 <SettingsMcp v-else-if="section === 'mcp'" />
                 <SettingsVoice v-else-if="section === 'voice'" />
+                <SettingsNotifications v-else-if="section === 'notifications'" />
+                <SettingsShortcuts v-else-if="section === 'shortcuts'" />
                 <SettingsAppearance v-else-if="section === 'appearance'" />
                 <SettingsChangelog v-else-if="section === 'changelog'" />
                 <SettingsMaintenance v-else-if="section === 'maintenance'" />

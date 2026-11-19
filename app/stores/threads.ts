@@ -23,6 +23,7 @@ import { attachHistory, flushHistory, forgetHistory, loadHistory, loadMoreHistor
 import { adoptRemote, attachRemoteChats, forgetRemote } from '~/utils/remoteChats'
 import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
+import { notifyChange } from '~/composables/notify'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -1154,6 +1155,7 @@ export const useThreads = defineStore('threads', {
       if (!t) return
       // A run just ended: note on its message how long the whole turn took.
       const wasBusy = isBusy(t)
+      const before = t.status
       t.status = status
       if (wasBusy && !isBusy(t)) {
         const last = t.messages[t.messages.length - 1]
@@ -1167,6 +1169,7 @@ export const useThreads = defineStore('threads', {
       if (outcome === 'done') t.seen = visible
       this._touch(id)
       this.persist(id)
+      try { notifyChange(t, before, outcome) } catch { /* a notification never breaks a run */ }
     },
     /** The chat changed (an agent's output too): note the time, and save it soon. */
     _touch(id: string) {

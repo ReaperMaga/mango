@@ -3,7 +3,6 @@ import { Files, GitBranch, GitPullRequest, Laptop, Server } from 'lucide-vue-nex
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
-import { modLabel } from '~/composables/useShortcuts'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
@@ -15,8 +14,6 @@ import { modLabel } from '~/composables/useShortcuts'
 const ws = useWorkspace()
 const git = useGit()
 const threads = useThreads()
-const mod = ref('Ctrl')
-onMounted(() => (mod.value = modLabel()))
 
 /** Number of changed files in the working copy in view (the active chat's worktree, or the project), shown on the Changes button. */
 const workdir = computed(() => threads.workdir ?? ws.activeProjectPath)
@@ -45,9 +42,9 @@ const placeTitle = computed(() => {
 watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { immediate: true })
 
 const tools = computed(() => [
-  { id: 'files' as ToolView, label: 'Files', icon: Files, keys: `${mod.value}+Shift+E`, count: 0, counts: '' },
-  { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: `${mod.value}+Shift+G`, count: changeCount.value, counts: 'changed file' },
-  { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: `${mod.value}+Shift+P`, count: linkCount.value, counts: 'linked item' },
+  { id: 'files' as ToolView, label: 'Files', icon: Files, keys: ws.keyLabel('files'), count: 0, counts: '' },
+  { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changed file' },
+  { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linked item' },
 ])
 
 /*
@@ -76,7 +73,7 @@ watch(() => ws.toolPanel, async (id) => {
       :class="{ 'is-active': ws.toolPanel === 'env' }"
       :aria-pressed="ws.toolPanel === 'env'"
       :aria-label="`Environment: ${placeTitle}`"
-      :title="`${placeTitle} (${mod}+Shift+H)`"
+      :title="ws.withKey(placeTitle, 'env')"
       @click="ws.toggleEnv()"
     >
       <component :is="place ? Server : Laptop" />

@@ -7,7 +7,6 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type AgentId, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
-import { modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
 import type { MenuItem } from '~/types/ui'
@@ -23,8 +22,6 @@ const ws = useWorkspace()
 const threads = useThreads()
 const win = useWindows()
 const now = useNow()
-const mod = ref('Ctrl')
-onMounted(() => (mod.value = modLabel()))
 
 const width = computed(() => ws.sidebarWidth)
 
@@ -81,9 +78,9 @@ const canWorktree = wts.supported
 const newChatItems = computed<MenuItem[]>(() => {
   const path = ws.activeProjectPath
   if (!path) return []
-  const items: MenuItem[] = [{ label: 'New chat', icon: Plus, kbd: `${mod.value}+N`, onSelect: () => newChat() }]
+  const items: MenuItem[] = [{ label: 'New chat', icon: Plus, kbd: ws.keyLabel('new-chat'), onSelect: () => newChat() }]
   if (!canWorktree.value) return items
-  items.push({ label: `New chat in a ${wts.term.value}`, icon: FolderGit2, kbd: `${mod.value}+Shift+N`, onSelect: () => threads.createAwaitingWorktree(path) })
+  items.push({ label: `New chat in a ${wts.term.value}`, icon: FolderGit2, kbd: ws.keyLabel('new-chat-worktree'), onSelect: () => threads.createAwaitingWorktree(path) })
   wts.linked.value.forEach((w, i) => items.push({
     label: worktreeName(w.path),
     hint: wts.hint(w),
@@ -364,7 +361,7 @@ const noAgentInstalled = computed(() => ws.agents.length > 0 && ws.agents.every(
 /* ---------- footer: Settings, and Code settings (which agent, its usage and plan) ---------- */
 
 const settingsItems = computed<MenuItem[]>(() => [
-  { label: 'Settings', icon: Settings, kbd: `${mod.value}+,`, onSelect: () => ws.openSettings() },
+  { label: 'Settings', icon: Settings, kbd: ws.keyLabel('settings'), onSelect: () => ws.openSettings() },
   { label: 'Get started…', icon: Rocket, onSelect: () => ws.openSetup() },
   { label: 'Changelog', icon: History, onSelect: () => ws.openSettings('changelog') },
   { label: 'Log out', icon: LogOut, divider: true, onSelect: askLogout },
@@ -411,7 +408,7 @@ const codeItems = computed<MenuItem[]>(() => [
       onSelect: () => threads.chooseAgent(id),
     }
   }),
-  { label: 'Usage limits', icon: Gauge, divider: true, kbd: `${mod.value}+Shift+U`, onSelect: () => ws.openUsage() },
+  { label: 'Usage limits', icon: Gauge, divider: true, kbd: ws.keyLabel('usage'), onSelect: () => ws.openUsage() },
   { label: 'Subscription', icon: CreditCard, onSelect: () => ws.openSettings('agents', 'subscription') },
 ])
 </script>
@@ -422,7 +419,7 @@ const codeItems = computed<MenuItem[]>(() => [
       <button type="button" class="sb__new" @click="newChat()">
         <MessageSquarePlus />
         <span>New chat</span>
-        <kbd>{{ mod }}</kbd><kbd>N</kbd>
+        <kbd v-for="k in ws.keyParts('new-chat')" :key="k">{{ k }}</kbd>
       </button>
     </div>
 
@@ -446,7 +443,7 @@ const codeItems = computed<MenuItem[]>(() => [
             <UiMenu :items="newChatItems" placement="bottom-end" :width="280" label="New chat">
               <template #default="{ open: menuOpen, toggle }">
                 <div class="sb__split" :class="{ 'is-open': menuOpen }">
-                  <button type="button" class="sb__split-main" :aria-label="`New chat (${mod}+N)`" :title="`New chat (${mod}+N)`" @click="newChat()"><Plus /></button>
+                  <button type="button" class="sb__split-main" :aria-label="ws.withKey('New chat', 'new-chat')" :title="ws.withKey('New chat', 'new-chat')" @click="newChat()"><Plus /></button>
                   <button
                     type="button"
                     class="sb__split-more"
@@ -583,7 +580,7 @@ const codeItems = computed<MenuItem[]>(() => [
     <footer class="sb__foot">
       <UiMenu :items="settingsItems" placement="top-start" :width="230" label="Settings">
         <template #default="{ toggle, open }">
-          <button type="button" class="sb__btn" :class="{ 'is-open': open }" :title="`Settings (${mod}+,)`" @click="toggle">
+          <button type="button" class="sb__btn" :class="{ 'is-open': open }" :title="ws.withKey('Settings', 'settings')" @click="toggle">
             <Settings />
             <span class="sb__btn-text">Settings</span>
             <span v-if="noAgentInstalled" class="sb__dot" title="No agent installed" />

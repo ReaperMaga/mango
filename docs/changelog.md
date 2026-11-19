@@ -37,6 +37,8 @@ All notable changes to Mango. Versions follow [semantic versioning](https://semv
 
 ### Settings
 
+- **Notifications:** a desktop notification when a chat needs you, finishes or fails, while Mango is in the background; choose which, hide the chat's text, add a sound, and send a test, in Settings > Notifications.
+- **Shortcuts:** change any keyboard shortcut in Settings > Shortcuts. Conflicts are refused, and tooltips, menus and the command palette follow your keys.
 - **Changelog** in Settings and in the Settings menu of the sidebar: what changed in each version.
 
 ### Environments

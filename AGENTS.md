@@ -75,6 +75,7 @@ app/
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
+                     shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
@@ -93,6 +94,7 @@ src-tauri/src/
   chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
   chats_remote.rs    remote projects' chats kept inside their environment (`chats_remote_*`), so other computers see them
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
+  notify.rs          `notify`: one system notification (the frontend decides when, `composables/notify.ts`)
   pty.rs, shells.rs  terminals; discovery of installed shells
   projects.rs        open / create / clone, recent projects
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
