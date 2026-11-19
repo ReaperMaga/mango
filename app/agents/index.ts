@@ -1,9 +1,10 @@
 import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, ContextUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
+import { mergeContext } from '~/agents/context'
 import { forAgent, makeThumb } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
@@ -162,6 +163,16 @@ export async function readAgentUsage(agent: AgentId): Promise<AgentUsage> {
   const adapter = await adapters[agent]()
   if (!adapter.readUsage) throw new Error(`${agent} cannot report its usage.`)
   return adapter.readUsage(spawnFor(agent, ''))
+}
+
+/**
+ * How full the conversation `sessionId` is, read in `workdir` (where its runs happen) without a
+ * turn. Null in the browser preview and for agents that cannot say without one (Codex).
+ */
+export async function readAgentContext(agent: AgentId, workdir: string, sessionId: string, model: string): Promise<ContextUsage | null> {
+  if (!isTauri()) return null
+  const adapter = await adapters[agent]()
+  return adapter.readContext ? adapter.readContext(spawnFor(agent, workdir), sessionId, model) : null
 }
 
 /* ------------------------------------------------------------------ */
@@ -332,6 +343,11 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     switch (e.type) {
       case 'session':
         t.sessionId = e.sessionId
+        break
+      case 'context':
+        t.context = mergeContext(t.context, e.usage)
+        // Live readings come with every request; the full one at the end of a turn is worth saving.
+        if (e.usage.max > 0) store.persist(threadId)
         break
       case 'workdir': {
         // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns,

@@ -7,7 +7,7 @@ import { useModels } from '~/stores/models'
 import { useCommands } from '~/stores/commands'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import { AGENTS, effortLabel, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { AGENTS, effortLabel, type AgentId, type Attachment, type ContextUsage, type Thread } from '~/types/chat'
 import { call, isTauri, pickFiles } from '~/composables/useBackend'
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeThumb, pastedName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
@@ -29,12 +29,18 @@ const props = withDefaults(defineProps<{
   autofocus?: boolean
   placeholder?: string
   large?: boolean
+  /** The chat's context window at its last reading (null: none yet). Left out: no meter (no chat yet). */
+  context?: ContextUsage | null
+  /** The context window is being read from the CLI. */
+  contextPending?: boolean
 }>(), { effort: null, busy: false, autofocus: false, large: false })
 
 const emit = defineEmits<{
   /** `opposite`: the other follow-up behaviour, for this message only. */
   send: [text: string, attachments: Attachment[], opposite: boolean]
   stop: []
+  /** Compact the conversation (`/compact`), from the context meter. */
+  compact: []
   'update:model': [model: string]
   'update:effort': [effort: string | null]
   'update:mode': [mode: Thread['mode']]
@@ -626,6 +632,14 @@ const sendTitle = computed(() => (props.busy
           {{ attachError }}
         </span>
       </div>
+      <ChatContext
+        v-if="context !== undefined && !listening"
+        :usage="context"
+        :pending="contextPending"
+        :agent-name="AGENTS[agent].name"
+        :busy="busy"
+        @compact="emit('compact')"
+      />
       <UiIconButton
         v-if="listening"
         class="cp__keep"

@@ -140,6 +140,11 @@ export type AgentEvent =
   | { type: 'question'; id: string; questions: AgentQuestion[]; toolId?: string; title?: string; message?: string }
   /** The approval or question was settled without the user (e.g. the run was interrupted). */
   | { type: 'approval-cancelled'; id: string }
+  /**
+   * How full the conversation's context window is now. A reading with `max` 0 is a live one
+   * taken mid-turn: it only updates the total (see `mergeContext`).
+   */
+  | { type: 'context'; usage: ContextUsage }
   /** Exactly one per run, always last. */
   | { type: 'turn-end'; status: 'done' | 'error' | 'stopped'; error?: string }
 
@@ -232,6 +237,31 @@ export interface AgentRun {
   taskOutput?(id: string): Promise<string | null>
 }
 
+/** One thing that takes room in the context window ("System prompt", "Messages", "Free space"). */
+export interface ContextPart {
+  id: string
+  label: string
+  tokens: number
+  /** 'buffer': kept free for compacting; 'free': still unused. */
+  kind: 'used' | 'buffer' | 'free'
+}
+
+/** A conversation's context window, as its CLI last reported it. */
+export interface ContextUsage {
+  /** Tokens the conversation takes up. */
+  used: number
+  /** The model's window in tokens; 0 when unknown. */
+  max: number
+  /** Where the CLI compacts the conversation by itself, when it says. */
+  compactAt?: number
+  /** What fills the window, when the CLI breaks it down (Claude Code). */
+  parts?: ContextPart[]
+  /** The model the numbers are for, as the CLI names it. */
+  model?: string
+  /** Unix ms of the reading. */
+  at: number
+}
+
 /** One rolling usage limit of the signed-in plan, e.g. the 5-hour or the weekly window. */
 export interface UsageWindow {
   /** Stable per agent: 'five-hour', 'weekly', 'weekly:<model>', or 'window:<minutes>'. */
@@ -272,6 +302,11 @@ export interface AgentAdapter {
    * turn (no quota is spent). Rejects when the CLI can't answer (missing, signed out, too old).
    */
   readUsage?(spawn: SpawnFn): Promise<AgentUsage>
+  /**
+   * How full the conversation `sessionId` is, read without running a turn (no quota is spent);
+   * `spawn` runs where the conversation's runs do. Rejects when the CLI can't answer.
+   */
+  readContext?(spawn: SpawnFn, sessionId: string, model: string): Promise<ContextUsage>
   /**
    * The slash commands a message can start with in this project (`spawn` runs in it), without
    * running a turn. A message `/name args` goes to `run()` as its prompt, unchanged.

@@ -1,6 +1,6 @@
-import type { AgentQuestion, PermissionMode, QuestionAnswers } from '~/agents/types'
+import type { AgentQuestion, ContextUsage, PermissionMode, QuestionAnswers } from '~/agents/types'
 
-export type { AgentQuestion, PermissionMode, QuestionAnswers }
+export type { AgentQuestion, ContextUsage, PermissionMode, QuestionAnswers }
 export type AgentId = 'claude' | 'codex'
 
 /** Ripeness: how far along a thread is. Drives the signature status dot. */
@@ -182,6 +182,8 @@ export interface Thread {
   agentType?: string
   /** Pull requests and issues linked to this chat, oldest first. Sub-agent chats link to their top-level chat. */
   links?: LinkedItem[]
+  /** How full the conversation's context window was at its last reading; unset before the first reply or after `/clear`. */
+  context?: ContextUsage
 }
 
 export interface AgentModel {

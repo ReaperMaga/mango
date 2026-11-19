@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNod
 import { Animated, Image, Linking, Platform, Pressable, ScrollView, TextInput, View, type TextInputInstance } from 'react-native'
 import { useRouter } from 'expo-router'
 import { ArrowUp, ChevronDown, CircleAlert, FilePen, FileText, Info, Map as MapIcon, Mic, Paperclip, ShieldCheck, Square, X, Zap, type LucideProps } from 'lucide-react-native'
-import { AGENTS, effortLabel, type AgentId, type AgentModel, type PermissionMode } from '~/types/chat'
+import { AGENTS, effortLabel, type AgentId, type AgentModel, type ContextUsage, type PermissionMode } from '~/types/chat'
 import { easeInOut, fonts, fontSize, makeStyles, radius, space, useReducedMotion, useTheme } from '@/theme'
 import { AgentIcon, Badge, ListRow, ListSection, Sheet, Spinner, Text, haptic } from '@/ui'
 import { clock, useDictation } from '@/voice'
 import { useAgentCommands } from '@/agents/commands'
 import { ChatCommandMenu } from './ChatCommandMenu'
+import { ContextButton } from './ChatContext'
 import { commandsFor, matchCommands, pickedText, slashQuery, type CommandMatch } from './commands'
 
 /** The four permission modes, as the desktop's composer names them. */
@@ -51,6 +52,12 @@ export interface ChatComposerProps {
    * agent's CLI there for its commands; without, the list is Mango's and the built-in stand-ins.
    */
   workdir?: string | null
+  /** The chat's context window at its last reading (null: none yet, an empty ring). Left out: no ring. */
+  context?: ContextUsage | null
+  /** The context window is being read from the CLI. */
+  contextPending?: boolean
+  /** Open the context window's details (the ring). */
+  onContext?: () => void
 }
 
 /** An attachment as the composer shows it: still uploading, ready, or failed (with why). */
@@ -227,6 +234,9 @@ export function ChatComposer(props: ChatComposerProps) {
               </>
             )}
         <View style={s.spacer} />
+        {props.context !== undefined && props.onContext && !dictation.busy
+          ? <ContextButton usage={props.context} pending={props.contextPending} agentName={name} onPress={props.onContext} />
+          : null}
         {disabled
           ? null
           : (
