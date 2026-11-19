@@ -170,6 +170,8 @@ export function Gallery({ sheetOpen = false }: { sheetOpen?: boolean }) {
       <Section title="Chats">
         <ListSection title="mango" aside={<Badge label="5" />}>
           {threads.map(th => <ThreadRow key={th.id} thread={th} now={now} onPress={() => {}} />)}
+          <ThreadRow thread={{ ...done, id: 'pc-1', status: 'working', title: 'Run on the desktop' }} elsewhere={{ status: 'running', at: now }} now={now} onPress={() => {}} />
+          <ThreadRow thread={{ ...done, id: 'pc-2', status: 'working', title: 'Asking on the desktop' }} elsewhere={{ status: 'waiting', at: now }} now={now} onPress={() => {}} />
         </ListSection>
       </Section>
 
@@ -199,6 +201,9 @@ export function Gallery({ sheetOpen = false }: { sheetOpen?: boolean }) {
           {running.messages.map((m, i) => <ChatMessage key={m.id} message={m} thread={running} last={i === running.messages.length - 1} />)}
           <ChatWorking thread={running} />
           <ChatWorking thread={running} reconnectingTo="forge" />
+          <ChatWorking thread={{ ...running, status: 'working' }} elsewhere={{ status: 'running', at: now }} />
+          <ChatWorking thread={{ ...running, status: 'working' }} elsewhere={{ status: 'waiting', at: now }} />
+          <ChatWorking thread={{ ...running, status: 'working' }} elsewhere={{ status: 'running', at: now - 14 * 60000 }} />
           {failed.messages.map(m => <ChatMessage key={m.id} message={m} thread={failed} />)}
           <ChatMessage
             thread={done}

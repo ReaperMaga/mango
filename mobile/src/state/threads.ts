@@ -10,7 +10,7 @@ import { answerQuestion as answerRun, interruptRun, isRunning, readAgentContext,
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
 import { chatFiles } from '@/state/chatFiles'
 import type { FollowUp } from '@/state/prefsModel'
-import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
+import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, runElsewhere, titleFrom, uid, type ElsewhereRun } from '@/state/threadModel'
 
 /**
  * The phone's chats: a zustand port of the desktop's `app/stores/threads.ts`, without what only a
@@ -81,6 +81,11 @@ export interface ThreadsState {
   contextReading: Record<string, true>
   /** The chat on screen: a turn that finishes there counts as seen. */
   viewing: string | null
+  /**
+   * Per chat id: a run another computer has going, read from the copy it saved. Not saved: it is
+   * only what the phone last saw, and it goes when a newer copy says the run ended.
+   */
+  elsewhere: Record<string, ElsewhereRun>
   followUp: FollowUp
 
   /* ---- reading ---- */
@@ -222,6 +227,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
   drafts: {},
   contextReading: {},
   viewing: null,
+  elsewhere: {},
   followUp: 'queue',
 
   byId: id => (id ? get().threads[id] ?? null : null),
@@ -256,7 +262,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       try { threads[t.id] = normalizeLoaded(t) } catch { /* a chat that cannot be read is left out */ }
     }
     held.clear()
-    set({ threads, loaded: true, live: {}, queue: {} })
+    set({ threads, loaded: true, live: {}, queue: {}, elsewhere: {} })
     h.attach({ threads: () => Object.values(get().threads), byId: id => get().byId(id) })
     // Remote projects' chats are kept in their environment too (see `remote/chatSync.ts`).
     attachRemoteChats(get().remoteSource())
@@ -288,12 +294,19 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
    */
   _adoptRemote(incoming) {
     const adopted: Thread[] = []
+    const elsewhere = { ...get().elsewhere }
     for (const raw of incoming) {
       if (!raw || !isSafeId(raw.id) || !Array.isArray(raw.messages)) continue
-      try { adopted.push(normalizeLoaded(raw)) } catch { /* unreadable: left out */ }
+      try {
+        adopted.push(normalizeLoaded(raw))
+        // Nothing runs here, but the copy says whether the computer that saved it still has a run going.
+        const run = runElsewhere(raw)
+        if (run) elsewhere[raw.id] = run
+        else delete elsewhere[raw.id]
+      } catch { /* unreadable: left out */ }
     }
     if (!adopted.length) return []
-    set(s => ({ threads: { ...s.threads, ...Object.fromEntries(adopted.map(t => [t.id, t])) } }))
+    set(s => ({ threads: { ...s.threads, ...Object.fromEntries(adopted.map(t => [t.id, t])) }, elsewhere }))
     get().persist(adopted.map(t => t.id))
     return adopted.map(t => get().byId(t.id)!)
   },
@@ -367,6 +380,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       threads: without(s.threads),
       queue: without(s.queue),
       drafts: without(s.drafts),
+      elsewhere: without(s.elsewhere),
       viewing: s.viewing && doomed.has(s.viewing) ? null : s.viewing,
     }))
     get().persist()
@@ -490,6 +504,8 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       return
     }
     held.delete(id)
+    // This phone drives the chat from here on: whatever another computer had going is no longer the story.
+    if (get().elsewhere[id]) set(s => ({ elsewhere: Object.fromEntries(Object.entries(s.elsewhere).filter(([k]) => k !== id)) }))
     get()._appendUser(id, text.trim(), attachments)
     await get()._runTurn(id, text.trim(), attachments)
     await get()._sendFollowUps(id)

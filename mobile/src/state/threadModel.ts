@@ -18,6 +18,26 @@ export const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 export const isBusy = (t: Thread) => t.status === 'running' || t.status === 'queued' || t.status === 'waiting'
 
 /**
+ * A run of this chat that another computer is driving, as the copy it saved says. Loading a chat
+ * turns `running`, `queued` and `waiting` into plain Working (nothing runs *here*), so this is
+ * read from the copy before that. Never saved: the phone only remembers it while it knows.
+ */
+export interface ElsewhereRun {
+  status: 'queued' | 'running' | 'waiting'
+  /** When that computer last saved the chat (ms): a run that stopped saving long ago may be gone. */
+  at: number
+}
+
+/** The run another computer has going in this copy of a chat, if it has one. */
+export function runElsewhere(raw: Pick<Thread, 'status' | 'updatedAt'>): ElsewhereRun | null {
+  if (raw.status !== 'running' && raw.status !== 'queued' && raw.status !== 'waiting') return null
+  return { status: raw.status, at: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0 }
+}
+
+/** A saving run writes at least every 15 s; a long tool call may go quiet, so only this long a silence is called out. */
+export const ELSEWHERE_QUIET_MS = 5 * 60 * 1000
+
+/**
  * List order is the user's: chats placed by hand (on the desktop) keep their place; chats without
  * a place come first, newest created on top. Activity never moves a chat.
  */

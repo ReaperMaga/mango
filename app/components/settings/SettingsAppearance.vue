@@ -26,6 +26,10 @@ const schemes: Array<{ value: ColorScheme; label: string }> = [
   { value: 'slate', label: 'Slate' },
   { value: 'uchiha', label: 'Uchiha' },
   { value: 'graphite', label: 'Graphite' },
+  { value: 'ink', label: 'Ink' },
+  { value: 'cocoa', label: 'Cocoa' },
+  { value: 'neon', label: 'Neon' },
+  { value: 'solar', label: 'Solar' },
 ]
 
 const uiFonts: Array<{ value: UiFont; label: string }> = [

@@ -1,12 +1,15 @@
 import { Pressable, StyleSheet, View } from 'react-native'
 import { ChevronRight, FolderGit2 } from 'lucide-react-native'
 import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type Thread } from '~/types/chat'
+import type { ElsewhereRun } from '@/state/threadModel'
 import { makeStyles, space, touch, useTheme } from '@/theme'
 import { RipenessDot, Text, dotStatus, type TextTone } from '@/ui'
+import { elsewhereSubtitle } from './elsewhere'
 import { shortAgo } from './time'
 
 /** The second line of a thread row: its status in words, as the desktop sidebar writes it. */
-export function threadSubtitle(t: Thread): string {
+export function threadSubtitle(t: Thread, elsewhere?: ElsewhereRun | null): string {
+  if (elsewhere && displayStatus(t) === 'working') return elsewhereSubtitle(elsewhere)
   const agent = t.simulated ? `${AGENTS[t.agent].name} · simulated` : AGENTS[t.agent].name
   switch (displayStatus(t)) {
     case 'waiting': return `Needs your ${waitingFor(t)}`
@@ -31,6 +34,8 @@ export interface ThreadRowProps {
   projectName?: string
   /** For the relative time; pass `useNow()` from the list so every row ticks together. */
   now?: number
+  /** Another computer has a run going in this chat (the phone only watches). */
+  elsewhere?: ElsewhereRun | null
   /** The chat on screen beside the list (iPad): Active Wash and primary ink. */
   current?: boolean
   onPress?: () => void
@@ -44,12 +49,12 @@ export interface ThreadRowProps {
  * a one-line status, the time at the right. A result nobody has looked at rings the dot and lifts
  * the title to primary ink at medium weight.
  */
-export function ThreadRow({ thread, projectName, now = Date.now(), current = false, onPress, onLongPress, chevron = true }: ThreadRowProps) {
+export function ThreadRow({ thread, projectName, now = Date.now(), current = false, elsewhere = null, onPress, onLongPress, chevron = true }: ThreadRowProps) {
   const t = useTheme()
   const s = useStyles()
   const status = displayStatus(thread)
   const unseen = hasUnreadResult(thread) || (!thread.archived && !thread.seen && thread.status === 'waiting')
-  const sub = threadSubtitle(thread)
+  const sub = threadSubtitle(thread, elsewhere)
   const wt = thread.worktree ? (thread.branch ?? thread.worktree.split(/[\\/]/).pop() ?? '') : ''
 
   return (
@@ -61,7 +66,7 @@ export function ThreadRow({ thread, projectName, now = Date.now(), current = fal
       accessibilityState={{ selected: current || undefined }}
       style={({ pressed }) => [s.row, current && s.current, pressed && s.pressed]}
     >
-      <View style={s.dot}><RipenessDot status={dotStatus(thread)} unseen={unseen} size={14} /></View>
+      <View style={s.dot}><RipenessDot status={elsewhere && status === 'working' ? elsewhere.status : dotStatus(thread)} unseen={unseen} size={14} /></View>
       <View style={s.text}>
         <View style={s.line}>
           <Text
@@ -74,7 +79,7 @@ export function ThreadRow({ thread, projectName, now = Date.now(), current = fal
           <Text variant="micro" tone="faint" tabular style={s.time}>{shortAgo(thread.updatedAt, now)}</Text>
         </View>
         <View style={s.line}>
-          <Text variant="caption" tone={subTone[status]} numberOfLines={1} style={s.sub}>
+          <Text variant="caption" tone={elsewhere?.status === 'waiting' && status === 'working' ? 'waiting' : subTone[status]} numberOfLines={1} style={s.sub}>
             {sub}{projectName ? <Text variant="caption" tone="faint">{`  ·  ${projectName}`}</Text> : null}
           </Text>
           {wt

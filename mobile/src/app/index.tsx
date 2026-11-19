@@ -33,6 +33,7 @@ export default function Home() {
   const t = useTheme()
   const router = useRouter()
   const now = useNow()
+  const elsewhere = useThreads(st => st.elsewhere)
   const homeView = usePrefs(st => st.homeView)
   const loaded = useEnvs(st => st.loaded)
   const envs = useEnvs(st => st.envs)
@@ -103,7 +104,7 @@ export default function Home() {
       {waiting.length
         ? (
             <ListSection title="Needs you" aside={<Badge label={String(waiting.length)} tone="waiting" />}>
-              {waiting.map(th => <ThreadRow key={th.id} thread={th} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
+              {waiting.map(th => <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
             </ListSection>
           )
         : null}
@@ -148,7 +149,7 @@ export default function Home() {
       {homeView === 'latest' && recent.length
         ? (
             <ListSection title="Chats" aside={backend.real ? undefined : <Badge label="Simulated" dashed />}>
-              {recent.map(th => <ThreadRow key={th.id} thread={th} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
+              {recent.map(th => <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
             </ListSection>
           )
         : null}

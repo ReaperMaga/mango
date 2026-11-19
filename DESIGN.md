@@ -289,7 +289,7 @@ The density is that of a tool, not a page: a 13.5px base, 12.5px and 11.5px for 
 
 The light theme is the same orchard in daylight: pale leaf-tinted paper, white panels, the accent fill kept bright while accent text and status text are deepened to hold contrast. Dark is the default; the theme is switched by `data-theme` on the root, and every component reads tokens only, so no component has a theme branch.
 
-A colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, and Graphite (neutral grey grounds with the mango accent kept). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.
+A colour scheme, chosen in Settings and set by `data-scheme` on the root, retints the grounds and swaps the accent family: Mango (the default, everything described here), Blue, Purple, Pink, Graphite (neutral grey grounds with the mango accent kept), and the two-tone Ink (monochrome), Cocoa (brown and oatmeal), Neon (indigo and magenta) and Solar (teal and gold). The ripening scale and the diff colours are the same in every scheme, so a thread's status reads the same whatever the room is painted.
 
 **Key Characteristics:**
 - Leaf-shade grounds (hue 160, chroma about 0.01, in the default Mango scheme) in four lightness steps, plus an inset well darker than all of them.

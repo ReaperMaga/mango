@@ -12,6 +12,8 @@ import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
 import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
 import { envOf } from '@/remote/chatSync'
+import { LIVE_CHAT_MS } from '@/screens/livePoll'
+import { useLiveChats } from '@/screens/useLiveChats'
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
 import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
@@ -41,6 +43,7 @@ export default function ChatScreen() {
   const draft = useThreads(st => st.drafts[id] ?? '')
   const queue = useThreads(st => st.queue[id])
   const live = useThreads(st => st.live[id])
+  const elsewhere = useThreads(st => st.elsewhere[id] ?? null)
   const toolCalls = usePrefs(st => st.toolCalls)
   const contextPending = useThreads(st => st.contextReading[id])
   // A chat from before Mango kept context readings gets one when it opens (no turn is run).
@@ -63,6 +66,9 @@ export default function ChatScreen() {
   const files = useAttachments(thread?.projectPath ?? null)
   const list = useRef<FlatList<Message>>(null)
   const atBottom = useRef(true)
+
+  // A run on another computer, and its end, show up here without a pull to refresh.
+  useLiveChats(thread?.projectPath, LIVE_CHAT_MS, true)
 
   useFocusEffect(useCallback(() => {
     useThreads.getState().setViewing(id)
@@ -189,6 +195,7 @@ export default function ChatScreen() {
           <View style={s.foot}>
             {queue?.length ? queue.map(q => <Queued key={q.id} q={q} threadId={id} running={busy} />) : null}
             {busy ? <ChatWorking thread={thread} waitingOnTasks={tasksLeft} reconnectingTo={live?.reconnecting ? env?.name ?? 'the environment' : null} /> : null}
+            {!busy && elsewhere ? <ChatWorking thread={thread} elsewhere={elsewhere} /> : null}
             {live?.tasks.length ? <ChatTasks tasks={live.tasks} onPress={() => setTasksOpen(true)} /> : null}
           </View>
         )}
