@@ -90,7 +90,7 @@ async function guard(fn: () => Promise<unknown>, path: string | null = null) {
 async function open(p: ProjectInfo) {
   if (opening.value) return
   opening.value = p.path
-  await guard(() => ws.openProject(p.path), p.path)
+  await guard(() => ws.openProjectAsking(p.path), p.path)
   opening.value = null
 }
 

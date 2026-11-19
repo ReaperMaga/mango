@@ -83,6 +83,7 @@ onBeforeUnmount(() => unlistenJoin?.())
     <SetupGettingStarted />
     <UsageDialog />
     <ConfirmDialog />
+    <OpenWhereDialog />
     <SettingsView />
     <CommandPalette />
     <UiImageViewer />

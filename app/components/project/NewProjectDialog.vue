@@ -120,8 +120,10 @@ async function createRemote(w: EnvRemote) {
     throw new Error(`${there.dir === '/' ? '' : there.dir}/${leaf} already exists. Pick another name, or open that folder with Open folder`)
   }
   const dir = await envs.prepareDir(w.hostId, w.instance, `${there.dir === '/' ? '' : there.dir}/${leaf}`, null, gitInit.value)
-  await ws.openEnvProject({ ...w, dir }, leaf)
-  if (ws.activeProjectPath) threads.create(ws.activeProjectPath)
+  const opened = await ws.openEnvProject({ ...w, dir }, leaf)
+  // Created either way: the dialog is done even when the user chose not to open it.
+  ws.dialog = null
+  if (opened === 'this' && ws.activeProjectPath) threads.create(ws.activeProjectPath)
 }
 
 async function submit() {
@@ -134,8 +136,7 @@ async function submit() {
       await createRemote(where.value)
     } else {
       const info = await call('create_project', { parent: parent.value, name: name.value.trim(), gitInit: gitInit.value })
-      ws.adopt(info)
-      threads.create(info.path)
+      if (await ws.placeProject(info) === 'this') threads.create(info.path)
     }
   } catch (e) {
     error.value = errorText(e).replace(/\.$/, '')

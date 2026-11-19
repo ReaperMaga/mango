@@ -1119,6 +1119,8 @@ export interface Commands {
    * pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
    */
   window_at: [{ x: number; y: number }, string | null]
+  /** Whether no other Mango window is on screen (closing this one ends the app). */
+  window_alone: [Record<string, never>, boolean]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
@@ -1223,4 +1225,6 @@ export interface Events {
   'envs://join': { link: string }
   /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
   'window://closed': { label: string }
+  /** The main window was closed while others are open: it is hidden and lets go of its projects. */
+  'window://parked': Record<string, never>
 }

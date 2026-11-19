@@ -197,6 +197,7 @@ pub fn run() {
             windows::window_focus,
             windows::window_list,
             windows::window_at,
+            windows::window_alone,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")

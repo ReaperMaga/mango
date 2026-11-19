@@ -70,6 +70,8 @@ export const useWindows = defineStore('windows', {
     started: false,
     /** Something this window could not take over (shown in a notice). Not persisted. */
     refused: null as null | string,
+    /** The main window, closed while others were open: hidden until something brings it back (`_park`). */
+    parked: false,
   }),
 
   getters: {
@@ -108,6 +110,11 @@ export const useWindows = defineStore('windows', {
       // first (`_closing`); a reload just says goodbye, and takes its things again when it is back.
       window.addEventListener('pagehide', () => { void this._post({ t: 'bye', id: this.self }) })
       if (!this.isMain) void appWindow.onClose(() => this._closing())
+      // The main window closed while others are open: the backend hid it; it lets go of its projects.
+      else if (isTauri()) {
+        await on('window://parked', () => { void this._park() })
+        window.addEventListener('focus', () => { this.parked = false })
+      }
     },
 
     /**
@@ -249,7 +256,8 @@ export const useWindows = defineStore('windows', {
 
     /** Chats that came back from their own window: their tabs open here, the last one in front. */
     async _reveal(ids: string[]) {
-      if (!ids.length || this.spec.kind === 'chat') return
+      // A parked main window does not pop up for them: they are in its sidebar once it is back.
+      if (!ids.length || this.spec.kind === 'chat' || this.parked) return
       const threads = useThreads()
       const ws = useWorkspace()
       for (const id of ids) {
@@ -285,13 +293,34 @@ export const useWindows = defineStore('windows', {
 
     /** This (not main) window is closing: stop its runs, save, say goodbye. */
     async _closing() {
+      // The last window on screen (the main one is parked): its projects are what Mango reopens next time.
+      if (isTauri() && await call('window_alone', {}).catch(() => false)) useWorkspace().handOverSession()
+      await this._shutDown()
+      await this._post({ t: 'bye', id: this.self })
+    },
+
+    /** Stop this window's runs and terminals, and save its chats. */
+    async _shutDown() {
       const threads = useThreads()
       for (const c of threads.heldRefs()) if (threads.isBusyChat(c.id)) threads.stop(c.id)
       const ws = useWorkspace()
       for (const t of ws.terminalTabs) if (t.ptyId && !t.exited) await call('pty_kill', { id: t.ptyId }).catch(() => {})
       await flushHistory()
       await Promise.race([flushRemoteChats(), new Promise(r => setTimeout(r, 1500))])
-      await this._post({ t: 'bye', id: this.self })
+    },
+
+    /**
+     * The main window was closed while other windows are open: the backend hid it instead (it holds
+     * what no window claims, so it stays). Like a closed window it stops and saves what it ran, then
+     * lets go of its projects so the other windows can open them. Shown again (another start of
+     * Mango, a returned chat), it is on the welcome screen.
+     */
+    async _park() {
+      this.parked = true
+      await this._shutDown()
+      this.chats = []
+      useWorkspace().park()
+      await this.sync()
     },
 
     async _receive(m: Message) {

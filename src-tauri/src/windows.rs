@@ -5,10 +5,9 @@
 //! (`?window=project&path=…`, `?window=chat&thread=…&path=…`), read once at start-up
 //! (`app/utils/windows.ts`). Which window holds which project or chat is the frontend's business
 //! (`app/stores/windows.ts`): the backend only opens, focuses and lists windows, and says when one
-//! is gone (`window://closed`).
+//! is gone (`window://closed`). Closing a window closes that window only (see [`on_event`]).
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
@@ -35,6 +34,9 @@ pub fn is_mango_window(label: &str) -> bool {
 struct Closed {
     label: String,
 }
+
+#[derive(Clone, Serialize)]
+struct Parked {}
 
 /// Percent-encode a query value: everything but unreserved characters.
 fn encode(value: &str) -> String {
@@ -227,29 +229,48 @@ pub async fn window_at(window: tauri::Window, x: f64, y: f64) -> Result<Option<S
     Ok(window_under(places, x * scale, y * scale))
 }
 
+/// Whether no other of Mango's windows is on screen: closing this one ends the app (the main
+/// window may still be there, hidden, see [`on_event`]).
+#[tauri::command]
+pub async fn window_alone(window: tauri::Window) -> Result<bool, String> {
+    let app = window.app_handle();
+    Ok(!app
+        .webview_windows()
+        .iter()
+        .any(|(label, w)| label != window.label() && is_mango_window(label) && w.is_visible().unwrap_or(false)))
+}
+
+/// Mango's windows other than the main one and `except`.
+fn others(app: &AppHandle, except: &str) -> usize {
+    app.webview_windows().keys().filter(|l| *l != MAIN && *l != except && is_mango_window(l)).count()
+}
+
 /// Window events, from `lib.rs`.
+///
+/// Each window closes on its own, as in JetBrains IDEs. The main window holds what no other window
+/// claims (`app/utils/windows.ts`), so it never goes while others are open: closing it then hides
+/// it ("parks" it), and its page closes its projects (`window://parked`). Closing the last window on
+/// screen while the main one is parked ends the app.
 pub fn on_event(window: &tauri::Window, event: &tauri::WindowEvent) {
     let app = window.app_handle();
     match event {
-        // Closing the main window closes the others too: each saves what it holds first
-        // (its own close handler), then goes.
-        tauri::WindowEvent::CloseRequested { .. } if window.label() == MAIN => {
-            for (label, w) in app.webview_windows() {
-                if label != MAIN && is_mango_window(&label) {
-                    let _ = w.close();
-                }
-            }
-            // A window that does not finish closing must not keep Mango running with no main window.
-            let app = app.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_secs(5));
-                if app.get_webview_window(MAIN).is_none() {
-                    app.exit(0);
-                }
-            });
+        tauri::WindowEvent::CloseRequested { api, .. } if window.label() == MAIN && others(app, MAIN) > 0 => {
+            api.prevent_close();
+            let _ = window.hide();
+            let _ = app.emit_to(MAIN, "window://parked", Parked {});
         }
         tauri::WindowEvent::Destroyed if is_mango_window(window.label()) => {
-            let _ = app.emit("window://closed", Closed { label: window.label().to_string() });
+            let label = window.label();
+            let _ = app.emit("window://closed", Closed { label: label.to_string() });
+            if label == MAIN || others(app, label) > 0 {
+                return;
+            }
+            // The last window on screen went: a parked main window must not keep Mango running unseen.
+            if let Some(main) = app.get_webview_window(MAIN) {
+                if !main.is_visible().unwrap_or(true) {
+                    app.exit(0);
+                }
+            }
         }
         _ => {}
     }

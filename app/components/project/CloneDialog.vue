@@ -251,7 +251,7 @@ async function submit() {
     })
     percent.value = 100
     phase.value = 'idle'
-    ws.adopt(info)
+    await ws.placeProject(info)
   } catch (e) {
     phase.value = 'error'
     error.value = explain(errorText(e))
@@ -269,6 +269,8 @@ async function cloneRemote(w: EnvRemote, repo: string) {
     percent.value = 100
     phase.value = 'idle'
     await ws.openEnvProject({ ...w, dir }, name)
+    // Cloned either way: the dialog is done even when the user chose not to open it.
+    ws.dialog = null
   } catch (e) {
     phase.value = 'error'
     error.value = explain(errorText(e))

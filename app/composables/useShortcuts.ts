@@ -31,7 +31,7 @@ export async function openFolderFlow() {
 export async function openLocalFolder() {
   const ws = useWorkspace()
   const path = await pickFolder('Open folder')
-  if (path) await ws.openProject(path)
+  if (path) await ws.openProjectAsking(path)
 }
 
 /**
