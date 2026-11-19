@@ -661,10 +661,14 @@ fn ssh_dialer(host: &EnvHost, instance: &str) -> Result<Dialer, String> {
     ssh_dialer_to(host, instance, NOVNC_ADDR)
 }
 
-/// Connections to `addr` (a socat address such as `TCP:127.0.0.1:3000`) inside the instance.
-pub(crate) fn ssh_dialer_to(host: &EnvHost, instance: &str, addr: &str) -> Result<Dialer, String> {
-    let inner = ["socat".to_string(), "-".into(), addr.to_string()];
-    let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, &inner)?)?;
+/// Connections to `addr` (a socat address such as `TCP:127.0.0.1:6080`) inside the instance.
+fn ssh_dialer_to(host: &EnvHost, instance: &str, addr: &str) -> Result<Dialer, String> {
+    ssh_dialer_run(host, instance, &["socat".to_string(), "-".into(), addr.to_string()])
+}
+
+/// Connections through `inner`, a command inside the instance that relays its stdin and stdout.
+pub(crate) fn ssh_dialer_run(host: &EnvHost, instance: &str, inner: &[String]) -> Result<Dialer, String> {
+    let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, inner)?)?;
     Ok(Arc::new(move || {
         let mut cmd = ssh::command(&argv);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
