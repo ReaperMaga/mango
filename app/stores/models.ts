@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { AGENTS, type AgentId, type AgentModel } from '~/types/chat'
 import { listAgentModels } from '~/agents'
+import { modelTitle } from '~/utils/modelNames'
 
 /**
  * The models each agent CLI offers, as the CLI itself reports them (with the
@@ -23,7 +24,7 @@ function load(): Cached {
     const lists: Cached['lists'] = {}
     for (const id of Object.keys(AGENTS) as AgentId[]) {
       const list = raw.lists?.[id]
-      if (Array.isArray(list) && list.every((m: AgentModel) => typeof m?.id === 'string' && typeof m?.label === 'string')) lists[id] = list
+      if (Array.isArray(list) && list.every((m: AgentModel) => typeof m?.id === 'string' && typeof m?.label === 'string')) lists[id] = list.map(tidy)
     }
     return { lists, fetchedAt: raw.fetchedAt ?? {} }
   } catch {
@@ -31,8 +32,8 @@ function load(): Cached {
   }
 }
 
-/** Codex reports some names in lower case ("gpt-5.4"); show them like the others. */
-const tidy = (m: AgentModel): AgentModel => ({ ...m, label: m.label.replace(/^gpt(?=-)/, 'GPT') })
+/** Codex reports some names in lower case ("gpt-5.4"), and a name may be a raw id: show them like the others. */
+const tidy = (m: AgentModel): AgentModel => ({ ...m, label: modelTitle(m.label.replace(/^gpt(?=-)/, 'GPT')) })
 
 const inflight = new Map<AgentId, Promise<void>>()
 
@@ -49,7 +50,7 @@ export const useModels = defineStore('models', {
       return (agent, id) => this.list(agent).find(m => m.id === id) ?? AGENTS[agent].models.find(m => m.id === id) ?? null
     },
     label(): (agent: AgentId, id: string) => string {
-      return (agent, id) => this.find(agent, id)?.label ?? id
+      return (agent, id) => this.find(agent, id)?.label ?? modelTitle(id)
     },
     /** Effort levels `model` accepts; empty when there is nothing to choose. */
     efforts(): (agent: AgentId, id: string) => string[] {
