@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
-import { answerQuestion, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
+import { answerQuestion, interruptRun, isRunning, readAgentContext, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
@@ -24,6 +24,7 @@ import { adoptRemote, attachRemoteChats, forgetRemote } from '~/utils/remoteChat
 import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
+import { normalizeContext } from '~/agents/context'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -74,6 +75,8 @@ export const useThreads = defineStore('threads', {
     live: {} as Record<string, LiveState>,
     /** Per chat id: messages waiting for the running turn to end. Not saved: it dies with the app. */
     queue: {} as Record<string, QueuedMessage[]>,
+    /** Chats whose context window is being read from the CLI (`readContext`). */
+    contextReading: {} as Record<string, true>,
   }),
 
   getters: {
@@ -807,6 +810,7 @@ export const useThreads = defineStore('threads', {
         t.effort = null
         // Each CLI keeps its own conversation; the other agent starts fresh.
         t.sessionId = null
+        t.context = undefined
       }
       this.defaultAgent = agent
       this.persist(id)
@@ -823,6 +827,29 @@ export const useThreads = defineStore('threads', {
     },
 
     /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
+    /**
+     * A chat shown without a context reading (one from before Mango kept them) gets one from its
+     * CLI, without a turn: once per chat while the app runs, since Claude Code notes the visit in
+     * its session file. Codex cannot say without a turn; its chats wait for their next reply.
+     */
+    async readContext(id: string) {
+      const t = this.byId(id)
+      if (!t || t.parentId || t.context || !t.sessionId || isRunning(id) || contextTried.has(id)) return
+      contextTried.add(id)
+      const session = t.sessionId
+      this.contextReading[id] = true
+      try {
+        const usage = await readAgentContext(t.agent, this.workdirFor(id) ?? t.projectPath, session, t.model)
+        const now = this.byId(id)
+        // A run that started meanwhile reports its own, newer reading.
+        if (!usage || !now || now.context || now.sessionId !== session || isRunning(id)) return
+        now.context = usage
+        this.persist(id)
+      } catch { /* no reading: the ring stays empty until the next reply */ } finally {
+        delete this.contextReading[id]
+      }
+    },
+
     setModel(id: string, model: string, efforts?: string[]) {
       const t = this.byId(id)
       if (!t) return
@@ -925,6 +952,7 @@ export const useThreads = defineStore('threads', {
       if (isClear(text) && !attachments.length) {
         // The CLI's conversation is left behind; the next message starts a fresh one.
         t.sessionId = null
+        t.context = undefined
         const m = this._pushAgentMessage(id)
         if (m) this._pushPart(id, m, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
         this.persist(id)
@@ -1210,6 +1238,8 @@ export const approvalWaiters = new Map<string, (allow: boolean) => void>()
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
 export const stopFlags = new Set<string>()
+/** Chats whose context window was already read from the CLI while the app runs (`readContext`). */
+const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
 /** A tab that shows something other than a chat; none of them is saved with the layout. */
@@ -1240,7 +1270,8 @@ function normalizeLoaded(t: Thread): Thread {
   const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree }
+  const context = normalizeContext(t.context)
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context }
 }
 
 /** The reason in a rejected backend call or a thrown error, without a trailing period. */
