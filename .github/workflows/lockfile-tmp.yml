@@ -1,0 +1,35 @@
+# TEMPORARY: adds the new tauri-plugin-notification entry to src-tauri/Cargo.lock (no cargo on the
+# author's machine) and commits it back. Delete this file once the lock is committed.
+name: Temporary lockfile update
+
+on:
+  push:
+    branches: [feat/notifications-and-shortcuts]
+    paths: ['.github/workflows/lockfile-tmp.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # Resolving the manifest adds what is missing to the lock and keeps every locked version.
+      - name: Update the lock
+        working-directory: src-tauri
+        run: cargo metadata --format-version 1 > /dev/null
+      - name: What changed
+        run: git diff --stat -- src-tauri/Cargo.lock
+      - name: Commit the lock
+        run: |
+          if git diff --quiet -- src-tauri/Cargo.lock; then
+            echo "Cargo.lock already up to date"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add src-tauri/Cargo.lock
+            git commit -m "chore: add tauri-plugin-notification to Cargo.lock"
+            git push
+          fi
