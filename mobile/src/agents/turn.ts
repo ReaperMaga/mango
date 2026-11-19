@@ -1,6 +1,7 @@
 import type { Message, Part, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
 import type { AgentEvent } from '~/agents/types'
+import { mergeContext } from '~/agents/context'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import type { ThreadsState } from '@/state/threads'
 
@@ -134,6 +135,10 @@ export function createTurn(store: Store, threadId: string, first: Message, workd
     switch (e.type) {
       case 'session':
         store.edit(threadId, (d) => { d.sessionId = e.sessionId })
+        break
+      case 'context':
+        // Kept with the chat, so the desktop shows it too; the phone does not draw it yet.
+        store.edit(threadId, (d) => { d.context = mergeContext(d.context, e.usage) })
         break
       case 'workdir': {
         // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns follow

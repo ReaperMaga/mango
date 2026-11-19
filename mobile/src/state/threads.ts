@@ -6,7 +6,7 @@ import { createPrPrompt } from '~/utils/createPr'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
 import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
-import { answerQuestion as answerRun, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
+import { answerQuestion as answerRun, interruptRun, isRunning, readAgentContext, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
 import { chatFiles } from '@/state/chatFiles'
 import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
@@ -77,6 +77,8 @@ export interface ThreadsState {
   queue: Record<string, QueuedMessage[]>
   /** Per chat id: what is typed in its composer and not sent yet. Not saved. */
   drafts: Record<string, string>
+  /** Chats whose context window is being read from the CLI (`readContext`). */
+  contextReading: Record<string, true>
   /** The chat on screen: a turn that finishes there counts as seen. */
   viewing: string | null
   followUp: FollowUp
@@ -123,6 +125,11 @@ export interface ThreadsState {
   /** Set a chat's status by hand: Working, or Settled. While an agent runs, the run owns the status. */
   setStatus(id: string, status: 'working' | 'done'): void
   setAgent(id: string, agent: AgentId): void
+  /**
+   * A chat shown without a context reading gets one from its CLI, without a turn: once per chat
+   * while the app runs (the desktop's `readContext`). Codex chats wait for their next reply.
+   */
+  readContext(id: string): Promise<void>
   /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
   setModel(id: string, model: string, efforts?: string[]): void
   setEffort(id: string, effort: string | null): void
@@ -198,6 +205,8 @@ function draftOf(t: Thread, msgIds?: readonly string[] | 'all'): Thread {
 let history: ChatHistory | null = null
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
+/** Chats whose context window was already read from the CLI while the app runs (`readContext`). */
+const contextTried = new Set<string>()
 
 export const useThreads = create<ThreadsState>()((set, get) => ({
   threads: {},
@@ -205,6 +214,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
   live: {},
   queue: {},
   drafts: {},
+  contextReading: {},
   viewing: null,
   followUp: 'queue',
 
@@ -371,8 +381,27 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       d.effort = null
       // Each CLI keeps its own conversation; the other agent starts fresh.
       d.sessionId = null
+      d.context = undefined
     })
     get().persist(id)
+  },
+
+  async readContext(id) {
+    const t = get().byId(id)
+    if (!t || t.parentId || t.context || !t.sessionId || isRunning(id) || contextTried.has(id)) return
+    contextTried.add(id)
+    const session = t.sessionId
+    set(s => ({ contextReading: { ...s.contextReading, [id]: true } }))
+    try {
+      const usage = await readAgentContext(t.agent, get().workdirFor(id) ?? t.projectPath, session, t.model)
+      const now = get().byId(id)
+      // A run that started meanwhile reports its own, newer reading.
+      if (!usage || !now || now.context || now.sessionId !== session || isRunning(id)) return
+      get().edit(id, (d) => { d.context = usage })
+      get().persist(id)
+    } catch { /* no reading: the ring stays empty until the next reply */ } finally {
+      set(s => ({ contextReading: Object.fromEntries(Object.entries(s.contextReading).filter(([k]) => k !== id)) }))
+    }
   },
 
   setModel(id, model, efforts) {
@@ -522,7 +551,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (!t) return
     if (isClear(text) && !attachments.length) {
       // The CLI's conversation is left behind; the next message starts a fresh one.
-      get().edit(id, (d) => { d.sessionId = null })
+      get().edit(id, (d) => { d.sessionId = null; d.context = undefined })
       const m = get()._pushAgentMessage(id)
       if (m) get()._pushPart(id, m.id, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
       get().persist(id)

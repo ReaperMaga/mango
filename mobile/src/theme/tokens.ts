@@ -85,6 +85,14 @@ export interface Colors {
 
   /** Claude's brand orange: only the agent logo uses it, as on the desktop (`--brand-claude`). */
   brandClaude: string
+
+  /** `--file-*`: file-type marks, also the categories of a context window's breakdown. */
+  fileBlue: string
+  fileYellow: string
+  fileOrange: string
+  fileGreen: string
+  filePurple: string
+  fileRed: string
 }
 
 const dark: Colors = {
@@ -146,6 +154,13 @@ const dark: Colors = {
   chipError: 'rgba(255, 125, 124, 0.14)',
 
   brandClaude: '#d97757',
+
+  fileBlue: '#5eaceb',
+  fileYellow: '#e7c952',
+  fileOrange: '#f78955',
+  fileGreen: '#6fc884',
+  filePurple: '#b093e5',
+  fileRed: '#ed7473',
 }
 
 const light: Colors = {
@@ -207,6 +222,13 @@ const light: Colors = {
   chipError: 'rgba(183, 24, 36, 0.14)',
 
   brandClaude: '#d97757',
+
+  fileBlue: '#1f74bf',
+  fileYellow: '#c28f00',
+  fileOrange: '#d16022',
+  fileGreen: '#2d8949',
+  filePurple: '#8059bb',
+  fileRed: '#c8393a',
 }
 
 /**

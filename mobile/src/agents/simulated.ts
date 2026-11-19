@@ -55,6 +55,43 @@ function script(prompt: string) {
   }
 }
 
+/**
+ * How full each simulated conversation's context window is, by session (or thread) id, so it
+ * fills a little with every message and turn the way a real one does.
+ */
+const contextUsed = new Map<string, number>()
+const fillContext = (id: string, tokens: number) => {
+  const used = Math.min((contextUsed.get(id) ?? 21_000) + tokens, 190_000)
+  contextUsed.set(id, used)
+  return used
+}
+
+/** Claude Code's answer to `get_context_usage` (what `/context` shows), for a 200k window. */
+function claudeContextAnswer(used: number) {
+  const max = 200_000
+  const buffer = 33_000
+  const fixed = [
+    { id: 'system_prompt', name: 'System prompt', tokens: 2_600 },
+    { id: 'system_tools', name: 'System tools', tokens: 8_900 },
+    { id: 'memory_files', name: 'Memory files', tokens: 2_100 },
+    { id: 'skills', name: 'Skills', tokens: 7_100 },
+  ]
+  const messages = Math.max(0, used - fixed.reduce((sum, c) => sum + c.tokens, 0))
+  return {
+    categories: [
+      ...fixed.map(c => ({ ...c, kind: 'used' })),
+      { id: 'messages', name: 'Messages', tokens: messages, kind: 'used' },
+      { id: 'autocompact_buffer', name: 'Autocompact buffer', tokens: buffer, kind: 'buffer' },
+      { id: 'free_space', name: 'Free space', tokens: Math.max(0, max - used - buffer), kind: 'free' },
+    ],
+    totalTokens: used,
+    maxTokens: max,
+    autoCompactThreshold: max - buffer,
+    isAutoCompactEnabled: true,
+    model: 'simulated',
+  }
+}
+
 /** The background commands a "background" prompt starts: how long each runs (in paces) and what it prints. */
 const BACKGROUND = [
   {
@@ -134,7 +171,8 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
 
   async function message(content: Json[]) {
     const id = `sim_msg_${++seq}`
-    p.out({ type: 'stream_event', event: { type: 'message_start', message: { id, role: 'assistant' } } })
+    const used = fillContext(sessionId, 4_700)
+    p.out({ type: 'stream_event', event: { type: 'message_start', message: { id, role: 'assistant', usage: { input_tokens: used } } } })
     let i = 0
     for (const b of content) {
       if (interrupted) break
@@ -254,7 +292,9 @@ function claudeProcess(dir: string, args: string[], handlers: SpawnHandlers, pac
       const output = sub === 'get_task_output' ? taskOutput(String(m.request?.task_id ?? '')) : null
       const response = sub === 'initialize'
         ? { commands: [], models: [{ value: 'default', displayName: 'Default', description: 'Simulated' }] }
-        : output !== null ? { output } : {}
+        : sub === 'get_context_usage'
+          ? claudeContextAnswer(contextUsed.get(sessionId) ?? 21_000)
+          : output !== null ? { output } : {}
       p.out({ type: 'control_response', response: { subtype: 'success', request_id: m.request_id, response } })
       return
     }
@@ -350,6 +390,9 @@ function codexProcess(dir: string, handlers: SpawnHandlers, pace: number): Agent
     // A message steered in by now is read before the last reply.
     await p.wait()
     if (!interrupted) await textItem('msg_sim_2', say.done(steered, edited))
+    const used = fillContext(threadId, 9_400)
+    const tokens = (total: number) => ({ totalTokens: total, inputTokens: total - 600, cachedInputTokens: Math.round(total * 0.7), outputTokens: 600, reasoningOutputTokens: 200 })
+    notify('thread/tokenUsage/updated', { turnId, tokenUsage: { total: tokens(used * 2), last: tokens(used), modelContextWindow: 258_400 } })
     notify('turn/completed', { turn: { id: turnId, status: interrupted ? 'interrupted' : 'completed' } })
   }
 
