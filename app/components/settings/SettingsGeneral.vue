@@ -4,6 +4,8 @@ import { useWorkspace } from '~/stores/workspace'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
+import SettingsSelect from './SettingsSelect.vue'
+import type { OpenProjectIn } from '~/utils/openWhere'
 
 const ws = useWorkspace()
 
@@ -13,6 +15,13 @@ const modes: Array<{ value: PermissionMode; label: string; hint: string }> = [
   { value: 'ask', label: 'Ask first', hint: 'The agent asks before every edit and every command.' },
   { value: 'edits', label: 'Accept edits', hint: 'The agent edits files without asking, and still asks before commands.' },
   { value: 'auto', label: 'Full auto', hint: 'The agent never asks. It edits files and runs commands on its own.' },
+]
+
+/** Opening a project in a window that already holds others. */
+const openIns: Array<{ value: OpenProjectIn; label: string }> = [
+  { value: 'ask', label: 'Ask each time' },
+  { value: 'this', label: 'This window' },
+  { value: 'new', label: 'New window' },
 ]
 
 function setMode(mode: PermissionMode) {
@@ -68,6 +77,18 @@ const hintId = useId()
       <SettingsRow label="Delete confirmation" hint="Ask before a chat and its messages are deleted.">
         <template #default="{ labelId }">
           <SettingsSwitch :model-value="ws.confirmDelete" :labelledby="labelId" @update:model-value="v => { ws.confirmDelete = v; ws.persist() }" />
+        </template>
+      </SettingsRow>
+    </div>
+
+    <div class="group confirms">
+      <div class="group__head">
+        <h3 class="group__title">Windows</h3>
+        <p class="group__hint">A window can hold several projects side by side, or each can have its own.</p>
+      </div>
+      <SettingsRow label="Open a project in" hint="When this window already has other projects open.">
+        <template #default="{ labelId }">
+          <SettingsSelect :model-value="ws.openProjectIn" :options="openIns" :labelledby="labelId" @update:model-value="v => { ws.openProjectIn = v; ws.persist() }" />
         </template>
       </SettingsRow>
     </div>
