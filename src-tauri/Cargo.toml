@@ -1,6 +1,6 @@
 [package]
 name = "mango"
-version = "0.1.25"
+version = "0.1.26"
 description = "Mango, a desktop agent workbench"
 edition = "2021"
 rust-version = "1.90"
