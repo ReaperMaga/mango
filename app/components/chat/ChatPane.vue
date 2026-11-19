@@ -27,10 +27,17 @@ const draft = reactive({ agent: threads.defaultAgent as AgentId, model: AGENTS[t
 const projectPref = computed(() => (ws.activeProjectPath ? ws.projectPrefs[ws.activeProjectPath] : undefined))
 watch([() => threads.defaultAgent, () => projectPref.value?.agent], ([a, own]) => { draft.agent = own ?? a }, { immediate: true })
 watch([() => ws.defaultMode, () => projectPref.value?.mode], ([m, own]) => { draft.mode = own ?? m }, { immediate: true })
+/** A model picked together with its agent in the composer: kept when the agent change resets the draft. */
+let pickedModel: string | null = null
 watch([() => draft.agent, () => projectPref.value?.model], ([a, own]) => {
-  draft.model = own && useModels().find(a, own) ? own : AGENTS[a].models[0]!.id
+  draft.model = pickedModel ?? (own && useModels().find(a, own) ? own : AGENTS[a].models[0]!.id)
+  pickedModel = null
   draft.effort = null
 }, { immediate: true })
+function draftAgent(agent: AgentId, model: string) {
+  pickedModel = model
+  draft.agent = agent
+}
 const draftText = ref('')
 const draftFiles = ref<Attachment[]>([])
 
@@ -172,10 +179,12 @@ function onKey(e: KeyboardEvent) {
           :autofocus="active"
           :context="thread.context ?? null"
           :context-pending="!!threads.contextReading[thread.id]"
+          :started="thread.messages.length > 0"
           @send="(text, attachments, opposite) => threads.send(thread!.id, text, attachments, opposite)"
           @compact="threads.send(thread!.id, '/compact')"
           @stop="threads.stop(thread!.id)"
           @update:model="m => threads.setModel(thread!.id, m)"
+          @update:agent="(a, m) => threads.setAgent(thread!.id, a, m)"
           @update:mode="m => threads.setMode(thread!.id, m)"
           @update:effort="e => threads.setEffort(thread!.id, e)"
         />
@@ -195,6 +204,7 @@ function onKey(e: KeyboardEvent) {
           v-model:mode="draft.mode"
           v-model:effort="draft.effort"
           large
+          @update:agent="draftAgent"
           :autofocus="active"
           @send="start"
         />
