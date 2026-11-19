@@ -1,34 +1,52 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { AccessibilityInfo, Easing, StyleSheet, useColorScheme, type ImageStyle, type TextStyle, type ViewStyle } from 'react-native'
 import AsyncStorage from '@react-native-async-storage/async-storage'
-import { useFonts } from 'expo-font'
-import { Inter_400Regular } from '@expo-google-fonts/inter/400Regular'
-import { Inter_500Medium } from '@expo-google-fonts/inter/500Medium'
-import { Inter_600SemiBold } from '@expo-google-fonts/inter/600SemiBold'
-import { Inter_700Bold } from '@expo-google-fonts/inter/700Bold'
-import { Inter_400Regular_Italic } from '@expo-google-fonts/inter/400Regular_Italic'
-import { JetBrainsMono_400Regular } from '@expo-google-fonts/jetbrains-mono/400Regular'
-import { JetBrainsMono_500Medium } from '@expo-google-fonts/jetbrains-mono/500Medium'
-import { JetBrainsMono_600SemiBold } from '@expo-google-fonts/jetbrains-mono/600SemiBold'
+import * as Font from 'expo-font'
 import type { Theme as NavigationTheme } from 'expo-router'
-import { fonts, motion, palettes, type Colors, type SchemeName, type Shadows } from './tokens'
+import { FONT_FILES } from './fontAssets'
+import { buildFonts, familiesFor, type Fonts } from './fonts'
+import { DEFAULT_LOOK, normalizeLook, sameFonts, type Look } from './look'
+import {
+  fontSizeFor, motion, paletteFor, radiusFor, typeFor,
+  type Colors, type FontSizes, type Radii, type SchemeName, type Shadows, type TextStyleName, type TextStyleSpec,
+} from './tokens'
 
 export * from './tokens'
+export * from './look'
+export type { FontFace, Fonts } from './fonts'
 
 /**
- * The theme a component reads. Like the desktop, components take every colour from here and have
- * no theme branch of their own: dark and light differ only in `colors` and `shadow`.
+ * The theme a component reads. Like the desktop, components take every colour, font, size and
+ * radius from here and have no theme branch of their own: dark and light, the colour scheme, the
+ * fonts, the text size and the corners (Settings > Appearance) all arrive as one object.
  */
 export interface Theme {
+  /** Light or dark. */
   scheme: SchemeName
   dark: boolean
+  look: Look
+  /** Names this combination: styles built for a theme are kept under it (`makeStyles`). */
+  key: string
   colors: Colors
   shadow: Shadows
+  fonts: Fonts
+  fontSize: FontSizes
+  type: Record<TextStyleName, TextStyleSpec>
+  radius: Radii
 }
 
-const themes: Record<SchemeName, Theme> = {
-  dark: { scheme: 'dark', dark: true, ...palettes.dark },
-  light: { scheme: 'light', dark: false, ...palettes.light },
+const built = new Map<string, Theme>()
+
+function buildTheme(mode: SchemeName, look: Look): Theme {
+  const key = [mode, look.scheme, look.fontUi, look.fontMono, look.textSize, look.corners].join('|')
+  let t = built.get(key)
+  if (!t) {
+    const fonts = buildFonts(look.fontUi, look.fontMono)
+    const fontSize = fontSizeFor(look.textSize)
+    t = { scheme: mode, dark: mode === 'dark', look, key, ...paletteFor(look.scheme, mode), fonts, fontSize, type: typeFor(fonts, fontSize), radius: radiusFor(look.corners) }
+    built.set(key, t)
+  }
+  return t
 }
 
 /** What the person chose in Settings: follow the phone, or keep one. */
@@ -38,31 +56,65 @@ interface Ctx {
   theme: Theme
   appearance: Appearance
   setAppearance: (a: Appearance) => void
-  /** The saved choice has been read; until then the theme follows the system. */
+  look: Look
+  /** Change some of the look (scheme, fonts, text size, corners, animations); new fonts are loaded first. */
+  setLook: (patch: Partial<Look>) => Promise<void>
+  /** Animations are off: the Animations setting, or the phone's Reduce Motion when that is left on System. */
+  reduceMotion: boolean
+  /** The saved choices are read and their fonts are loaded. */
   ready: boolean
 }
 
 const STORAGE_KEY = 'mango.appearance'
+const LOOK_KEY = 'mango.look'
 const ThemeContext = createContext<Ctx | null>(null)
 
+/** Register the font files a look needs; a failure leaves the system font standing in. */
+async function loadFonts(look: Look): Promise<void> {
+  const files: Record<string, (typeof FONT_FILES)[string]> = {}
+  for (const name of familiesFor(look.fontUi, look.fontMono)) {
+    const file = FONT_FILES[name]
+    if (file && !Font.isLoaded(name)) files[name] = file
+  }
+  if (Object.keys(files).length) await Font.loadAsync(files).catch(() => { /* the system font stands in */ })
+}
+
 /**
- * Follows the phone's appearance unless the person picked one (kept in AsyncStorage). `scheme`
- * forces a theme for a subtree (the gallery shows both side by side); the choice stays the outer one's.
+ * Follows the phone's appearance unless the person picked one (kept in AsyncStorage), and wears the
+ * look they chose. `scheme` forces light or dark for a subtree (the gallery shows both side by
+ * side); everything else stays the outer one's.
  */
 export function ThemeProvider({ children, scheme }: { children: ReactNode; scheme?: SchemeName }) {
   const outer = useContext(ThemeContext)
   const system = useColorScheme()
   const [appearance, setChoice] = useState<Appearance>('system')
+  const [look, setLookState] = useState<Look>(DEFAULT_LOOK)
+  const [systemReduced, setSystemReduced] = useState(false)
   const [ready, setReady] = useState(!!outer)
+  const latest = useRef(0)
 
   useEffect(() => {
     if (outer) return
     let alive = true
-    AsyncStorage.getItem(STORAGE_KEY)
-      .then((v) => { if (alive && (v === 'dark' || v === 'light' || v === 'system')) setChoice(v) })
-      .catch(() => { /* unreadable storage: follow the system */ })
+    Promise.all([AsyncStorage.getItem(STORAGE_KEY).catch(() => null), AsyncStorage.getItem(LOOK_KEY).catch(() => null)])
+      .then(async ([mode, savedLook]) => {
+        let saved = DEFAULT_LOOK
+        try { saved = normalizeLook(savedLook ? JSON.parse(savedLook) : null) } catch { /* unreadable: the default look */ }
+        await loadFonts(saved)
+        if (!alive) return
+        if (mode === 'dark' || mode === 'light' || mode === 'system') setChoice(mode)
+        setLookState(saved)
+      })
       .finally(() => { if (alive) setReady(true) })
     return () => { alive = false }
+  }, [outer])
+
+  useEffect(() => {
+    if (outer) return
+    let alive = true
+    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (alive) setSystemReduced(v) }).catch(() => {})
+    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setSystemReduced)
+    return () => { alive = false; sub.remove() }
   }, [outer])
 
   const setAppearance = useCallback((a: Appearance) => {
@@ -70,11 +122,22 @@ export function ThemeProvider({ children, scheme }: { children: ReactNode; schem
     AsyncStorage.setItem(STORAGE_KEY, a).catch(() => { /* kept for this session only */ })
   }, [])
 
+  const setLook = useCallback(async (patch: Partial<Look>) => {
+    const next = normalizeLook({ ...look, ...patch })
+    const run = ++latest.current
+    // New fonts are in before they are asked for, so no text flashes in the system font.
+    if (!sameFonts(look, next)) await loadFonts(next)
+    if (run !== latest.current) return
+    setLookState(next)
+    AsyncStorage.setItem(LOOK_KEY, JSON.stringify(next)).catch(() => { /* kept for this session only */ })
+  }, [look])
+
   const value = useMemo<Ctx>(() => {
-    if (outer) return scheme ? { ...outer, theme: themes[scheme] } : outer
-    const resolved: SchemeName = scheme ?? (appearance === 'system' ? (system === 'light' ? 'light' : 'dark') : appearance)
-    return { theme: themes[resolved], appearance, setAppearance, ready }
-  }, [outer, scheme, appearance, system, setAppearance, ready])
+    if (outer) return scheme ? { ...outer, theme: buildTheme(scheme, outer.look) } : outer
+    const mode: SchemeName = scheme ?? (appearance === 'system' ? (system === 'light' ? 'light' : 'dark') : appearance)
+    const reduceMotion = look.motion === 'reduced' || (look.motion === 'system' && systemReduced)
+    return { theme: buildTheme(mode, look), appearance, setAppearance, look, setLook, reduceMotion, ready }
+  }, [outer, scheme, appearance, system, setAppearance, look, setLook, systemReduced, ready])
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
 }
@@ -87,10 +150,10 @@ function useCtx(): Ctx {
 
 export const useTheme = (): Theme => useCtx().theme
 
-/** The appearance choice, for Settings: `appearance`, `setAppearance`, and `ready` once the saved one is read. */
+/** The appearance choices, for Settings: light or dark, the look, and `ready` once the saved ones are read. */
 export function useAppearance() {
-  const { appearance, setAppearance, ready, theme } = useCtx()
-  return { appearance, setAppearance, ready, scheme: theme.scheme }
+  const { appearance, setAppearance, look, setLook, ready, theme } = useCtx()
+  return { appearance, setAppearance, look, setLook, ready, scheme: theme.scheme }
 }
 
 /**
@@ -100,43 +163,21 @@ export function useAppearance() {
 export type NamedStyles = Record<string, ViewStyle | TextStyle | ImageStyle>
 
 export function makeStyles<T extends NamedStyles>(build: (t: Theme) => T): () => T {
-  const cache = new Map<SchemeName, T>()
+  const cache = new Map<string, T>()
   return function useStyles() {
     const t = useTheme()
-    let s = cache.get(t.scheme)
+    let s = cache.get(t.key)
     if (!s) {
       s = StyleSheet.create(build(t))
-      cache.set(t.scheme, s)
+      cache.set(t.key, s)
     }
     return s
   }
 }
 
-/** Loads Inter and JetBrains Mono. True once they are ready (or failed: the system font stands in). */
-export function useMangoFonts(): boolean {
-  const [loaded, error] = useFonts({
-    [fonts.regular]: Inter_400Regular,
-    [fonts.medium]: Inter_500Medium,
-    [fonts.semibold]: Inter_600SemiBold,
-    [fonts.bold]: Inter_700Bold,
-    [fonts.italic]: Inter_400Regular_Italic,
-    [fonts.mono]: JetBrainsMono_400Regular,
-    [fonts.monoMedium]: JetBrainsMono_500Medium,
-    [fonts.monoSemibold]: JetBrainsMono_600SemiBold,
-  })
-  return loaded || !!error
-}
-
-/** The system's Reduce Motion: ripening, breathing and the working dots hold still under it. */
+/** Animations are off: ripening, breathing and the working dots hold still (Settings > Appearance > Animations, or the phone's Reduce Motion). */
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false)
-  useEffect(() => {
-    let alive = true
-    AccessibilityInfo.isReduceMotionEnabled().then((v) => { if (alive) setReduced(v) }).catch(() => {})
-    const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduced)
-    return () => { alive = false; sub.remove() }
-  }, [])
-  return reduced
+  return useCtx().reduceMotion
 }
 
 /** `--ease-out` and `--ease-in-out` for `Animated.timing`. */
@@ -156,10 +197,10 @@ export function navigationTheme(t: Theme): NavigationTheme {
       notification: t.colors.ripeWaiting,
     },
     fonts: {
-      regular: { fontFamily: fonts.regular, fontWeight: '400' },
-      medium: { fontFamily: fonts.medium, fontWeight: '500' },
-      bold: { fontFamily: fonts.semibold, fontWeight: '600' },
-      heavy: { fontFamily: fonts.bold, fontWeight: '700' },
+      regular: { fontFamily: t.fonts.regular.fontFamily ?? 'System', fontWeight: '400' },
+      medium: { fontFamily: t.fonts.medium.fontFamily ?? 'System', fontWeight: '500' },
+      bold: { fontFamily: t.fonts.semibold.fontFamily ?? 'System', fontWeight: '600' },
+      heavy: { fontFamily: t.fonts.bold.fontFamily ?? 'System', fontWeight: '700' },
     },
   }
 }

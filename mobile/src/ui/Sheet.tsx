@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Animated, Modal, PanResponder, Platform, Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { X } from 'lucide-react-native'
-import { easeOut, makeStyles, motion, radius, space, useReducedMotion, useTheme } from '@/theme'
+import { easeOut, makeStyles, motion, space, useReducedMotion, useTheme } from '@/theme'
 import { Text } from './Text'
 import { IconButton } from './IconButton'
 import { ListGround } from './List'
@@ -144,8 +144,8 @@ const useStyles = makeStyles(t => ({
   dock: { flex: 1, justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: t.colors.bgRaised,
-    borderTopLeftRadius: radius.lg,
-    borderTopRightRadius: radius.lg,
+    borderTopLeftRadius: t.radius.lg,
+    borderTopRightRadius: t.radius.lg,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: 0,
@@ -155,7 +155,7 @@ const useStyles = makeStyles(t => ({
   },
   page: { flex: 1, backgroundColor: t.colors.bgRaised },
   grab: { alignItems: 'center', paddingTop: space[2], paddingBottom: 2 },
-  handle: { width: 36, height: 5, borderRadius: radius.pill, backgroundColor: t.colors.lineStrong },
+  handle: { width: 36, height: 5, borderRadius: t.radius.pill, backgroundColor: t.colors.lineStrong },
   head: { flexDirection: 'row', alignItems: 'center', gap: space[2], minHeight: 48, paddingLeft: space[5], paddingRight: space[3] },
   title: { flex: 1 },
   scroll: { flexGrow: 0 },

@@ -3,7 +3,7 @@ import { Pressable, ScrollView, View } from 'react-native'
 import { ArrowUpRight, ChevronRight, CircleAlert, FilePen, FilePlus, FileText, Globe, Search, SquareTerminal, Wrench, type LucideProps } from 'lucide-react-native'
 import type { ComponentType } from 'react'
 import type { Part, ToolKind } from '~/types/chat'
-import { fonts, fontSize, makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Spinner, Text } from '@/ui'
 import { ChatDiff } from './ChatDiff'
 
@@ -130,29 +130,29 @@ const useStyles = makeStyles(t => ({
     minHeight: touch.min - 4,
     paddingHorizontal: space[2],
     marginLeft: -space[2],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
   },
   pressed: { backgroundColor: t.colors.bgHover },
   icon: { width: 18, height: 18, alignItems: 'center', justifyContent: 'center' },
-  verb: { fontFamily: fonts.medium, color: t.colors.fgMuted, flexShrink: 0 },
+  verb: { ...t.fonts.medium, color: t.colors.fgMuted, flexShrink: 0 },
   verbLive: { color: t.colors.fg },
   verbError: { color: t.colors.ripeErrorFg },
-  target: { flexShrink: 1, minWidth: 0, fontFamily: fonts.mono, fontSize: fontSize.mono, color: t.colors.fgMuted },
+  target: { flexShrink: 1, minWidth: 0, ...t.fonts.mono, fontSize: t.fontSize.mono, color: t.colors.fgMuted },
   sum: { marginLeft: 'auto', flexShrink: 0, paddingLeft: space[1] },
   grow: { flex: 1 },
   caretOpen: { transform: [{ rotate: '90deg' }] },
-  open: { flexDirection: 'row', alignItems: 'center', gap: 3, minHeight: 32, paddingHorizontal: space[2], borderRadius: radius.xs },
+  open: { flexDirection: 'row', alignItems: 'center', gap: 3, minHeight: 32, paddingHorizontal: space[2], borderRadius: t.radius.xs },
   detail: { marginTop: 2, marginBottom: 6, marginLeft: 26 },
   outBox: {
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     backgroundColor: t.colors.bgInset,
     overflow: 'hidden',
   },
   outScroll: { padding: space[3] },
-  out: { fontFamily: fonts.mono, fontSize: fontSize.mono - 1, lineHeight: Math.round((fontSize.mono - 1) * 1.6), color: t.colors.fgMuted, fontVariant: ['no-common-ligatures', 'no-contextual'] },
+  out: { ...t.fonts.mono, fontSize: t.fontSize.mono - 1, lineHeight: Math.round((t.fontSize.mono - 1) * 1.6), color: t.colors.fgMuted, fontVariant: ['no-common-ligatures', 'no-contextual'] },
   more: { minHeight: 44, alignItems: 'center', justifyContent: 'center', borderTopWidth: 1, borderTopColor: t.colors.lineSoft },
 }))

@@ -1,7 +1,7 @@
 import { Text as RNText, type TextProps } from 'react-native'
-import { type, useTheme, type Colors } from '@/theme'
+import { useTheme, type Colors, type TextStyleName } from '@/theme'
 
-export type TextVariant = keyof typeof type
+export type TextVariant = TextStyleName
 export type TextTone = 'fg' | 'muted' | 'subtle' | 'faint' | 'accent' | 'queued' | 'running' | 'waiting' | 'done' | 'error' | 'onAccent'
 
 const tones: Record<TextTone, keyof Colors> = {
@@ -29,7 +29,7 @@ export function Text({ variant = 'body', tone = 'fg', tabular, style, ...rest }:
     <RNText
       maxFontSizeMultiplier={1.6}
       {...rest}
-      style={[type[variant], { color: t.colors[tones[tone]] }, tabular && { fontVariant: ['tabular-nums'] }, style]}
+      style={[t.type[variant], { color: t.colors[tones[tone]] }, tabular && { fontVariant: ['tabular-nums'] }, style]}
     />
   )
 }

@@ -1,5 +1,5 @@
 import { View, type StyleProp, type ViewStyle } from 'react-native'
-import { fonts, makeStyles, radius, withAlpha, type Colors } from '@/theme'
+import { makeStyles, withAlpha, type Colors } from '@/theme'
 import { Text } from './Text'
 
 export type BadgeTone = 'neutral' | 'accent' | 'queued' | 'running' | 'waiting' | 'done' | 'error'
@@ -46,8 +46,8 @@ const useStyles = makeStyles((t) => {
   const tint = (k: keyof typeof marks) => ({ backgroundColor: withAlpha(t.colors[marks[k][0]], 0.14) })
   const ink = (k: keyof typeof marks) => ({ color: t.colors[marks[k][1]] })
   return {
-    pill: { alignSelf: 'flex-start', minHeight: 20, paddingHorizontal: 7, justifyContent: 'center', borderRadius: radius.pill, borderWidth: 1, borderColor: 'transparent' },
-    text: { fontFamily: fonts.medium },
+    pill: { alignSelf: 'flex-start', minHeight: 20, paddingHorizontal: 7, justifyContent: 'center', borderRadius: t.radius.pill, borderWidth: 1, borderColor: 'transparent' },
+    text: { ...t.fonts.medium },
     dashed: { borderStyle: 'dashed', borderColor: t.colors.lineStrong },
     neutral: { backgroundColor: t.colors.bgHover, borderColor: t.colors.lineSoft },
     neutralInk: { color: t.colors.fgMuted },

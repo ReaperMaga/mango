@@ -3,7 +3,7 @@ import Svg, { Circle } from 'react-native-svg'
 import { Minimize2 } from 'lucide-react-native'
 import type { ContextUsage } from '~/types/chat'
 import { contextLevel, contextPercent, formatTokens } from '~/agents/context'
-import { makeStyles, radius, space, useTheme, type Colors } from '@/theme'
+import { makeStyles, space, useTheme, type Colors } from '@/theme'
 import { Button, Sheet, Spinner, Text, haptic, type TextTone } from '@/ui'
 
 /**
@@ -198,12 +198,12 @@ export function ChatContextSheet({ visible, onClose, usage, pending, agentName, 
 }
 
 const useStyles = makeStyles(t => ({
-  button: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: space[2], borderRadius: radius.sm },
+  button: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: space[2], borderRadius: t.radius.sm },
   pressed: { backgroundColor: t.colors.bgHover },
   body: { gap: space[3], paddingBottom: space[2] },
   summary: { flexDirection: 'row', alignItems: 'baseline', gap: space[2], paddingHorizontal: space[1] },
-  bar: { flexDirection: 'row', gap: 1, height: 10, borderRadius: radius.pill, overflow: 'hidden', backgroundColor: t.colors.bgActive },
-  group: { backgroundColor: t.colors.bgPanel, borderRadius: radius.md, borderCurve: 'continuous', paddingHorizontal: space[4] },
+  bar: { flexDirection: 'row', gap: 1, height: 10, borderRadius: t.radius.pill, overflow: 'hidden', backgroundColor: t.colors.bgActive },
+  group: { backgroundColor: t.colors.bgPanel, borderRadius: t.radius.md, borderCurve: 'continuous', paddingHorizontal: space[4] },
   row: { flexDirection: 'row', alignItems: 'center', gap: space[3], minHeight: 40 },
   rowLine: { borderTopWidth: 1, borderTopColor: t.colors.lineSoft },
   rowBreak: { borderTopColor: t.colors.lineStrong },

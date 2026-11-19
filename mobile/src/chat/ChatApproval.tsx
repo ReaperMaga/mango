@@ -1,7 +1,7 @@
 import { ScrollView, View } from 'react-native'
 import { Ban, Check, ShieldQuestionMark } from 'lucide-react-native'
 import type { Part } from '~/types/chat'
-import { fonts, makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Button, ButtonRow, Text } from '@/ui'
 
 export type ApprovalPart = Extract<Part, { type: 'approval' }>
@@ -64,7 +64,7 @@ const useStyles = makeStyles(t => ({
   card: {
     marginVertical: 6,
     padding: space[3],
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.waitingLine,
@@ -72,11 +72,11 @@ const useStyles = makeStyles(t => ({
     boxShadow: t.shadow.soft,
   },
   head: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  title: { flex: 1, fontFamily: fonts.semibold },
+  title: { flex: 1, ...t.fonts.semibold },
   cmd: {
     marginTop: space[2],
     maxHeight: 200,
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.lineSoft,

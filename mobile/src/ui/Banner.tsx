@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { View, type StyleProp, type ViewStyle } from 'react-native'
 import { CircleAlert, Info, ShieldQuestionMark, X } from 'lucide-react-native'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Text } from './Text'
 import { IconButton } from './IconButton'
 
@@ -52,7 +52,7 @@ const useStyles = makeStyles(t => ({
     paddingVertical: space[3],
     paddingLeft: space[3],
     paddingRight: space[2],
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: 1,
   },
