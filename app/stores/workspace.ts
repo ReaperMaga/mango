@@ -17,7 +17,7 @@ import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWh
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
-export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite'] as const
+export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite', 'ink', 'cocoa', 'neon', 'solar'] as const
 export type ColorScheme = typeof COLOR_SCHEMES[number]
 /** Interface text size, corner roundness and animation (scales in tokens.css). */
 export const TEXT_SIZES = ['small', 'default', 'large', 'xlarge'] as const
