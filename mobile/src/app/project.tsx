@@ -8,6 +8,8 @@ import { Button, EmptyState, IconButton, ListRow, ListSection, Text } from '@/ui
 import { ThreadRow, useNow } from '@/chat'
 import { backend } from '@/remote'
 import { envOf, syncEnv } from '@/remote/chatSync'
+import { LIVE_LIST_MS } from '@/screens/livePoll'
+import { useLiveChats } from '@/screens/useLiveChats'
 import type { GitState } from '@/remote/types'
 import { onFilesChanged } from '@/agents/run'
 import { useEnvs } from '@/state/envs'
@@ -26,6 +28,7 @@ export default function ProjectScreen() {
   const s = useStyles()
   const router = useRouter()
   const now = useNow()
+  const elsewhere = useThreads(st => st.elsewhere)
   const { path = '' } = useLocalSearchParams<{ path: string }>()
   const at = envOf(path)
   const env = useEnvs(st => (at ? st.envs.find(e => e.id === at.hostId) ?? null : null))
@@ -54,6 +57,8 @@ export default function ProjectScreen() {
   }, [path, readGit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useFocusEffect(useCallback(() => { void load() }, [load]))
+  // Another computer's runs show up on the list's dots without a pull to refresh.
+  useLiveChats(path, LIVE_LIST_MS)
   // A finished turn probably changed files: the count follows.
   useEffect(() => onFilesChanged((p) => { if (p === path || p.startsWith(`${path}/`)) void readGit() }), [path, readGit])
 
@@ -97,7 +102,7 @@ export default function ProjectScreen() {
         ? (
             <ListSection title="Chats">
               {chats.map(th => (
-                <ThreadRow key={th.id} thread={th} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
+                <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
               ))}
             </ListSection>
           )
@@ -128,7 +133,7 @@ export default function ProjectScreen() {
                 ? (
                     <ListSection>
                       {archived.map(th => (
-                        <ThreadRow key={th.id} thread={th} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
+                        <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
                       ))}
                     </ListSection>
                   )

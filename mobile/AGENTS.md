@@ -44,6 +44,8 @@ src/agents/          run.ts + turn.ts (app/agents/index.ts: drives the desktop's
                      usage.ts (plan limits through the adapters' `readUsage`), commands.ts
 src/state/           envs.ts, threads.ts, network.ts, prefs.ts (zustand), prefsModel.ts (Settings choices, pure),
                      chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
+                     `threads.elsewhere`: a run another computer has going, read from the copy it saved (loading turns `running` into Working, so it is
+                     noted in `_adoptRemote` before that; never saved). `screens/livePoll.ts` + `useLiveChats.ts`: an open chat / project list syncs its env every 4 / 8 s
 src/theme/           tokens.ts + schemes.generated.ts (every colour scheme of app/assets/css/tokens.css, dark and light: generated
                      by scripts/schemes.ts, do not edit), look.ts (Settings > Appearance as data), fonts.ts + fontAssets.ts,
                      ThemeProvider (the `Theme` a component reads: colours, fonts, sizes, radii, all per look)
