@@ -16,7 +16,9 @@ public final class MangoSshModule: Module {
   public func definition() -> ModuleDefinition {
     Name("MangoSsh")
 
-    /// `{ id, stream: "stdout" | "stderr", lines: string[] }`: whole lines, in order.
+    /// `{ id, stream: "stdout" | "stderr", lines: string[], sizes: number[], partial?: true }`: whole
+    /// lines, in order, with the bytes each took (`\n` included); `partial`: the stream ended in the
+    /// middle of this (single) last line.
     /// `{ id, code: number | null }`: once, after the last lines.
     Events("onLines", "onExit")
 
@@ -141,21 +143,28 @@ public final class MangoSshModule: Module {
   }
 
   /// Turns a stream's output into `onLines` events (one per read, not per line, to keep
-  /// the bridge quiet) and its end into one `onExit`.
+  /// the bridge quiet) and its end into one `onExit`. Each event carries the bytes every line
+  /// took (`sizes`, `\n` included); the unfinished last line of a stream that ended is sent on
+  /// its own, marked `partial`.
   private func streamSink(_ id: String) -> SessionSink {
     let lines = StreamLines()
-    let emit = { [weak self] (stream: String, batch: [String]) in
-      if !batch.isEmpty {
-        self?.sendEvent("onLines", ["id": id, "stream": stream, "lines": batch])
+    let emit = { [weak self] (stream: String, batch: (lines: [String], sizes: [Int]), partial: Bool) in
+      if !batch.lines.isEmpty {
+        var event: [String: Any] = ["id": id, "stream": stream, "lines": batch.lines, "sizes": batch.sizes]
+        if partial { event["partial"] = true }
+        self?.sendEvent("onLines", event)
       }
     }
+    let rest = { (last: (line: String, size: Int)?) -> (lines: [String], sizes: [Int]) in
+      last.map { ([$0.line], [$0.size]) } ?? ([], [])
+    }
     let flush = {
-      emit("stdout", lines.stdout.finish().map { [$0] } ?? [])
-      emit("stderr", lines.stderr.finish().map { [$0] } ?? [])
+      emit("stdout", rest(lines.stdout.finish()), true)
+      emit("stderr", rest(lines.stderr.finish()), true)
     }
     return SessionSink(
-      stdout: { bytes in emit("stdout", lines.stdout.push(bytes.readableBytesView)) },
-      stderr: { bytes in emit("stderr", lines.stderr.push(bytes.readableBytesView)) },
+      stdout: { bytes in emit("stdout", lines.stdout.push(bytes.readableBytesView), false) },
+      stderr: { bytes in emit("stderr", lines.stderr.push(bytes.readableBytesView), false) },
       eof: flush,
       exit: { [weak self] code in
         flush()

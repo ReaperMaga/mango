@@ -13,10 +13,11 @@ import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
 import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
+import { useNetwork } from '@/state/network'
 import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { useAttachments, type AttachSource } from '@/screens/useAttachments'
-import { placeOf, projectName } from '@/screens/names'
+import { placeOf, projectName, reconnectingText } from '@/screens/names'
 import { useLinkDetails } from '@/screens/useLinkDetails'
 
 /** How close to the end (pt) still counts as "at the bottom": new output then keeps it in view. */
@@ -44,6 +45,7 @@ export default function ChatScreen() {
   const at = thread ? envOf(thread.projectPath) : null
   const env = useEnvs(st => (at ? st.envs.find(e => e.id === at.hostId) ?? null : null))
   const conn = useEnvs(st => (at ? st.status[at.hostId] : undefined))
+  const offline = useNetwork(st => st.online === false)
   const [menu, setMenu] = useState(false)
   const [keyboard, setKeyboard] = useState(false)
   const [attachMenu, setAttachMenu] = useState(false)
@@ -152,9 +154,21 @@ export default function ChatScreen() {
         ListHeaderComponent={(
           <View style={s.head}>
             {thread.simulated ? <Badge label="Simulated" dashed style={s.center} /> : null}
-            {conn?.state === 'error' && env
-              ? <Banner tone="error" message={`${env.name} can't be reached right now, so messages can't go out. ${conn.message ?? ''}`.trim()} />
-              : null}
+            {offline
+              ? (
+                  <Banner
+                    title="No internet connection"
+                    message={busy
+                      ? `${agentName} keeps working in ${env?.name ?? 'its environment'}. Mango reconnects when this phone is back online.`
+                      : 'Messages can go out once this phone is back online.'}
+                  />
+                )
+              : conn?.state === 'error' && env
+                ? <Banner tone="error" message={`${env.name} can't be reached right now, so messages can't go out. ${conn.message ?? ''}`.trim()} />
+                // A running chat says it in its working row.
+                : conn?.state === 'reconnecting' && env && !live?.reconnecting
+                  ? <Banner message={reconnectingText([env.name])} />
+                  : null}
           </View>
         )}
         ListEmptyComponent={(
@@ -166,7 +180,7 @@ export default function ChatScreen() {
         ListFooterComponent={(
           <View style={s.foot}>
             {queue?.length ? queue.map(q => <Queued key={q.id} q={q} threadId={id} running={busy} />) : null}
-            {busy ? <ChatWorking thread={thread} waitingOnTasks={tasksLeft} /> : null}
+            {busy ? <ChatWorking thread={thread} waitingOnTasks={tasksLeft} reconnectingTo={live?.reconnecting ? env?.name ?? 'the environment' : null} /> : null}
             {live?.tasks.length ? <ChatTasks tasks={live.tasks} onPress={() => setTasksOpen(true)} /> : null}
           </View>
         )}

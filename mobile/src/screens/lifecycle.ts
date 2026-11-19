@@ -1,16 +1,21 @@
 import { useEffect } from 'react'
 import { AppState, type AppStateStatus } from 'react-native'
+import { addNetworkStateListener, getNetworkStateAsync, type NetworkState } from 'expo-network'
 import { useEnvs } from '@/state/envs'
+import { useNetwork } from '@/state/network'
 import { useThreads } from '@/state/threads'
 import { backend } from '@/remote'
 import { envOf, flushRemoteChats, syncEnv } from '@/remote/chatSync'
 import type { EnvRemote } from '@/remote/types'
 import { stopDictation } from '@/voice'
+import { createCatchUp, watchNetwork, type NetworkSnapshot, type NetworkSource } from './connectivity'
 
 /**
  * The app's life around its data: read the saved environments and chats once, save before iOS
- * suspends the app, and catch up when it comes back. Connections die while the app is in the
- * background, so coming back drops them (`backend.reset`) and pulls what other computers wrote.
+ * suspends the app, and catch up when it comes back or the network does. Connections die while
+ * the app is in the background or the network changes, so catching up drops them
+ * (`backend.reset`): agent runs in environments keep working there and attach again
+ * (`backend.reconnectNow`), and what other computers wrote is pulled, what is pending here sent.
  * A dictation in progress stops on the way out.
  */
 
@@ -49,6 +54,34 @@ export async function refreshAll(): Promise<void> {
   }))
 }
 
+/**
+ * Make every connection anew and catch up: on the way back from the background, and when the
+ * network returns or changes interface. Offline, only the dead connections are dropped.
+ */
+export const catchUp = createCatchUp({
+  reset: () => backend.reset(),
+  reconnectNow: () => backend.reconnectNow(),
+  checkAllEnvs,
+  syncChatsEverywhere,
+  flushRemoteChats,
+  online: () => useNetwork.getState().online,
+})
+
+const snapshot = (s: NetworkState): NetworkSnapshot => ({
+  // Connected to a network, and not known to be cut off from the internet.
+  online: s.isConnected === undefined ? null : !!s.isConnected && s.isInternetReachable !== false,
+  kind: String(s.type ?? 'UNKNOWN'),
+})
+
+/** The system's network state (NWPathMonitor on iOS, through expo-network). */
+const systemNetwork: NetworkSource = {
+  current: () => getNetworkStateAsync().then(snapshot),
+  subscribe(listener) {
+    const sub = addNetworkStateListener(s => listener(snapshot(s)))
+    return () => sub.remove()
+  },
+}
+
 let started: Promise<void> | null = null
 
 /**
@@ -82,11 +115,19 @@ export function useAppLifecycle() {
         away = false
         void (async () => {
           await startApp()
-          await backend.reset()
-          await Promise.all([checkAllEnvs(), syncChatsEverywhere()])
+          await catchUp()
         })()
       }
     })
     return () => sub.remove()
   }, [])
+}
+
+/** Mounted once, in the root layout: keeps `useNetwork` current and catches up when the network is back. */
+export function useNetworkWatch() {
+  useEffect(() => watchNetwork(
+    systemNetwork,
+    s => useNetwork.getState().set(s.online, s.kind),
+    () => { void startApp().then(catchUp) },
+  ), [])
 }

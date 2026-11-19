@@ -183,9 +183,23 @@ export interface RemoteBackend {
    * The adapters' process bridge for one agent CLI in a project folder (or the agent's home
    * when `projectPath` is the instance root): the same `SpawnFn` the desktop builds over
    * `agent_spawn`, so `~/agents/claude.ts` and `codex.ts` run unchanged. Every run is tagged
-   * `MANGO_RUN=<id>` and `kill()` stops its whole process tree in the instance.
+   * `MANGO_RUN=<id>` and `kill()` stops its whole process tree in the instance. A run outlives a
+   * dropped connection: it is attached again (`onConnection` 'lost', then 'back'), see `agentRun.ts`.
    */
   spawnFor(agent: AgentId, projectPath: string): SpawnFn
+
+  /**
+   * The connection may be back (the network returned, the app came to the foreground): runs
+   * that lost theirs attach again now instead of after their backoff, and stops and closes still
+   * owed to an environment are sent.
+   */
+  reconnectNow(): void
+
+  /**
+   * Hear when an environment's connection fails (`'lost'`: a run's dropped, or a command could
+   * not reach it) and when it works again (`'back'`). Returns how to stop listening.
+   */
+  watchConnections(listener: (envId: string, state: 'lost' | 'back') => void): () => void
 
   /** Forget shared connections (after the app returns from the background, or an env is removed). */
   reset(env?: Env): Promise<void>

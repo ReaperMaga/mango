@@ -61,6 +61,18 @@ describe('native ssh', () => {
     expect(b.onExit.mock.calls).toEqual([[null]])
   })
 
+  it('passes on the bytes each line took, and marks an unfinished last line', async () => {
+    const { mod, lines } = fakeModule()
+    const ssh = createNativeSsh(mod, () => 'p')
+    const a = { onLine: vi.fn(), onStderr: vi.fn() }
+    await ssh.exec(ENDPOINT, 'x', a)
+    lines({ id: 'p', stream: 'stdout', lines: ['é', 'b'], sizes: [3, 3] })
+    lines({ id: 'p', stream: 'stdout', lines: ['tail'], sizes: [4], partial: true })
+    lines({ id: 'p', stream: 'stderr', lines: ['w'], sizes: [2] })
+    expect(a.onLine.mock.calls).toEqual([['é', { bytes: 3 }], ['b', { bytes: 3 }], ['tail', { bytes: 4, partial: true }]])
+    expect(a.onStderr.mock.calls).toEqual([['w', { bytes: 2 }]])
+  })
+
   it('has the handlers in place before the stream starts', async () => {
     const { mod, lines, exit } = fakeModule()
     const seen: string[] = []

@@ -5,7 +5,7 @@ import { Stack, ThemeProvider as NavigationThemeProvider } from 'expo-router'
 import * as SplashScreen from 'expo-splash-screen'
 import { StatusBar } from 'expo-status-bar'
 import { fonts, navigationTheme, ThemeProvider, useAppearance, useMangoFonts, useTheme } from '@/theme'
-import { useAppLifecycle } from '@/screens/lifecycle'
+import { useAppLifecycle, useNetworkWatch } from '@/screens/lifecycle'
 
 // The splash stays up until the fonts and the saved appearance are in, so nothing flashes.
 SplashScreen.preventAutoHideAsync().catch(() => {})
@@ -16,6 +16,7 @@ export const unstable_settings = { anchor: 'index' }
 export default function RootLayout() {
   const fontsReady = useMangoFonts()
   useAppLifecycle()
+  useNetworkWatch()
   return (
     <ThemeProvider>
       <Root fontsReady={fontsReady} />

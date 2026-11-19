@@ -3,7 +3,8 @@ import type { ExecHandlers, RunOptions, RunResult, SshApi, SshEndpoint } from '@
 import { toBase64, utf8Encode } from './bytes'
 import { line } from './shell'
 import {
-  createSshBackend, explain, hint, parseInstances, parseProjectPath, spawnLine, stopLine, STOP_SCRIPT, RUN_TAG,
+  attachLine, closeLine, createSshBackend, explain, hint, isConnectionLoss, parseInstances, parseProjectPath, spawnLine, stopLine,
+  RUN_SCRIPT, STOP_SCRIPT, RUN_TAG,
 } from './sshBackend'
 import type { Env } from './types'
 
@@ -66,9 +67,21 @@ describe('agent runs', () => {
     const l = line(argv)
     expect(l.startsWith('incus exec os1:dev -T -- runuser -u agent -- env HOME=/home/agent')).toBe(true)
     expect(l).toContain(" 'A=x y' B=2 MANGO_RUN=run-1 bash -lc ")
-    expect(l.endsWith("mango '/home/agent/work/my app' claude -p --output-format stream-json")).toBe(true)
+    // Started detached through RUN_SCRIPT, from the project folder.
+    expect(l).toContain(" mango '/home/agent/work/my app' sh -c '# mango-run:")
+    expect(l.endsWith("' mango-run start run-1 claude -p --output-format stream-json")).toBe(true)
     // No folder: the agent's home.
-    expect(line(spawnLine(server(), 'dev', ' ', undefined, 'r', 'codex', [])).endsWith('mango /home/agent codex')).toBe(true)
+    expect(line(spawnLine(server(), 'dev', ' ', undefined, 'r', 'codex', [])).endsWith("' mango-run start r codex")).toBe(true)
+    expect(line(spawnLine(server(), 'dev', ' ', undefined, 'r', 'codex', []))).toContain(' mango /home/agent sh -c ')
+    // Attach and close: from the agent's home, only the tag passed.
+    const a = line(attachLine(server(), 'dev', 'run-1', 120, 7))
+    expect(a).toContain(' SHELL=/bin/bash MANGO_RUN=run-1 bash -lc ')
+    expect(a).toContain(' mango /home/agent sh -c ')
+    expect(a.endsWith("' mango-run attach run-1 120 7")).toBe(true)
+    expect(line(closeLine(joined(), 'dev', 'run-1')).endsWith("' mango-run close run-1")).toBe(true)
+    expect(() => attachLine(server(), 'dev', 'run;1', 0, 0)).toThrow()
+    expect(() => attachLine(server(), 'dev', 'run-1', -1, 0)).toThrow()
+    expect(() => spawnLine(server(), 'dev', '', undefined, '../x', 'claude', [])).toThrow()
   })
 
   it('refuses bad input', () => {
@@ -101,8 +114,9 @@ describe('agent runs', () => {
     expect(m).toContain('dev is not running')
     m = hint(h, 'dev', 'claude', 127, 'mango: line 1: exec: claude: not found', false)!
     expect(m).toContain('claude is not installed')
-    expect(hint(h, 'dev', 'claude', 255, '', true)).toContain('connection to Lab was lost')
-    expect(hint(h, 'dev', 'claude', null, '', true)).toContain('connection to Lab was lost')
+    // A dropped connection is no end any more: the run is attached again, nothing to explain.
+    expect(hint(h, 'dev', 'claude', 255, '', true)).toBeNull()
+    expect(hint(h, 'dev', 'claude', null, '', true)).toBeNull()
     expect(hint(h, 'dev', 'claude', 1, 'some CLI error', true)).toBeNull()
     expect(hint(h, 'dev', 'claude', 0, '', false)).toBeNull()
   })
@@ -270,28 +284,32 @@ describe('ssh backend', () => {
       onExit: (c) => { exit = c },
     }, { CLAUDE_X: '1' })
     expect(execs[0]!.command).toContain(' CLAUDE_X=1 MANGO_RUN=run-1 bash -lc ')
-    expect(execs[0]!.command.endsWith('mango /home/agent/work/shop claude -p')).toBe(true)
+    expect(execs[0]!.command.endsWith('mango-run start run-1 claude -p')).toBe(true)
     await t.write('{"type":"user"}')
     expect(execs[0]!.written).toEqual(['{"type":"user"}\n'])
+    // Login-shell noise, then the script's marker on each stream: only what follows is the run's.
+    execs[0]!.handlers.onLine('Welcome to dev')
+    execs[0]!.handlers.onLine('mango-run:attached')
+    execs[0]!.handlers.onStderr?.('motd says hi')
+    execs[0]!.handlers.onStderr?.('mango-run:attached')
     execs[0]!.handlers.onLine('{"a":1}\r')
     execs[0]!.handlers.onLine('')
     expect(lines).toEqual(['{"a":1}'])
-    // The connection drops mid-run: say so, and stop what may still run in the instance.
-    execs[0]!.handlers.onExit?.(null)
-    expect(errs.at(-1)).toContain('connection to Lab was lost')
-    expect(exit).toBeNull()
-    await new Promise(r => setTimeout(r, 0))
-    expect(calls.at(-1)!.command.endsWith(' mango-stop run-1')).toBe(true)
+    // The run ends: the script's marker carries its code, and is not shown.
+    execs[0]!.handlers.onStderr?.('mango-run:exit 0')
+    execs[0]!.handlers.onExit?.(0)
+    expect(errs).toEqual([])
+    expect(exit).toBe(0)
 
     // Stopped on request: no hint, the channel closes and the tag is stopped.
     const t2 = await b.spawnFor('codex', 'env://h/dev')([], { onLine() {}, onStderr: l => errs.push(l) })
-    expect(execs[1]!.command.endsWith('mango /home/agent codex')).toBe(true)
-    const before = errs.length
+    expect(execs[1]!.command.endsWith("' mango-run start run-1 codex")).toBe(true)
     await t2.kill()
     execs[1]!.handlers.onExit?.(null)
     expect(execs[1]!.killed).toBe(true)
-    expect(errs.length).toBe(before)
-    expect(calls.filter(c => c.command.endsWith(' mango-stop run-1'))).toHaveLength(2)
+    expect(errs).toEqual([])
+    await new Promise(r => setTimeout(r, 0))
+    expect(calls.filter(c => c.command.endsWith(' mango-stop run-1'))).toHaveLength(1)
     await expect(b.spawnFor('claude', 'env://gone/dev')([], { onLine() {} })).rejects.toThrow(/no longer in Mango's list/)
   })
 

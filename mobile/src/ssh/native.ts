@@ -1,10 +1,14 @@
-import type { ExecHandlers, ExecProcess, HostKeyInfo, RunOptions, RunResult, SshApi, SshEndpoint } from './types'
+import type { ExecHandlers, LineInfo, ExecProcess, HostKeyInfo, RunOptions, RunResult, SshApi, SshEndpoint } from './types'
 
 /** Whole lines of one stream of an `exec`, in order (one event per read, not per line). */
 export interface LinesEvent {
   id: string
   stream: 'stdout' | 'stderr'
   lines: string[]
+  /** The bytes each line took, `\n` included (absent from older builds of the module). */
+  sizes?: number[]
+  /** The stream ended in the middle of the (only) line of this event. */
+  partial?: boolean
 }
 
 /** The end of an `exec`, once, after its last lines. */
@@ -44,9 +48,10 @@ const nextId = () => `${Date.now().toString(36)}-${++counter}`
 const plain = (e: SshEndpoint): SshEndpoint => ({ host: e.host, port: e.port, user: e.user, keyId: e.keyId, hostKey: e.hostKey })
 
 /** A handler that throws must not cost the stream its remaining lines. */
-function deliver(fn: (line: string) => void, line: string) {
+function deliver(fn: (line: string, info?: LineInfo) => void, line: string, info: LineInfo | undefined) {
   try {
-    fn(line)
+    if (info) fn(line, info)
+    else fn(line)
   } catch (e) {
     console.error('An SSH output handler failed:', e)
   }
@@ -60,7 +65,13 @@ export function createNativeSsh(native: MangoSshModule, newId: () => string = ne
     const h = streams.get(e.id)
     if (!h) return
     const fn = e.stream === 'stderr' ? h.onStderr?.bind(h) : h.onLine.bind(h)
-    if (fn) for (const line of e.lines) deliver(fn, line)
+    if (!fn) return
+    const last = e.lines.length - 1
+    e.lines.forEach((line, i) => {
+      const bytes = e.sizes?.[i]
+      const info = typeof bytes === 'number' ? (e.partial && i === last ? { bytes, partial: true } : { bytes }) : undefined
+      deliver(fn, line, info)
+    })
   })
   native.addListener('onExit', e => {
     const h = streams.get(e.id)

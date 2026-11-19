@@ -7,7 +7,14 @@ vi.mock('@/remote', async () => {
   return {
     backend: {
       real: false,
-      spawnFor: (agent: AgentId, path: string) => simulatedSpawn(agent, path, { pace: 0 }),
+      spawnFor: (agent: AgentId, path: string) => {
+        const spawn = simulatedSpawn(agent, path, { pace: 0 })
+        // Each run's handlers, so a test can drop its connection.
+        return async (args: string[], h: { onConnection?(s: 'lost' | 'back'): void }, env?: Record<string, string>) => {
+          ;(globalThis as { lastRun?: typeof h }).lastRun = h
+          return spawn(args, h as never, env)
+        }
+      },
       gitState: async () => ({ branch: null }),
     },
   }
@@ -138,6 +145,25 @@ for (const agent of ['claude', 'codex'] as const) {
     })
   })
 }
+
+it('stays Working while its connection is lost, and says it is reconnecting', async () => {
+  const t = store().create({ projectPath: PROJECT, agent: 'claude', mode: 'ask' })
+  const sent = store().send(t.id, 'Fix it')
+  await vi.waitFor(() => expect(store().byId(t.id)!.status).toBe('waiting'))
+  const run = (globalThis as { lastRun?: { onConnection?(s: 'lost' | 'back'): void } }).lastRun!
+  run.onConnection!('lost')
+  expect(store().live[t.id]?.reconnecting).toBe(true)
+  expect(store().byId(t.id)!.status).toBe('waiting')
+  run.onConnection!('back')
+  expect(store().live[t.id]?.reconnecting).toBe(false)
+  run.onConnection!('lost')
+  autoApprove()
+  await sent
+  const done = store().byId(t.id)!
+  expect(done.messages[1]!.outcome).toBe('done')
+  // The run's end clears it.
+  expect(store().live[t.id]?.reconnecting).toBeFalsy()
+})
 
 it('/clear starts a fresh conversation without running the agent', async () => {
   const t = store().create({ projectPath: PROJECT, agent: 'claude' })

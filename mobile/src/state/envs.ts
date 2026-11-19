@@ -20,7 +20,11 @@ import type { Env, Instance, RemoteProject } from '@/remote/types'
 
 const STORAGE_KEY = 'mango.envs'
 
-export type ConnState = 'unknown' | 'checking' | 'ok' | 'error'
+/**
+ * `reconnecting`: it answered before, then a run or a command lost its connection to it, and
+ * Mango is trying again (runs there keep working). Cleared by the next thing that reaches it.
+ */
+export type ConnState = 'unknown' | 'checking' | 'ok' | 'error' | 'reconnecting'
 
 export interface EnvStatus {
   state: ConnState
@@ -270,7 +274,8 @@ export const useEnvs = create<EnvsState>()((set, get) => {
 
     async check(id) {
       const env = need(id)
-      setStatus(id, { state: 'checking', message: null })
+      // Already saying "Reconnecting…": checking is part of that, no need to flicker.
+      if (get().status[id]?.state !== 'reconnecting') setStatus(id, { state: 'checking', message: null })
       try {
         await backend.check(env)
         setStatus(id, { state: 'ok', message: null })
@@ -316,3 +321,13 @@ export const useEnvs = create<EnvsState>()((set, get) => {
 
 // Remote paths (`env://<envId>/…`) and chat mirrors find their env here.
 backend.setEnvLookup(id => useEnvs.getState().byId(id))
+
+// A run or a command that lost its connection marks the env reconnecting; whatever reaches it
+// again clears that (and an earlier failure). A failure with words of its own (`error`) stays.
+backend.watchConnections((id, state) => {
+  const st = useEnvs.getState()
+  if (!st.byId(id)) return
+  const now = st.status[id]?.state
+  if (state === 'lost' ? now === 'error' || now === 'reconnecting' : now !== 'reconnecting' && now !== 'error') return
+  useEnvs.setState(s => ({ status: { ...s.status, [id]: { state: state === 'lost' ? 'reconnecting' : 'ok', message: null } } }))
+})

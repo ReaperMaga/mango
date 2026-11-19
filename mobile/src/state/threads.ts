@@ -43,6 +43,11 @@ export interface LiveState {
   tasks: BackgroundTask[]
   /** The agent has answered and only waits on background tasks. */
   idle: boolean
+  /**
+   * The run's connection to its environment dropped and it is being attached again: the agent
+   * keeps working there meanwhile, so the chat stays Working.
+   */
+  reconnecting?: boolean
 }
 
 /** What a message sent during a turn does: wait for the turn to end, or go to the agent right away. */
@@ -170,6 +175,8 @@ export interface ThreadsState {
   _taskUpdate(id: string, taskId: string, patch: Partial<Pick<BackgroundTask, 'title' | 'activity'>>): void
   _taskEnd(id: string, taskId: string, status: BackgroundTask['status'], summary?: string): void
   _setIdle(id: string, idle: boolean): void
+  /** The run lost its connection (true) or got it back (false). */
+  _setReconnecting(id: string, on: boolean): void
   _clearLive(id: string): void
   _pushAgentMessage(id: string): Message | null
   _pushPart(id: string, msgId: string, part: Part): void
@@ -749,6 +756,13 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     set((s) => {
       if (!idle && !s.live[id]) return {}
       return { live: { ...s.live, [id]: { ...(s.live[id] ?? { tasks: [] }), idle } } }
+    })
+  },
+
+  _setReconnecting(id, on) {
+    set((s) => {
+      if (!!s.live[id]?.reconnecting === on || (!on && !s.live[id])) return {}
+      return { live: { ...s.live, [id]: { ...(s.live[id] ?? { tasks: [], idle: false }), reconnecting: on } } }
     })
   },
 

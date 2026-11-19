@@ -7,12 +7,13 @@ import { space, useTheme } from '@/theme'
 import { Banner, Button, EmptyState, IconButton, ListRow, ListSection, RipenessDot, Spinner, Text, dotStatus } from '@/ui'
 import { envOf, syncEnv } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
+import { useNetwork } from '@/state/network'
 import { useThreads } from '@/state/threads'
 import { EnvActions } from '@/screens/EnvActions'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ProjectList } from '@/screens/ProjectList'
 import { ScreenScroll } from '@/screens/Screen'
-import { INSTANCE_STATE, connectionText, expiryText, mostUrgent } from '@/screens/names'
+import { INSTANCE_STATE, OFFLINE, connectionText, expiryText, mostUrgent, reconnectingText } from '@/screens/names'
 import type { Thread } from '~/types/chat'
 
 /**
@@ -26,6 +27,7 @@ export default function EnvScreen() {
   const { id } = useLocalSearchParams<{ id: string }>()
   const env = useEnvs(st => st.envs.find(e => e.id === id) ?? null)
   const status = useEnvs(st => st.status[id])
+  const offline = useNetwork(st => st.online === false)
   const instances = useEnvs(st => st.instances[id])
   const threads = useThreads(st => st.threads)
   const [menu, setMenu] = useState(false)
@@ -83,7 +85,12 @@ export default function EnvScreen() {
         }}
       />
 
-      {status?.state === 'error'
+      {offline
+        ? <Banner title={OFFLINE.title} message={OFFLINE.message} />
+        : status?.state === 'reconnecting'
+          ? <Banner message={reconnectingText([env.name])} />
+          : null}
+      {status?.state === 'error' && !offline
         ? <Banner tone="error" title="Can't connect" message={status.message ?? 'The environment did not answer.'} action={<Button label="Try again" size="sm" onPress={refresh} />} />
         : null}
 
