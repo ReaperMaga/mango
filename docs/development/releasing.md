@@ -88,8 +88,8 @@ The release builds sign the macOS app with a Developer ID Application certificat
 | `APPLE_CERTIFICATE_PASSWORD` | the `.p12`'s password |
 | `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` |
 | `KEYCHAIN_PASSWORD` | any random string, for the build's temporary keychain |
-| `APPLE_ID`, `APPLE_PASSWORD` | the team's Apple ID and an app-specific password for it (appleid.apple.com), for notarization |
-| `APPLE_TEAM_ID` | the 10-character team ID |
+| `APPLE_API_KEY_P8` | an App Store Connect API key (Users and Access > Integrations > Team Keys, Developer role or higher): the `.p8` file's contents, for notarization |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER` | that key's Key ID and the Issuer ID shown above the key list |
 
 Without `APPLE_CERTIFICATE` the app is unsigned; without the notarization secrets it is signed but not notarized, and the run warns either way. The hardened runtime that notarization requires blocks the microphone unless the app asks for it, so `src-tauri/Entitlements.plist` carries `com.apple.security.device.audio-input` for dictation. Local builds are not signed.
 
