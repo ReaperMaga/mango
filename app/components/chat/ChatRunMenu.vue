@@ -96,7 +96,9 @@ const GAP = 6
 const MARGIN = 8
 const FLY_CAP = 380
 const pos = ref<{ left: number; top?: number; bottom?: number; origin: string }>({ left: 0, bottom: 0, origin: 'bottom left' })
-const flyPos = ref<{ left: number; top?: number; bottom?: number; maxHeight: number }>({ left: 0, top: 0, maxHeight: FLY_CAP })
+const flyPos = ref<{ left: number; top: number; maxHeight: number; side: 'right' | 'left' }>({ left: 0, top: 0, maxHeight: FLY_CAP, side: 'right' })
+/** The flyout is already out and moves to another row: let it glide there instead of jumping. */
+const flyGlide = ref(false)
 
 function place() {
   const r = root.value?.getBoundingClientRect()
@@ -113,8 +115,9 @@ function place() {
 }
 
 /**
- * Beside its row, on the side with room. It grows the way the menu opened (up from a composer at the
- * bottom) when it fits, else the way with more room, and scrolls past the room there is.
+ * Beside its row, on the side with room, its first choice level with the row like a native submenu.
+ * Where the window is too short below, it slides up only as far as it must, and scrolls past the room
+ * there is.
  */
 function placeFly() {
   const row = pop.value?.querySelector<HTMLElement>(`[data-row="${sub.value}"]`)
@@ -126,18 +129,18 @@ function placeFly() {
   const vh = window.innerHeight
   const width = el.offsetWidth
   let left = box.right + 4
-  if (left + width > vw - MARGIN) left = box.left - width - 4
+  let side: 'right' | 'left' = 'right'
+  if (left + width > vw - MARGIN) {
+    left = box.left - width - 4
+    side = 'left'
+  }
   left = Math.max(MARGIN, left)
   // Line the first choice up with the row: the flyout's padding plus its border.
   const inset = 5
-  const need = Math.min(el.scrollHeight + 2, FLY_CAP)
-  const down = vh - MARGIN - (rr.top - inset)
-  const up = rr.bottom + inset - MARGIN
-  const upward = pos.value.bottom != null
-  const goDown = upward ? need > up && down > up : need <= down || down >= up
-  flyPos.value = goDown
-    ? { left, top: rr.top - inset, maxHeight: Math.min(FLY_CAP, down) }
-    : { left, bottom: vh - rr.bottom - inset, maxHeight: Math.min(FLY_CAP, up) }
+  const maxHeight = Math.min(FLY_CAP, vh - 2 * MARGIN)
+  const need = Math.min(el.scrollHeight + 2, maxHeight)
+  const top = Math.max(MARGIN, Math.min(rr.top - inset, vh - MARGIN - need))
+  flyPos.value = { left, top, maxHeight, side }
 }
 
 async function show() {
@@ -205,6 +208,7 @@ const switchNote = computed(() => {
 async function openSub(key: RowKey, focus = false) {
   clearTimeout(hoverTimer)
   active.value = rows.value.findIndex(r => r.key === key)
+  flyGlide.value = sub.value !== null
   if (sub.value !== key) {
     sub.value = key
     if (key !== 'effort' && key !== 'mode') void models.refresh(key, ws.activeProjectPath)
@@ -372,57 +376,65 @@ defineExpose({ toggle, close })
           </template>
         </div>
       </Transition>
-      <div
-        v-if="open && sub"
-        ref="fly"
-        class="run run__fly"
-        :class="{ 'run__fly--effort': sub === 'effort' }"
-        :role="sub === 'effort' ? 'dialog' : 'menu'"
-        :aria-label="sub === 'effort' ? 'Reasoning effort' : sub === 'mode' ? 'Permissions' : `${AGENTS[sub].name} models`"
-        tabindex="-1"
-        :style="{
-          left: `${flyPos.left}px`,
-          top: flyPos.top != null ? `${flyPos.top}px` : undefined,
-          bottom: flyPos.bottom != null ? `${flyPos.bottom}px` : undefined,
-          maxHeight: `${flyPos.maxHeight}px`,
-        }"
-        @mouseenter="holdFly"
-        @keydown="sub !== 'effort' && onListKey($event)"
-      >
-        <ChatEffort
-          v-if="sub === 'effort'"
-          ref="effortPanel"
-          :efforts="efforts"
-          :model-value="effort"
-          :fallback="fallbackEffort"
-          :agent-name="AGENTS[agent].name"
-          @update:model-value="e => emit('update:effort', e)"
-          @done="backToMenu"
-        />
-        <template v-else>
-          <p v-if="switchNote" class="run__note">{{ switchNote }}</p>
-          <template v-for="(c, i) in choices" :key="c.key">
-            <div v-if="c.divider" class="run__sep" role="separator" />
-            <button
-              type="button"
-              class="run__row run__choice"
-              :class="{ 'is-active': i === subActive, 'is-checked': c.checked }"
-              role="menuitemradio"
-              :aria-checked="c.checked"
-              :disabled="c.disabled"
-              @mouseenter="!c.disabled && (subActive = i)"
-              @click="c.onSelect()"
-            >
-              <span v-if="c.icon" class="run__icon"><component :is="c.icon" /></span>
-              <span class="run__text">
-                <span class="run__label">{{ c.label }}</span>
-                <span v-if="c.hint" class="run__hint">{{ c.hint }}</span>
-              </span>
-              <Check v-if="c.checked" class="run__check" />
-            </button>
-          </template>
-        </template>
-      </div>
+      <Transition name="run-fly">
+        <div
+          v-if="open && sub"
+          ref="fly"
+          class="run run__fly"
+          :class="{
+            'run__fly--effort': sub === 'effort',
+            'run__fly--left': flyPos.side === 'left',
+            'is-gliding': flyGlide,
+          }"
+          :role="sub === 'effort' ? 'dialog' : 'menu'"
+          :aria-label="sub === 'effort' ? 'Reasoning effort' : sub === 'mode' ? 'Permissions' : `${AGENTS[sub].name} models`"
+          tabindex="-1"
+          :style="{
+            left: `${flyPos.left}px`,
+            top: `${flyPos.top}px`,
+            maxHeight: `${flyPos.maxHeight}px`,
+          }"
+          @mouseenter="holdFly"
+          @keydown="sub !== 'effort' && onListKey($event)"
+        >
+          <!-- Keyed by the row, so another row's choices fade in rather than swap in place. -->
+          <div :key="sub" class="run__body">
+            <ChatEffort
+              v-if="sub === 'effort'"
+              ref="effortPanel"
+              :efforts="efforts"
+              :model-value="effort"
+              :fallback="fallbackEffort"
+              :agent-name="AGENTS[agent].name"
+              @update:model-value="e => emit('update:effort', e)"
+              @done="backToMenu"
+            />
+            <template v-else>
+              <p v-if="switchNote" class="run__note">{{ switchNote }}</p>
+              <template v-for="(c, i) in choices" :key="c.key">
+                <div v-if="c.divider" class="run__sep" role="separator" />
+                <button
+                  type="button"
+                  class="run__row run__choice"
+                  :class="{ 'is-active': i === subActive, 'is-checked': c.checked }"
+                  role="menuitemradio"
+                  :aria-checked="c.checked"
+                  :disabled="c.disabled"
+                  @mouseenter="!c.disabled && (subActive = i)"
+                  @click="c.onSelect()"
+                >
+                  <span v-if="c.icon" class="run__icon"><component :is="c.icon" /></span>
+                  <span class="run__text">
+                    <span class="run__label">{{ c.label }}</span>
+                    <span v-if="c.hint" class="run__hint">{{ c.hint }}</span>
+                  </span>
+                  <Check v-if="c.checked" class="run__check" />
+                </button>
+              </template>
+            </template>
+          </div>
+        </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
@@ -446,6 +458,8 @@ defineExpose({ toggle, close })
 }
 .run__fly { width: 288px; z-index: 81; }
 .run__fly--effort { width: 300px; overflow: visible; }
+/* Moving between rows, the open flyout glides to the new one. */
+.run__fly.is-gliding { transition: top var(--dur-med) var(--ease-out), left var(--dur-med) var(--ease-out); }
 
 .run__group {
   padding: var(--space-2) var(--space-2) 2px;
@@ -465,6 +479,7 @@ defineExpose({ toggle, close })
   border-radius: var(--radius-sm);
   text-align: left;
   color: var(--fg);
+  transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .run__row.is-active, .run__row.is-open { background: var(--bg-hover); }
 .run__row:disabled { color: var(--fg-faint); cursor: default; }
@@ -483,7 +498,15 @@ defineExpose({ toggle, close })
   font-size: var(--text-xs);
   color: var(--fg-subtle);
 }
-.run__arrow { width: 13px; height: 13px; flex: none; stroke-width: 2; color: var(--fg-subtle); }
+.run__arrow {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  stroke-width: 2;
+  color: var(--fg-subtle);
+  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.run__row.is-open .run__arrow { color: var(--fg-muted); transform: translateX(2px); }
 .run__check { width: 14px; height: 14px; flex: none; color: var(--accent-ink); }
 .run__note {
   margin: 0;
@@ -493,9 +516,27 @@ defineExpose({ toggle, close })
   color: var(--fg-muted);
 }
 
-.run-enter-active, .run-leave-active { transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
-.run-enter-from, .run-leave-to { opacity: 0; transform: scale(0.97); }
+.run-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.run-leave-active { transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+.run-enter-from { opacity: 0; transform: translateY(4px) scale(0.98); }
+.run-leave-to { opacity: 0; transform: scale(0.98); }
+
+/* The flyout slides out from its row's side. */
+.run-fly-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.run-fly-leave-active { transition: opacity var(--dur-fast) var(--ease-out); }
+.run-fly-enter-from { opacity: 0; transform: translateX(-6px); }
+.run__fly--left.run-fly-enter-from { transform: translateX(6px); }
+.run-fly-leave-to { opacity: 0; }
+
+/* Another row's choices fade in where the last ones were. */
+.is-gliding .run__body { animation: run-swap var(--dur-med) var(--ease-out); }
+@keyframes run-swap {
+  from { opacity: 0; transform: translateY(-3px); }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .run-enter-active, .run-leave-active { transition: none; }
+  .run-enter-active, .run-leave-active, .run-fly-enter-active, .run-fly-leave-active, .run__fly.is-gliding,
+  .run__row, .run__arrow { transition: none; }
+  .is-gliding .run__body { animation: none; }
 }
 </style>
