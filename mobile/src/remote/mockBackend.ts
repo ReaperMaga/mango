@@ -426,6 +426,10 @@ export function createMockBackend(): RemoteBackend {
     },
 
     async reset() {},
+
+    // Simulated runs never lose a connection.
+    reconnectNow() {},
+    watchConnections() { return () => {} },
   }
   return backend
 }

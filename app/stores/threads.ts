@@ -49,6 +49,8 @@ export interface LiveState {
   tasks: BackgroundTask[]
   /** The agent has answered and only waits on background tasks. */
   idle: boolean
+  /** The run is in a remote environment whose connection dropped: it goes on there while Mango reconnects. */
+  reconnecting?: boolean
 }
 
 export const useThreads = defineStore('threads', {
@@ -1126,6 +1128,9 @@ export const useThreads = defineStore('threads', {
     },
     _setIdle(id: string, idle: boolean) {
       if (idle || this.live[id]) this._liveFor(id).idle = idle
+    },
+    _setReconnecting(id: string, reconnecting: boolean) {
+      if (reconnecting || this.live[id]) this._liveFor(id).reconnecting = reconnecting
     },
     /** The run ended: its background work is over. */
     _clearLive(id: string) {

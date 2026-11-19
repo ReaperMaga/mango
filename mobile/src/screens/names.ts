@@ -47,6 +47,7 @@ export function connectionText(s: EnvStatus | undefined): { text: string; tone: 
   switch (s?.state) {
     case 'ok': return { text: 'Connected', tone: 'queued' }
     case 'checking': return { text: 'Connecting…', tone: 'subtle' }
+    case 'reconnecting': return { text: 'Reconnecting…', tone: 'subtle' }
     case 'error': return { text: s.message ? `Can't connect: ${s.message}` : "Can't connect", tone: 'error' }
     default: return { text: 'Not checked yet', tone: 'faint' }
   }
@@ -73,3 +74,15 @@ export function expiryText(at: number | null, now = Date.now()): string {
 }
 
 export const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
+
+/** The banner while the phone has no network: calm, it is not the environment's fault. */
+export const OFFLINE = {
+  title: 'No internet connection',
+  message: 'Agents keep working in their environments. Mango reconnects and catches up when this phone is back online.',
+}
+
+/** "Reconnecting to Lab…", "Reconnecting to Lab and dev…", "Reconnecting to 3 environments…". */
+export function reconnectingText(names: string[]): string {
+  if (names.length <= 2) return `Reconnecting to ${names.join(' and ')}…`
+  return `Reconnecting to ${names.length} environments…`
+}

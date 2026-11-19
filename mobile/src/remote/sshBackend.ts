@@ -1,7 +1,8 @@
 import type { AgentId } from '~/types/chat'
 import type { AgentTransport, SpawnFn } from '~/agents/types'
 import { envPath } from '~/utils/envPath'
-import type { ExecProcess, RunResult, SshApi } from '@/ssh/types'
+import type { RunResult, SshApi } from '@/ssh/types'
+import { startRemoteRun, type RemoteRun } from './agentRun'
 import { fromBase64, splitNul, utf8Decode } from './bytes'
 import {
   BATCH, COMMIT, DIFF_CAP, GIT_ENV, GIT_OPTS, UNTRACKED_DIFF,
@@ -140,6 +141,23 @@ export function transportError(env: Env, e: unknown, now = Date.now()): Error {
   return new Error(explain(env, 255, messageOf(e), '', now))
 }
 
+/** Messages of the SSH module (`SshErrors.swift`) and OpenSSH that mean the network let us down. */
+const CONNECTION_LOST = [
+  ...UNREACHABLE, 'could not reach', 'unreachable', 'connection was closed', 'was reset', 'network connection was lost',
+  'offline', 'broken pipe', 'software caused connection abort',
+]
+
+/**
+ * Whether a rejection from the SSH module means the connection failed (no network, a timeout,
+ * a reset) rather than the server saying no (sign-in refused, a changed host key): the first
+ * is worth waiting out, the second needs the person.
+ */
+export function isConnectionLoss(e: unknown): boolean {
+  const lower = messageOf(e).toLowerCase()
+  if (has(lower, SIGN_IN_REFUSED) || has(lower, HOST_KEY_CHANGED) || lower.includes('identity changed')) return false
+  return has(lower, CONNECTION_LOST)
+}
+
 /* ---------- agent runs ---------- */
 
 /** The environment variable that marks every process of one run. */
@@ -191,15 +209,79 @@ export function stopLine(env: Env, instance: string, runId: string): string[] {
 }
 
 /**
- * The remote argv starting `program args…` as the agent user inside `instance`, from `cwd`
- * (the agent's home when empty), tagged with the run id.
+ * An agent run that outlives the connection (the desktop's `RUN_SCRIPT` in `agent_proc.rs`, the
+ * same text: a test compares them). `sh -c` script, `$0` = mango-run, `$1` = start | attach |
+ * close, `$2` = run id. The client side is `agentRun.ts`.
  */
-export function spawnLine(
-  env: Env, instance: string, cwd: string, vars: Record<string, string> | undefined, runId: string, program: string, args: readonly string[],
-): string[] {
-  validInstance(instance)
-  const dir = cwd.trim()
-  if (dir) validInstanceDir(dir)
+export const RUN_SCRIPT = `# mango-run: an agent run that outlives the connection. $1 = start | attach | close, $2 = run id.
+# start <id> <program> <args…>: start the run detached, then attach from the beginning.
+# attach <id> <out offset> <err offset>: stream its stdout and stderr from those byte offsets,
+#   feed this stdin to it, and end with the line "mango-run:exit <code>" on stderr. Offsets count
+#   only bytes after the line "mango-run:attached" each stream starts with (a login shell may print first).
+# close <id>: end its input.
+mode=$1 id=$2
+shift 2
+case $id in ''|*[!A-Za-z0-9-]*) echo "Mango: bad run id." >&2; exit 2 ;; esac
+base="$HOME/.cache/mango/runs" dir="$HOME/.cache/mango/runs/$id"
+gone() { echo "mango-run:gone" >&2; exit 1; }
+case $mode in
+start)
+  umask 077
+  mkdir -p "$base" || exit 1
+  find "$base" -mindepth 1 -maxdepth 1 -type d -mmin +1440 -exec rm -rf {} + 2>/dev/null
+  mkdir "$dir" && mkfifo "$dir/in" && : >"$dir/out" && : >"$dir/err" && touch "$dir/alive" || exit 1
+  setsid sh -c '
+    dir=$1; shift
+    echo $$ >"$dir/pid.tmp" && mv "$dir/pid.tmp" "$dir/pid"
+    exec 3<>"$dir/in"
+    "$@" <"$dir/in" >>"$dir/out" 2>>"$dir/err" 3>&- &
+    pid=$! stopped=
+    while kill -0 $pid 2>/dev/null; do
+      sleep 1
+      [ -e "$dir/closed" ] && exec 3>&-
+      if [ -z "$stopped" ] && [ -n "$(find "$dir/alive" -mmin +30 2>/dev/null)" ]; then
+        echo "Mango: nothing was connected to this run for 30 minutes, so it was stopped." >>"$dir/err"
+        kill -TERM $pid; stopped=1
+      fi
+    done
+    wait $pid; echo $? >"$dir/code.tmp" && mv "$dir/code.tmp" "$dir/code"
+  ' mango-runner "$dir" "$@" </dev/null >/dev/null 2>&1 &
+  i=0
+  while [ ! -e "$dir/pid" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+  set -- 0 0
+  ;;
+attach) ;;
+close) [ -d "$dir" ] || gone; touch "$dir/closed"; exit 0 ;;
+*) exit 2 ;;
+esac
+[ -e "$dir/pid" ] || gone
+pid=$(cat "$dir/pid")
+touch "$dir/alive"
+exec 4<&0
+feed=
+if [ ! -e "$dir/closed" ]; then cat <&4 >"$dir/in" 2>/dev/null & feed=$!; fi
+( while kill -0 $$ 2>/dev/null; do
+    touch "$dir/alive"
+    [ -n "$feed" ] && [ -e "$dir/closed" ] && kill $feed 2>/dev/null
+    sleep 1
+  done ) </dev/null >/dev/null 2>&1 &
+beat=$!
+echo "mango-run:attached"
+echo "mango-run:attached" >&2
+tail -c +$(($2 + 1)) --pid="$pid" -f "$dir/err" >&2 &
+e=$!
+tail -c +$(($1 + 1)) --pid="$pid" -f "$dir/out"
+wait $e
+kill $beat $feed 2>/dev/null
+i=0
+while [ ! -e "$dir/code" ] && [ $i -lt 25 ]; do sleep 0.2; i=$((i + 1)); done
+code=$(cat "$dir/code" 2>/dev/null)
+echo "mango-run:exit \${code:-143}" >&2
+exit "\${code:-143}"
+`
+
+/** The variables of a run, checked and in a stable order, its tag last. */
+function runVars(vars: Record<string, string> | undefined, runId: string): [string, string][] {
   const list: [string, string][] = []
   for (const [k, v] of Object.entries(vars ?? {})) {
     if (!validEnvKey(k) || k === RUN_TAG) throw new Error(`"${k}" can't be passed to an agent in an environment.`)
@@ -208,21 +290,59 @@ export function spawnLine(
   }
   list.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0))
   list.push([RUN_TAG, runId])
+  return list
+}
+
+/** A run id as `RUN_SCRIPT` takes it (it checks again). */
+function validRunId(runId: string): void {
+  if (!/^[A-Za-z0-9-]+$/.test(runId)) throw new Error('That run id is not valid.')
+}
+
+/**
+ * The remote argv starting `program args…` as the agent user inside `instance`, from `cwd`
+ * (the agent's home when empty), tagged with the run id: `RUN_SCRIPT start`, which starts it
+ * detached and attaches to it from the beginning.
+ */
+export function spawnLine(
+  env: Env, instance: string, cwd: string, vars: Record<string, string> | undefined, runId: string, program: string, args: readonly string[],
+): string[] {
+  validInstance(instance)
+  validRunId(runId)
+  const dir = cwd.trim()
+  if (dir) validInstanceDir(dir)
+  const list = runVars(vars, runId)
   if (args.some(a => a.includes('\0'))) throw new Error('An argument for the agent contains a NUL character.')
-  return inInstance(env, instance, 'batch', asAgent(dir || null, list, [program, ...args]))
+  return inInstance(env, instance, 'batch', asAgent(dir || null, list, ['sh', '-c', RUN_SCRIPT, 'mango-run', 'start', runId, program, ...args]))
+}
+
+/**
+ * Attach to a run again after a dropped connection, its output resumed from these byte counts
+ * (`RUN_SCRIPT attach`). From the agent's home, where the run's files are: the project folder
+ * may have gone meanwhile.
+ */
+export function attachLine(env: Env, instance: string, runId: string, outBytes: number, errBytes: number): string[] {
+  validInstance(instance)
+  validRunId(runId)
+  if (!Number.isSafeInteger(outBytes) || outBytes < 0 || !Number.isSafeInteger(errBytes) || errBytes < 0) throw new Error('Bad output offsets.')
+  return inInstance(env, instance, 'batch', asAgent(null, [[RUN_TAG, runId]], ['sh', '-c', RUN_SCRIPT, 'mango-run', 'attach', runId, String(outBytes), String(errBytes)]))
+}
+
+/** End a run's stdin (`RUN_SCRIPT close`). */
+export function closeLine(env: Env, instance: string, runId: string): string[] {
+  validInstance(instance)
+  validRunId(runId)
+  return inInstance(env, instance, 'batch', asAgent(null, [[RUN_TAG, runId]], ['sh', '-c', RUN_SCRIPT, 'mango-run', 'close', runId]))
 }
 
 /**
  * A `Mango: …` line explaining why a remote run ended, when it is not already clear from what
- * it printed (the desktop's `remote::hint`). `stderr` is its last stderr lines. `code` null is
- * the channel closing without an exit status, which on a phone is a dropped connection.
+ * it printed (the desktop's `remote::hint`). `stderr` is its last stderr lines. A dropped
+ * connection is not an end any more (the run is attached again), so it needs no words here.
  */
 export function hint(env: Env, instance: string, program: string, code: number | null, stderr: string, sawStdout: boolean): string | null {
   const lower = stderr.toLowerCase()
   const first = (s: string) => s.split('\n')[0] ?? ''
-  if (sawStdout) {
-    return code === 255 || code === null ? `Mango: the SSH connection to ${env.name} was lost, so this run was stopped.` : null
-  }
+  if (sawStdout) return null
   if (code === 255) return `Mango: ${first(explain(env, code, stderr, ''))}`
   if (lower.includes('incus: command not found') || lower.includes('incus: not found')) {
     return `Mango: ${first(explain(env, code, stderr, ''))}`
@@ -482,6 +602,30 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
   const lastFiles = new Map<string, GitFile[]>()
   /** Endpoints used, so `reset()` can drop them all. */
   const used = new Map<string, Env>()
+  /** Agent runs that may still need this backend: attached, reattaching, or owing a stop. */
+  const runs = new Set<RemoteRun>()
+  /** Until when (ms) a run that loses its channel attaches again at once: just after `reset()`. */
+  let quickUntil = 0
+  /** Envs whose connection failed (a run's dropped, or a command could not reach them), and who hears of it. */
+  const unreachable = new Set<string>()
+  /** Runs per env that are reattaching now: the env is not back while one still is. */
+  const lostRuns = new Map<string, number>()
+  const listeners = new Set<(envId: string, state: 'lost' | 'back') => void>()
+  const tell = (envId: string, state: 'lost' | 'back') => {
+    for (const l of listeners) {
+      try { l(envId, state) } catch (e) { console.error('A connection listener failed:', e) }
+    }
+  }
+  function down(envId: string) {
+    if (unreachable.has(envId)) return
+    unreachable.add(envId)
+    tell(envId, 'lost')
+  }
+  function up(envId: string) {
+    if (!unreachable.has(envId) || (lostRuns.get(envId) ?? 0) > 0) return
+    unreachable.delete(envId)
+    tell(envId, 'back')
+  }
 
   const envById = (hostId: string): Env => {
     const env = lookup(hostId)
@@ -502,11 +646,15 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
 
   /** Run a remote argv over the env's shared connection; a transport failure is explained. */
   async function runRemote(env: Env, argv: string[], opts: { stdin?: string; timeoutMs?: number } = {}): Promise<RunResult> {
+    let r: RunResult
     try {
-      return await ssh.run(env.endpoint, line(argv), { timeoutMs: opts.timeoutMs ?? LOCAL_TIMEOUT, ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}) })
+      r = await ssh.run(env.endpoint, line(argv), { timeoutMs: opts.timeoutMs ?? LOCAL_TIMEOUT, ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}) })
     } catch (e) {
+      if (isConnectionLoss(e)) down(env.id)
       throw transportError(env, e, now())
     }
+    up(env.id)
+    return r
   }
 
   /** `runRemote`, its stdout on exit 0 and an explained error otherwise (the desktop's `ssh::run`). */
@@ -938,59 +1086,52 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
         const runId = newId()
         // The instance root stands for the agent's home (questions that need no project).
         const argv = spawnLine(p.env, p.instance, p.dir === '/' ? '' : p.dir, vars, runId, program, args)
-        let sawStdout = false
-        let stopped = false
-        const tail: string[] = []
-        const stop = () => {
-          runRemote(p.env, stopLine(p.env, p.instance, runId), { timeoutMs: 30_000 }).catch(() => {})
-        }
-        let proc: ExecProcess
-        try {
-          proc = await ssh.exec(p.env.endpoint, line(argv), {
-            onLine(l) {
-              const t = l.replace(/\r+$/, '')
-              if (!t) return
-              sawStdout = true
-              h.onLine(t)
-            },
-            onStderr(l) {
-              const t = l.replace(/\r+$/, '')
-              if (!t) return
-              if (tail.length === 20) tail.shift()
-              tail.push(t)
-              h.onStderr?.(t)
-            },
-            onExit(code) {
-              // Stopped on request: nothing to explain, and `kill()` already stops it remotely.
-              if (!stopped) {
-                const why = hint(p.env, p.instance, program, code, tail.join('\n'), sawStdout)
-                if (why) h.onStderr?.(why)
-                // The connection dropped mid-run: the CLI may still be working in the instance.
-                if (sawStdout && (code === 255 || code === null)) stop()
-              }
-              h.onExit?.(code)
-            },
-          })
-        } catch (e) {
-          throw transportError(p.env, e, now())
-        }
-        const transport: AgentTransport = {
-          write: data => proc.write(`${data}\n`),
-          closeStdin: () => proc.closeStdin(),
-          async kill() {
-            if (stopped) return
-            stopped = true
-            await proc.kill().catch(() => {})
-            // In the background: closing the channel alone may leave the CLI running.
-            stop()
+        const envId = p.env.id
+        const run = await startRemoteRun({
+          ssh,
+          endpoint: p.env.endpoint,
+          instance: p.instance,
+          startLine: line(argv),
+          attachLine: (out, err) => line(attachLine(p.env, p.instance, runId, out, err)),
+          // Resolves on any answer: a run gone already (`mango-run:gone`) has nothing left to close.
+          close: async () => { await runRemote(p.env, closeLine(p.env, p.instance, runId), { timeoutMs: 30_000 }) },
+          stop: async () => { await runRemote(p.env, stopLine(p.env, p.instance, runId), { timeoutMs: 30_000 }) },
+          hint: (code, stderr, sawStdout) => hint(p.env, p.instance, program, code, stderr, sawStdout),
+          startError: e => {
+            if (isConnectionLoss(e)) down(envId)
+            return transportError(p.env, e, now())
           },
-        }
-        return transport
+          onConnection(state) {
+            const n = (lostRuns.get(envId) ?? 0) + (state === 'lost' ? 1 : -1)
+            if (n > 0) lostRuns.set(envId, n)
+            else lostRuns.delete(envId)
+            if (state === 'lost') down(envId)
+            else up(envId)
+          },
+          quick: () => now() < quickUntil,
+        }, h)
+        up(envId)
+        runs.add(run)
+        return run.transport
       }
+    },
+
+    reconnectNow() {
+      for (const run of [...runs]) {
+        if (run.settled) runs.delete(run)
+        else run.reconnectNow()
+      }
+    },
+
+    watchConnections(listener) {
+      listeners.add(listener)
+      return () => { listeners.delete(listener) }
     },
 
     async reset(env) {
       const list = env ? [env] : [...used.values()]
+      // Runs whose channels this closes attach again right away, not after a backoff.
+      quickUntil = now() + 5000
       await Promise.all(list.map(e => ssh.disconnect(e.endpoint).catch(() => {})))
     },
   }

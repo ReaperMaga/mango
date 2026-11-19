@@ -5,6 +5,7 @@ import { FolderGit2, Inbox, Moon, Plus, RefreshCw, Server, Settings, Smartphone,
 import type { AgentQuestion, Message, PermissionMode, Thread } from '~/types/chat'
 import { demoThreads } from '~/utils/demoThreads'
 import { makeStyles, radius, space, useAppearance, useTheme, type Appearance } from '@/theme'
+import { OFFLINE, reconnectingText } from '@/screens/names'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, MangoMark, RipenessDot, Segmented, Sheet, Spinner, Text, TextField, type DotStatus } from '@/ui'
 import { ChangeRow, ChatComposer, ChatDiff, ChatMessage, ChatWorking, ThreadRow, useNow, type ChangeRowFile } from '@/chat'
 
@@ -197,6 +198,7 @@ export function Gallery({ sheetOpen = false }: { sheetOpen?: boolean }) {
           <ChatWorking thread={waiting} />
           {running.messages.map((m, i) => <ChatMessage key={m.id} message={m} thread={running} last={i === running.messages.length - 1} />)}
           <ChatWorking thread={running} />
+          <ChatWorking thread={running} reconnectingTo="forge" />
           {failed.messages.map(m => <ChatMessage key={m.id} message={m} thread={failed} />)}
           <ChatMessage
             thread={done}
@@ -254,6 +256,8 @@ export function Gallery({ sheetOpen = false }: { sheetOpen?: boolean }) {
         <Banner tone="error" title="Could not connect" message="ssh: connect to host forge.example.com port 22: Operation timed out. Check the host and that the server is up, then try again." action={<Button label="Try again" size="sm" />} onDismiss={() => {}} />
         <Banner tone="waiting" message="2 chats need you: an approval and a question." />
         <Banner message="Replies here are simulated: there is no server behind the web preview." />
+        <Banner title={OFFLINE.title} message={OFFLINE.message} />
+        <Banner message={reconnectingText(['forge'])} />
       </Section>
 
       <Section title="Empty">

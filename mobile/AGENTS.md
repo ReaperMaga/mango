@@ -32,13 +32,14 @@ modules/mango-ssh/   local Expo module: SSH in Swift (SwiftNIO SSH via spm_depen
 src/ssh/             types.ts (the contract), native.ts (wrapper), mock.ts, index.ts (`ssh`)
 src/remote/          the environment: shell.ts (quoting, command lines, validators: ports of envs/ssh.rs and envs/mod.rs),
                      shareLink.ts (envs/token.rs, join.rs), git.ts, sshBackend.ts (chats_remote.rs, git.rs, agent_proc.rs),
+                     agentRun.ts (a run that reattaches after a dropped connection),
                      mockBackend.ts, chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
 src/attachments/     picking (Photos, camera, Files), previews, pictures fitted for the model, upload into the
                      environment (`~/.local/share/mango/attachments/<id>/`); input.ts: what a run gets (pure)
 src/voice/           dictation: transcript.ts (merging, locales, messages: pure), engine.native.ts (Apple's recognizer via
                      expo-speech-recognition, on-device required where offered), engine.ts (Web Speech API or simulated), useDictation
 src/agents/          run.ts + turn.ts (app/agents/index.ts: drives the desktop's own adapters), simulated.ts (fake CLI for web)
-src/state/           envs.ts, threads.ts (zustand), chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
+src/state/           envs.ts, threads.ts, network.ts (zustand), chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
 src/theme/           tokens.ts (from app/assets/css/tokens.css, both themes), ThemeProvider, fonts
 src/ui/, src/chat/   the component kit and chat components (presentational)
 src/app/             routes (expo-router); src/screens/ shared screen code and the app lifecycle
@@ -57,8 +58,14 @@ agent adapters and chat types are shared, not copied. Only import types and plai
   HTML, opens only http(s) links and never fetches a picture from the web; a reply's `![alt](path)` is read only from a
   file inside the environment through `backend.chatImage`, the desktop's `chat_image` script, and shown only when its
   bytes are a raster image: `src/remote/images.ts`, `src/chat/ChatPicture.tsx`).
-- **iOS kills sockets in the background.** The lifecycle (`src/screens/lifecycle.ts`) flushes chats on the way out
-  and resets connections and syncs on the way back; a run cut off must end, never stay "Working".
+- **iOS kills sockets in the background, and networks come and go.** The lifecycle (`src/screens/lifecycle.ts`) flushes
+  chats on the way out; on the way back, and whenever the network returns or changes interface (expo-network,
+  `useNetworkWatch`, `screens/connectivity.ts`), it catches up: drops every connection (`backend.reset`), reattaches runs
+  (`backend.reconnectNow`), checks envs, pulls and pushes chats. A remote agent run outlives a dropped connection
+  (`RUN_SCRIPT` in `sshBackend.ts`, the desktop's text byte for byte; client side `src/remote/agentRun.ts`): the chat stays
+  Working and says "Reconnecting to …" until it is attached again from the byte offsets of the lines it had. It ends
+  only on the script's end marker, when the run is gone, when the user stops it, or when the start never reached the
+  environment. The native module reports each line's byte size (`LineInfo`) so the offsets are exact.
 - **Design:** tokens only (`src/theme/tokens.ts`, kept in step with `tokens.css`), the impeccable process from the
   root `AGENTS.md`, iOS idioms (44pt targets, safe areas, sheets, back swipe). Check both themes.
 - Never create or edit `ios/` or `android/` by hand (Continuous Native Generation): configure through `app.json`,

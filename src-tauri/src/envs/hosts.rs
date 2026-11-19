@@ -413,6 +413,18 @@ pub(crate) fn direct_probe(result: Result<String, String>) -> EnvProbe {
     }
 }
 
+/// Is the server reachable right now? The cheapest check there is (a fresh SSH connection running
+/// `true`), for noticing that a dropped connection is back. Errors only for an unknown host.
+#[tauri::command]
+pub async fn env_ping(app: AppHandle, host_id: String) -> Result<bool, String> {
+    super::blocking(move || {
+        let host = get(&app, &host_id)?;
+        // Its own connection: a shared one opened before the drop may not have noticed it yet.
+        Ok(ssh::run_alone(&host, &["true".to_string()], Duration::from_secs(15)).is_ok())
+    })
+    .await
+}
+
 /// Can Mango reach the server, and what state is its Incus in? One SSH call.
 #[tauri::command]
 pub async fn env_probe(app: AppHandle, host_id: String) -> Result<EnvProbe, String> {

@@ -1,5 +1,5 @@
 import type { AgentId, Attachment, QuestionAnswers } from '~/types/chat'
-import type { AgentAdapter, AgentRun } from '~/agents/types'
+import type { AgentAdapter, AgentRun, SpawnFn } from '~/agents/types'
 import { claudeAdapter } from '~/agents/claude'
 import { codexAdapter } from '~/agents/codex'
 import { backend } from '@/remote'
@@ -79,6 +79,26 @@ export function onFilesChanged(listener: (path: string) => void): () => void {
   return () => { filesListeners.delete(listener) }
 }
 
+/**
+ * `spawn`, with its runs' connection reported: a run in an environment that loses its connection
+ * keeps working there and is attached again (`onConnection`), and the chat says so meanwhile.
+ * The adapter's own handlers are called as they were.
+ */
+export function watched(spawn: SpawnFn, reconnecting: (on: boolean) => void): SpawnFn {
+  return (args, h, env) => spawn(args, {
+    onLine: line => h.onLine(line),
+    ...(h.onStderr ? { onStderr: (line: string) => h.onStderr!(line) } : {}),
+    onExit: (code) => {
+      reconnecting(false)
+      h.onExit?.(code)
+    },
+    onConnection: (state) => {
+      reconnecting(state === 'lost')
+      h.onConnection?.(state)
+    },
+  }, env)
+}
+
 /* ------------------------------------------------------------------ */
 /* One turn                                                            */
 /* ------------------------------------------------------------------ */
@@ -122,7 +142,7 @@ export async function runAgentTurn(threadId: string, text: string, attachments: 
       mode: thread.mode,
       effort: thread.effort ?? null,
       sessionId: thread.sessionId ?? null,
-      spawn: backend.spawnFor(thread.agent, workdir),
+      spawn: watched(backend.spawnFor(thread.agent, workdir), on => useThreads.getState()._setReconnecting(threadId, on)),
       emit: turn.emit,
     })
     current = run

@@ -553,6 +553,11 @@ export interface TerminalProfile {
 
 export interface AgentLineEvent { id: string; line: string }
 export interface AgentExitEvent { id: string; code: number | null }
+/**
+ * A run in a remote environment lost its connection (`lost`: it goes on there, and Mango keeps
+ * attaching again) or has it back (`back`). Never sent for runs on this computer.
+ */
+export interface AgentConnectionEvent { id: string; state: 'lost' | 'back'; hostId: string; instance: string }
 
 export interface PtyDataEvent { id: string; data: string }
 export interface PtyExitEvent { id: string; code: number | null }
@@ -832,6 +837,12 @@ export interface Commands {
   agent_close_stdin: [{ id: string }, void]
   /** Kills the process and everything it started. Unknown ids succeed silently. */
   agent_kill: [{ id: string }, void]
+  /**
+   * The connection to `hostId` (every host when null) is back: remote runs attach again now
+   * instead of after their wait, runs stopped while it was gone are stopped there, and the
+   * browser tools' way back from the environment is made again.
+   */
+  agent_reconnect_now: [{ hostId: string | null }, void]
 
   agent_auth_status: [{ agent: 'claude' | 'codex' }, AuthStatus]
 
@@ -1113,6 +1124,8 @@ export interface Commands {
   env_host_remove: [{ id: string }, void]
   /** Can Mango reach it over SSH, and what does its incus know? */
   env_probe: [{ hostId: string }, EnvProbe]
+  /** Can Mango reach it right now (one fresh SSH connection running `true`)? For noticing a dropped connection is back. */
+  env_ping: [{ hostId: string }, boolean]
   /**
    * Install Incus on the server (or update it when installed), initialise it when it has no storage
    * pool or network, and let the SSH user use it. Runs in a terminal (sudo may ask for a password); returns the pty id.
@@ -1169,6 +1182,7 @@ export interface Events {
   'agent://stdout': AgentLineEvent
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
+  'agent://connection': AgentConnectionEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
   /** A browser's page changed: URL, title, loading. */

@@ -10,6 +10,7 @@ import { cssVar, hex2, toHex } from '~/utils/cssColor'
 import { parseEnvPath } from '~/utils/envPath'
 import { useBrowser } from '~/stores/browser'
 import { useThreads } from '~/stores/threads'
+import { useConnectivity } from '~/stores/connectivity'
 
 /**
  * One xterm bound to one PTY. The panel keeps every view mounted (v-show)
@@ -47,6 +48,21 @@ let term: Terminal | null = null
 let fitAddon: FitAddon | null = null
 let disposed = false
 let spawning = false
+
+/*
+ * A remote tab whose `ssh` ended with 255 lost its connection (a deliberate exit has the shell's
+ * own code): it starts a fresh shell when its server answers again (`useConnectivity`), not on a
+ * timer. A shell that drops again within seconds of such a restart counts toward a limit, so a
+ * server that answers checks but refuses shells ends in "press Enter" instead of a loop.
+ */
+const conn = useConnectivity()
+/** The server this tab waits for (its host id), while it does. */
+const waitingFor = ref<string | null>(null)
+let shellStartedAt = 0
+let autoRestarted = false
+let quickDrops = 0
+const QUICK_MS = 5_000
+const MAX_QUICK_DROPS = 3
 /** While a spawn is in flight we don't know our id yet: park events here. */
 let backlog: Array<{ kind: 'data'; e: PtyDataEvent } | { kind: 'exit'; e: PtyExitEvent }> | null = null
 /** Size last reported to the PTY. */
@@ -173,14 +189,30 @@ function handleExit(e: PtyExitEvent) {
   }
   if (e.id !== props.tab.ptyId || props.tab.exited) return
   props.tab.exited = true
+  const env = parseEnvPath(props.tab.cwd)
+  const lived = Date.now() - shellStartedAt
+  // A quick 255 on a first start is a sign-in or address problem, which waiting would not fix.
+  if (env && e.code === 255 && (lived >= QUICK_MS || autoRestarted)) {
+    quickDrops = lived < QUICK_MS ? quickDrops + 1 : 0
+    if (quickDrops < MAX_QUICK_DROPS) {
+      waitingFor.value = env.hostId
+      term?.write('\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n\x1b[?25l')
+      conn.markDown(env.hostId)
+      return
+    }
+  }
+  quickDrops = 0
+  waitingFor.value = null
   const what = e.code == null ? '[process exited]' : `[process exited with code ${e.code}]`
   // Hide the cursor while there's nothing to type into.
   term?.write(`\r\n\x1b[2m${what} — press Enter to restart\x1b[0m\r\n\x1b[?25l`)
 }
 
-async function spawn() {
+async function spawn(auto = false) {
   if (!term || spawning || disposed) return
   spawning = true
+  autoRestarted = auto
+  waitingFor.value = null
   backlog = []
   try {
     const { cols, rows } = term
@@ -198,6 +230,7 @@ async function spawn() {
     }
     props.tab.ptyId = id
     props.tab.exited = false
+    shellStartedAt = Date.now()
     term?.write('\x1b[?25h')
     ptySize = { cols, rows }
     const parked = backlog
@@ -298,6 +331,13 @@ onMounted(async () => {
 })
 
 watch(settling, (moving) => { if (!moving) scheduleFit() })
+
+// The server this tab lost is back: a fresh shell, in the same tab.
+watch(() => (waitingFor.value ? conn.backAt[waitingFor.value] ?? 0 : 0), (at, before) => {
+  if (!waitingFor.value || !at || at === before || !props.tab.exited) return
+  term?.write('\x1b[2m[reconnected]\x1b[0m\r\n')
+  void spawn(true)
+})
 
 // Refit + focus when this tab is selected or the panel is reopened.
 watch(() => props.active && props.visible, async (shown) => {

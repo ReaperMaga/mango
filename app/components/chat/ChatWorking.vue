@@ -4,6 +4,7 @@ import { formatDuration } from '~/utils/time'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
+import { parseEnvPath } from '~/utils/envPath'
 
 /**
  * The live "the agent is at work" row under the conversation: what it is
@@ -21,8 +22,16 @@ const waitingOn = computed(() => {
   return live?.idle ? live.tasks.filter(t => t.status === 'running').length : 0
 })
 
+/** The run's environment lost its connection: the agent goes on there while Mango reconnects. */
+const reconnecting = computed(() => {
+  if (!threads.live[props.thread.id]?.reconnecting) return null
+  const t = threads.rootOf(props.thread.id) ?? props.thread
+  return parseEnvPath(t.projectPath)?.instance ?? 'the environment'
+})
+
 const activity = computed(() => {
   const t = props.thread
+  if (reconnecting.value) return `Reconnecting to ${reconnecting.value}`
   if (t.status === 'queued' && t.awaitingWorktree) {
     // Unity VCS downloads the branch's files into the new workspace first: minutes on a big project.
     const terms = vcsTerms(ws.openProjects.find(p => p.path === t.projectPath)?.vcs)
@@ -65,9 +74,10 @@ const elapsed = computed(() => formatDuration(Math.max(0, now.value - startedAt.
 </script>
 
 <template>
-  <div class="wk" :class="`wk--${thread.status}`" role="status" aria-live="polite">
+  <div class="wk" :class="[`wk--${thread.status}`, { 'wk--reconnecting': reconnecting }]" role="status" aria-live="polite">
     <UiRipenessDot :status="thread.status" :size="13" />
     <span class="wk__label">{{ activity }}<span class="wk__dots" aria-hidden="true"><i /><i /><i /></span></span>
+    <span v-if="reconnecting" class="wk__note">the agent keeps working there</span>
     <span class="wk__time tabular">{{ elapsed }}</span>
     <span v-if="thread.status !== 'waiting'" class="wk__hint"><kbd>Esc</kbd> to stop</span>
   </div>
@@ -84,6 +94,15 @@ const elapsed = computed(() => formatDuration(Math.max(0, now.value - startedAt.
 }
 .wk__label { font-weight: 520; color: var(--fg); }
 .wk--waiting .wk__label { color: var(--ripe-waiting-fg); }
+/* A dropped connection is not the agent's doing: said quietly, the run goes on. */
+.wk--reconnecting .wk__label { color: var(--fg-muted); }
+.wk__note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-subtle);
+}
 .wk__time { color: var(--fg-subtle); }
 .wk__hint { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--fg-faint); }
 

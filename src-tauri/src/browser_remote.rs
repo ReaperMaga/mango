@@ -174,10 +174,56 @@ pub fn agent_port(app: &AppHandle, project: &str, mcp_port: u16) -> Result<Optio
         }
     }
     let host = hosts::get(app, &f.host_id)?;
-    let b = if host.direct.is_some() { forward_direct(&host, &f.instance, mcp_port)? } else { forward_master(&host, &f.instance, mcp_port)? };
+    let b = forward(&host, &f.instance, mcp_port, None)?;
     let port = b.port;
     state.back.lock().unwrap_or_else(|e| e.into_inner()).insert(key, b);
     Ok(Some(port))
+}
+
+fn forward(host: &EnvHost, instance: &str, mcp_port: u16, want: Option<u16>) -> Result<Back, String> {
+    if host.direct.is_some() {
+        forward_direct(host, instance, mcp_port, want)
+    } else {
+        forward_master(host, instance, mcp_port, want)
+    }
+}
+
+/// The connection to `host_id` (every host when `None`) is back: forwards that died with it are
+/// made again, on the same port inside where it is still free, so agents that kept running
+/// through the drop find their browser tools where they were. Blocking; best effort.
+pub fn revive(app: &AppHandle, host_id: Option<&str>) {
+    let state = app.state::<RemoteBrowserState>();
+    let dead: Vec<((String, String), Back)> = {
+        let mut back = state.back.lock().unwrap_or_else(|e| e.into_inner());
+        let keys: Vec<(String, String)> = back
+            .iter_mut()
+            .filter_map(|(k, b)| (host_id.is_none_or(|id| id == k.0) && !matches!(b.child.try_wait(), Ok(None))).then(|| k.clone()))
+            .collect();
+        keys.into_iter().filter_map(|k| back.remove(&k).map(|b| (k, b))).collect()
+    };
+    for (key, mut old) in dead {
+        let _ = old.child.wait();
+        // Made again by a new turn meanwhile, or the host is still out of reach (tried on the next reconnect).
+        if state.back.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&key) {
+            continue;
+        }
+        match forward(&old.host, &old.instance, old.to, Some(old.port)) {
+            Ok(b) => {
+                let mut back = state.back.lock().unwrap_or_else(|e| e.into_inner());
+                if back.contains_key(&key) {
+                    let mut b = b;
+                    let _ = b.child.kill();
+                    let _ = b.child.wait();
+                } else {
+                    back.insert(key, b);
+                }
+            }
+            Err(_) => {
+                // Keep the dead one: the next reconnect tries again.
+                state.back.lock().unwrap_or_else(|e| e.into_inner()).entry(key).or_insert(old);
+            }
+        }
+    }
 }
 
 /// `ssh <options> -N -R <spec> <destination>`: the options of `ssh::ssh_args` before the destination.
@@ -208,8 +254,19 @@ fn spawn_forward(argv: &[String]) -> Result<(Child, mpsc::Receiver<String>), Str
     Ok((child, rx))
 }
 
-/// A joined environment: SSH lands inside it, so ask its sshd for any free loopback port.
-fn forward_direct(host: &EnvHost, instance: &str, mcp_port: u16) -> Result<Back, String> {
+/// A joined environment: SSH lands inside it, so ask its sshd for `want` (the port a dropped
+/// forward had), or any free loopback port.
+fn forward_direct(host: &EnvHost, instance: &str, mcp_port: u16, want: Option<u16>) -> Result<Back, String> {
+    if let Some(port) = want {
+        let argv = forward_argv(host, &format!("127.0.0.1:{port}:127.0.0.1:{mcp_port}"), &[])?;
+        let (mut child, _lines) = spawn_forward(&argv)?;
+        // A fixed port says nothing when it is up (`ExitOnForwardFailure` ends it when taken).
+        std::thread::sleep(Duration::from_millis(1500));
+        if let Ok(None) = child.try_wait() {
+            return Ok(Back { child, port, to: mcp_port, host: host.clone(), instance: instance.into(), device: false });
+        }
+        let _ = child.wait();
+    }
     let argv = forward_argv(host, &format!("127.0.0.1:0:127.0.0.1:{mcp_port}"), &[])?;
     let (mut child, lines) = spawn_forward(&argv)?;
     let until = std::time::Instant::now() + Duration::from_secs(20);
@@ -241,7 +298,7 @@ fn allocated_port(line: &str) -> Option<u16> {
 
 /// A master: forward to a unix socket of the SSH user there, and expose it inside the instance
 /// with a proxy device on a loopback port.
-fn forward_master(host: &EnvHost, instance: &str, mcp_port: u16) -> Result<Back, String> {
+fn forward_master(host: &EnvHost, instance: &str, mcp_port: u16, want: Option<u16>) -> Result<Back, String> {
     let tag = &uuid::Uuid::new_v4().simple().to_string()[..16];
     let socket = format!("/tmp/mango-browser-{tag}.sock");
     let argv = forward_argv(host, &format!("{socket}:127.0.0.1:{mcp_port}"), &["-o", "StreamLocalBindUnlink=yes", "-o", "StreamLocalBindMask=0177"])?;
@@ -254,8 +311,9 @@ fn forward_master(host: &EnvHost, instance: &str, mcp_port: u16) -> Result<Back,
     }
     // Any port in a quiet range; the proxy device fails if it is taken, so try a few.
     let mut last = String::new();
-    for _ in 0..3 {
-        let port = 41000 + (uuid::Uuid::new_v4().as_u128() % 8000) as u16;
+    // The port a dropped forward had comes first: agents still running know it.
+    let ports = want.into_iter().chain(std::iter::repeat_with(|| 41000 + (uuid::Uuid::new_v4().as_u128() % 8000) as u16).take(3));
+    for port in ports {
         match ssh::run(host, &device_line(host, instance, port, &socket), Duration::from_secs(30)) {
             Ok(_) => return Ok(Back { child, port, to: mcp_port, host: host.clone(), instance: instance.into(), device: true }),
             Err(e) => last = e,

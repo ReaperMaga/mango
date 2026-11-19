@@ -9,14 +9,20 @@ export interface ChatWorkingProps {
   thread: Thread
   /** Background tasks still running once the answer is written (the run is open only for them). */
   waitingOnTasks?: number
+  /**
+   * The run lost its connection and is being attached again: the environment's name. The agent
+   * keeps working there meanwhile, so this is said calmly, in place of what it is doing.
+   */
+  reconnectingTo?: string | null
 }
 
 /** What the agent is doing right now, in words (the desktop's `ChatWorking.vue`). */
-export function workingActivity(t: Thread, waitingOnTasks = 0): string {
+export function workingActivity(t: Thread, waitingOnTasks = 0, reconnectingTo: string | null = null): string {
   const agent = AGENTS[t.agent].name
   if (t.status === 'queued' && t.awaitingWorktree) return 'Making a worktree'
   if (t.status === 'queued') return `Starting ${agent}`
   if (t.status === 'waiting') return `Waiting for your ${waitingFor(t)}`
+  if (reconnectingTo) return `Reconnecting to ${reconnectingTo}…`
   if (waitingOnTasks) return `Waiting for ${waitingOnTasks} background task${waitingOnTasks === 1 ? '' : 's'}`
   const last = t.messages[t.messages.length - 1]
   const part = last?.role === 'agent' ? last.parts[last.parts.length - 1] : undefined
@@ -42,7 +48,7 @@ export function workingActivity(t: Thread, waitingOnTasks = 0): string {
  * is doing, three dots taking turns, and how long the turn has run. Present from the moment a
  * message is sent until the turn ends, so the chat never looks idle while something runs.
  */
-export function ChatWorking({ thread, waitingOnTasks = 0 }: ChatWorkingProps) {
+export function ChatWorking({ thread, waitingOnTasks = 0, reconnectingTo = null }: ChatWorkingProps) {
   const s = useStyles()
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -56,13 +62,13 @@ export function ChatWorking({ thread, waitingOnTasks = 0 }: ChatWorkingProps) {
     if (thread.messages[i]!.role === 'user') { startedAt = thread.messages[i]!.createdAt; break }
   }
   const waiting = thread.status === 'waiting'
-  const activity = workingActivity(thread, waitingOnTasks)
+  const activity = workingActivity(thread, waitingOnTasks, reconnectingTo)
   const elapsed = formatDuration(Math.max(0, now - startedAt))
 
   return (
     <View style={s.row} accessibilityRole="progressbar" accessibilityLiveRegion="polite" accessibilityLabel={`${activity}, ${elapsed}`}>
       <RipenessDot status={thread.status} size={14} />
-      <Text variant="bodySm" tone={waiting ? 'waiting' : 'fg'} style={s.label} numberOfLines={1}>{activity}</Text>
+      <Text variant="bodySm" tone={waiting ? 'waiting' : reconnectingTo ? 'muted' : 'fg'} style={s.label} numberOfLines={1}>{activity}</Text>
       {waiting ? null : <Dots />}
       <Text variant="bodySm" tone="subtle" tabular>{elapsed}</Text>
     </View>

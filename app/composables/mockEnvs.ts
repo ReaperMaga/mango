@@ -434,6 +434,14 @@ export function createMockEnvs(ctx: MockEnvContext) {
         return
       }
 
+      case 'env_ping': {
+        const h = hostOf(args.hostId)
+        await latency(200)
+        const d = h.host.direct
+        if (d) return !revoked.has(d.shareId) && h.instances[0]!.status === 'running'
+        return !unreachable(h.host)
+      }
+
       case 'env_probe': {
         const h = hostOf(args.hostId)
         await latency(650)

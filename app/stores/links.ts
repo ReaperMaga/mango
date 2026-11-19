@@ -50,6 +50,8 @@ const STALE_MS = 4 * 60_000
 
 /** The latest read started per link key: an older read that finishes later is dropped. */
 const reads = new Map<string, number>()
+/** Where each item was last read from (its link and project), to read it again when the network is back. */
+const sources = new Map<string, { url: string; projectPath: string }>()
 /** The same for job reads, by job link. */
 const jobReads = new Map<string, number>()
 
@@ -80,6 +82,7 @@ export const useLinks = defineStore('links', {
       if (!force && had?.item && !had.error && Date.now() - had.bodyAt < STALE_MS) return
       const mine = (reads.get(link.key) ?? 0) + 1
       reads.set(link.key, mine)
+      sources.set(link.key, { url: link.url, projectPath })
       const keep = { item: had?.item ?? null, fetchedAt: had?.fetchedAt ?? 0, bodyAt: had?.bodyAt ?? 0 }
       this.details[link.key] = { ...keep, loading: true, quiet, error: null }
       try {
@@ -158,6 +161,15 @@ export const useLinks = defineStore('links', {
         if (jobReads.get(url) !== mine) return
         this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: false, error: message(e) }
       }
+    },
+
+    /** The network is back: read again what failed while it was gone (the open item and its check log). */
+    retryFailed() {
+      for (const [key, d] of Object.entries(this.details)) {
+        const from = sources.get(key)
+        if (d.error && !d.loading && from) void this.load({ key, url: from.url }, from.projectPath, true, true)
+      }
+      for (const [url, j] of Object.entries(this.jobs)) if (j.error && !j.loading) void this.loadJob(url)
     },
 
     /** Open an item in the tool window. */

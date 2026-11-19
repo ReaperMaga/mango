@@ -9,11 +9,12 @@ import { ThreadRow, useNow } from '@/chat'
 import { backend } from '@/remote'
 import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
+import { useNetwork } from '@/state/network'
 import { useThreads } from '@/state/threads'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { refreshAll } from '@/screens/lifecycle'
-import { projectName } from '@/screens/names'
+import { OFFLINE, projectName, reconnectingText } from '@/screens/names'
 
 
 /**
@@ -37,7 +38,10 @@ export default function Home() {
   const ids = new Set(envs.map(e => e.id))
   const chats = all.filter(th => ids.has(envOf(th.projectPath)?.hostId ?? '')).sort((a, b) => b.updatedAt - a.updatedAt)
   const waiting = chats.filter(th => th.status === 'waiting')
-  const broken = envs.filter(e => status[e.id]?.state === 'error')
+  const offline = useNetwork(st => st.online === false)
+  // Offline, every environment is out of reach: one banner says why, not one per environment.
+  const broken = offline ? [] : envs.filter(e => status[e.id]?.state === 'error')
+  const reconnecting = offline ? [] : envs.filter(e => status[e.id]?.state === 'reconnecting')
   const recent = chats.filter(th => th.status !== 'waiting')
 
   const refresh = async () => {
@@ -95,6 +99,9 @@ export default function Home() {
             </ListSection>
           )
         : null}
+
+      {offline ? <Banner title={OFFLINE.title} message={OFFLINE.message} /> : null}
+      {reconnecting.length ? <Banner message={reconnectingText(reconnecting.map(e => e.name))} /> : null}
 
       {broken.length
         ? (

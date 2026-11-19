@@ -49,10 +49,21 @@ export interface RunResult {
   stderr: string
 }
 
+/**
+ * Where a line came from in its stream, when the transport knows it (the native module does;
+ * an older build of it does not, and passes nothing).
+ */
+export interface LineInfo {
+  /** The bytes the line took in the stream: its `\n` included, before a `\r` was dropped or bad UTF-8 replaced. */
+  bytes: number
+  /** The stream ended in the middle of this line (it had no `\n`): it is the stream's last. */
+  partial?: boolean
+}
+
 export interface ExecHandlers {
   /** One complete line of stdout, without its `\n` (UTF-8 decoded on whole lines). */
-  onLine(line: string): void
-  onStderr?(line: string): void
+  onLine(line: string, info?: LineInfo): void
+  onStderr?(line: string, info?: LineInfo): void
   /** Exactly once, when the channel closes. */
   onExit?(code: number | null): void
 }

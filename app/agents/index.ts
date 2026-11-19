@@ -89,6 +89,7 @@ function ensureListening() {
     on('agent://stdout', e => dispatch(e.id, h => h.onLine(e.line))),
     on('agent://stderr', e => dispatch(e.id, h => h.onStderr?.(e.line))),
     on('agent://exit', e => dispatch(e.id, (h) => { h.onExit?.(e.code); handlers.delete(e.id) })),
+    on('agent://connection', e => dispatch(e.id, h => h.onConnection?.(e.state))),
   ]).then(() => {})
   return listening
 }
@@ -104,11 +105,23 @@ function placeOf(projectPath: string) {
     : { cwd: projectPath, remote: null }
 }
 
-function spawnFor(agent: AgentId, projectPath: string): SpawnFn {
+/**
+ * `onConnection`: a remote run lost its connection or has it back (the run goes on meanwhile);
+ * the runner shows it, whether or not the adapter cares.
+ */
+function spawnFor(agent: AgentId, projectPath: string, onConnection?: (state: 'lost' | 'back') => void): SpawnFn {
   const { cwd, remote } = placeOf(projectPath)
-  return async (args, h, env) => {
+  return async (args, given, env) => {
     await ensureListening()
     const id = await call('agent_spawn', { agent, args, cwd, env: env ?? null, ...(remote ? { remote } : {}) })
+    const h: SpawnHandlers = onConnection
+      ? {
+          onLine: line => given.onLine(line),
+          onStderr: line => given.onStderr?.(line),
+          onExit: code => given.onExit?.(code),
+          onConnection: (state) => { given.onConnection?.(state); onConnection(state) },
+        }
+      : given
     handlers.set(id, h)
     for (const deliver of backlog.get(id) ?? []) deliver(h)
     backlog.delete(id)
@@ -310,7 +323,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   /** Folders the agent moved into during this turn: their files changed too. */
   const moved = new Set<string>()
   let finish!: () => void
-  const finished = new Promise<void>(resolve => (finish = resolve))
+  let over = false
+  const finished = new Promise<void>(resolve => (finish = () => { over = true; resolve() }))
 
   const emit = (e: AgentEvent) => {
     const t = store.byId(threadId)
@@ -516,7 +530,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       sessionId: thread.sessionId ?? null,
       ...(browserMcp ? { browserMcp } : {}),
       ...(mcpServers.length ? { mcpServers } : {}),
-      spawn: spawnFor(thread.agent, workdir),
+      // Through a drop the run goes on in its environment: the chat says it is reconnecting, and stays Working.
+      spawn: spawnFor(thread.agent, workdir, (state) => { if (!over) store._setReconnecting(threadId, state === 'lost') }),
       emit,
     })
     runs.set(threadId, {
