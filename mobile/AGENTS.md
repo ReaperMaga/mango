@@ -22,6 +22,9 @@ CI=1 npx expo export --platform ios --output-dir /tmp/mango-ios   # proves the H
 npx eas-cli@latest build --profile development --platform ios     # a development build in the cloud (eas.json)
 ```
 
+TestFlight builds come from `.github/workflows/mobile.yml` (a `mobile-vX.Y.Z` tag matching `expo.version` in `app.json`,
+or a manual run); see `docs/development/mobile-release.md`.
+
 `npx expo install <pkg>` to add a dependency (it picks the SDK-compatible version). pnpm runs with
 `node-linker=hoisted` (`.npmrc`), as Expo needs.
 
