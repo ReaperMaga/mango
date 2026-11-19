@@ -5,7 +5,7 @@ import type { Message, Thread, ThreadStatus } from '~/types/chat'
 import { notificationFor, type NotifyKind } from '~/utils/notifications'
 
 /** Which of the three things (if any) a status change is. A sub-agent's chat never counts: its parent speaks for it. */
-export function kindOf(t: Thread, before: ThreadStatus, now: ThreadStatus, outcome: Message['outcome'] | undefined): NotifyKind | null {
+function kindOf(t: Thread, before: ThreadStatus, now: ThreadStatus, outcome: Message['outcome'] | undefined): NotifyKind | null {
   if (t.parentId) return null
   if (now === 'waiting') return before === 'waiting' ? null : 'needsYou'
   // Only a run that was going can finish or fail; a user's stop is neither.
@@ -17,8 +17,8 @@ export function kindOf(t: Thread, before: ThreadStatus, now: ThreadStatus, outco
 
 /**
  * Called by the threads store whenever a chat's status is set. Shows a desktop notification when it
- * is one of the moments Settings > Notifications asks for. Never throws: a notification that
- * cannot be shown must not break the chat.
+ * is one of the moments Settings > Notifications asks for. A notification that cannot be shown must not
+ * break the chat: the caller (threads._setStatus) catches anything this throws, and a refused one is dropped.
  */
 export function notifyChange(t: Thread, before: ThreadStatus, outcome: Message['outcome'] | undefined) {
   const kind = kindOf(t, before, t.status, outcome)

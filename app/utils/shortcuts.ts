@@ -64,7 +64,7 @@ const RESERVED = new Set([
   'Mod+Q', 'Mod+H', 'Mod+M', 'Mod+Enter', 'Mod+Shift+Enter', 'Mod+J',
 ])
 
-export const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform)
+const isMac = () => /Mac|iPhone|iPad/.test(navigator.platform)
 
 const SYMBOL_CODES: Record<string, string> = {
   Backquote: '`', Backslash: '\\', Comma: ',', Period: '.', Slash: '/', Semicolon: ';', Quote: '\'',
