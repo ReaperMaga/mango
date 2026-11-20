@@ -88,7 +88,6 @@ export function PullDetail({ link, detail, onOpenCheck }: PullDetailProps) {
         <View style={s.state}>
           <StateIcon size={16} strokeWidth={1.85} color={t.colors[LINK_TONE_COLORS[look.tone]]} />
           <Text variant="captionStrong" style={{ color: t.colors[LINK_TONE_COLORS[look.tone]] }}>{look.word}</Text>
-          <Text variant="caption" tone="faint" tabular numberOfLines={1} style={s.ref}>{link.owner}/{link.repo} #{link.number}</Text>
         </View>
         <Text variant="headline" selectable accessibilityRole="header">{title}</Text>
         {item
@@ -267,7 +266,6 @@ const useStyles = makeStyles(t => ({
   flex: { flex: 1, minWidth: 0 },
   head: { gap: space[2] },
   state: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  ref: { flex: 1, textAlign: 'right' },
   meta: { flexDirection: 'row', alignItems: 'center', gap: space[3] },
   comments: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 
@@ -305,7 +303,7 @@ const useStyles = makeStyles(t => ({
     borderColor: t.colors.line,
     backgroundColor: t.colors.bgPanel,
   },
-  swatch: { width: 8, height: 8, borderRadius: 4 },
+  swatch: { width: 8, height: 8, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: t.colors.lineStrong },
   swatchNone: { borderWidth: 1, borderColor: t.colors.fgFaint },
 
   description: { gap: 6 },

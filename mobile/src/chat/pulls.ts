@@ -87,7 +87,7 @@ export const labelColor = (hex: string): string | null => (/^[0-9a-f]{6}$/i.test
 
 export const MERGE_METHODS: Record<GhMergeMethod, { action: string; label: string; short: string; hint: string }> = {
   squash: { action: 'Squash and merge', label: 'Squash and merge', short: 'Squash', hint: 'All commits become one' },
-  merge: { action: 'Merge', label: 'Create a merge commit', short: 'Merge commit', hint: 'Keeps every commit, adds a merge commit' },
+  merge: { action: 'Merge', label: 'Create a merge commit', short: 'Merge', hint: 'Keeps every commit, adds a merge commit' },
   rebase: { action: 'Rebase and merge', label: 'Rebase and merge', short: 'Rebase', hint: 'Replays each commit onto the base' },
 }
 
