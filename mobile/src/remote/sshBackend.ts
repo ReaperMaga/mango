@@ -1082,6 +1082,12 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       return item
     },
 
+    async ghDetail() { throw new Error('Not built yet') },
+    async ghResolve() { throw new Error('Not built yet') },
+    async ghMerge() { throw new Error('Not built yet') },
+    async ghJob() { throw new Error('Not built yet') },
+    async ghPrCreate() { throw new Error('Not built yet') },
+
     spawnFor(agent, projectPath): SpawnFn {
       return async (args, h, vars) => {
         const p = placeOf(projectPath)

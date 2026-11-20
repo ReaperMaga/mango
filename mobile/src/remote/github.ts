@@ -1,4 +1,5 @@
 import type { LinkedItem } from '~/types/chat'
+import type { GhItem } from '~/types/ipc'
 import { tidyOutput } from './git'
 
 /**
@@ -38,7 +39,15 @@ export function ghWebUrl(ref: GhRef): string | null {
   return `https://${GITHUB_HOST}/${ref.owner}/${ref.repo}/${ref.kind === 'pr' ? 'pull' : 'issues'}/${ref.number}`
 }
 
-/** What the phone shows of an item, read from GitHub. */
+/**
+ * One pull request or issue in full, as the pull request screen shows it: the desktop's `GhItem`
+ * (`gh_item`, `src-tauri/src/github.rs`), except that the description is GitHub's Markdown source
+ * (`body`) rather than its rendered HTML: the phone renders no HTML, and `ChatMarkdown` shows the
+ * Markdown as text, links and code without fetching anything. Untrusted, like everything from GitHub.
+ */
+export type GhDetail = Omit<GhItem, 'bodyHtml'> & { body: string }
+
+/** What the phone shows of an item in the list, read from GitHub. */
 export interface GhState {
   kind: 'pr' | 'issue'
   title: string

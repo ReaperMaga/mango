@@ -421,6 +421,12 @@ export function createMockBackend(): RemoteBackend {
       return { ...found }
     },
 
+    async ghDetail() { throw new Error('Not built yet') },
+    async ghResolve() { throw new Error('Not built yet') },
+    async ghMerge() { throw new Error('Not built yet') },
+    async ghJob() { throw new Error('Not built yet') },
+    async ghPrCreate() { throw new Error('Not built yet') },
+
     spawnFor(agent, projectPath): SpawnFn {
       return simulatedSpawn(agent, projectPath)
     },
