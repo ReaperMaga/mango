@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View } from 'react-native'
-import { Trash2 } from 'lucide-react-native'
+import { GitPullRequest, Trash2 } from 'lucide-react-native'
 import { displayStatus, type Thread } from '~/types/chat'
 import { isBusy } from '@/state/threadModel'
 import { makeStyles, radius, space, useTheme } from '@/theme'
@@ -28,11 +28,13 @@ function statusNote(th: Thread): string | undefined {
  * (Working, Settled, Archived: picking Working or Settled brings an archived chat back), delete.
  * Deleting asks twice, and also deletes it in the environment, on every computer.
  */
-export function ThreadActions({ threadId, visible, onClose, onDeleted }: {
+export function ThreadActions({ threadId, visible, onClose, onDeleted, onLinks }: {
   threadId: string
   visible: boolean
   onClose: () => void
   onDeleted?: () => void
+  /** Show the chat's pull requests and issues (where linking one by hand starts). */
+  onLinks?: () => void
 }) {
   const t = useTheme()
   const s = useStyles()
@@ -95,6 +97,18 @@ export function ThreadActions({ threadId, visible, onClose, onDeleted }: {
             />
           ))}
         </ListSection>
+        {onLinks
+          ? (
+              <ListSection>
+                <ListRow
+                  title="Pull requests and issues"
+                  detail={thread.links?.length ? String(thread.links.length) : undefined}
+                  leading={<GitPullRequest size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+                  onPress={onLinks}
+                />
+              </ListSection>
+            )
+          : null}
         <ListSection footer={busy ? 'A chat can be deleted once its agent has stopped.' : undefined}>
           <ListRow
             title="Delete"
