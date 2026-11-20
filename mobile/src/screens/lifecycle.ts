@@ -4,6 +4,7 @@ import { addNetworkStateListener, getNetworkStateAsync, type NetworkState } from
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
 import { useThreads } from '@/state/threads'
+import { useLinks } from '@/state/links'
 import { backend } from '@/remote'
 import { envOf, flushRemoteChats, syncEnv } from '@/remote/chatSync'
 import type { EnvRemote } from '@/remote/types'
@@ -67,6 +68,13 @@ export const catchUp = createCatchUp({
   online: () => useNetwork.getState().online,
 })
 
+/** Catch up, then read again the pull requests and check logs that failed while the network was gone. */
+function catchUpAndRetry(): Promise<void> {
+  return catchUp().then(() => {
+    if (useNetwork.getState().online !== false) useLinks.getState().retryFailed()
+  })
+}
+
 const snapshot = (s: NetworkState): NetworkSnapshot => ({
   // Connected to a network, and not known to be cut off from the internet.
   online: s.isConnected === undefined ? null : !!s.isConnected && s.isInternetReachable !== false,
@@ -115,7 +123,7 @@ export function useAppLifecycle() {
         away = false
         void (async () => {
           await startApp()
-          await catchUp()
+          await catchUpAndRetry()
         })()
       }
     })
@@ -128,6 +136,6 @@ export function useNetworkWatch() {
   useEffect(() => watchNetwork(
     systemNetwork,
     s => useNetwork.getState().set(s.online, s.kind),
-    () => { void startApp().then(catchUp) },
+    () => { void startApp().then(catchUpAndRetry) },
   ), [])
 }
