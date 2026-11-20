@@ -9,14 +9,16 @@ The app has its own version, separate from the desktop's: `expo.version` in `mob
 You need a seat on the `averix-enterprise` Expo account, the Apple Developer Program team that owns `info.averix.mango.ios`, and the app in App Store Connect (its id is `submit.production.ios.ascAppId` in `eas.json`).
 
 1. **Signing credentials in EAS.** In `mobile/`, run `npx eas-cli@latest credentials --platform ios`, pick the `production` profile, then **Build Credentials**: let EAS create (or upload) the distribution certificate and the App Store provisioning profile. It signs in to your Apple account for this; the workflow never does.
-2. **The App Store Connect API key in EAS.** In the same menu, **App Store Connect: Manage your API Key**: let EAS create one, or upload a `.p8` key (App Store Connect > Users and Access > Integrations > Team Keys, Admin or App Manager role). EAS Submit uses it to upload builds.
-3. **The `EXPO_TOKEN` secret.** Create an access token on expo.dev (account settings > Access tokens; a robot user of the organisation is best, since its token is tied to no person) and store it in the repository:
+2. **The App Store Connect API key in EAS.** In the same menu, **App Store Connect: Manage your API Key**, then **Set up your project to use an API Key for EAS Submit**: pick a stored key, or add a `.p8` key (App Store Connect > Users and Access > Integrations > Team Keys, Admin or App Manager role). Declining the Apple sign-in is fine here. The menu says "App Store Connect API Key already set up" once the key is assigned to `info.averix.mango.ios`; the build checks exactly that, and without it `--auto-submit` fails with "App Store Connect API Keys cannot be set up in --non-interactive mode".
+3. **The `EXPO_TOKEN` secret.** Create an access token on expo.dev (organisation settings > Access tokens) for a robot user with the **Developer** role or higher; a Runner robot may not read the stored credentials ("Entity not authorized: AppleAppIdentifierEntity"). Store it in the repository:
 
    ```bash
    gh secret set EXPO_TOKEN
    ```
 
-That is the only secret the workflow reads; the Apple credentials stay in EAS. Without it the run stops at its first step. A first `eas build --platform ios --profile production` run by hand also walks you through steps 1 and 2.
+4. **The `APPLE_TEAM_ID` secret** (the 10-character team id from developer.apple.com > Membership; the macOS release uses the same one). With it, the build signs in to Apple with the key from step 2, so EAS can turn on capabilities the app gained (Push Notifications for `expo-notifications`, say) and make a new provisioning profile by itself. Without it a new capability fails the Xcode build with "Provisioning profile … doesn't include the … capability".
+
+The Apple credentials stay in EAS. Without `EXPO_TOKEN` the run stops at its first step. A first `eas build --platform ios --profile production` run by hand also walks you through steps 1 and 2.
 
 ## Ship a build
 

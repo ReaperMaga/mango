@@ -9,7 +9,7 @@
 # mobile/app.json, the one the App Store shows), separate from the desktop's vX.Y.Z tags, and
 # the tag must match it. EAS counts the build number up on its own (eas.json).
 #
-# Needs the repository secret EXPO_TOKEN. The signing certificate, provisioning profile and
+# Needs the repository secrets EXPO_TOKEN and APPLE_TEAM_ID. The signing certificate, provisioning profile and
 # App Store Connect API key live in EAS, set up once with `eas credentials` (see
 # docs/development/mobile-release.md). The job waits for EAS and fails if the build or the
 # upload does; the build's logs are on expo.dev (the link is in this job's log).
@@ -100,9 +100,13 @@ jobs:
       # app/types) and builds in its cloud. With --auto-submit it hands the finished build
       # to the production submit profile, which uploads it to App Store Connect with the API
       # key stored in EAS; the command waits for both and fails if either does.
+      # EXPO_APPLE_TEAM_ID lets EAS sign in to Apple with the App Store Connect key stored in
+      # EAS (it cannot ask for the team here). Signed in, it turns on capabilities the app
+      # gained and makes a new provisioning profile instead of failing the Xcode build.
       - name: Build (and submit to TestFlight)
         env:
           SUBMIT: ${{ github.event_name != 'workflow_dispatch' || inputs.submit }}
+          EXPO_APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           args=(--platform ios --profile production --non-interactive)
           args+=(--message "$GITHUB_REF_NAME ${GITHUB_SHA::7}")
