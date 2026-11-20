@@ -144,12 +144,15 @@ export const useThreads = defineStore('threads', {
     worktreesOf: s => (projectPath: string): string[] =>
       [...new Set(s.threads.filter(t => t.projectPath === projectPath && t.worktree).map(t => t.worktree!))],
     /**
-     * The active project's tabs, in order. `tabs` holds every project's tabs; only these
-     * are on screen, so only these may be put in a pane (closing a tab, split, Ctrl+1–9).
+     * The active project's tabs, in order, plus any chat another project has in a pane (a split of
+     * two repos). `tabs` holds every project's tabs; only these are on screen, so only these may be
+     * put in a pane (closing a tab, split, Ctrl+1–9).
      */
     visibleTabs(): string[] {
       const path = useWorkspace().activeProjectPath
-      return path ? this.tabs.filter(id => this.projectOf(id) === path) : []
+      if (!path) return []
+      return this.tabs.filter(id => this.projectOf(id) === path
+        || (!!this.byId(id) && this.panes.some(p => p.threadId === id)))
     },
     /** The pane whose tab strip holds a tab: the pane showing it, else the one it was put in, else the left one. */
     groupOf(): (id: string) => string {
