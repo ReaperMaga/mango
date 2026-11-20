@@ -4,7 +4,7 @@ import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-rou
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ellipsis, ExternalLink, GitPullRequest, RefreshCw, Unlink } from 'lucide-react-native'
 import type { GhCheck } from '~/types/ipc'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
 import { PullDetail } from '@/chat/PullDetail'
 import { PullMerge } from '@/chat/PullMerge'
@@ -190,5 +190,5 @@ const useStyles = makeStyles(t => ({
     backgroundColor: t.colors.bgCanvas,
   },
   menu: { gap: space[5] },
-  confirm: { gap: space[2], padding: space[3], borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.errorLine, backgroundColor: t.colors.errorWash },
+  confirm: { gap: space[2], padding: space[3], borderRadius: t.radius.md, borderWidth: 1, borderColor: t.colors.errorLine, backgroundColor: t.colors.errorWash },
 }))

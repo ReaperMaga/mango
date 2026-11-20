@@ -4,6 +4,7 @@ import type { SshEndpoint } from '@/ssh/types'
 import type { GhJob, GhMergeMethod } from '~/types/ipc'
 import type { GhDetail, GhRef, GhState } from './github'
 import type { ChatPicture } from './images'
+import type { AgentAuth } from './auth'
 
 /**
  * The contract between the app's state/screens and a remote environment. Implemented over SSH
@@ -134,6 +135,8 @@ export interface RemoteBackend {
   projects(env: Env, instance: string): Promise<RemoteProject[]>
   /** Which agent CLIs are installed in the instance. */
   agentsInstalled(env: Env, instance: string): Promise<AgentId[]>
+  /** Whether the installed agent CLIs are signed in (their own status commands; Claude Code and Codex, always both). */
+  agentAuth(env: Env, instance: string): Promise<AgentAuth[]>
 
   /* Chats kept in the environment: exactly the desktop's `chats_remote_*` scripts and files. */
   chatsList(at: EnvRemote): Promise<RemoteChatEntry[]>

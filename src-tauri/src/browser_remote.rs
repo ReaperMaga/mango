@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager, Url};
 
-use crate::envs::remote::{ssh_dialer_to, Origins, Tunnel};
+use crate::envs::remote::{ssh_dialer_run, Origins, Tunnel};
 use crate::envs::{hosts, parse_env_path, ssh, EnvFolder, EnvHost};
 
 #[derive(Default)]
@@ -144,11 +144,34 @@ fn tunnel(app: &AppHandle, f: &EnvFolder, inside: u16) -> Result<u16, String> {
     let listener = TcpListener::bind(("127.0.0.1", inside))
         .or_else(|_| TcpListener::bind("127.0.0.1:0"))
         .map_err(|e| format!("Could not open a local port for {}: {e}", f.instance))?;
-    let dialer = ssh_dialer_to(&host, &f.instance, &format!("TCP:127.0.0.1:{inside}"))?;
+    let dialer = ssh_dialer_run(&host, &f.instance, &relay(inside))?;
     let t = Tunnel::serve_on(listener, dialer, Origins::Loopback)?;
     let port = t.port;
     state.tunnels.lock().unwrap_or_else(|e| e.into_inner()).insert(key, t);
     Ok(port)
+}
+
+/// Instance-side argv relaying stdin and stdout to the dev server on `port` there. Dev servers
+/// that listen on "localhost" often take only `[::1]` (Node resolves it to IPv6 first), so
+/// IPv4 loopback is tried, then IPv6. socat connects before it reads anything, so a refused
+/// first try leaves the request for the second. When neither answers, the page gets a 502 that
+/// says why instead of an empty response.
+fn relay(port: u16) -> Vec<String> {
+    let script = format!(
+        "command -v socat >/dev/null 2>&1 || {{ {}; exit 0; }}; \
+         socat - TCP4:127.0.0.1:{port} 2>/dev/null || socat - 'TCP6:[::1]:{port}' 2>/dev/null || {}",
+        bad_gateway("socat is missing in this environment. Install (or update) its base component."),
+        bad_gateway(&format!("Nothing in this environment answers on port {port}. Is the dev server running?")),
+    );
+    vec!["sh".into(), "-c".into(), script]
+}
+
+/// A shell `printf` writing a whole `502 Bad Gateway` response saying `body` (plain ASCII, no `'`, `%` or `\`).
+fn bad_gateway(body: &str) -> String {
+    format!(
+        "printf 'HTTP/1.1 502 Bad Gateway\\r\\nContent-Type: text/plain; charset=utf-8\\r\\nContent-Length: {}\\r\\nConnection: close\\r\\n\\r\\n{body}\\n'",
+        body.len() + 1,
+    )
 }
 
 /* ---------- agent tools ---------- */
@@ -348,6 +371,25 @@ mod tests {
     fn reads_the_allocated_port() {
         assert_eq!(allocated_port("Allocated port 41234 for remote forward to 127.0.0.1:5000"), Some(41234));
         assert_eq!(allocated_port("Warning: Permanently added"), None);
+    }
+
+    #[test]
+    fn relay_tries_both_loopbacks() {
+        let line = relay(3000);
+        assert_eq!(line[..2], ["sh".to_string(), "-c".to_string()]);
+        let script = &line[2];
+        let v4 = script.find("TCP4:127.0.0.1:3000").unwrap();
+        let v6 = script.find("'TCP6:[::1]:3000'").unwrap();
+        assert!(v4 < v6);
+        assert!(script.contains("answers on port 3000"));
+    }
+
+    #[test]
+    fn bad_gateway_counts_its_body() {
+        let p = bad_gateway("Nope.");
+        assert!(p.starts_with("printf 'HTTP/1.1 502 Bad Gateway\\r\\n"));
+        assert!(p.contains("Content-Length: 6\\r\\n"));
+        assert!(p.ends_with("\\r\\n\\r\\nNope.\\n'"));
     }
 
     #[test]

@@ -2,31 +2,39 @@ import { useState } from 'react'
 import { View } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
 import { useShallow } from 'zustand/react/shallow'
-import { ClipboardPaste, MessagesSquare, Plus, QrCode, Server, Settings, SquarePen } from 'lucide-react-native'
-import { makeStyles, space } from '@/theme'
-import { Badge, Banner, Button, EmptyState, IconButton, ListSection, MangoMark, Spinner } from '@/ui'
+import { ClipboardPaste, Folder, MessagesSquare, Plus, QrCode, Server, Settings, SquarePen } from 'lucide-react-native'
+import { makeStyles, space, useTheme } from '@/theme'
+import { hasUnreadResult } from '~/types/chat'
+import { Badge, Banner, Button, EmptyState, IconButton, ListRow, ListSection, MangoMark, RipenessDot, Spinner, dotStatus } from '@/ui'
 import { ThreadRow, useNow } from '@/chat'
+import { shortAgo } from '@/chat/time'
 import { backend } from '@/remote'
 import { envOf } from '@/remote/chatSync'
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
+import { usePrefs } from '@/state/prefs'
 import { useThreads } from '@/state/threads'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { refreshAll } from '@/screens/lifecycle'
-import { OFFLINE, projectName, reconnectingText } from '@/screens/names'
+import { groupByProject, groupSummary } from '@/screens/homeGroups'
+import { OFFLINE, placeOf, projectName, reconnectingText } from '@/screens/names'
 
 
 /**
  * Home: chats. What needs the person first (waiting on an approval or an answer, in every
- * environment), then the latest ones, and New chat in the header. The environments themselves are
+ * environment), then a folder per project to open (or, if Settings > Chats says so, every chat
+ * newest first), and New chat in the header. The environments themselves are
  * in Settings; an unreachable one still shows here, as a banner. With nothing saved yet it teaches
  * the way in: scan the share code Mango shows on the computer, or paste its link.
  */
 export default function Home() {
   const s = useStyles()
+  const t = useTheme()
   const router = useRouter()
   const now = useNow()
+  const elsewhere = useThreads(st => st.elsewhere)
+  const homeView = usePrefs(st => st.homeView)
   const loaded = useEnvs(st => st.loaded)
   const envs = useEnvs(st => st.envs)
   const status = useEnvs(st => st.status)
@@ -43,6 +51,7 @@ export default function Home() {
   const broken = offline ? [] : envs.filter(e => status[e.id]?.state === 'error')
   const reconnecting = offline ? [] : envs.filter(e => status[e.id]?.state === 'reconnecting')
   const recent = chats.filter(th => th.status !== 'waiting')
+  const folders = homeView === 'projects' ? groupByProject(chats) : []
 
   const refresh = async () => {
     setRefreshing(true)
@@ -95,7 +104,7 @@ export default function Home() {
       {waiting.length
         ? (
             <ListSection title="Needs you" aside={<Badge label={String(waiting.length)} tone="waiting" />}>
-              {waiting.map(th => <ThreadRow key={th.id} thread={th} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
+              {waiting.map(th => <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
             </ListSection>
           )
         : null}
@@ -114,10 +123,33 @@ export default function Home() {
           )
         : null}
 
-      {recent.length
+      {homeView === 'projects' && folders.length
+        ? (
+            <ListSection title="Projects" aside={backend.real ? undefined : <Badge label="Simulated" dashed />}>
+              {folders.map((g) => {
+                const env = envs.find(e => e.id === envOf(g.path)?.hostId) ?? null
+                const unseen = !!g.top && (hasUnreadResult(g.top) || g.top.status === 'waiting')
+                return (
+                  <ListRow
+                    key={g.path}
+                    title={g.name}
+                    subtitle={`${placeOf(g.path, env)} · ${groupSummary(g)}`}
+                    detail={shortAgo(g.latest, now)}
+                    leading={g.top
+                      ? <RipenessDot status={dotStatus(g.top)} unseen={unseen} size={14} />
+                      : <Folder size={20} strokeWidth={1.75} color={t.colors.fgFaint} />}
+                    onPress={() => router.push({ pathname: '/project', params: { path: g.path } })}
+                  />
+                )
+              })}
+            </ListSection>
+          )
+        : null}
+
+      {homeView === 'latest' && recent.length
         ? (
             <ListSection title="Chats" aside={backend.real ? undefined : <Badge label="Simulated" dashed />}>
-              {recent.map(th => <ThreadRow key={th.id} thread={th} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
+              {recent.map(th => <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} projectName={projectName(th.projectPath)} now={now} onPress={() => open(th.id)} />)}
             </ListSection>
           )
         : null}

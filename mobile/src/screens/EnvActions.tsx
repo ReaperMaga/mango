@@ -3,7 +3,7 @@ import { View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { Copy, KeyRound, RefreshCw, Trash2 } from 'lucide-react-native'
 import { ssh } from '@/ssh'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Banner, Button, ButtonRow, ListRow, ListSection, Sheet, Text, TextField, haptic } from '@/ui'
 import { useEnvs } from '@/state/envs'
 import { connectionText, messageOf } from './names'
@@ -172,6 +172,6 @@ const useStyles = makeStyles(t => ({
   rename: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2] },
   save: { marginTop: 26, minHeight: 44 },
   keyBlock: { gap: space[2], alignItems: 'flex-start' },
-  well: { alignSelf: 'stretch', padding: space[3], borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.line, backgroundColor: t.colors.bgInset },
-  confirm: { gap: space[2], padding: space[3], borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.errorLine, backgroundColor: t.colors.errorWash },
+  well: { alignSelf: 'stretch', padding: space[3], borderRadius: t.radius.md, borderWidth: 1, borderColor: t.colors.line, backgroundColor: t.colors.bgInset },
+  confirm: { gap: space[2], padding: space[3], borderRadius: t.radius.md, borderWidth: 1, borderColor: t.colors.errorLine, backgroundColor: t.colors.errorWash },
 }))

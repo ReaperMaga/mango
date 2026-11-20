@@ -4,7 +4,7 @@ import { ArrowRight, ChevronDown, ChevronUp, Circle, CircleCheck, CircleDashed, 
 import type { LinkedItem } from '~/types/chat'
 import type { GhCheck, GhRunState } from '~/types/ipc'
 import type { Colors } from '@/theme'
-import { makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Badge, Banner, ListRow, ListSection, Text } from '@/ui'
 import type { LinkDetail } from '@/state/links'
 import { ChatMarkdown } from './ChatMarkdown'
@@ -270,11 +270,11 @@ const useStyles = makeStyles(t => ({
   comments: { flexDirection: 'row', alignItems: 'center', gap: 4 },
 
   skeleton: { gap: space[3], paddingTop: space[1] },
-  bone: { height: 10, borderRadius: radius.xs, backgroundColor: t.colors.bgHover },
+  bone: { height: 10, borderRadius: t.radius.xs, backgroundColor: t.colors.bgHover },
 
   facts: {
     backgroundColor: t.colors.bgPanel,
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.lineSoft,
@@ -298,7 +298,7 @@ const useStyles = makeStyles(t => ({
     minHeight: 26,
     maxWidth: '100%',
     paddingHorizontal: space[2],
-    borderRadius: radius.pill,
+    borderRadius: t.radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.line,
     backgroundColor: t.colors.bgPanel,
@@ -311,7 +311,7 @@ const useStyles = makeStyles(t => ({
   body: {
     padding: space[4],
     backgroundColor: t.colors.bgPanel,
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.lineSoft,

@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 import { Pressable, type StyleProp, type ViewStyle } from 'react-native'
 import type { LucideProps } from 'lucide-react-native'
-import { makeStyles, radius, touch, useTheme } from '@/theme'
+import { makeStyles, touch, useTheme } from '@/theme'
 import { haptic, type HapticKind } from './haptics'
 
 export interface IconButtonProps {
@@ -37,7 +37,7 @@ export function IconButton({ icon: Icon, label, onPress, size = 'md', active = f
       accessibilityState={{ disabled, selected: active || undefined }}
       style={({ pressed }) => [
         s.base,
-        { width: box, height: box, borderRadius: size === 'md' ? radius.md : radius.sm },
+        { width: box, height: box, borderRadius: size === 'md' ? t.radius.md : t.radius.sm },
         (pressed || active) && s.active,
         disabled && s.disabled,
         style,

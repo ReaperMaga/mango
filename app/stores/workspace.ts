@@ -11,12 +11,13 @@ import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
+import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
-export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite'] as const
+export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite', 'ink', 'cocoa', 'neon', 'solar'] as const
 export type ColorScheme = typeof COLOR_SCHEMES[number]
 /** Interface text size, corner roundness and animation (scales in tokens.css). */
 export const TEXT_SIZES = ['small', 'default', 'large', 'xlarge'] as const
@@ -69,35 +70,9 @@ export type FollowUp = 'queue' | 'steer'
 export type ToolCalls = 'all' | 'hide-ok' | 'hide' | 'zen'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 /** What Mango tells you about while you are elsewhere (Settings > Notifications). */
-export interface NotifyPrefs {
-  /** Master switch. */
-  enabled: boolean
-  /** A chat finished its turn. */
-  done: boolean
-  /** A chat needs an approval or an answer. */
-  needsYou: boolean
-  /** A chat's run failed. */
-  failed: boolean
-  /** Only while Mango's window is in the background or minimised. */
-  backgroundOnly: boolean
-  /** Name the chat and quote the reply; off, the notification only says what happened. */
-  preview: boolean
-  /** The system's notification sound. */
-  sound: boolean
-}
-const notifyOf = (raw: unknown): NotifyPrefs => {
-  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
-  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
-  return {
-    enabled: on(o.enabled, true),
-    done: on(o.done, true),
-    needsYou: on(o.needsYou, true),
-    failed: on(o.failed, true),
-    backgroundOnly: on(o.backgroundOnly, true),
-    preview: on(o.preview, true),
-    sound: on(o.sound, false),
-  }
-}
+/** Notification preferences: the type and the loader live in `utils/notifications.ts` (the phone shares them). */
+export type { NotifyPrefs }
+const notifyOf = notifyPrefsOf
 /** What one project overrides (Settings > Projects). Anything missing follows the global default. */
 export interface ProjectPrefs {
   /** Shown instead of the folder name. */

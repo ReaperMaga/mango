@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Animated, Linking, ScrollView, StyleSheet, View } from 'react-native'
 import { Check } from 'lucide-react-native'
 import { lexer, type Token, type Tokens } from 'marked'
-import { fonts, fontSize, makeStyles, radius, space, useReducedMotion, type, useTheme } from '@/theme'
+import { makeStyles, space, useReducedMotion, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { localImagePath } from '~/utils/imagePaths'
 import { ChatPicture } from './ChatPicture'
@@ -320,39 +320,39 @@ const useStyles = makeStyles(t => ({
   root: {},
   first: { marginTop: 0 },
   last: { marginBottom: 0 },
-  p: { marginBottom: Math.round(fontSize.body * 0.7) },
-  h: { ...type.title, fontFamily: fonts.semibold, color: t.colors.fg, marginTop: Math.round(fontSize.body * 1.2), marginBottom: Math.round(fontSize.body * 0.4) },
-  h4: { ...type.chat, fontFamily: fonts.semibold, color: t.colors.fg, marginTop: space[3], marginBottom: space[1] },
-  strong: { fontFamily: fonts.semibold },
-  em: { fontFamily: fonts.italic },
+  p: { marginBottom: Math.round(t.fontSize.body * 0.7) },
+  h: { ...t.type.title, ...t.fonts.semibold, color: t.colors.fg, marginTop: Math.round(t.fontSize.body * 1.2), marginBottom: Math.round(t.fontSize.body * 0.4) },
+  h4: { ...t.type.chat, ...t.fonts.semibold, color: t.colors.fg, marginTop: space[3], marginBottom: space[1] },
+  strong: { ...t.fonts.semibold },
+  em: { ...t.fonts.italic },
   del: { textDecorationLine: 'line-through', color: t.colors.fgMuted },
   codespan: {
-    fontFamily: fonts.mono,
-    fontSize: Math.round(fontSize.body * 0.88),
+    ...t.fonts.mono,
+    fontSize: Math.round(t.fontSize.body * 0.88),
     backgroundColor: t.colors.bgHover,
     color: t.colors.fg,
   },
   link: { color: t.colors.accentInk, textDecorationLine: 'underline', textDecorationColor: t.colors.accentLine },
-  alt: { color: t.colors.fgSubtle, fontSize: fontSize.bodySm },
+  alt: { color: t.colors.fgSubtle, fontSize: t.fontSize.bodySm },
   pre: {
-    marginBottom: Math.round(fontSize.body * 0.8),
+    marginBottom: Math.round(t.fontSize.body * 0.8),
     backgroundColor: t.colors.bgInset,
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     overflow: 'hidden',
   },
   preScroll: { paddingVertical: space[3], paddingHorizontal: space[4] },
-  code: { ...type.code, color: t.colors.fg },
+  code: { ...t.type.code, color: t.colors.fg },
   quote: {
-    marginBottom: Math.round(fontSize.body * 0.8),
+    marginBottom: Math.round(t.fontSize.body * 0.8),
     paddingLeft: space[3],
     borderLeftWidth: 1,
     borderLeftColor: t.colors.lineStrong,
     opacity: 0.92,
   },
-  list: { marginBottom: Math.round(fontSize.body * 0.8) },
+  list: { marginBottom: Math.round(t.fontSize.body * 0.8) },
   item: { flexDirection: 'row', alignItems: 'flex-start', marginVertical: 2 },
   marker: { minWidth: 20, paddingRight: 6, color: t.colors.fgFaint },
   box: {
@@ -360,7 +360,7 @@ const useStyles = makeStyles(t => ({
     height: 14,
     marginTop: 6,
     marginRight: space[2],
-    borderRadius: radius.xs,
+    borderRadius: t.radius.xs,
     borderWidth: 1.5,
     borderColor: t.colors.lineStrong,
     backgroundColor: t.colors.bgInset,
@@ -369,12 +369,12 @@ const useStyles = makeStyles(t => ({
   },
   boxOn: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   itemBody: { flex: 1, minWidth: 0 },
-  table: { marginBottom: Math.round(fontSize.body * 0.8), flexGrow: 0 },
+  table: { marginBottom: Math.round(t.fontSize.body * 0.8), flexGrow: 0 },
   tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.colors.lineSoft },
   th: { borderBottomColor: t.colors.line },
   td: { paddingVertical: 6, paddingHorizontal: 10 },
-  thText: { fontFamily: fonts.semibold },
-  hr: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.lineSoft, marginVertical: Math.round(fontSize.body * 1.2) },
+  thText: { ...t.fonts.semibold },
+  hr: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.lineSoft, marginVertical: Math.round(t.fontSize.body * 1.2) },
   caretText: { backgroundColor: t.colors.accent },
   caretBlock: { width: 7, height: 17, borderRadius: 1, backgroundColor: t.colors.accent, marginTop: 2 },
 }))

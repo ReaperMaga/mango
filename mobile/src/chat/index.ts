@@ -8,6 +8,7 @@ export { ChatApproval, type ChatApprovalProps, type ApprovalPart } from './ChatA
 export { ChatQuestion, type ChatQuestionProps, type QuestionPart } from './ChatQuestion'
 export { ChatWorking, workingActivity, type ChatWorkingProps } from './ChatWorking'
 export { ChatComposer, PERMISSION_MODES, type ChatComposerProps } from './ChatComposer'
+export { ChatContextSheet, ContextButton, ContextRing } from './ChatContext'
 export { ThreadRow, threadSubtitle, type ThreadRowProps } from './ThreadRow'
 export { ChangeRow, type ChangeRowProps, type ChangeRowFile, type ChangeKind } from './ChangeRow'
 export { shortAgo, formatDuration, useNow } from './time'

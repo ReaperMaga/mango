@@ -7,12 +7,15 @@
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
+ *   node scripts/try-agent.ts claude <cwd> --context <session id> [--model id] [--raw]
  *
  * Prints every AgentEvent as one JSON line (text deltas are coalesced).
  * Approvals are allowed automatically unless --deny is given; questions get their first option unless --dismiss is.
  * --models prints the CLI's model list (no turn, no quota) instead of running a prompt.
  * --usage prints the plan's usage limits (5-hour, weekly, …), also without a turn.
  * --commands prints the slash commands the composer offers for <cwd>, also without a turn.
+ * --context prints how full a conversation's context window is, also without a turn (run it in the
+ * conversation's own folder; Claude Code only).
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --task-output-after reads each background task's output that long after it starts (no quota);
@@ -26,7 +29,7 @@ import { readFileSync } from 'node:fs'
 import { basename, dirname, extname, resolve } from 'node:path'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
-if (!agentId || !cwd || (!prompt && !['--models', '--usage', '--commands'].some(f => process.argv.includes(f)))) {
+if (!agentId || !cwd || (!prompt && !['--models', '--usage', '--commands', '--context'].some(f => process.argv.includes(f)))) {
   console.error('usage: node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [flags]')
   process.exit(2)
 }
@@ -80,6 +83,13 @@ if (prompt === '--commands' || has('commands')) {
 
 if (prompt === '--usage' || has('usage')) {
   console.log(JSON.stringify(await adapter.readUsage(spawnCli), null, 2))
+  process.exit(0)
+}
+
+const contextOf = prompt === '--context' ? rest[0] : flag('context')
+if (contextOf) {
+  if (!adapter.readContext) throw new Error(`${agentId} cannot report the context window without a turn.`)
+  console.log(JSON.stringify(await adapter.readContext(spawnCli, contextOf, flag('model') ?? 'default'), null, 2))
   process.exit(0)
 }
 

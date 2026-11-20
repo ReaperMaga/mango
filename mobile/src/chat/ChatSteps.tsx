@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Animated, Pressable, View } from 'react-native'
 import { ChevronRight } from 'lucide-react-native'
 import type { Part, ToolKind } from '~/types/chat'
-import { easeInOut, makeStyles, radius, space, touch, useReducedMotion, useTheme } from '@/theme'
+import { easeInOut, makeStyles, space, touch, useReducedMotion, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { ChatTool } from './ChatTool'
 import { formatDuration } from './time'
@@ -120,7 +120,7 @@ const useStyles = makeStyles(t => ({
     maxWidth: '100%',
     paddingHorizontal: space[2],
     marginLeft: -space[2],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
   },
   pressed: { backgroundColor: t.colors.bgHover },
   caretOpen: { transform: [{ rotate: '90deg' }] },

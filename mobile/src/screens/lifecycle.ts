@@ -3,8 +3,10 @@ import { AppState, type AppStateStatus } from 'react-native'
 import { addNetworkStateListener, getNetworkStateAsync, type NetworkState } from 'expo-network'
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
-import { useThreads } from '@/state/threads'
+import { setStatusHook, useThreads } from '@/state/threads'
 import { useLinks } from '@/state/links'
+import { notifyChange } from '@/notify'
+import { usePrefs } from '@/state/prefs'
 import { backend } from '@/remote'
 import { envOf, flushRemoteChats, syncEnv } from '@/remote/chatSync'
 import type { EnvRemote } from '@/remote/types'
@@ -98,6 +100,13 @@ let started: Promise<void> | null = null
  */
 export function startApp(): Promise<void> {
   started ??= (async () => {
+    await usePrefs.getState().load()
+    setStatusHook(notifyChange)
+    // The chat store decides queue or steer inside `send`: hand it the preference now and when it changes.
+    useThreads.getState().setFollowUp(usePrefs.getState().followUp)
+    usePrefs.subscribe((now, before) => {
+      if (now.followUp !== before.followUp) useThreads.getState().setFollowUp(now.followUp)
+    })
     await useEnvs.getState().load()
     await useThreads.getState().load()
     void refreshAll()

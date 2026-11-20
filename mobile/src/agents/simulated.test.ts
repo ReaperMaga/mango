@@ -146,3 +146,29 @@ describe('simulated claude: background commands', () => {
     expect(events[events.length - 1]).toEqual({ type: 'turn-end', status: 'done' })
   })
 })
+
+describe('context window', () => {
+  it('fills with each turn and ends every turn with a full reading (Claude Code)', async () => {
+    const events = await drive(claudeAdapter, 'claude', 'auto')
+    const readings = events.filter(e => e.type === 'context')
+    expect(readings.length).toBeGreaterThan(1)
+    const last = readings.at(-1)!
+    expect(last.usage.max).toBe(200_000)
+    expect(last.usage.parts?.map(p => p.id)).toContain('messages')
+    // The full reading comes right before the end.
+    expect(events.at(-2)).toBe(last)
+  })
+
+  it('reports the window with each Codex turn', async () => {
+    const events = await drive(codexAdapter, 'codex', 'auto')
+    const reading = events.find(e => e.type === 'context')
+    expect(reading?.usage.max).toBe(258_400)
+  })
+
+  it('reads a resumed conversation without a turn (Claude Code only)', async () => {
+    const usage = await claudeAdapter.readContext!(simulatedSpawn('claude', PROJECT, { pace: 0 }), 'sim-resumed', 'default')
+    expect(usage.max).toBe(200_000)
+    expect(usage.used).toBeGreaterThan(0)
+    expect(codexAdapter.readContext).toBeUndefined()
+  })
+})

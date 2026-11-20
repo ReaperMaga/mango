@@ -479,6 +479,131 @@
 }
 
 /* ---------- Appearance options ---------- */
+/* Ink: no hue at all. Grey grounds and a monochrome accent: a near-white fill on dark, a near-black fill on light. */
+:root[data-scheme='ink'],
+[data-scheme='ink'] {
+  --ground-tint: 0;
+
+  --accent: oklch(0.93 0 0);
+  --accent-strong: oklch(0.99 0 0);
+  --accent-fg: oklch(0.18 0 0);
+  --accent-soft: oklch(0.93 0 0 / 0.12);
+  --accent-ink: oklch(0.90 0 0);
+  --accent-line: oklch(0.93 0 0 / 0.4);
+  --selection: oklch(0.93 0 0 / 0.2);
+  --focus-ring: oklch(0.90 0 0 / 0.75);
+}
+:root[data-theme='light'][data-scheme='ink'],
+[data-theme='light'] [data-scheme='ink'] {
+  --accent: oklch(0.24 0 0);
+  --accent-strong: oklch(0.14 0 0);
+  --accent-fg: oklch(0.98 0 0);
+  --accent-soft: oklch(0.24 0 0 / 0.08);
+  --accent-ink: oklch(0.26 0 0);
+  --accent-line: oklch(0.30 0 0 / 0.4);
+  --selection: oklch(0.24 0 0 / 0.14);
+  --focus-ring: oklch(0.26 0 0 / 0.7);
+}
+
+/* Cocoa: warm brown grounds with an oatmeal accent. Text leans cream (hue-ink) on dark; on light the grounds are cream paper. */
+:root[data-scheme='cocoa'],
+[data-scheme='cocoa'] {
+  --hue-ground: 55;
+  --hue-ink: 80;
+  --ground-tint: 1.6;
+
+  --accent: oklch(0.82 0.08 80);
+  --accent-strong: oklch(0.86 0.08 80);
+  --accent-fg: oklch(0.22 0.03 70);
+  --accent-soft: oklch(0.82 0.08 80 / 0.16);
+  --accent-ink: oklch(0.84 0.075 80);
+  --accent-line: oklch(0.82 0.08 80 / 0.5);
+  --selection: oklch(0.82 0.08 80 / 0.3);
+  --focus-ring: oklch(0.82 0.08 80 / 0.75);
+}
+:root[data-theme='light'][data-scheme='cocoa'],
+[data-theme='light'] [data-scheme='cocoa'] {
+  --accent: oklch(0.70 0.10 70);
+  --accent-strong: oklch(0.65 0.105 68);
+  --accent-fg: oklch(0.22 0.04 62);
+  --accent-soft: oklch(0.70 0.10 70 / 0.16);
+  --accent-ink: oklch(0.46 0.09 60);
+  --accent-line: oklch(0.60 0.10 68 / 0.45);
+  --selection: oklch(0.70 0.10 70 / 0.25);
+  --focus-ring: oklch(0.50 0.10 62 / 0.7);
+}
+
+/* Neon: ink-dark indigo grounds with a hot magenta accent (dark ink on the fill). Dark goes below the usual
+   steps, like Uchiha; light is pale lavender with a deeper magenta and white on the fill. */
+:root[data-scheme='neon'],
+[data-scheme='neon'] {
+  --hue-ground: 285;
+  --hue-ink: 285;
+  --ground-tint: 1.7;
+
+  --accent: oklch(0.72 0.24 340);
+  --accent-strong: oklch(0.77 0.22 340);
+  --accent-fg: oklch(0.18 0.05 340);
+  --accent-soft: oklch(0.72 0.24 340 / 0.16);
+  --accent-ink: oklch(0.80 0.16 340);
+  --accent-line: oklch(0.72 0.24 340 / 0.5);
+  --selection: oklch(0.72 0.24 340 / 0.3);
+  --focus-ring: oklch(0.76 0.22 340 / 0.8);
+}
+:root[data-theme='dark'][data-scheme='neon'],
+[data-theme='dark'] [data-scheme='neon'] {
+  --bg-app: oklch(0.13 calc(0.008 * var(--ground-tint)) var(--hue-ground));
+  --bg-canvas: oklch(0.16 calc(0.009 * var(--ground-tint)) var(--hue-ground));
+  --bg-panel: oklch(0.185 calc(0.010 * var(--ground-tint)) var(--hue-ground));
+  --bg-raised: oklch(0.225 calc(0.011 * var(--ground-tint)) var(--hue-ground));
+  --bg-hover: oklch(0.26 calc(0.013 * var(--ground-tint)) var(--hue-ground) / 0.55);
+  --bg-active: oklch(0.30 calc(0.016 * var(--ground-tint)) var(--hue-ground) / 0.7);
+  --bg-inset: oklch(0.11 calc(0.007 * var(--ground-tint)) var(--hue-ground));
+  --line: oklch(0.28 calc(0.012 * var(--ground-tint)) var(--hue-ground));
+  --line-soft: oklch(0.23 calc(0.010 * var(--ground-tint)) var(--hue-ground));
+  --line-strong: oklch(0.37 calc(0.016 * var(--ground-tint)) var(--hue-ground));
+  --term-bg: oklch(0.11 calc(0.007 * var(--ground-tint)) var(--hue-ground));
+}
+:root[data-theme='light'][data-scheme='neon'],
+[data-theme='light'] [data-scheme='neon'] {
+  --accent: oklch(0.57 0.25 340);
+  --accent-strong: oklch(0.52 0.25 340);
+  --accent-fg: oklch(0.99 0.005 340);
+  --accent-soft: oklch(0.57 0.25 340 / 0.14);
+  --accent-ink: oklch(0.50 0.23 340);
+  --accent-line: oklch(0.58 0.25 340 / 0.45);
+  --selection: oklch(0.57 0.25 340 / 0.22);
+  --focus-ring: oklch(0.52 0.24 340 / 0.7);
+}
+
+/* Solar: deep teal grounds with a gold accent. Light is cream paper (hue-ink 95) with teal-black text. */
+:root[data-scheme='solar'],
+[data-scheme='solar'] {
+  --hue-ground: 205;
+  --hue-ink: 95;
+  --ground-tint: 1.8;
+
+  --accent: oklch(0.84 0.15 95);
+  --accent-strong: oklch(0.88 0.155 95);
+  --accent-fg: oklch(0.22 0.04 95);
+  --accent-soft: oklch(0.84 0.15 95 / 0.16);
+  --accent-ink: oklch(0.85 0.13 95);
+  --accent-line: oklch(0.84 0.15 95 / 0.5);
+  --selection: oklch(0.84 0.15 95 / 0.3);
+  --focus-ring: oklch(0.84 0.15 95 / 0.75);
+}
+:root[data-theme='light'][data-scheme='solar'],
+[data-theme='light'] [data-scheme='solar'] {
+  --accent: oklch(0.80 0.15 90);
+  --accent-strong: oklch(0.75 0.15 88);
+  --accent-fg: oklch(0.22 0.04 90);
+  --accent-soft: oklch(0.80 0.15 90 / 0.18);
+  --accent-ink: oklch(0.48 0.11 85);
+  --accent-line: oklch(0.68 0.14 88 / 0.5);
+  --selection: oklch(0.80 0.15 90 / 0.3);
+  --focus-ring: oklch(0.52 0.12 85 / 0.7);
+}
+
 :root[data-text-size='small'] { --text-scale: 0.92; }
 :root[data-text-size='large'] { --text-scale: 1.08; }
 :root[data-text-size='xlarge'] { --text-scale: 1.16; }

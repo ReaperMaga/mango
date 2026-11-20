@@ -80,7 +80,22 @@ A run for a tag can only restore caches saved on that tag or on `main`, so a rel
 
 ### macOS signing
 
-The macOS app is ad-hoc signed (`bundle.macOS.signingIdentity: "-"` in `src-tauri/tauri.macos.conf.json`), which Apple Silicon needs to run it at all, but it is not signed with a Developer ID or notarized, so users confirm the first launch in System Settings (see the [install page](../guide/install#macos)). To ship a notarized build, get an Apple Developer ID Application certificate, add Tauri's `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` as secrets and pass them to the macOS builds' `tauri-action` step, and drop `signingIdentity` from the config; see [Tauri's macOS signing guide](https://tauri.app/distribute/sign/macos/).
+The release builds sign the macOS app with a Developer ID Application certificate and notarize it, using these repository secrets (the "Apple signing secrets" step exports only the ones that are set; see [Tauri's macOS signing guide](https://tauri.app/distribute/sign/macos/)):
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_CERTIFICATE` | the certificate and its private key as a `.p12`, base64-encoded |
+| `APPLE_CERTIFICATE_PASSWORD` | the `.p12`'s password |
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` |
+| `KEYCHAIN_PASSWORD` | any random string, for the build's temporary keychain |
+| `APPLE_API_KEY_P8` | an App Store Connect API key (Users and Access > Integrations > Team Keys, Developer role or higher): the `.p8` file's contents, for notarization |
+| `APPLE_API_KEY`, `APPLE_API_ISSUER` | that key's Key ID and the Issuer ID shown above the key list |
+
+Without `APPLE_CERTIFICATE` the app is unsigned; without the notarization secrets it is signed but not notarized, and the run warns either way.
+
+Tauri signs the app and the DMG, and `scripts/release-macos.sh` (tauri-action's build command on macOS) then notarizes the DMG and staples the ticket to it. The API key reaches the build as `NOTARY_*`, not `APPLE_API_*`, so Tauri does not notarize on its own: it waits on Apple with no time limit, and a slow notary queue once held a release for four hours. The script retries its uploads and status checks, and gives Apple 40 minutes (`NOTARY_TIMEOUT_MINUTES`). Past that the job fails and prints the submission id. Check it from a Mac with `xcrun notarytool info <id> --key … --key-id … --issuer …` and re-run the failed jobs once Apple is through. The first submissions from a new developer team are the slow ones; after that notarization takes minutes. The updater bundle holds the same signed app as the DMG, so it is covered by the same submission. The hardened runtime that notarization requires blocks the microphone unless the app asks for it, so `src-tauri/Entitlements.plist` carries `com.apple.security.device.audio-input` for dictation. Local builds are not signed.
+
+Make the `.p12` with `openssl pkcs12 -export -legacy …` (macOS cannot read OpenSSL 3's default format) and encode it with `base64 -i cert.p12`. The certificate expires (the date shows in Keychain Access): before then, create a new one at developer.apple.com and replace the first three secrets.
 
 ## Documentation
 

@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, View, type ScrollViewInstance } from
 import { ArrowUpRight, Bot, ChevronRight, CircleAlert, CircleCheck, CircleSlash, CircleStop, ScrollText, SquareTerminal, Activity, type LucideProps } from 'lucide-react-native'
 import type { ComponentType } from 'react'
 import type { BackgroundTask } from '~/types/chat'
-import { fonts, makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { IconButton, Sheet, Spinner, Text } from '@/ui'
 import { useNow } from './time'
 import { plainOutput, taskDetail, taskElapsed, tasksSummary } from './tasks'
@@ -201,18 +201,18 @@ const useStyles = makeStyles(t => ({
     gap: space[2],
     minHeight: touch.min,
     paddingHorizontal: space[3],
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.lineSoft,
     backgroundColor: t.colors.bgPanel,
   },
   pressed: { backgroundColor: t.colors.bgActive },
-  barTitle: { fontFamily: fonts.semibold },
+  barTitle: { ...t.fonts.semibold },
   barCount: { flex: 1 },
   list: { gap: space[2] },
   summary: { paddingHorizontal: space[1] },
-  group: { borderRadius: radius.lg, borderCurve: 'continuous', borderWidth: 1, borderColor: t.colors.line, overflow: 'hidden' },
+  group: { borderRadius: t.radius.lg, borderCurve: 'continuous', borderWidth: 1, borderColor: t.colors.line, overflow: 'hidden' },
   item: { paddingLeft: space[3], paddingRight: space[1], paddingVertical: space[2] },
   line: { flexDirection: 'row', alignItems: 'center' },
   rule: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.colors.line },
@@ -220,12 +220,12 @@ const useStyles = makeStyles(t => ({
   status: { width: 18, alignItems: 'center' },
   text: { flex: 1, minWidth: 0, gap: 2 },
   titleLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  title: { flexShrink: 1, fontFamily: fonts.medium },
+  title: { flexShrink: 1, ...t.fonts.medium },
   actions: { flexDirection: 'row', alignItems: 'center', gap: space[1], paddingLeft: space[1] },
   // Padding, not margins, keeps the box inside the row (a stretched child's margins overflow on the web).
   outWrap: { paddingTop: space[2], paddingRight: space[2], paddingLeft: 18 + space[3] },
   out: {
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: t.colors.lineSoft,
     backgroundColor: t.colors.bgInset,

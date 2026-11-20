@@ -1,4 +1,4 @@
-import type { Part } from '~/types/chat'
+import type { AgentId, ContextUsage, Part } from '~/types/chat'
 import { approvalWaiters, stopFlags, type useThreads } from '~/stores/threads'
 import { simulatedTasks } from '~/agents'
 import { baseName } from '~/utils/paths'
@@ -194,6 +194,34 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
       }
     }
   }
+  const t = thread()
+  if (t) t.context = mockContext(t.agent, t.context?.used)
   store._clearLive(threadId)
   store._setStatus(threadId, 'working', 'done')
+}
+
+/** A plausible context window after one more turn: Claude Code's breakdown, or Codex's plain total. */
+function mockContext(agent: AgentId, before = 0): ContextUsage {
+  const used = Math.min(before ? before + 18_400 : 46_200, 186_000)
+  if (agent === 'codex') return { used, max: 258_400, at: Date.now() }
+  const max = 200_000
+  const fixed = { system_prompt: 2_600, system_tools: 8_900, memory_files: 2_100, skills: 7_100 }
+  const messages = used - Object.values(fixed).reduce((a, b) => a + b, 0)
+  const buffer = 33_000
+  return {
+    used,
+    max,
+    compactAt: max - buffer,
+    model: 'claude-sonnet-5-5',
+    parts: [
+      { id: 'system_prompt', label: 'System prompt', tokens: fixed.system_prompt, kind: 'used' },
+      { id: 'system_tools', label: 'System tools', tokens: fixed.system_tools, kind: 'used' },
+      { id: 'memory_files', label: 'Memory files', tokens: fixed.memory_files, kind: 'used' },
+      { id: 'skills', label: 'Skills', tokens: fixed.skills, kind: 'used' },
+      { id: 'messages', label: 'Messages', tokens: messages, kind: 'used' },
+      { id: 'autocompact_buffer', label: 'Autocompact buffer', tokens: buffer, kind: 'buffer' },
+      { id: 'free_space', label: 'Free space', tokens: Math.max(0, max - used - buffer), kind: 'free' },
+    ],
+    at: Date.now(),
+  }
 }

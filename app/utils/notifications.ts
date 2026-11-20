@@ -1,5 +1,36 @@
 import type { Message, Part } from '~/types/chat'
-import type { NotifyPrefs } from '~/stores/workspace'
+
+export interface NotifyPrefs {
+  /** Master switch. */
+  enabled: boolean
+  /** A chat finished its turn. */
+  done: boolean
+  /** A chat needs an approval or an answer. */
+  needsYou: boolean
+  /** A chat's run failed. */
+  failed: boolean
+  /** Only while Mango's window is in the background or minimised. */
+  backgroundOnly: boolean
+  /** Name the chat and quote the reply; off, the notification only says what happened. */
+  preview: boolean
+  /** The system's notification sound. */
+  sound: boolean
+}
+
+/** Preferences from whatever was saved: every switch has a default, so older data loads. */
+export const notifyPrefsOf = (raw: unknown): NotifyPrefs => {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
+  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
+  return {
+    enabled: on(o.enabled, true),
+    done: on(o.done, true),
+    needsYou: on(o.needsYou, true),
+    failed: on(o.failed, true),
+    backgroundOnly: on(o.backgroundOnly, true),
+    preview: on(o.preview, true),
+    sound: on(o.sound, false),
+  }
+}
 
 /**
  * What is worth a desktop notification, and what it says (pure: `composables/notify.ts` sends it).

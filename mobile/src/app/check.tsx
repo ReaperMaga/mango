@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ChevronDown, ChevronRight, ExternalLink, ScrollText } from 'lucide-react-native'
 import type { LogLine, LogSpan } from '~/utils/actionsLog'
 import type { Colors } from '@/theme'
-import { fonts, makeStyles, radius, space, touch, type as typeScale, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Banner, EmptyState, IconButton, Text } from '@/ui'
 import { RUN_ICONS, RUN_MARK, RUN_TONE } from '@/chat/PullDetail'
 import { CHECK_WORD, JOB_POLL_MS, isJobUrl, jobRunning, jobWantsMore, tookMs } from '@/chat/pulls'
@@ -268,7 +268,7 @@ function Spans({ spans }: { spans: LogSpan[] }) {
           key={i}
           style={[
             sp.fg ? { color: t.colors[ANSI[sp.fg] ?? 'fgMuted'] } : null,
-            sp.bold && { fontFamily: fonts.monoSemibold },
+            sp.bold && t.fonts.monoSemibold,
             sp.dim && { opacity: 0.7 },
             sp.underline && { textDecorationLine: 'underline' },
           ]}
@@ -288,20 +288,20 @@ const useStyles = makeStyles(t => ({
   stateRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   took: { marginLeft: 'auto' },
   skeleton: { gap: space[3], paddingTop: space[3] },
-  bone: { height: 10, borderRadius: radius.xs, backgroundColor: t.colors.bgHover },
+  bone: { height: 10, borderRadius: t.radius.xs, backgroundColor: t.colors.bgHover },
   foot: { paddingTop: space[3] },
 
-  step: { flexDirection: 'row', alignItems: 'center', gap: space[2], minHeight: touch.min, paddingHorizontal: space[1], borderRadius: radius.sm },
+  step: { flexDirection: 'row', alignItems: 'center', gap: space[2], minHeight: touch.min, paddingHorizontal: space[1], borderRadius: t.radius.sm },
   stepName: { flex: 1, minWidth: 0 },
   pressed: { backgroundColor: t.colors.bgActive },
 
   well: { backgroundColor: t.colors.bgInset },
-  wellStart: { height: space[2], borderTopLeftRadius: radius.md, borderTopRightRadius: radius.md, marginTop: 2 },
-  wellEnd: { height: space[2], borderBottomLeftRadius: radius.md, borderBottomRightRadius: radius.md, marginBottom: space[2] },
+  wellStart: { height: space[2], borderTopLeftRadius: t.radius.md, borderTopRightRadius: t.radius.md, marginTop: 2 },
+  wellEnd: { height: space[2], borderBottomLeftRadius: t.radius.md, borderBottomRightRadius: t.radius.md, marginBottom: space[2] },
   omitted: { paddingHorizontal: space[3], paddingBottom: space[1] },
   line: { flexDirection: 'row', alignItems: 'flex-start', paddingRight: space[2] },
-  n: { ...typeScale.monoSm, textAlign: 'right', marginRight: space[2], color: t.colors.fgFaint, fontVariant: ['tabular-nums'] },
-  t: { ...typeScale.monoSm, flex: 1, minWidth: 0 },
+  n: { ...t.type.monoSm, textAlign: 'right', marginRight: space[2], color: t.colors.fgFaint, fontVariant: ['tabular-nums'] },
+  t: { ...t.type.monoSm, flex: 1, minWidth: 0 },
   inner: { paddingLeft: 16 },
   groupChev: { paddingTop: 3, marginRight: 4 },
 }))

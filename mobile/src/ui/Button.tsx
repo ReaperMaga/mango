@@ -1,7 +1,7 @@
 import type { ComponentType, ReactNode } from 'react'
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native'
 import type { LucideProps } from 'lucide-react-native'
-import { fonts, fontSize, makeStyles, radius, space, touch, useTheme, type Colors } from '@/theme'
+import { makeStyles, space, touch, useTheme, type Colors } from '@/theme'
 import { Text } from './Text'
 import { Spinner } from './Spinner'
 import { haptic, type HapticKind } from './haptics'
@@ -70,7 +70,7 @@ export function Button({ label, onPress, variant = 'secondary', size = 'md', ico
       <Text
         numberOfLines={1}
         maxFontSizeMultiplier={1.3}
-        style={[s.label, { color }, size === 'lg' && { fontSize: fontSize.body }]}
+        style={[s.label, { color }, size === 'lg' && { fontSize: t.fontSize.body }]}
       >
         {label}
       </Text>
@@ -90,13 +90,13 @@ const useStyles = makeStyles(t => ({
     justifyContent: 'center',
     alignSelf: 'flex-start',
     gap: space[2],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: 'transparent',
   },
   block: { alignSelf: 'stretch' },
-  label: { fontFamily: fonts.medium, fontSize: fontSize.bodySm },
+  label: { ...t.fonts.medium, fontSize: t.fontSize.bodySm },
   primary: { backgroundColor: t.colors.accent },
   primaryPressed: { backgroundColor: t.colors.accentStrong },
   secondary: { backgroundColor: t.colors.bgPanel, borderColor: t.colors.line },

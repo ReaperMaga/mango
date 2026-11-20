@@ -8,7 +8,7 @@ const remote = vi.hoisted(() => ({
 vi.mock('@/remote', () => ({ backend: { real: true, spawnFor: () => { throw new Error('no spawning here') }, gitState: async () => ({ branch: null }), ...remote } }))
 vi.mock('@/remote/chatSync', () => ({ attachRemoteChats: vi.fn(), noteSaved: vi.fn() }))
 
-const { useThreads } = await import('@/state/threads')
+const { setStatusHook, useThreads } = await import('@/state/threads')
 const { memoryChatFiles } = await import('@/state/chatHistory')
 const chatSync = await import('@/remote/chatSync')
 
@@ -128,6 +128,38 @@ describe('the chat store', () => {
     expect(store().byId('t-remote')!.title).toBe('Renamed elsewhere')
     source.drop(['t-remote'])
     expect(store().byId('t-remote')).toBeNull()
+  })
+
+  it('remembers a run another computer has going, until a newer copy says it ended', async () => {
+    await store().load(memoryChatFiles())
+    const source = vi.mocked(chatSync.attachRemoteChats).mock.calls[0]![0] as ReturnType<ReturnType<typeof store>['remoteSource']>
+    source.adopt([oldChat({ id: 't-pc', status: 'running', updatedAt: 42 })])
+    // The copy here is plain Working (nothing runs here), but the phone knows who is running it.
+    expect(store().byId('t-pc')!.status).toBe('working')
+    expect(store().elsewhere['t-pc']).toEqual({ status: 'running', at: 42 })
+    // It still takes the next copy: the chat is not "running here".
+    expect(source.busy(store().byId('t-pc')!)).toBe(false)
+    source.adopt([oldChat({ id: 't-pc', status: 'waiting', updatedAt: 50 })])
+    expect(store().elsewhere['t-pc']).toEqual({ status: 'waiting', at: 50 })
+    // The run ended there: the chat is just Working again, with no one running it.
+    source.adopt([oldChat({ id: 't-pc', status: 'working', updatedAt: 60 })])
+    expect(store().elsewhere['t-pc']).toBeUndefined()
+    source.adopt([oldChat({ id: 't-pc2', status: 'running' })])
+    expect(store().elsewhere['t-pc2']).toBeDefined()
+    // Deleting the chat forgets it too.
+    store().remove('t-pc2')
+    expect(store().elsewhere['t-pc2']).toBeUndefined()
+  })
+
+  it('never saves what it knows of another computer\'s run into the chat', async () => {
+    const files = memoryChatFiles()
+    await store().load(files)
+    const source = vi.mocked(chatSync.attachRemoteChats).mock.calls[0]![0] as ReturnType<ReturnType<typeof store>['remoteSource']>
+    source.adopt([oldChat({ id: 't-pc', status: 'running' })])
+    await store().flush()
+    const saved = JSON.parse(files.data.get('t-pc')!)
+    expect(saved.status).toBe('working')
+    expect(JSON.stringify(saved)).not.toContain('elsewhere')
   })
 
   it('reuses an untouched new chat, and keeps busy chats from being archived', async () => {
@@ -275,6 +307,30 @@ describe('the chat store', () => {
       expect(now).toMatchObject({ status: 'working', worktree: 'env://h1/dev/home/agent/shop.worktrees/slow-one' })
       // Only the user's message: no agent turn was started.
       expect(now.messages.map(m => m.role)).toEqual(['user'])
+    })
+  })
+
+  describe('status hook', () => {
+    it('hears a change with what the chat was, how it ended and what is on screen', () => {
+      const t = store().create({ projectPath: PROJECT, agent: 'claude' })
+      const heard: unknown[][] = []
+      setStatusHook((c, before, outcome, ctx) => { heard.push([c.id, before, c.status, outcome, ctx]) })
+      store()._setStatus(t.id, 'running')
+      store().setViewing(t.id)
+      store()._setStatus(t.id, 'working', 'done')
+      expect(heard).toEqual([
+        [t.id, 'working', 'running', undefined, { viewing: null, queued: 0 }],
+        [t.id, 'running', 'working', 'done', { viewing: t.id, queued: 0 }],
+      ])
+      store().setViewing(null)
+    })
+
+    it('never lets a listener that throws break the chat', () => {
+      const t = store().create({ projectPath: PROJECT, agent: 'claude' })
+      setStatusHook(() => { throw new Error('boom') })
+      expect(() => store()._setStatus(t.id, 'running')).not.toThrow()
+      expect(store().byId(t.id)!.status).toBe('running')
+      setStatusHook(null)
     })
   })
 })

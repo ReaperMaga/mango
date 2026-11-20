@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { Animated, Image, Linking, Platform, Pressable, ScrollView, TextInput, View, type TextInputInstance } from 'react-native'
+import { settingsHref } from '@/screens/settings/sections'
 import { useRouter } from 'expo-router'
 import { ArrowUp, ChevronDown, CircleAlert, FilePen, FileText, Info, Map as MapIcon, Mic, Paperclip, ShieldCheck, Square, X, Zap, type LucideProps } from 'lucide-react-native'
-import { AGENTS, effortLabel, type AgentId, type AgentModel, type PermissionMode } from '~/types/chat'
-import { easeInOut, fonts, fontSize, makeStyles, radius, space, useReducedMotion, useTheme } from '@/theme'
+import { AGENTS, effortLabel, type AgentId, type AgentModel, type ContextUsage, type PermissionMode } from '~/types/chat'
+import { easeInOut, makeStyles, space, useReducedMotion, useTheme } from '@/theme'
 import { AgentIcon, Badge, ListRow, ListSection, Sheet, Spinner, Text, haptic } from '@/ui'
 import { clock, useDictation } from '@/voice'
 import { useAgentCommands } from '@/agents/commands'
 import { ChatCommandMenu } from './ChatCommandMenu'
+import { ContextButton } from './ChatContext'
 import { commandsFor, matchCommands, pickedText, slashQuery, type CommandMatch } from './commands'
 
 /** The four permission modes, as the desktop's composer names them. */
@@ -51,6 +53,12 @@ export interface ChatComposerProps {
    * agent's CLI there for its commands; without, the list is Mango's and the built-in stand-ins.
    */
   workdir?: string | null
+  /** The chat's context window at its last reading (null: none yet, an empty ring). Left out: no ring. */
+  context?: ContextUsage | null
+  /** The context window is being read from the CLI. */
+  contextPending?: boolean
+  /** Open the context window's details (the ring). */
+  onContext?: () => void
 }
 
 /** An attachment as the composer shows it: still uploading, ready, or failed (with why). */
@@ -119,7 +127,7 @@ export function ChatComposer(props: ChatComposerProps) {
   const openFix = () => {
     dictation.clearNotice()
     if (notice?.settings === 'system') void Linking.openSettings().catch(() => {})
-    else router.push('/settings')
+    else router.push(settingsHref('voice'))
   }
 
   return (
@@ -227,6 +235,9 @@ export function ChatComposer(props: ChatComposerProps) {
               </>
             )}
         <View style={s.spacer} />
+        {props.context !== undefined && props.onContext && !dictation.busy
+          ? <ContextButton usage={props.context} pending={props.contextPending} agentName={name} onPress={props.onContext} />
+          : null}
         {disabled
           ? null
           : (
@@ -464,7 +475,7 @@ const useStyles = makeStyles(t => ({
     backgroundColor: t.colors.bgPanel,
     borderWidth: 1,
     borderColor: t.colors.line,
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     boxShadow: t.shadow.soft,
   },
@@ -475,9 +486,9 @@ const useStyles = makeStyles(t => ({
     paddingHorizontal: space[1],
     paddingTop: 0,
     paddingBottom: space[1],
-    fontFamily: fonts.regular,
-    fontSize: fontSize.body,
-    lineHeight: Math.round(fontSize.body * 1.45),
+    ...t.fonts.regular,
+    fontSize: t.fontSize.body,
+    lineHeight: Math.round(t.fontSize.body * 1.45),
     color: t.colors.fg,
     textAlignVertical: 'top',
   },
@@ -492,20 +503,20 @@ const useStyles = makeStyles(t => ({
     minHeight: 32,
     paddingLeft: space[2],
     paddingRight: 6,
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     flexShrink: 1,
     minWidth: 0,
   },
   chipPressed: { backgroundColor: t.colors.bgHover },
-  chipText: { fontFamily: fonts.medium, flexShrink: 1 },
+  chipText: { ...t.fonts.medium, flexShrink: 1 },
   send: {
     width: 36,
     height: 36,
     marginLeft: space[1],
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
   },
   sendOn: { backgroundColor: t.colors.accent },
@@ -519,18 +530,18 @@ const useStyles = makeStyles(t => ({
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
   },
   micOn: { backgroundColor: t.colors.bgActive },
   rec: { flexDirection: 'row', alignItems: 'center', gap: space[2], paddingLeft: space[1], flexShrink: 1, minWidth: 0 },
   recDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: t.colors.ripeError },
   meter: { flexDirection: 'row', alignItems: 'center', gap: 2, height: 12 },
-  level: { width: 2, borderRadius: radius.pill },
+  level: { width: 2, borderRadius: t.radius.pill },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2], paddingHorizontal: space[1], paddingBottom: space[1] },
   noticeIcon: { marginTop: 2 },
   noticeText: { flex: 1 },
-  noticeAction: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: radius.xs, marginTop: -2 },
+  noticeAction: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: t.radius.xs, marginTop: -2 },
   stopPressed: { backgroundColor: t.colors.fgMuted, transform: [{ scale: 0.94 }] },
   gap: { marginTop: space[5] },
   attach: {
@@ -538,7 +549,7 @@ const useStyles = makeStyles(t => ({
     height: 32,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
   },
   tray: { gap: space[2], paddingBottom: space[2], paddingRight: space[1] },
@@ -552,7 +563,7 @@ const useStyles = makeStyles(t => ({
     backgroundColor: t.colors.bgInset,
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
   },
   fileFailed: { borderColor: t.colors.errorLine, backgroundColor: t.colors.errorWash },
@@ -563,7 +574,7 @@ const useStyles = makeStyles(t => ({
     justifyContent: 'center',
     overflow: 'hidden',
     backgroundColor: t.colors.bgActive,
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
   },
   fileImage: { width: 36, height: 36 },

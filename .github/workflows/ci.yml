@@ -1,8 +1,10 @@
 # Checks every pull request: the version agrees everywhere, the frontend typechecks and
-# builds, the backend's tests pass with no warnings, and Windows and macOS keep compiling.
+# builds, the backend's tests pass with no warnings, Windows and macOS keep compiling, and
+# the iOS app in mobile/ typechecks and passes its tests.
 #
 # Only the parts a pull request touches run: a frontend-only change skips the Rust jobs
-# and the other way round. "CI result" sums them up and is the one check to require.
+# and the other way round, and the mobile job runs only for mobile/ and the desktop code
+# it imports. "CI result" sums them up and is the one check to require.
 #
 # rust-cache.yml calls this workflow on main (warm-cache) so the Rust caches the
 # backend jobs save there can be restored by the next pull request. A pull request's
@@ -45,6 +47,7 @@ jobs:
     outputs:
       frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs.ci == 'true' || github.event_name != 'pull_request' }}
       backend: ${{ steps.filter.outputs.backend == 'true' || github.event_name != 'pull_request' }}
+      mobile: ${{ steps.filter.outputs.mobile == 'true' || github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -52,18 +55,22 @@ jobs:
         id: filter
         if: github.event_name == 'pull_request'
         with:
-          # A file counts for the frontend unless it is backend, docs, prose or CI
+          # A file counts for the frontend unless it is backend, mobile, docs, prose or CI
           # configuration. A change to this workflow runs everything.
           predicate-quantifier: every
           filters: |
             frontend:
               - '**'
               - '!src-tauri/**'
+              - '!mobile/**'
               - '!docs/**'
               - '!**/*.md'
               - '!.github/**'
             backend:
               - '{src-tauri/**,.github/workflows/ci.yml}'
+            # mobile/ imports the desktop's agent adapters and chat types directly.
+            mobile:
+              - '{mobile/**,app/agents/**,app/types/**,.github/workflows/ci.yml}'
             ci:
               - '.github/workflows/ci.yml'
 
@@ -101,6 +108,38 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+  # The iOS app: its own package and lockfile. mobile.yml builds it with EAS; this only
+  # typechecks and tests, which needs no Mac.
+  mobile:
+    name: Mobile
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true' && !inputs.warm-cache
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: mobile/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
 
   backend-linux:
     name: Backend (Linux)
@@ -213,7 +252,7 @@ jobs:
 
   result:
     name: CI result
-    needs: [changes, frontend, backend-linux, backend-windows, backend-macos]
+    needs: [changes, frontend, mobile, backend-linux, backend-windows, backend-macos]
     if: always()
     runs-on: ubuntu-latest
     steps:

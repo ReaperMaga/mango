@@ -5,16 +5,20 @@ import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
 import { AGENTS, type BackgroundTask, type LinkedItem, type Message, type Thread } from '~/types/chat'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
-import { ChatComposer, ChatMessage, ChatWorking } from '@/chat'
+import { ChatComposer, ChatContextSheet, ChatMessage, ChatWorking } from '@/chat'
 import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
 import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
 import { envOf } from '@/remote/chatSync'
+import { LIVE_CHAT_MS } from '@/screens/livePoll'
+import { useLiveChats } from '@/screens/useLiveChats'
 import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
 import { isBusy, useThreads, type QueuedMessage } from '@/state/threads'
+import { usePrefs } from '@/state/prefs'
+import type { ToolCalls } from '@/state/prefsModel'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { useAttachments, type AttachSource } from '@/screens/useAttachments'
 import { placeOf, projectName, reconnectingText } from '@/screens/names'
@@ -41,6 +45,11 @@ export default function ChatScreen() {
   const draft = useThreads(st => st.drafts[id] ?? '')
   const queue = useThreads(st => st.queue[id])
   const live = useThreads(st => st.live[id])
+  const elsewhere = useThreads(st => st.elsewhere[id] ?? null)
+  const toolCalls = usePrefs(st => st.toolCalls)
+  const contextPending = useThreads(st => st.contextReading[id])
+  // A chat from before Mango kept context readings gets one when it opens (no turn is run).
+  useEffect(() => { void useThreads.getState().readContext(id) }, [id])
   // A sub-agent's chat shows the links of the chat that started it, as on the desktop.
   const root = useThreads(st => (st.threads[id] ? st.rootOf(id) : null))
   const links = root?.links ?? NO_LINKS
@@ -53,11 +62,15 @@ export default function ChatScreen() {
   const [attachMenu, setAttachMenu] = useState(false)
   const [tasksOpen, setTasksOpen] = useState(false)
   const [linksOpen, setLinksOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(false)
   const linkDetails = useLinkDetails(root?.id ?? id, root?.projectPath ?? null, links, linksOpen)
   const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
   const list = useRef<FlatList<Message>>(null)
   const atBottom = useRef(true)
+
+  // A run on another computer, and its end, show up here without a pull to refresh.
+  useLiveChats(thread?.projectPath, LIVE_CHAT_MS, true)
 
   useFocusEffect(useCallback(() => {
     useThreads.getState().setViewing(id)
@@ -163,6 +176,7 @@ export default function ChatScreen() {
             message={item}
             thread={thread}
             last={index === thread.messages.length - 1}
+            toolCalls={toolCalls}
             onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
           />
         )}
@@ -197,6 +211,7 @@ export default function ChatScreen() {
           <View style={s.foot}>
             {queue?.length ? queue.map(q => <Queued key={q.id} q={q} threadId={id} running={busy} />) : null}
             {busy ? <ChatWorking thread={thread} waitingOnTasks={tasksLeft} reconnectingTo={live?.reconnecting ? env?.name ?? 'the environment' : null} /> : null}
+            {!busy && elsewhere ? <ChatWorking thread={thread} elsewhere={elsewhere} /> : null}
             {live?.tasks.length ? <ChatTasks tasks={live.tasks} onPress={() => setTasksOpen(true)} /> : null}
           </View>
         )}
@@ -232,6 +247,9 @@ export default function ChatScreen() {
           attachments={files.files}
           onAttach={readOnly ? undefined : () => setAttachMenu(true)}
           onRemoveAttachment={files.remove}
+          context={readOnly ? undefined : thread.context ?? null}
+          contextPending={!!contextPending}
+          onContext={() => setContextOpen(true)}
         />
       </View>
       <Sheet visible={attachMenu} onClose={() => setAttachMenu(false)} title="Attach">
@@ -249,6 +267,16 @@ export default function ChatScreen() {
         readOutput={readOutput}
         childOf={subagentChat}
         onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
+      />
+      <ChatContextSheet
+        visible={contextOpen}
+        onClose={() => setContextOpen(false)}
+        usage={thread.context ?? null}
+        pending={!!contextPending}
+        agentName={agentName}
+        running={busy}
+        // Not through `send`: the draft and its attachments stay for the next message.
+        onCompact={() => { atBottom.current = true; void store.send(id, '/compact') }}
       />
       <ChatLinksSheet
         visible={linksOpen}
@@ -286,19 +314,20 @@ function subagentChat(task: BackgroundTask): string | null {
  * One message. Kept from re-rendering while another message streams: a chat's snapshot changes on
  * every chunk, but only the message being written (and the last one's live state) needs drawing.
  */
-const Item = memo(function Item({ message, thread, last, onOpenChild }: { message: Message; thread: Thread; last: boolean; onOpenChild: (id: string) => void }) {
+const Item = memo(function Item({ message, thread, last, toolCalls, onOpenChild }: { message: Message; thread: Thread; last: boolean; toolCalls: ToolCalls; onOpenChild: (id: string) => void }) {
   const store = useThreads.getState()
   return (
     <ChatMessage
       message={message}
       thread={thread}
       last={last}
+      toolCalls={toolCalls}
       onResolveApproval={(i, allow) => store.resolveApproval(thread.id, message.id, i, allow)}
       onAnswerQuestion={(i, answers) => store.answerQuestion(thread.id, message.id, i, answers)}
       onOpenChild={onOpenChild}
     />
   )
-}, (a, b) => a.message === b.message && a.last === b.last && a.thread.agent === b.thread.agent
+}, (a, b) => a.message === b.message && a.last === b.last && a.toolCalls === b.toolCalls && a.thread.agent === b.thread.agent
   && (!b.last || a.thread.status === b.thread.status))
 
 /** A message written while the agent works: it goes out when the turn ends, or now if asked. */
@@ -337,8 +366,8 @@ const useStyles = makeStyles(t => ({
     maxWidth: '88%',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: radius.xs,
+    borderRadius: t.radius.lg,
+    borderBottomRightRadius: t.radius.xs,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderStyle: 'dashed',

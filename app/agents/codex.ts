@@ -2,6 +2,7 @@ import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, codexMcp } from './mcp.ts'
+import { codexContext } from './context.ts'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -82,7 +83,6 @@ const POLICIES: Record<PermissionMode, Policy> = {
 
 /** Notifications this adapter has no use for; the server skips sending them. */
 const UNUSED_NOTIFICATIONS = [
-  'thread/tokenUsage/updated',
   'account/rateLimits/updated',
   'mcpServer/startupStatus/updated',
   'remoteControl/status/changed',
@@ -605,6 +605,11 @@ function run(options: AgentRunOptions): AgentRun {
     if (closing && method !== 'item/completed') return
 
     switch (method) {
+      case 'thread/tokenUsage/updated': {
+        const usage = codexContext(p.tokenUsage)
+        if (usage) emit({ type: 'context', usage })
+        break
+      }
       case 'turn/started':
         if (p.turn?.id && !turnId) { turnId = p.turn.id; if (stopRequested) sendInterrupt() }
         break

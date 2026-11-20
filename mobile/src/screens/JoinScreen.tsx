@@ -4,7 +4,7 @@ import { Stack, useRouter } from 'expo-router'
 import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as Clipboard from 'expo-clipboard'
 import { ClipboardPaste, QrCode, ScanLine } from 'lucide-react-native'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Banner, Button, ListRow, ListSection, Spinner, Text, TextField, haptic } from '@/ui'
 import { ListGround } from '@/ui/List'
 import { joinLinkOf } from '@/remote/shareLink'
@@ -222,7 +222,7 @@ const useStyles = makeStyles(t => ({
   cameraWrap: { gap: space[2] },
   frame: {
     width: '100%',
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     overflow: 'hidden',
     backgroundColor: t.colors.bgInset,

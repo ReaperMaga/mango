@@ -1,5 +1,6 @@
 import type { AgentId, Thread } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
+import type { AgentAuth } from './auth'
 import { mockChats } from './mockChats'
 import {
   ghDetailArgv, ghFailure, ghItemArgv, ghMergeArgv, ghPrCreateArgv, parseJobUrl, parseReference, targetOf, targetOfRef,
@@ -301,6 +302,16 @@ export function createMockBackend(): RemoteBackend {
       await wait(60, 160)
       running(env, instance)
       return ['claude', 'codex']
+    },
+
+    async agentAuth(env, instance): Promise<AgentAuth[]> {
+      await wait(200, 500)
+      running(env, instance)
+      const blank = { installed: true, loggedIn: false, account: null, plan: null, organization: null, method: null, detail: null }
+      return [
+        { ...blank, agent: 'claude', loggedIn: true, account: 'you@example.com', plan: 'max', method: 'claude.ai' },
+        { ...blank, agent: 'codex', detail: 'Not logged in' },
+      ]
     },
 
     async chatsList(at): Promise<RemoteChatEntry[]> {
