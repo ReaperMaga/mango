@@ -98,7 +98,7 @@ export function ChatChanges({ message, thread }: ChatChangesProps) {
           variant="ghost"
           size="sm"
           accessibilityHint="Opens Changes for this chat's folder"
-          onPress={() => router.push({ pathname: '/changes', params: { path: workdir } })}
+          onPress={() => router.push({ pathname: '/changes', params: { path: workdir, chat: thread.id } })}
           style={s.review}
         />
       </View>
