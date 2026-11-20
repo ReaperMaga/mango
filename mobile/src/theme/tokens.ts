@@ -85,6 +85,17 @@ export interface Colors {
 
   /** Claude's brand orange: only the agent logo uses it, as on the desktop (`--brand-claude`). */
   brandClaude: string
+
+  /** The terminal's ANSI palette (`--term-*`): colours in a GitHub Actions log, as the desktop shows them. */
+  termRed: string
+  termGreen: string
+  termYellow: string
+  termBlue: string
+  termMagenta: string
+  termCyan: string
+  termBrightBlack: string
+  /** `color-mix(in oklch, term-yellow 9%, transparent)`: a warning line in a log. */
+  termYellowWash: string
 }
 
 const dark: Colors = {
@@ -146,6 +157,15 @@ const dark: Colors = {
   chipError: 'rgba(255, 125, 124, 0.14)',
 
   brandClaude: '#d97757',
+
+  termRed: '#f0766b',
+  termGreen: '#8fcf9a',
+  termYellow: '#f4c062',
+  termBlue: '#7fb2f0',
+  termMagenta: '#d39af0',
+  termCyan: '#78d0c8',
+  termBrightBlack: '#5d6b64',
+  termYellowWash: 'rgba(244, 192, 98, 0.09)',
 }
 
 const light: Colors = {
@@ -207,6 +227,15 @@ const light: Colors = {
   chipError: 'rgba(183, 24, 36, 0.14)',
 
   brandClaude: '#d97757',
+
+  termRed: '#c4362c',
+  termGreen: '#2e8a4a',
+  termYellow: '#a86a00',
+  termBlue: '#2a64b8',
+  termMagenta: '#8e3fb0',
+  termCyan: '#11807a',
+  termBrightBlack: '#6b7570',
+  termYellowWash: 'rgba(168, 106, 0, 0.09)',
 }
 
 /**
