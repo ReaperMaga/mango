@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseShared } from './chatSyncCore'
 import { MOCK_ENVS, createMockBackend } from './mockBackend'
 import { validHostKey } from './shareLink'
@@ -51,5 +51,56 @@ describe('mock backend', () => {
     expect(await b.gitState(wt.path)).toMatchObject({ repo: true, branch: 'fix-login', changes: [] })
     expect((await b.gitWorktrees(path)).worktrees.map(w => w.branch)).toEqual(['main', 'fix-login'])
     await expect(b.gitWorktreeAdd(path, 'fix-login')).rejects.toThrow(/already exists/)
+  })
+
+  afterEach(() => { vi.useRealTimers() })
+
+  it('shows pull requests in full: checks, jobs with logs, merging, linking and opening', async () => {
+    // The mock's delays pass at once.
+    vi.useFakeTimers({ now: Date.now() })
+    const settle = async <T>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {})
+      await vi.advanceTimersByTimeAsync(2000)
+      return p
+    }
+    const b = createMockBackend()
+    const shop = 'env://mock-forge/dev/home/agent/work/shop-api'
+    const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop-api', number: 134 }
+    const pr = await settle(b.ghDetail(shop, ref))
+    expect(pr).toMatchObject({ state: 'open', mergeState: 'unstable', canMerge: true, defaultMergeMethod: 'squash' })
+    expect(pr.body).toMatch(/^## Why/)
+    expect(new Set(pr.checkRuns.map(c => c.state))).toEqual(new Set(['success', 'failure', 'pending', 'skipped']))
+    expect(pr.checkRuns.some(c => c.workflow === null && c.description)).toBe(true)
+
+    const failing = await settle(b.ghJob(shop, pr.checkRuns.find(c => c.state === 'failure')!.url!))
+    expect(failing).toMatchObject({ state: 'failure', logReady: true })
+    const lines = failing.steps.flatMap(s => s.lines)
+    expect(lines.some(l => l.startsWith('##[group]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('##[error]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('##[warning]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('[command]'))).toBe(true)
+    expect(lines.some(l => l.includes('\x1b['))).toBe(true)
+    // Every step that ran got its own lines from the split.
+    expect(failing.steps.filter(s => s.state !== 'skipped').every(s => s.lines.length > 0)).toBe(true)
+    const running = await settle(b.ghJob(shop, pr.checkRuns.find(c => c.state === 'pending')!.url!))
+    expect(running).toMatchObject({ state: 'pending', logReady: false })
+    expect(running.steps.some(s => s.state === 'pending') && running.steps.some(s => s.state === 'queued')).toBe(true)
+
+    await expect(settle(b.ghMerge(shop, ref, 'squash', '0'.repeat(40)))).rejects.toThrow(/new commits/)
+    await settle(b.ghMerge(shop, ref, 'squash', pr.headSha!))
+    expect((await settle(b.ghDetail(shop, ref))).state).toBe('merged')
+    expect((await settle(b.ghItem(shop, ref))).state).toBe('merged')
+
+    expect((await settle(b.ghResolve(shop, '#97'))).kind).toBe('issue')
+    expect((await settle(b.ghResolve(shop, 'https://github.com/acme/shop-api/pull/128'))).state).toBe('merged')
+    await expect(settle(b.ghResolve(shop, '#999'))).rejects.toThrow('There is no pull request or issue #999 in acme/shop-api.')
+    await expect(settle(b.ghResolve(shop, 'https://gitlab.com/a/b/pull/1'))).rejects.toThrow(/github\.com/)
+    await expect(settle(b.ghDetail(shop, { ...ref, repo: 'shop-admin', number: 42 }))).rejects.toThrow(/not signed in/)
+
+    const opened = await settle(b.ghPrCreate(shop, null))
+    expect(opened).toMatchObject({ state: 'open', headRef: 'feat/orders', baseRef: 'main', owner: 'acme', repo: 'shop-api' })
+    expect((await settle(b.ghPrCreate(shop, 'main'))).number).toBe(opened.number)
+    await expect(settle(b.ghPrCreate('env://mock-forge/dev/home/agent/work/mango', null))).rejects.toThrow(/no commits/)
+    await expect(settle(b.ghPrCreate(shop, '--force'))).rejects.toThrow(/not a valid branch name/)
   })
 })
