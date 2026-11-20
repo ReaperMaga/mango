@@ -359,4 +359,98 @@ describe('ssh backend', () => {
     })
     expect(calls).toHaveLength(1)
   })
+
+  it('reads a pull request in full with gh from the agent\'s home, and resolves #N from the remotes in one more call', async () => {
+    const answer = JSON.stringify({ data: { repository: { viewerPermission: 'WRITE', squashMergeAllowed: true, issueOrPullRequest: {
+      __typename: 'PullRequest', title: 'Fix', number: 12, state: 'OPEN', isDraft: false, body: '## Hi', headRefOid: H,
+    } } } })
+    const { b, calls } = backendWith((command) => {
+      if (command.includes(' remote -v')) return { code: 0, stdout: batchOut([{ code: 0, stdout: 'origin\tgit@github.com:acme/shop.git (fetch)\norigin\tgit@github.com:acme/shop.git (push)\n' }]), stderr: '' }
+      return { code: 0, stdout: answer, stderr: '' }
+    })
+    const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop', number: 12 }
+    const d = await b.ghDetail('env://h/dev/home/agent/work/shop', ref)
+    expect(d).toMatchObject({ kind: 'pr', title: 'Fix', body: '## Hi', state: 'open', mergeMethods: ['squash'], canMerge: true })
+    expect(calls).toHaveLength(1)
+    const c = calls[0]!.command
+    expect(c).toContain(' GH_PROMPT_DISABLED=1 ')
+    expect(c).toContain(' mango /home/agent gh api graphql --hostname github.com -f owner=acme -f name=shop -F number=12 ')
+    // The query is one quoted word.
+    expect(c).toContain(" 'query=query($owner: String!, $name: String!, $number: Int!) {")
+
+    expect((await b.ghResolve('env://h/dev/home/agent/work/shop', ' #12 ')).number).toBe(12)
+    expect(calls).toHaveLength(3)
+    expect(calls[1]!.command).toContain(" mango /home/agent/work/shop bash -c ")
+    expect(calls[2]!.command).toContain(' -f owner=acme -f name=shop -F number=12 ')
+    await b.ghResolve('env://h/dev/home/agent/work/shop', 'https://github.com/other/repo/pull/3')
+    expect(calls).toHaveLength(4)
+    // Refused before anything is sent.
+    await expect(b.ghResolve('env://h/dev/x', 'https://gitlab.com/a/b/pull/1')).rejects.toThrow(/github\.com/)
+    await expect(b.ghResolve('env://h/dev/x', 'a;rm/b#1')).rejects.toThrow(/Paste a pull request/)
+    await expect(b.ghDetail('env://h/dev/x', { ...ref, owner: 'a;rm' })).rejects.toThrow(/github\.com/)
+    expect(calls).toHaveLength(4)
+  })
+
+  it('merges with the sha, and words a refusal', async () => {
+    const { b, calls } = backendWith(() => ({ code: 1, stdout: '{"message":"Head branch was modified."}', stderr: 'gh: Head branch was modified. (HTTP 409)' }))
+    const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop', number: 12 }
+    await expect(b.ghMerge('env://h/dev/x', ref, 'squash', H)).rejects.toThrow(/new commits/)
+    expect(calls[0]!.command).toContain(` gh api --hostname github.com --method PUT repos/acme/shop/pulls/12/merge -f merge_method=squash -f sha=${H}`)
+    await expect(b.ghMerge('env://h/dev/x', ref, 'octopus' as never, H)).rejects.toThrow(/not a merge method/)
+    await expect(b.ghMerge('env://h/dev/x', { ...ref, kind: 'issue' }, 'squash', H)).rejects.toThrow(/Only a pull request/)
+    expect(calls).toHaveLength(1)
+  })
+
+  it('reads a finished job and its log in one round trip, and marks a capped log', async () => {
+    const job = { id: 2, name: 'build', status: 'completed', conclusion: 'success', html_url: '', steps: [
+      { number: 1, name: 'Set up job', status: 'completed', conclusion: 'success', started_at: '2026-11-16T20:29:33Z', completed_at: '2026-11-16T20:29:35Z' },
+    ] }
+    const url = 'https://github.com/o/r/actions/runs/1/job/2'
+    let { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(job) }, { code: 0, stdout: '2026-11-16T20:29:34.0Z \x1b[32mhello\x1b[0m\n' }]), stderr: '' }))
+    const j = await b.ghJob('env://h/dev/x', url)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.command).toContain(' mango /home/agent bash -c ')
+    expect(calls[0]!.command).toContain(' env GH_PROMPT_DISABLED=1 ')
+    expect(calls[0]!.command).toContain(' gh api --hostname github.com repos/o/r/actions/jobs/2 ')
+    expect(calls[0]!.command).toContain(' mango-job repos/o/r/actions/jobs/2 1')
+    expect(j).toMatchObject({ logReady: true, logTruncated: false, logError: null, url })
+    expect(j.steps[0]!.lines).toEqual(['\x1b[32mhello\x1b[0m'])
+
+    // Capped: the header says one byte more than came, and gh died of the closed pipe.
+    const cap = 8 * 1024 * 1024
+    const capped = `MANGO-RUN 141 ${cap + 1} 0\n${toBase64(utf8Encode('2026-11-16T20:29:34.0Z x\n'.padEnd(cap, 'y')))}\n\n`;
+    ({ b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(job) }]) + capped, stderr: '' })))
+    expect(await b.ghJob('env://h/dev/x', url)).toMatchObject({ logReady: true, logTruncated: true })
+
+    // An old gh without the flag: once more without it.
+    ;({ b, calls } = backendWith((_c, n) => n === 1
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(job) }, { code: 1, stderr: 'unknown flag: --allow-escape-sequences' }]), stderr: '' }
+      : { code: 0, stdout: batchOut([{ code: 0, stdout: '2026-11-16T20:29:34.0Z plain\n' }]), stderr: '' }))
+    expect((await b.ghJob('env://h/dev/x', url)).steps[0]!.lines).toEqual(['plain'])
+    expect(calls[1]!.command).toContain(' mango-job repos/o/r/actions/jobs/2 0')
+
+    // Running: no log asked for (JOB_LOG exits 75), none expected.
+    ;({ b } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify({ ...job, status: 'in_progress' }) }, { code: 75 }]), stderr: '' })))
+    expect(await b.ghJob('env://h/dev/x', url)).toMatchObject({ state: 'pending', logReady: false, logError: null })
+
+    // Expired log.
+    ;({ b } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(job) }, { code: 1, stderr: 'gh: Gone (HTTP 410)' }]), stderr: '' })))
+    expect((await b.ghJob('env://h/dev/x', url)).logError).toMatch(/expired/)
+    await expect(b.ghJob('env://h/dev/x', 'https://ci.example.com/9')).rejects.toThrow(/not a GitHub Actions job/)
+  })
+
+  it('opens a pull request in the project folder through the login shell, then reads it back', async () => {
+    const answer = JSON.stringify({ data: { repository: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Feat y', number: 7, state: 'OPEN' } } } })
+    const { b, calls } = backendWith((_c, n) => n === 1
+      ? { code: 1, stdout: '', stderr: 'MANGO-BRANCH:feat/y\na pull request for branch "feat/y" into branch "main" already exists:\nhttps://github.com/acme/shop/pull/7\n' }
+      : { code: 0, stdout: answer, stderr: '' })
+    const d = await b.ghPrCreate('env://h/dev/home/agent/work/shop', 'main')
+    expect(d).toMatchObject({ number: 7, owner: 'acme', repo: 'shop', title: 'Feat y' })
+    expect(calls[0]!.command).toContain(' bash -lc ')
+    expect(calls[0]!.command).toContain(' mango /home/agent/work/shop sh -c ')
+    expect(calls[0]!.command.endsWith(' mango-pr main')).toBe(true)
+    expect(calls[1]!.command).toContain(' -F number=7 ')
+    await expect(b.ghPrCreate('env://h/dev/home/agent/work/shop', '-x')).rejects.toThrow(/not a valid branch name/)
+    expect(calls).toHaveLength(2)
+  })
 })

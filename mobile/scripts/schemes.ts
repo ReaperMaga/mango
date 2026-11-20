@@ -146,6 +146,7 @@ const COLOR_TOKENS = [
   'diff-add-bg', 'diff-add-fg', 'diff-del-bg', 'diff-del-fg',
   'scrim', 'selection', 'focus-ring',
   'file-blue', 'file-yellow', 'file-orange', 'file-green', 'file-purple', 'file-red',
+  'term-red', 'term-green', 'term-yellow', 'term-blue', 'term-magenta', 'term-cyan', 'term-bright-black',
 ]
 
 export type Palette = Record<string, string>
@@ -179,6 +180,11 @@ export function palette(rules: Rule[], theme: Theme, scheme: Scheme): { colors: 
   colors.chipQueued = withAlpha('ripe-queued-fg', 0.14)
   colors.chipError = withAlpha('ripe-error-fg', 0.14)
   colors.brandClaude = get('brand-claude')
+  // A warning line in a GitHub Actions log: `color-mix(in oklch, var(--term-yellow) 9%, transparent)`.
+  // The terminal colours are plain hex in tokens.css, so the mix is the colour at 9% alpha.
+  const term = get('term-yellow')
+  if (!/^#[0-9a-f]{6}$/i.test(term)) throw new Error(`--term-yellow is not #rrggbb: ${term}`)
+  colors.termYellowWash = rgba([1, 3, 5].map(i => parseInt(term.slice(i, i + 2), 16)), 0.09)
 
   return { colors, shadow: { pop: shadowToken(get('shadow-pop'), vars), soft: shadowToken(get('shadow-soft'), vars) } }
 }

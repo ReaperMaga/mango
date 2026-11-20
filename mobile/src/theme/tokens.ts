@@ -98,6 +98,17 @@ export interface Colors {
   fileGreen: string
   filePurple: string
   fileRed: string
+
+  /** The terminal's ANSI palette (`--term-*`): colours in a GitHub Actions log, as the desktop shows them. */
+  termRed: string
+  termGreen: string
+  termYellow: string
+  termBlue: string
+  termMagenta: string
+  termCyan: string
+  termBrightBlack: string
+  /** `color-mix(in oklch, term-yellow 9%, transparent)`: a warning line in a log. */
+  termYellowWash: string
 }
 
 /**
