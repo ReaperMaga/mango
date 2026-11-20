@@ -16,7 +16,13 @@ import {
   validEnvKey, validInstance, validInstanceDir,
 } from './shell'
 import { IMAGE_READ, MAX_IMAGE_BYTES, checkedPicturePath, parsePicture } from './images'
-import { GH_ENV, ghFailure, ghItemArgv, parseGhItem } from './github'
+import {
+  GH_ENV, GITHUB_HOST, JOB_RUNNING, LOG_CAP, NO_REPO,
+  createdTarget, detailFailure, ghDetailArgv, ghFailure, ghItemArgv, ghJobArgv, ghJobLogArgv, ghMergeArgv, ghPrCreateArgv,
+  jobFailure, jobFromJson, jobLogFailure, mergeFailure, parseGhDetail, parseGhItem, parseJobUrl, parseReference, prCreateFailure,
+  projectRepo, splitLog, targetOf, targetOfRef, unknownFlag,
+  type GhDetail, type GhTarget,
+} from './github'
 import type {
   Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
@@ -36,6 +42,10 @@ import type {
 const LOCAL_TIMEOUT = 120_000
 /** Push and commit (hooks may run a test suite). */
 const SLOW_TIMEOUT = 600_000
+/** A gh call (the desktop's `github.rs` allows the same). */
+const GH_TIMEOUT = 45_000
+/** `gh` with its environment, as one command of the batch (`runAll` passes no variables). */
+const ghBatch = (argv: readonly string[]) => ['env', ...GH_ENV.map(([k, v]) => `${k}=${v}`), ...argv]
 const MAX_IDS = 500
 
 export interface SshBackendDeps {
@@ -733,6 +743,15 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     return outs
   }
 
+  /** One pull request or issue in full, read with gh from the agent's home (the folder may be gone; gh needs no repository). */
+  async function readDetail(projectPath: string, t: GhTarget): Promise<GhDetail> {
+    const argv = ghDetailArgv(t)
+    const { hostId, instance } = parseProjectPath(projectPath)
+    const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT })
+    if (r.code !== 0) throw new Error(detailFailure(instance, t, r.code, r.stderr, r.stdout))
+    return parseGhDetail(r.stdout, t, instance)
+  }
+
   const folderKey = (p: Place) => `${p.env.id}\0${p.instance}\0${p.dir}`
 
   /** The work tree root a git command needs, from the cache or one `rev-parse`. */
@@ -1082,11 +1101,87 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       return item
     },
 
-    async ghDetail() { throw new Error('Not built yet') },
-    async ghResolve() { throw new Error('Not built yet') },
-    async ghMerge() { throw new Error('Not built yet') },
-    async ghJob() { throw new Error('Not built yet') },
-    async ghPrCreate() { throw new Error('Not built yet') },
+    async ghDetail(projectPath, ref) {
+      return readDetail(projectPath, targetOfRef(ref))
+    },
+
+    async ghResolve(projectPath, reference) {
+      const parsed = parseReference(reference)
+      let repo = { owner: '', repo: '' }
+      if (parsed.kind === 'number') {
+        // A bare number is in the project's own repository, read from its remotes in the folder.
+        const [o] = await runAll(placeOf(projectPath), [{ argv: gitRead(['remote', '-v']), cap: 1024 * 1024 }])
+        let list: string | null = text(o!)
+        if (!ok(o!)) {
+          if (!utf8Decode(o!.stderr).toLowerCase().includes('not a git repository')) throw new Error(`${NO_REPO} (${errorOf(o!, 'git remote')})`)
+          list = null
+        }
+        repo = projectRepo(list)
+      }
+      return readDetail(projectPath, targetOf(parsed, repo))
+    },
+
+    async ghMerge(projectPath, ref, method, headSha) {
+      const t = targetOfRef(ref)
+      if (ref.kind !== 'pr') throw new Error('Only a pull request can be merged.')
+      const argv = ghMergeArgv(t, method, headSha)
+      const { hostId, instance } = parseProjectPath(projectPath)
+      const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT })
+      if (r.code !== 0) throw new Error(mergeFailure(instance, t, r.code, r.stdout, r.stderr))
+    },
+
+    async ghJob(projectPath, url) {
+      const t = parseJobUrl(url)
+      const { hostId, instance } = parseProjectPath(projectPath)
+      const home = homeOf({ hostId, instance })
+      const logCmd = (escapes: boolean): BatchCmd => ({ argv: ghBatch(ghJobLogArgv(t, escapes)), cap: LOG_CAP })
+      // The job and, once it finished, its log: one round trip.
+      const [meta, first] = await runAll(home, [{ argv: ghBatch(ghJobArgv(t)), cap: 4 * 1024 * 1024 }, logCmd(true)], GH_TIMEOUT * 2)
+      if (!ok(meta!)) throw new Error(jobFailure(instance, t, meta!.code, utf8Decode(meta!.stderr), text(meta!)))
+      let v: unknown
+      try { v = JSON.parse(text(meta!)) } catch { throw new Error(`The GitHub CLI in ${instance} answered with something unexpected.`) }
+      const job = jobFromJson(v)
+      if (!job.url) job.url = url.trim()
+      if ((v as { status?: unknown } | null)?.status !== 'completed') return job
+      let log = first!
+      if (!ok(log) && !log.truncated && unknownFlag(utf8Decode(log.stderr), text(log))) {
+        [log] = await runAll(home, [logCmd(false)], GH_TIMEOUT * 2) as [Output]
+      }
+      // A capped log ends gh with a broken pipe; what came is still the log.
+      if (ok(log) || log.truncated) {
+        splitLog(text(log), job.steps)
+        job.logReady = true
+        job.logTruncated = log.truncated
+      } else {
+        job.logError = log.code === JOB_RUNNING && !utf8Decode(log.stderr).trim()
+          ? 'The log is not ready yet. Try again in a moment.'
+          : jobLogFailure(instance, log.code, utf8Decode(log.stderr), text(log))
+      }
+      return job
+    },
+
+    async ghPrCreate(projectPath, base) {
+      const argv = ghPrCreateArgv(base)
+      const p = placeOf(projectPath)
+      // gh in the project folder, through the login shell (it may need the profile, and git hooks may run).
+      const r = await exec(p, true, [...GH_ENV, ...GIT_ENV], argv, { timeoutMs: 90_000 })
+      const said = `${r.stdout}\n${r.stderr}`
+      let target: GhTarget | null
+      if (r.code === 0) target = createdTarget(r.stdout)
+      else if (said.includes('already exists')) target = createdTarget(said)
+      else throw new Error(prCreateFailure(p.instance, base, r.code, r.stderr, r.stdout))
+      if (!target) {
+        const detail = tidyOutput(said.split('\n').filter(l => !l.startsWith('MANGO-BRANCH:')).join('\n'))
+        throw new Error(`The GitHub CLI did not say where the pull request is.${detail ? `\n${detail}` : ''}`)
+      }
+      const link = `https://${target.host}/${target.owner}/${target.repo}/pull/${target.number}`
+      if (target.host !== GITHUB_HOST) throw new Error(`Opened ${link}, but the phone reads only github.com. Open it there.`)
+      try {
+        return await readDetail(projectPath, target)
+      } catch (e) {
+        throw new Error(`Opened ${link}, but could not read it back: ${messageOf(e)}`)
+      }
+    },
 
     spawnFor(agent, projectPath): SpawnFn {
       return async (args, h, vars) => {
