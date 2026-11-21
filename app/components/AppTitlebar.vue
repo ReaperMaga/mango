@@ -9,6 +9,7 @@ import { useWindows } from '~/stores/windows'
 import { appWindow, isTauri } from '~/composables/useBackend'
 import { openFolderFlow } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
+import type { ProjectInfo } from '~/types/ipc'
 import { isEnvPath } from '~/utils/envPath'
 
 const ws = useWorkspace()
@@ -76,25 +77,44 @@ function chooseWhere() {
 }
 
 /*
- * Recent projects not open in this window, so every window can reach them (a window opened on one
+ * One list of projects: those open in this window first, in their own order (a dot marks them, the check
+ * the one in view), then recent ones by last use, so every window can reach them (a window opened on one
  * project otherwise lists only that one). One open in another window brings that window forward.
  */
 const RECENT_IN_MENU = 8
-const recentItems = computed<MenuItem[]>(() =>
-  ws.listedRecent
+function projectItem(p: ProjectInfo, here: boolean): MenuItem {
+  const place = remotePlace(p.path)
+  const elsewhere = !here && !!win.projectElsewhere(p.path)
+  // Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead.
+  const blocked = here ? win.moveBlocker(p.path) : null
+  // A window of its own is pointless for a window's only project, unless this is the main window.
+  const ownWindow = !elsewhere && (!here || win.isMain || ws.openProjects.length > 1)
+  return {
+    label: p.name,
+    // Under the name: the branch, or for a remote project where it runs.
+    hint: elsewhere ? 'In another window' : place?.where ?? (p.branch || undefined),
+    hintIcon: elsewhere ? AppWindow : place ? Server : undefined,
+    hintMono: !elsewhere && !place && !!p.branch,
+    icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
+    checked: here && p.path === ws.activeProjectPath,
+    open: here,
+    onSelect: here
+      ? () => ws.setActiveProject(p.path)
+      : () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
+          ws.notify('Could not open the project', e instanceof Error ? e.message : String(e))),
+    remove: here ? { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) } : undefined,
+    action: ownWindow
+      ? { label: 'Open in new window', icon: AppWindow, disabled: !!blocked, reason: blocked?.hint, onSelect: () => win.openInNewWindow(p.path) }
+      : undefined,
+  }
+}
+const listedProjects = computed<MenuItem[]>(() => [
+  ...ws.openProjects.map(p => projectItem(p, true)),
+  ...ws.listedRecent
     .filter(p => !ws.openProjects.some(o => o.path === p.path))
     .slice(0, RECENT_IN_MENU)
-    .map((p, i) => ({
-      label: p.name,
-      group: i === 0 ? 'Recent' : undefined,
-      divider: i === 0 && ws.openProjects.length > 0,
-      hint: win.projectElsewhere(p.path) ? 'Open in another window' : remotePlace(p.path)?.where ?? (p.branch || undefined),
-      hintMono: !win.projectElsewhere(p.path) && !remotePlace(p.path) && !!p.branch,
-      icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
-      onSelect: () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
-        ws.notify('Could not open the project', e instanceof Error ? e.message : String(e))),
-    })),
-)
+    .map(p => projectItem(p, false)),
+])
 /* Another window may have opened a project since this one read the list. */
 function toggleProjects(toggle: () => void, open: boolean) {
   if (!open) void ws.refreshRecent()
@@ -102,22 +122,8 @@ function toggleProjects(toggle: () => void, open: boolean) {
 }
 
 const projectItems = computed<MenuItem[]>(() => [
-  ...ws.openProjects.map(p => ({
-    label: p.name,
-    // Under the name: the branch, or for a remote project where it runs.
-    hint: remotePlace(p.path)?.where ?? (p.branch || undefined),
-    hintMono: !remotePlace(p.path) && !!p.branch,
-    icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
-    checked: p.path === ws.activeProjectPath,
-    onSelect: () => ws.setActiveProject(p.path),
-    remove: { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) },
-  })),
-  // The active project in a window of its own (pointless when it is this window's only one).
-  ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
-    ? [moveItem(ws.activeProject.path)]
-    : []),
-  ...recentItems.value,
-  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: (!(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0) || recentItems.value.length > 0, onSelect: () => win.openInNewWindow(null) },
+  ...listedProjects.value,
+  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: listedProjects.value.length > 0, onSelect: () => win.openInNewWindow(null) },
   { label: 'Open folder…', icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
@@ -130,19 +136,6 @@ const projectItems = computed<MenuItem[]>(() => [
       ]
     : []),
 ])
-
-/* Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead. */
-function moveItem(path: string): MenuItem {
-  const blocked = win.moveBlocker(path)
-  return {
-    label: 'Open in new window',
-    icon: AppWindow,
-    divider: true,
-    disabled: !!blocked,
-    hint: blocked?.hint,
-    onSelect: () => win.openInNewWindow(path),
-  }
-}
 
 /* The quiet sync part of the branch widget: commits to push / pull and changed files of the working copy in view. */
 const gitStatus = computed(() => git.status(workdir.value))
