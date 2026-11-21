@@ -102,7 +102,10 @@ function projectItem(p: ProjectInfo, here: boolean): MenuItem {
       ? () => ws.setActiveProject(p.path)
       : () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
           ws.notify('Could not open the project', e instanceof Error ? e.message : String(e))),
-    remove: here ? { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) } : undefined,
+    // Open here: close it. A recent one: take it off the list (one open in another window is that window's to close).
+    remove: here
+      ? { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) }
+      : elsewhere ? undefined : { label: `Remove ${p.name} from Recent`, onSelect: () => void ws.forgetProject(p.path) },
     action: ownWindow
       ? { label: 'Open in new window', icon: AppWindow, disabled: !!blocked, reason: blocked?.hint, onSelect: () => win.openInNewWindow(p.path) }
       : undefined,
