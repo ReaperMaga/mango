@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.39
+
+### New
+
+- Move the sidebar toggle into the sidebar.
+- Git log plugin, a commit graph in the bottom panel.
+
 ## 0.1.38
 
 ### New
