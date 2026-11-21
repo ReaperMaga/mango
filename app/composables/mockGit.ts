@@ -1087,7 +1087,7 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
         if (Object.keys(r.branches).some(b => b.startsWith(`${name}/`))) throw new Error("Can't remove this branch because it has child branches.")
         if (r.used?.has(name)) throw new Error("Can't remove this branch because it has changesets.")
         delete r.branches[name]
-        return
+        return null
       }
     }
   }
@@ -1159,9 +1159,16 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     case 'git_branch_delete': {
       const name = String(args.branch)
       if (name === r.branch) throw new Error(`error: cannot delete branch '${name}' used by worktree`)
+      const main = linkedTrees.get(path) ?? path
+      const tree = [...linkedTrees].find(([at, m]) => m === main && at !== path && repoAt(at).branch === name)?.[0]
+      if (tree && !args.withWorktree) throw new Error(`error: cannot delete branch '${name}' used by worktree at '${tree}'`)
+      if (tree && repoAt(tree).files.length) throw new Error(`${name} has uncommitted changes in its worktree ${tree}; commit or discard them first`)
       if (!args.force && r.branches[name] && !r.branches[name]!.upstream) throw new Error(`error: the branch '${name}' is not fully merged`)
       delete r.branches[name]
-      return
+      if (!tree) return null
+      repos.delete(tree)
+      linkedTrees.delete(tree)
+      return tree
     }
   }
   throw new Error(`mock: ${cmd} is not implemented`)

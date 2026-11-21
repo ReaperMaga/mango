@@ -515,6 +515,15 @@ export const useThreads = defineStore('threads', {
       const term = vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
       if (users.some(isBusy)) throw new Error(`A chat is still working in this ${term}. Stop it first.`)
       await call('git_worktree_remove', { path: t.projectPath, worktree: folder, force })
+      this.forgetWorktree(t.projectPath, folder)
+    },
+
+    /**
+     * A worktree folder of `projectPath` was removed (here or with its branch): the chats that
+     * worked there go back to the project folder, and tabs opened from it close.
+     */
+    forgetWorktree(projectPath: string, folder: string) {
+      const users = this.threads.filter(x => x.worktree === folder)
       for (const x of users) x.worktree = null
       // Diff and file tabs opened from the folder show nothing now.
       for (const tab of [...this.tabs]) {
@@ -522,8 +531,8 @@ export const useThreads = defineStore('threads', {
       }
       const git = useGit()
       delete git.repos[folder]
-      void git.loadWorktrees(t.projectPath)
-      this.persist(users.map(x => x.id))
+      void git.loadWorktrees(projectPath)
+      if (users.length) this.persist(users.map(x => x.id))
     },
 
     /**

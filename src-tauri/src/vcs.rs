@@ -187,8 +187,9 @@ pub async fn git_branch_rename(app: AppHandle, path: String, from: String, to: S
 }
 
 #[tauri::command]
-pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, force: bool) -> Result<(), String> {
-    dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force), plastic(root) => plastic::branch_delete(&root, &branch))
+pub async fn git_branch_delete(app: AppHandle, path: String, branch: String, force: bool, with_worktree: bool) -> Result<Option<String>, String> {
+    dispatch!(app, path, git(at) => git::branch_delete(&at, &branch, force, with_worktree),
+        plastic(root) => plastic::branch_delete(&root, &branch).map(|()| None))
 }
 
 /// The repository's worktrees, the main one first. For Unity VCS: the project's workspace and
