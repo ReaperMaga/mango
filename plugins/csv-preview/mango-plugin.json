@@ -1,0 +1,28 @@
+{
+  "id": "csv-preview",
+  "name": "CSV preview",
+  "version": "1.0.0",
+  "description": "Shows csv and tsv code blocks in agent replies as a table, with the raw text one click away.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/csv-preview",
+  "main": "main.js",
+  "styles": "styles.css",
+  "minAppVersion": "0.1.36",
+  "settings": [
+    {
+      "key": "maxRows",
+      "type": "number",
+      "label": "Rows shown",
+      "description": "Longer tables show this many rows and say how many there are.",
+      "default": 200,
+      "min": 10,
+      "max": 5000
+    },
+    {
+      "key": "header",
+      "type": "boolean",
+      "label": "First row is the header",
+      "default": true
+    }
+  ]
+}

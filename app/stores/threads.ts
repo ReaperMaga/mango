@@ -26,6 +26,8 @@ import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
 import { normalizeContext } from '~/agents/context'
 import { transcript } from '~/utils/transcript'
+import { isPluginTab } from '~/plugin-host/ids'
+import { emitThreadCreated, emitTurnEnd, hooks as pluginHooks, pluginBeforeSend, pluginTabs, reg as pluginReg, runPluginSlash } from '~/plugin-host/registry'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -398,6 +400,7 @@ export const useThreads = defineStore('threads', {
       useWindows().claimNew(t.id, projectPath)
       this.show(t.id)
       this.persist(t.id)
+      emitThreadCreated(this.byId(t.id) ?? t)
       return t
     },
 
@@ -596,6 +599,7 @@ export const useThreads = defineStore('threads', {
       if (isFileTab(id)) useFiles().forget(id)
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
+      if (isPluginTab(id)) delete pluginTabs[id]
       this.removeTab(id)
       // Closing a terminal's tab ends its shell, as closing it in the panel does.
       const term = parseTerminalTab(id)
@@ -893,6 +897,12 @@ export const useThreads = defineStore('threads', {
       const t = this.byId(id)
       // A sub-agent's chat is written by its parent's run only.
       if (!t || t.parentId || (!text.trim() && !attachments.length)) return
+      // Plugins: their own slash commands, then their `onBeforeSend` hooks (only awaited when there are any).
+      if (pluginReg.slashCommands.length || pluginHooks.beforeSend.length) {
+        const plugged = await this._pluginSend(t, text, attachments)
+        if (!plugged || (!plugged.text.trim() && !plugged.attachments.length)) return
+        ;({ text, attachments } = plugged)
+      }
       t.archived = false // writing in an archived chat brings it back
       if (isBusy(t)) {
         const queued = { id: uid('q'), text: text.trim(), attachments, queuedAt: Date.now() }
@@ -909,6 +919,22 @@ export const useThreads = defineStore('threads', {
       this._appendUser(t, text.trim(), attachments)
       await this._runTurn(t.id, text.trim(), attachments)
       await this._sendFollowUps(t.id)
+    },
+
+    /**
+     * What plugins make of a message before it goes: a plugin's `/command` runs (and may hand back the
+     * text to send instead), then each `onBeforeSend` hook may change it or cancel it (null). Slash
+     * commands (Mango's and the CLI's) are not handed to the hooks: rewritten, they would break.
+     */
+    async _pluginSend(t: Thread, text: string, attachments: Attachment[]): Promise<{ text: string; attachments: Attachment[] } | null> {
+      const projectPath = this.workdirFor(t.id) ?? t.projectPath
+      const slash = await runPluginSlash(text, { threadId: t.id, agent: t.agent, projectPath })
+      if (slash) {
+        if (slash.send === null) return null
+        text = slash.send
+      }
+      if (isCommand(text)) return { text, attachments }
+      return pluginBeforeSend({ threadId: t.id, text, attachments, agent: t.agent, projectPath })
     },
 
     /**
@@ -1038,6 +1064,7 @@ export const useThreads = defineStore('threads', {
       useWindows().claimNew(t.id, src.projectPath)
       this.show(t.id)
       this.persist(t.id)
+      emitThreadCreated(this.byId(t.id) ?? t)
       return t
     },
 
@@ -1104,6 +1131,7 @@ export const useThreads = defineStore('threads', {
       const handOver = t.history && !t.sessionId
       await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
       if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
+      emitTurnEnd(id, this.byId(id)?.status !== 'error')
     },
 
     /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -1361,7 +1389,7 @@ const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
 /** A tab that shows something other than a chat; none of them is saved with the layout. */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id)
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id)
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'

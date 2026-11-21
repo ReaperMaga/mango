@@ -14,11 +14,15 @@ import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/uti
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
+import { effectiveScheme, isPluginRef, type PluginRef } from '~/plugin-host/ids'
+import { isPluginSchemeRegistered, pluginShortcutDefs } from '~/plugin-host/registry'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
 export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite', 'ink', 'cocoa', 'neon', 'solar'] as const
 export type ColorScheme = typeof COLOR_SCHEMES[number]
+/** A built-in scheme, or one a plugin registered (`plugin:<pluginId>.<id>`; Mango's own applies while it is not there). */
+export type SchemeId = ColorScheme | PluginRef
 /** Interface text size, corner roundness and animation (scales in tokens.css). */
 export const TEXT_SIZES = ['small', 'default', 'large', 'xlarge'] as const
 export type TextSize = typeof TEXT_SIZES[number]
@@ -56,7 +60,7 @@ export interface TerminalPlacement {
  * The tool windows that open on the right: where the project runs (this computer or an environment),
  * the project's files, source control, and the chat's pull requests and issues.
  */
-export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases'
+export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases' | PluginRef
 /** Enter sends (Shift+Enter breaks the line), or Ctrl/Cmd+Enter sends (Enter breaks the line). */
 /** Interface and code fonts (see tokens.css). */
 export const UI_FONTS = ['inter', 'geist', 'dm-sans', 'manrope', 'system'] as const
@@ -98,7 +102,8 @@ export interface ConfirmAsk { title: string; body: string; label: string; danger
 /** "Open project: this window or a new one?" waiting for its answer (null: cancelled). */
 export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog'
+/** Built-in sections, plus `plugin:<pluginId>.<pageId>` for a settings page a plugin registered (Settings > Plugins when it is gone). */
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -196,7 +201,8 @@ function envExtraOf(v: unknown): Record<string, string[]> {
   return out
 }
 
-const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' ? v : null)
+/** A plugin's tool window (`plugin:<pluginId>.<id>`) is kept while it is not loaded: the panel shows it once the plugin is back. */
+const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' || isPluginRef(v) ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
 const whereOf = (v: unknown): EnvRemote | null => {
@@ -234,7 +240,7 @@ const initialState = () => {
       agents: [] as AgentInfo[],
 
       theme: (prefs.theme ?? 'dark') as Theme,
-      scheme: (COLOR_SCHEMES.includes(prefs.scheme) ? prefs.scheme : 'mango') as ColorScheme,
+      scheme: (COLOR_SCHEMES.includes(prefs.scheme) || isPluginRef(prefs.scheme) ? prefs.scheme : 'mango') as SchemeId,
       textSize: (TEXT_SIZES.includes(prefs.textSize) ? prefs.textSize : 'default') as TextSize,
       corners: (CORNERS.includes(prefs.corners) ? prefs.corners : 'default') as Corners,
       fontUi: (UI_FONTS.includes(prefs.fontUi) ? prefs.fontUi : 'inter') as UiFont,
@@ -330,7 +336,7 @@ export const useWorkspace = defineStore('workspace', {
     activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
     hasProject: s => s.openProjects.length > 0,
     /** Every action's key in force. */
-    bindings: s => resolveBindings(s.shortcuts),
+    bindings: s => resolveBindings(s.shortcuts, pluginShortcutDefs()),
     /** The shell a plain "new terminal" starts: the user's choice if it still exists, else the system default. */
     defaultTerminalProfile: s =>
       s.terminalProfiles.find(p => p.id === s.terminalProfileId)
@@ -763,7 +769,7 @@ export const useWorkspace = defineStore('workspace', {
       this.applyTheme()
       this.persist()
     },
-    setScheme(scheme: ColorScheme) {
+    setScheme(scheme: SchemeId) {
       this.scheme = scheme
       this.applyTheme()
       this.persist()
@@ -799,7 +805,7 @@ export const useWorkspace = defineStore('workspace', {
     applyTheme() {
       const root = document.documentElement.dataset
       root.theme = this.resolvedTheme()
-      root.scheme = this.scheme
+      root.scheme = effectiveScheme(this.scheme, isPluginSchemeRegistered)
       root.textSize = this.textSize
       root.corners = this.corners
       root.fontUi = this.fontUi === 'inter' ? '' : this.fontUi

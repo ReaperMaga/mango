@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
+import { pluginMenuItems } from '~/plugin-host/menus'
 import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, FolderGit2, FolderMinus, MessageSquarePlus, MoreHorizontal, Plus, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
@@ -286,6 +288,7 @@ function threadMenu(t: Thread): MenuItem[] {
     { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) ws.confirmThen('archive', { title: 'Archive chat?', body: `“${t.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(t.id)) } },
     ...(t.worktree ? [{ label: `Remove ${termOf(t)}…`, icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
     { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => ws.confirmThen('delete', { title: 'Delete chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
+    ...pluginMenuItems('thread', { threadId: t.id }),
   ]
 }
 
@@ -517,6 +520,7 @@ function endResize() {
       </section>
     </nav>
 
+    <PluginStatusItems location="sidebar" />
     <AppSidebarFoot />
 
     <UiDialog :open="!!removing" :title="`Remove ${removeTerm}`" :width="440" :dismissible="!removeBusy" @close="removing = null">

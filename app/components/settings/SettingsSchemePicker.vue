@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ColorScheme } from '~/stores/workspace'
+import type { SchemeId } from '~/stores/workspace'
 
 /**
  * Colour scheme choice as small previews of the workspace. Each preview carries
@@ -7,18 +7,19 @@ import type { ColorScheme } from '~/stores/workspace'
  * current one is. Native radios underneath, like SettingsSegmented.
  */
 defineProps<{
-  modelValue: ColorScheme
-  options: Array<{ value: ColorScheme; label: string }>
+  modelValue: SchemeId
+  /** `swatch`: a plugin scheme's own colour for the preview's accent button; `hint`: who adds it (a tooltip). */
+  options: Array<{ value: SchemeId; label: string; swatch?: string; hint?: string }>
   /** id of the element that names the group */
   labelledby?: string
 }>()
-const emit = defineEmits<{ 'update:modelValue': [value: ColorScheme] }>()
+const emit = defineEmits<{ 'update:modelValue': [value: SchemeId] }>()
 const name = useId()
 </script>
 
 <template>
   <div class="schemes" role="radiogroup" :aria-labelledby="labelledby">
-    <label v-for="o in options" :key="o.value" class="scheme">
+    <label v-for="o in options" :key="o.value" class="scheme" :title="o.hint">
       <input
         class="scheme__input"
         type="radio"
@@ -33,7 +34,7 @@ const name = useId()
           <span class="scheme__line" />
           <span class="scheme__line scheme__line--short" />
         </span>
-        <span class="scheme__accent" />
+        <span class="scheme__accent" :style="o.swatch ? { background: o.swatch } : undefined" />
       </span>
       <span class="scheme__label">{{ o.label }}</span>
     </label>

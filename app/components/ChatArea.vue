@@ -22,6 +22,11 @@ import { isBusy } from '~/stores/threads'
 import { copyToClipboard } from '~/utils/agentCli'
 import { sepOf, withTrailingSep } from '~/utils/paths'
 import type { MenuItem } from '~/types/ui'
+import { isPluginTab, parsePluginTab } from '~/plugin-host/ids'
+import { pluginNames, pluginTabView, pluginTabs } from '~/plugin-host/registry'
+import type { PluginIcon as PluginIconValue } from '~/plugin-host/types'
+import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
+import PluginTabPane from '~/plugin-host/ui/PluginTabPane.vue'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -37,6 +42,7 @@ type Tab =
   | { id: string; kind: 'file'; title: string; file: string }
   | { id: string; kind: 'browser'; title: string; browser: Browser }
   | { id: string; kind: 'terminal'; title: string; term: TerminalTab }
+  | { id: string; kind: 'plugin'; title: string; icon: PluginIconValue | null; plugin: string }
 
 /** Tabs belonging to the active project (chats, diffs, files); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
@@ -49,6 +55,12 @@ const tabs = computed<Tab[]>(() => {
     if (isBrowserTab(id)) {
       const b = browsers.forTab(id)
       if (b) out.push({ id, kind: 'browser', title: browserTitle(b), browser: b })
+      continue
+    }
+    const plugin = parsePluginTab(id)
+    if (plugin) {
+      // Shown while its plugin is away too (the pane says so); it closes when the plugin is turned off.
+      out.push({ id, kind: 'plugin', title: pluginTabs[id]?.title ?? plugin.viewId, icon: pluginTabView(plugin.pluginId, plugin.viewId)?.icon ?? null, plugin: pluginNames[plugin.pluginId] ?? plugin.pluginId })
       continue
     }
     const term = parseTerminalTab(id)
@@ -93,6 +105,8 @@ function tabTitle(t: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
   if (t.kind === 'file') return `${t.file}${keys}`
+  if (t.kind === 'plugin') return `${t.title}
+From ${t.plugin}${keys}`
   if (t.kind === 'terminal') {
     const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
     return `Terminal${where ? ` — ${where}` : ''}${t.term.exited ? ' (exited)' : ''}${keys}`
@@ -253,6 +267,11 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     return items
   }
 
+  if (tab.kind === 'plugin') {
+    items.push(splitItem)
+    return items
+  }
+
   if (tab.kind === 'browser') {
     const b = tab.browser
     const blank = isBlank(b.url)
@@ -340,6 +359,10 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 <span class="ca__tab-title">{{ t.title }}</span>
                 <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
               </template>
+              <template v-else-if="t.kind === 'plugin'">
+                <PluginIcon :icon="t.icon" class="ca__tab-icon" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+              </template>
               <template v-else-if="t.kind === 'browser'">
                 <span v-if="t.browser.loading" class="ca__tab-spin" aria-hidden="true" />
                 <Globe v-else class="ca__tab-icon" aria-hidden="true" />
@@ -418,6 +441,18 @@ const tabMenuItems = computed<MenuItem[]>(() => {
         />
         <BrowserPane
           v-else-if="isBrowserTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="paneBasis(i)"
+          data-tab-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <PluginTabPane
+          v-else-if="isPluginTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"

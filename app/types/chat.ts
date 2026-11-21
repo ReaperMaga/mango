@@ -221,6 +221,8 @@ export interface AgentCommand {
   /** Other names that run the same command. */
   aliases?: string[]
   mango?: boolean
+  /** Added by a plugin (its name): Mango runs it, the composer tags it with the name. */
+  plugin?: string
 }
 
 /** Names for the effort levels the CLIs use. Unknown ones show as they are. */

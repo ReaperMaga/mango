@@ -932,6 +932,144 @@ export interface RemoteChatEntry { id: string; rev: number | null }
 export type RemotePut = 'ok' | 'stale' | 'gone'
 
 /** Commands: name -> [args, result] */
+/* ---------- Plugins (src-tauri/src/plugins.rs, app/plugin-host/) ---------- */
+
+/** One field of a plugin's declarative settings (`settings` in `mango-plugin.json`), shown in Settings > Plugins. */
+export interface PluginSettingField {
+  key: string
+  type: 'boolean' | 'string' | 'text' | 'number' | 'select'
+  label: string
+  description?: string
+  default?: string | number | boolean
+  /** For `select`. */
+  options?: { value: string; label: string }[]
+  placeholder?: string
+  min?: number
+  max?: number
+}
+
+/**
+ * `mango-plugin.json` at the root of a plugin's folder. `main` is one bundled ES module (no relative
+ * or bare imports: Vue and the rest come in through the API object `activate` receives).
+ */
+export interface PluginManifest {
+  /** `[a-z0-9][a-z0-9._-]{0,63}`: unique among installed plugins; also its storage namespace. */
+  id: string
+  name: string
+  version: string
+  description?: string
+  author?: string
+  homepage?: string
+  /** Entry module, relative to the plugin folder. Default `main.js`. */
+  main?: string
+  /** A stylesheet injected while the plugin is active, relative to the plugin folder. */
+  styles?: string
+  /** Oldest Mango version it works with (semver). Older apps refuse to activate it. */
+  minAppVersion?: string
+  settings?: PluginSettingField[]
+}
+
+/**
+ * Where a plugin came from. `git`: a repository (`https://…`, `ssh://…` or `git@host:path`), optionally a
+ * branch/tag/commit and a folder inside it (a repository may hold several plugins). `local`: a folder on
+ * this computer, used in place (for plugin authors: edit, then Reload).
+ */
+export type PluginSource =
+  | { kind: 'git'; url: string; ref: string | null; subpath: string | null }
+  | { kind: 'local'; path: string }
+
+export interface InstalledPlugin {
+  manifest: PluginManifest
+  source: PluginSource
+  /** Absolute folder the plugin runs from (a copy under the app data folder, or the local folder itself). */
+  dir: string
+  enabled: boolean
+  /** Commit it was installed or last updated at (git sources only). */
+  commit: string | null
+  /** Unix ms. */
+  installedAt: number
+  updatedAt: number
+}
+
+/** A plugin found in a repository by `plugins_probe`. */
+export interface PluginCandidate {
+  /** Folder inside the repository ('' for the root), `/`-separated. */
+  subpath: string
+  manifest: PluginManifest
+  /** Already installed with this id (installing again replaces it). */
+  installed: boolean
+}
+
+export interface PluginProbe {
+  /** Hand it back to `plugins_install`; the checkout waits in a staging folder until then (or until the next probe). */
+  probeId: string
+  url: string
+  ref: string | null
+  commit: string
+  /** The plugin at the given subpath, or every plugin found in the repository when none was given. */
+  candidates: PluginCandidate[]
+}
+
+export interface PluginUpdateInfo {
+  id: string
+  current: string | null
+  latest: string | null
+  /** Version in the latest manifest, when it could be read. */
+  latestVersion: string | null
+  hasUpdate: boolean
+  /** Set when the check failed for this plugin (offline, repository gone…). */
+  error: string | null
+}
+
+export interface PluginProgress {
+  jobId: string
+  /** A raw line of git's progress output. */
+  line: string
+}
+
+/** A file of a plugin read as bytes (pictures and fonts for its UI). */
+export interface PluginAsset {
+  mime: string
+  /** base64 */
+  data: string
+}
+
+/**
+ * One plugin in the official catalog (`plugins/catalog.json` in Mango's repository). Official plugins
+ * live beside it (`plugins/<id>/`, source url = Mango's repository); community ones point at their own.
+ */
+export interface PluginCatalogEntry {
+  id: string
+  name: string
+  description: string
+  author: string
+  /** Version in the catalog (the installed manifest is the truth once installed). */
+  version: string
+  /** Free tags the browse view filters by ("theme", "git", "chat", "productivity"…). */
+  tags: string[]
+  /** Maintained in Mango's repository. */
+  official: boolean
+  homepage?: string
+  /** A lucide icon name (kebab-case, e.g. `sparkles`) shown in the list. */
+  icon?: string
+  /** Where to install it from (a `plugins_probe` source). */
+  source: { url: string; ref: string | null; subpath: string | null }
+  minAppVersion?: string
+}
+
+export interface PluginCatalog {
+  schema: 1
+  plugins: PluginCatalogEntry[]
+}
+
+export interface PluginCatalogResult {
+  catalog: PluginCatalog
+  /** Unix ms of the copy returned. */
+  fetchedAt: number
+  /** Served from the cached copy because the network fetch failed (the reason). */
+  stale: string | null
+}
+
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
   recent_projects: [Record<string, never>, ProjectInfo[]]
@@ -1327,6 +1465,39 @@ export interface Commands {
   env_join_preview: [{ link: string }, EnvJoinPreview]
   /** Save the environment from a link (its key is stored in Mango's app data); returns the new direct host. */
   env_join: [{ link: string; name: string | null }, EnvHost]
+
+  /** Every installed plugin, enabled or not. */
+  plugins_list: [Record<string, never>, InstalledPlugin[]]
+  /**
+   * Shallow-clone a git source into a staging folder (streams `plugins://progress` with `jobId`) and read
+   * what it holds: the plugin at `subpath`, or every `mango-plugin.json` found (a few levels deep) when there
+   * is none. Nothing is installed yet.
+   */
+  plugins_probe: [{ source: Extract<PluginSource, { kind: 'git' }>; jobId: string }, PluginProbe]
+  /** Install the chosen candidates of a probe (by subpath); replaces an installed plugin with the same id. */
+  plugins_install: [{ probeId: string; subpaths: string[] }, InstalledPlugin[]]
+  /** Register a local folder holding a `mango-plugin.json` (used in place, never copied). */
+  plugins_add_local: [{ path: string }, InstalledPlugin]
+  plugins_set_enabled: [{ id: string; enabled: boolean }, InstalledPlugin]
+  /** Uninstall: forget it and delete its copy (a local plugin's folder is left alone). */
+  plugins_remove: [{ id: string }, void]
+  /** Fetch each git plugin's source (all when `ids` is null) and say whether a newer commit is there. */
+  plugins_check_updates: [{ ids: string[] | null; jobId: string }, PluginUpdateInfo[]]
+  /** Move a git plugin to the latest commit of its source (re-reads its manifest; a local one is just re-read). */
+  plugins_update: [{ id: string; jobId: string }, InstalledPlugin]
+  /** A text file inside a plugin's folder (its entry module, styles…). `path` is relative; nothing outside the folder is read. */
+  plugins_read: [{ id: string; path: string }, string]
+  /** A binary file inside a plugin's folder, base64. Same confinement as `plugins_read`. */
+  plugins_asset: [{ id: string; path: string }, PluginAsset]
+  /**
+   * The official catalog: `plugins/catalog.json` from Mango's repository on GitHub (main branch), cached in
+   * the app data folder for an hour (`force` skips the cache). Falls back to the cached copy when offline.
+   */
+  plugins_catalog: [{ force: boolean }, PluginCatalogResult]
+  /** Show a plugin's folder (the plugins folder when `id` is null) in the system file manager. */
+  plugins_reveal: [{ id: string | null }, void]
+  /** The folder plugins are installed in (for "Open plugins folder"). */
+  plugins_dir: [Record<string, never>, string]
 }
 
 /** Events emitted by the backend. */
@@ -1350,4 +1521,6 @@ export interface Events {
   'window://closed': { label: string }
   /** The main window was closed while others are open: it is hidden and lets go of its projects. */
   'window://parked': Record<string, never>
+  /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */
+  'plugins://progress': PluginProgress
 }

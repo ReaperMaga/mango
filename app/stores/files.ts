@@ -119,6 +119,8 @@ export const useFiles = defineStore('files', {
      * replaces it instead of piling up tabs; editing it or double-clicking keeps it.
      */
     preview: {} as Record<string, string | null>,
+    /** A line to bring into view in a file tab once its editor shows it (1-based), by tab id. */
+    lines: {} as Record<string, number>,
   }),
 
   getters: {
@@ -331,6 +333,11 @@ export const useFiles = defineStore('files', {
       threads.show(id)
       if (pin) this.pin(id)
       else if (!wasOpen) this.preview[projectPath] = id
+    },
+
+    /** Show a line of an open file tab: its editor scrolls there and puts the cursor on it (now, or once it shows the file). */
+    revealLine(tabId: string, line: number) {
+      if (Number.isFinite(line) && line >= 1) this.lines[tabId] = Math.floor(line)
     },
 
     /** Keep a preview tab open (it was edited or double-clicked). */

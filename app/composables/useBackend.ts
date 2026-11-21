@@ -8,6 +8,7 @@ import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/comp
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
+import { mockPlugins } from '~/composables/mockPlugins'
 import { isEnvPath } from '~/utils/envPath'
 
 /**
@@ -514,6 +515,8 @@ const mock = (() => {
     if (cmd.startsWith('git_') || cmd.startsWith('vcs_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)
+    // Plugins: the catalog and official plugins from this repository's plugins/ folder (mockPlugins.ts).
+    if (cmd.startsWith('plugins_')) return mockPlugins(cmd, args, emit)
     throw new Error(`mock: unknown command ${cmd}`)
   }
 

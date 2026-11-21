@@ -876,6 +876,7 @@ function run(options: AgentRunOptions): AgentRun {
         approvalsReviewer: 'user',
         sandbox: policy.sandbox,
         ...(model && model !== 'default' ? { model } : {}),
+        ...(options.appendSystemPrompt ? { developerInstructions: options.appendSystemPrompt } : {}),
         // Codex reviews with its own review model unless told otherwise: use the chat's.
         ...(builtin === 'review' && model && model !== 'default' ? { config: { review_model: model } } : {}),
       }

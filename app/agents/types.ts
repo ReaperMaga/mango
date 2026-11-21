@@ -197,6 +197,11 @@ export interface AgentRunOptions {
    * keep them out of the command line where the CLI can read them from its environment instead.
    */
   mcpServers?: AgentMcpServer[]
+  /**
+   * Text added to the agent's system prompt for this run (what plugins append, see `plugin-host/`):
+   * Claude Code `--append-system-prompt`, Codex `developerInstructions`. Absent when there is none.
+   */
+  appendSystemPrompt?: string
   spawn: SpawnFn
   emit(event: AgentEvent): void
 }

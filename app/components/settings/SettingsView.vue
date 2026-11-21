@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Bell, Bot, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bell, Bot, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
@@ -11,11 +11,17 @@ import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
 import SettingsMcp from './SettingsMcp.vue'
 import SettingsNotifications from './SettingsNotifications.vue'
+import SettingsPlugins from './SettingsPlugins.vue'
+import SettingsSection from './SettingsSection.vue'
 import SettingsProjects from './SettingsProjects.vue'
 import SettingsShortcuts from './SettingsShortcuts.vue'
 import SettingsTerminal from './SettingsTerminal.vue'
 import SettingsVoice from './SettingsVoice.vue'
 import { useOverlay } from '~/composables/useOverlay'
+import { usePluginRuntime } from '~/plugin-host/runtime'
+import { usePlugins } from '~/stores/plugins'
+import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
+import PluginGlyph from '~/components/plugins/PluginGlyph.vue'
 
 /**
  * Settings: a full view under the titlebar, not a dialog. It takes the place
@@ -54,6 +60,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'environments', label: 'Environments', icon: Server },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
       { id: 'mcp', label: 'MCP servers', icon: Plug },
+      { id: 'plugins', label: 'Plugins', icon: Puzzle },
       { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     ],
@@ -65,14 +72,28 @@ const bottom: Item[] = [
   { id: 'changelog', label: 'Changelog', icon: History },
 ]
 
+/** Settings pages plugins registered: a third group in the rail, `plugin:<pluginId>.<pageId>`. */
+const runtime = usePluginRuntime()
+const pluginsStore = usePlugins()
+const pluginPages = computed(() => runtime.settingsPages.map(p => ({ ...p, section: `plugin:${p.fullId}` as Section })))
+const pluginName = (id: string) => pluginsStore.byId(id)?.manifest.name ?? id
+
 /** The sections in rail order: what Up and Down walk. */
-const sections: Section[] = [...groups.flatMap(g => g.items), ...bottom].map(i => i.id)
+const sections = computed<Section[]>(() => [
+  ...groups.flatMap(g => g.items).map(i => i.id),
+  ...pluginPages.value.map(p => p.section),
+  ...bottom.map(i => i.id),
+])
 
 const open = computed(() => ws.settings !== null)
 /* Settings covers the workspace; the browsers' native pages would show through. */
 useOverlay(() => open.value)
 /** Stays on the last section while the view fades out. */
 const section = ref<Section>(ws.settings ?? 'general')
+/** The page of a plugin section, while its plugin has it. */
+const pluginPage = computed(() => pluginPages.value.find(p => p.section === section.value) ?? null)
+/** What shows: a plugin page whose plugin is gone (or not started yet) falls back to Plugins. */
+const current = computed<Section>(() => (section.value.startsWith('plugin:') && !pluginPage.value ? 'plugins' : section.value))
 /** The other sections render while the view is open or fading out. */
 const rendered = ref(open.value)
 /** Environments, once shown, stays mounted for the life of the window (see above). */
@@ -149,9 +170,9 @@ function placeGlide(still: boolean) {
   const a = box.getBoundingClientRect()
   const b = el.getBoundingClientRect()
   if (!b.width) return // hidden (closed with Environments kept mounted)
-  Object.assign(glide, { x: b.left - a.left, y: b.top - a.top, w: b.width, h: b.height, still })
+  Object.assign(glide, { x: b.left - a.left, y: b.top - a.top + box.scrollTop, w: b.width, h: b.height, still })
 }
-watch([section, open], async ([, isOpen], [, wasOpen]) => {
+watch([current, open, () => pluginPages.value.length], async ([, isOpen], [, wasOpen]) => {
   if (!isOpen) return
   await nextTick()
   placeGlide(!wasOpen)
@@ -179,8 +200,8 @@ function onKey(e: KeyboardEvent) {
 /** Up and Down walk the section list, like a native settings sidebar. */
 function onRailKey(e: KeyboardEvent) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-  const list = sections
-  const i = list.indexOf(section.value)
+  const list = sections.value
+  const i = list.indexOf(current.value)
   const next = list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]
   if (!next) return
   e.preventDefault()
@@ -226,12 +247,29 @@ onBeforeUnmount(() => {
               :key="s.id"
               type="button"
               class="settings__item settings__item--child"
-              :class="{ 'is-current': section === s.id }"
-              :aria-current="section === s.id ? 'page' : undefined"
+              :class="{ 'is-current': current === s.id }"
+              :aria-current="current === s.id ? 'page' : undefined"
               @click="show(s.id)"
             >
               <component :is="s.icon" aria-hidden="true" />
               <span>{{ s.label }}</span>
+            </button>
+          </div>
+          <!-- Pages plugins registered, under their own headline -->
+          <div v-if="pluginPages.length" class="settings__group" role="group" aria-label="Plugin settings">
+            <h2 class="settings__heading" aria-hidden="true">Plugins</h2>
+            <button
+              v-for="p in pluginPages"
+              :key="p.section"
+              type="button"
+              class="settings__item settings__item--child"
+              :class="{ 'is-current': current === p.section }"
+              :aria-current="current === p.section ? 'page' : undefined"
+              :title="`${p.title}, from ${pluginName(p.pluginId)}`"
+              @click="show(p.section)"
+            >
+              <PluginGlyph :icon="p.icon" />
+              <span class="settings__label">{{ p.title }}</span>
             </button>
           </div>
         </nav>
@@ -241,8 +279,8 @@ onBeforeUnmount(() => {
             :key="s.id"
             type="button"
             class="settings__item"
-            :class="{ 'is-current': section === s.id }"
-            :aria-current="section === s.id ? 'page' : undefined"
+            :class="{ 'is-current': current === s.id }"
+            :aria-current="current === s.id ? 'page' : undefined"
             @click="show(s.id)"
           >
             <component :is="s.icon" aria-hidden="true" />
@@ -276,6 +314,15 @@ onBeforeUnmount(() => {
                 <SettingsProjects v-else-if="section === 'projects'" />
                 <SettingsBehavior v-else-if="section === 'behavior'" />
                 <SettingsGeneral v-else-if="section === 'general'" />
+                <SettingsPlugins v-else-if="current === 'plugins'" />
+                <SettingsSection
+                  v-else-if="pluginPage"
+                  :key="pluginPage.section"
+                  :title="pluginPage.title"
+                  :description="`Settings of the ${pluginName(pluginPage.pluginId)} plugin.`"
+                >
+                  <PluginViewHost :view="pluginPage.view" :ctx="{}" :plugin-id="pluginPage.pluginId" />
+                </SettingsSection>
               </Transition>
             </template>
             <Transition name="page">
@@ -311,6 +358,9 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  /* A short window with plugin pages in the rail: it scrolls rather than cutting off the bottom items. */
+  overflow-y: auto;
+  scrollbar-width: thin;
   padding: var(--space-1) var(--space-2) var(--space-3) var(--space-3);
 }
 .settings__head {
@@ -347,6 +397,10 @@ onBeforeUnmount(() => {
   font-size: var(--text-xs);
 }
 .settings__item.settings__item--child svg { width: 14px; height: 14px; }
+/* A plugin's page: its own icon (any kind), and a title that may run long. */
+.settings__item :deep(.glyph) { width: 14px; height: 14px; color: var(--fg-subtle); }
+.settings__item:hover :deep(.glyph), .settings__item.is-current :deep(.glyph) { color: var(--fg); }
+.settings__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Agents and Changelog sit at the bottom of the rail, above the version. */
 .settings__nav--bottom { display: grid; gap: 2px; margin-top: auto; margin-bottom: var(--space-2); }
 .settings__item {

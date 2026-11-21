@@ -61,6 +61,15 @@ Deleting such a chat deletes it on the other computers too. When two computers
 change the same chat, the environment's copy wins, unless the chat is running
 here. Chats of folders on this computer stay on this computer.
 
+## Plugins
+
+Plugins add slash commands, tool windows, colour schemes, checks before a message is sent and more. Browse the
+official catalog, install from any git repository (a branch, tag or folder of it), or add a folder on this computer,
+all in **Settings > Plugins**, where each plugin can be turned off, updated, reloaded or removed and shows its settings
+and log. A plugin is trusted code with the same rights as Mango, so install only ones you trust.
+
+The official plugins are in [`plugins/`](plugins/). Writing one: [docs/plugins.md](docs/plugins.md).
+
 ## Run it
 
 ```bash
@@ -176,6 +185,7 @@ src-tauri/src/        Rust backend
   mcp.rs              the user's MCP servers for agent chats (mcp-servers.json, owner-only)
   envs/               remote environments: ssh + incus (hosts, instances, component recipes, remote shells and agents, desktop tunnel)
 mobile/               the iOS app (Expo, React Native): remote environments over SSH, chats, changes
+plugins/              the official plugins (one folder each) and catalog.json, the list Settings > Plugins browses
 scripts/try-agent.ts  run an adapter against the real CLI from a terminal (--mcp servers.json to hand it MCP servers)
 tests/                plain Node tests (`pnpm test`): MCP config building and server selection, terminal tabs, window ownership
 PRODUCT.md            product context

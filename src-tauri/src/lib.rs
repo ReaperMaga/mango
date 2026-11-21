@@ -17,6 +17,7 @@ mod images;
 mod mcp;
 mod notify;
 mod plastic;
+mod plugins;
 mod projects;
 mod releases;
 mod pty;
@@ -60,6 +61,7 @@ pub fn run() {
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
         .manage(mcp::McpState::default())
+        .manage(plugins::PluginsState::default())
         .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
@@ -78,6 +80,19 @@ pub fn run() {
             projects::create_project,
             projects::git_clone,
             projects::default_projects_dir,
+            plugins::plugins_list,
+            plugins::plugins_probe,
+            plugins::plugins_install,
+            plugins::plugins_add_local,
+            plugins::plugins_set_enabled,
+            plugins::plugins_remove,
+            plugins::plugins_check_updates,
+            plugins::plugins_update,
+            plugins::plugins_read,
+            plugins::plugins_asset,
+            plugins::plugins_catalog,
+            plugins::plugins_dir,
+            plugins::plugins_reveal,
             agents::detect_agents,
             pty::pty_spawn,
             pty::pty_write,

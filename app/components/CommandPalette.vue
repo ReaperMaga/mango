@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
-  Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
+  Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Puzzle, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -15,7 +15,10 @@ import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
 import { useOverlay } from '~/composables/useOverlay'
 import { useWorktrees } from '~/composables/useWorktrees'
+import { openPlugins } from '~/composables/pluginsView'
 import { parseTerminalTab } from '~/utils/terminalTabs'
+import { pluginNames, reg, setBuiltinCommands, shown } from '~/plugin-host/registry'
+import { iconComponent } from '~/plugin-host/icons'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -40,7 +43,7 @@ function knownPlaces() {
   return out
 }
 
-type Group = 'Actions' | 'Threads' | 'Projects'
+type Group = 'Actions' | 'Plugins' | 'Threads' | 'Projects'
 
 interface Item {
   id: string
@@ -171,6 +174,8 @@ const actions = computed<Item[]>(() => {
     )
   }
   items.push({ id: 'settings-mcp', group: 'Actions', label: 'MCP servers', icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
+  items.push({ id: 'plugins-browse', group: 'Actions', label: 'Browse plugins', icon: Puzzle, keywords: 'plugins extensions addons catalog install marketplace', run: () => openPlugins({ tab: 'browse' }) })
+  items.push({ id: 'plugins-add', group: 'Actions', label: 'Add plugin from link', icon: Puzzle, keywords: 'plugins install git repository url extension', run: () => openPlugins({ add: true }) })
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
   items.push({ id: 'settings-notifications', group: 'Actions', label: 'Notification settings', icon: Bell, keywords: 'notifications notify alert sound desktop finished approval fails background', run: () => ws.openSettings('notifications') })
   items.push({ id: 'settings-shortcuts', group: 'Actions', label: 'Keyboard shortcuts', icon: Keyboard, keywords: 'keyboard shortcuts keys keybindings bindings hotkeys rebind remap', run: () => ws.openSettings('shortcuts') })
@@ -195,6 +200,25 @@ const actions = computed<Item[]>(() => {
   }
   return items.map((it, i) => ({ ...it, rank: i }))
 })
+
+/* Plugins' actions can run Mango's own by id (`mango.commands.execute('toggle-git')`). */
+setBuiltinCommands(() => actions.value.map(a => ({ id: a.id, title: a.label, run: a.run })))
+
+/** Commands plugins registered, with the plugin's name as the detail (or the command's own). */
+const pluginItems = computed<Item[]>(() =>
+  reg.commands.filter(c => shown(c)).map((c, i) => {
+    const plugin = pluginNames[c.pluginId] ?? c.pluginId
+    return {
+      id: `plugin:${c.fullId}`,
+      group: 'Plugins' as const,
+      label: c.title,
+      detail: c.detail || plugin,
+      icon: iconComponent(c.icon) ?? iconComponent('puzzle'),
+      keywords: `${plugin} plugin ${c.keywords ?? ''}`,
+      rank: i,
+      run: () => c.run(),
+    }
+  }))
 
 const threadItems = computed<Item[]>(() => {
   const many = ws.openProjects.length > 1
@@ -293,12 +317,12 @@ function fuzzy(q: string, text: string): { score: number; hits: number[] } | nul
   return best
 }
 
-const GROUP_ORDER: Group[] = ['Actions', 'Threads', 'Projects']
-const EMPTY_LIMIT: Record<Group, number> = { Actions: 20, Threads: 8, Projects: 6 }
+const GROUP_ORDER: Group[] = ['Actions', 'Plugins', 'Threads', 'Projects']
+const EMPTY_LIMIT: Record<Group, number> = { Actions: 20, Plugins: 8, Threads: 8, Projects: 6 }
 
 const groups = computed(() => {
   const q = query.value.trim().toLowerCase().replace(/\s+/g, ' ')
-  const all = [...actions.value, ...threadItems.value, ...projectItems.value]
+  const all = [...actions.value, ...pluginItems.value, ...threadItems.value, ...projectItems.value]
   const out: { group: Group; items: Scored[]; best: number }[] = []
 
   const escape = (w: string) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')

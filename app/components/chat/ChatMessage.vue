@@ -10,6 +10,9 @@ import { AGENTS } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
 import { createdBy } from '~/utils/githubLinks'
 import { useWorkspace } from '~/stores/workspace'
+import { guarded, reg as pluginReg, shown } from '~/plugin-host/registry'
+import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
+import type { MessageActionContext } from '~/plugin-host/types'
 
 const props = defineProps<{ message: Message; thread: Thread; last: boolean }>()
 const threads = useThreads()
@@ -69,6 +72,19 @@ const segments = computed<Segment[]>(() => {
 const clock = computed(() => new Date(props.message.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))
 const sentAt = computed(() => new Date(props.message.createdAt).toLocaleString())
 const plainText = computed(() => props.message.parts.flatMap(p => (p.type === 'text' ? [p.text] : [])).join('\n\n'))
+
+/** Plugins' hover actions for this message (`chat.messageActions`). */
+const actionCtx = computed<MessageActionContext>(() => ({
+  threadId: props.thread.id,
+  messageId: props.message.id,
+  role: props.message.role === 'user' ? 'user' : 'assistant',
+  text: plainText.value,
+}))
+const pluginActions = computed(() => pluginReg.messageActions.filter(a => shown(a, actionCtx.value)))
+function runAction(a: (typeof pluginActions.value)[number]) {
+  const ctx = { ...actionCtx.value }
+  void guarded(a.pluginId, `message action ${a.id}`, () => a.run(ctx))
+}
 
 const copied = ref(false)
 let copiedTimer: ReturnType<typeof setTimeout> | undefined
@@ -196,6 +212,9 @@ ${a.path}`"
       <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
         <GitBranch />
       </UiIconButton>
+      <UiIconButton v-for="a in pluginActions" :key="a.fullId" size="sm" :label="a.label" @click="runAction(a)">
+        <PluginIcon :icon="a.icon" />
+      </UiIconButton>
     </div>
   </article>
 
@@ -257,6 +276,9 @@ ${a.path}`"
       </UiIconButton>
       <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
         <GitBranch />
+      </UiIconButton>
+      <UiIconButton v-for="a in pluginActions" :key="a.fullId" size="sm" :label="a.label" @click="runAction(a)">
+        <PluginIcon :icon="a.icon" />
       </UiIconButton>
     </div>
   </article>

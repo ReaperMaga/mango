@@ -111,10 +111,23 @@ function show() {
     syncDirty()
     readSvg()
     void loadBase()
+    revealAsked()
     // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
     if (props.active && !svgPreview.value) editor.focus()
   }
 }
+
+/** A line someone asked to see (`files.revealLine`, a plugin's `openFile`): scroll there and put the cursor on it. */
+function revealAsked() {
+  const line = files.lines[props.tabId]
+  const model = editor?.getModel()
+  if (!editor || !line || !model || shownTab !== props.tabId) return
+  delete files.lines[props.tabId]
+  const at = Math.min(line, model.getLineCount())
+  editor.setPosition({ lineNumber: at, column: 1 })
+  editor.revealLineInCenter(at)
+}
+watch(() => files.lines[props.tabId], revealAsked)
 
 async function setUp() {
   if (editor || !host.value) return

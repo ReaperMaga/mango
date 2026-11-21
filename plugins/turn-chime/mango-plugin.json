@@ -1,0 +1,32 @@
+{
+  "id": "turn-chime",
+  "name": "Turn chime",
+  "version": "1.0.0",
+  "description": "A short chime when an agent finishes its turn, and a lower one when it fails.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/turn-chime",
+  "main": "main.js",
+  "minAppVersion": "0.1.36",
+  "settings": [
+    {
+      "key": "when",
+      "type": "select",
+      "label": "Play the chime",
+      "default": "unfocused",
+      "options": [
+        { "value": "unfocused", "label": "When Mango is in the background" },
+        { "value": "always", "label": "Always" },
+        { "value": "off", "label": "Never" }
+      ]
+    },
+    {
+      "key": "volume",
+      "type": "number",
+      "label": "Volume",
+      "description": "0 to 100.",
+      "default": 40,
+      "min": 0,
+      "max": 100
+    }
+  ]
+}

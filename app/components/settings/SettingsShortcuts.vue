@@ -4,6 +4,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { FIXED_SHORTCUTS, SHORTCUTS, SHORTCUT_GROUPS, comboLabel, comboParts, eventCombo, refuse } from '~/utils/shortcuts'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
+import { pluginShortcutDefs } from '~/plugin-host/registry'
 
 /**
  * Settings > Shortcuts: every key Mango answers to. Pick one, press the new combination.
@@ -12,7 +13,16 @@ import SettingsRow from './SettingsRow.vue'
 const ws = useWorkspace()
 const mod = comboParts('Mod')[0]!
 
-const groups = SHORTCUT_GROUPS.map(g => ({ group: g, items: SHORTCUTS.filter(s => s.group === g) }))
+/** Every action a key may run: Mango's, then each running plugin's under the plugin's name. */
+const allDefs = computed(() => [...SHORTCUTS, ...pluginShortcutDefs()])
+const groups = computed(() => {
+  const plugins = pluginShortcutDefs()
+  const names = [...new Set(plugins.map(s => s.group))]
+  return [
+    ...SHORTCUT_GROUPS.map(g => ({ group: g as string, items: SHORTCUTS.filter(s => s.group === g) })),
+    ...names.map(g => ({ group: g, items: plugins.filter(s => s.group === g) })),
+  ]
+})
 const changed = computed(() => Object.keys(ws.shortcuts).length > 0)
 
 /** The action being recorded, and why the last key was refused. */
@@ -25,7 +35,8 @@ function save(next: Record<string, string>) {
 }
 
 function assign(id: string, combo: string) {
-  const def = SHORTCUTS.find(s => s.id === id)!
+  const def = allDefs.value.find(s => s.id === id)
+  if (!def) return
   const next = { ...ws.shortcuts }
   if (combo === def.key) delete next[id]
   else next[id] = combo
@@ -67,7 +78,7 @@ function onKey(e: KeyboardEvent) {
     problem.value = `Hold ${mod} and press the key.`
     return
   }
-  const why = refuse(combo, id, ws.bindings)
+  const why = refuse(combo, id, ws.bindings, allDefs.value)
   if (why) {
     problem.value = why
     return

@@ -20,7 +20,8 @@ export type ShortcutScope = 'always' | 'app' | 'workspace'
 export interface ShortcutDef {
   id: string
   label: string
-  group: ShortcutGroup
+  /** A built-in group, or a plugin's name for the keys a plugin registered. */
+  group: ShortcutGroup | (string & {})
   scope: ShortcutScope
   /** The key out of the box. */
   key: string
@@ -119,20 +120,33 @@ export function comboLabel(combo: string): string {
   return comboParts(combo).join(isMac() ? '' : '+')
 }
 
-/** Why a binding can't be used, or null. `owner` is the label of the action that has the key. */
-export function refuse(combo: string, forId: string, bindings: Record<string, string>): string | null {
+/** Plugins' shortcuts are kept under `plugin:<pluginId>.<id>` (see `plugin-host/`). */
+export const isPluginShortcut = (id: string) => id.startsWith('plugin:')
+
+/** Why a binding can't be used, or null. `defs`: every action that may own a key (plugins' too). */
+export function refuse(combo: string, forId: string, bindings: Record<string, string>, defs: readonly ShortcutDef[] = SHORTCUTS): string | null {
   if (!combo.startsWith('Mod+')) return 'A shortcut needs Ctrl (⌘ on a Mac) held down.'
   if (/^Mod\+[1-9]$/.test(combo)) return 'Ctrl+1 to 9 switch tabs.'
   if (RESERVED.has(combo)) return `${comboLabel(combo)} is used by the system and the text fields.`
-  const other = SHORTCUTS.find(s => s.id !== forId && bindings[s.id] === combo)
+  const other = defs.find(s => s.id !== forId && bindings[s.id] === combo)
   if (other) return `${comboLabel(combo)} already runs “${other.label}”.`
   return null
 }
 
-/** The bindings in force: each action's default, unless the user chose another key (or cleared it). */
-export function resolveBindings(overrides: Record<string, string>): Record<string, string> {
+/**
+ * The bindings in force: each action's default, unless the user chose another key (or cleared it).
+ * `extra`: plugins' shortcuts; a plugin's default that a built-in key already has is left unbound.
+ */
+export function resolveBindings(overrides: Record<string, string>, extra: readonly ShortcutDef[] = []): Record<string, string> {
   const out: Record<string, string> = {}
   for (const s of SHORTCUTS) out[s.id] = overrides[s.id] ?? s.key
+  const taken = new Set(Object.values(out).filter(Boolean))
+  for (const s of extra) {
+    const own = overrides[s.id]
+    const key = own ?? (taken.has(s.key) || RESERVED.has(s.key) || !s.key.startsWith('Mod+') ? '' : s.key)
+    out[s.id] = key
+    if (key) taken.add(key)
+  }
   return out
 }
 
@@ -143,6 +157,10 @@ export function cleanOverrides(raw: unknown): Record<string, string> {
   for (const s of SHORTCUTS) {
     const v = (raw as Record<string, unknown>)[s.id]
     if (typeof v === 'string' && v !== s.key) out[s.id] = v
+  }
+  // A plugin's keys are kept even while it is not loaded (plugins start after the prefs are read).
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (isPluginShortcut(id) && id.length < 200 && typeof v === 'string') out[id] = v
   }
   return out
 }

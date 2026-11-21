@@ -1,0 +1,31 @@
+{
+  "id": "secret-guard",
+  "name": "Secret guard",
+  "version": "1.0.0",
+  "description": "Catches API keys, tokens, private keys and passwords in a message before it reaches the agent.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/secret-guard",
+  "main": "main.js",
+  "minAppVersion": "0.1.36",
+  "settings": [
+    {
+      "key": "action",
+      "type": "select",
+      "label": "When a message holds a secret",
+      "description": "Ask lets you send it anyway. Mask replaces each secret with a placeholder and sends the rest. Block never sends it.",
+      "default": "ask",
+      "options": [
+        { "value": "ask", "label": "Ask before sending" },
+        { "value": "mask", "label": "Mask the secret and send" },
+        { "value": "block", "label": "Block the message" }
+      ]
+    },
+    {
+      "key": "generic",
+      "type": "boolean",
+      "label": "Catch password= and token= assignments",
+      "description": "Also flags values written after password, secret, token or api_key. Turn it off if it fires on example code too often.",
+      "default": true
+    }
+  ]
+}
