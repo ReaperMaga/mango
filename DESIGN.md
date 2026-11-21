@@ -417,7 +417,7 @@ Corners are softly rounded and the radius follows the size of the thing: 4px for
 
 Borders are 1px hairlines in the line tokens, never heavier. Tinted borders are made by mixing a status colour toward transparent (35 to 60%). The user's message bubble has one squared corner (4px, bottom right) so it reads as spoken from the right; that is the only asymmetric radius besides the canvas corner.
 
-The system's one figurative shape is the ripeness dot: a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. The app mark (`ui/MangoMark.vue`, and `assets/icon.svg`, the source of the app icons) is the same fruit, fully ripe in Ripe Mango with the leaf in Unripe Leaf Green, and a Roman inscription capital M (thick and thin strokes, bracketed serifs) cut out of the flesh so the ground shows through. Everything else is rectangles and circles (the settled state of the ripeness dot is a circle with a check cut out).
+The system's figurative shapes are mangoes. The ripeness dot is a slightly lopsided mango silhouette with a small leaf, drawn on a 12-unit grid with a 1.2 stroke. The app mark (`ui/MangoMark.vue`, and `assets/icon.svg`, the source of the app icons) is a fuller kidney-shaped mango, high shoulder and low beak, split down its ridge by a gap the ground shows through: two halves for two chats side by side. The left half is Ripe Mango, the right the accent a step lighter and turned towards gold (`oklch(from accent l+0.07 c×0.85 h+20)`), the leaf Unripe Leaf Green. Everything else is rectangles and circles (the settled state of the ripeness dot is a circle with a check cut out).
 
 ## Components
 
