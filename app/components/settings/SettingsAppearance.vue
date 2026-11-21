@@ -69,7 +69,8 @@ const motions: Array<{ value: Motion; label: string }> = [
 
 <template>
   <SettingsSection title="Appearance" description="How Mango looks on this computer.">
-    <div class="group">
+    <h3 class="head">Color</h3>
+    <div class="card">
       <SettingsRow label="Theme" hint="System follows your computer's light or dark setting.">
         <template #default="{ labelId }">
           <SettingsSegmented
@@ -90,6 +91,10 @@ const motions: Array<{ value: Motion; label: string }> = [
           />
         </template>
       </SettingsRow>
+    </div>
+
+    <h3 class="head">Text</h3>
+    <div class="card">
       <SettingsRow label="Interface font" hint="The font of menus, chats and settings.">
         <template #default="{ labelId }">
           <SettingsSelect :model-value="ws.fontUi" :options="uiFonts" :labelledby="labelId" label="Interface font" @update:model-value="v => ws.setFonts({ ui: v })" />
@@ -110,6 +115,10 @@ const motions: Array<{ value: Motion; label: string }> = [
           />
         </template>
       </SettingsRow>
+    </div>
+
+    <h3 class="head">Shape and motion</h3>
+    <div class="card">
       <SettingsRow label="Corners" hint="How rounded buttons, panels and menus are.">
         <template #default="{ labelId }">
           <SettingsSegmented
@@ -135,8 +144,12 @@ const motions: Array<{ value: Motion; label: string }> = [
 </template>
 
 <style scoped>
-.group {
-  border-top: 1px solid var(--line-soft);
-  border-bottom: 1px solid var(--line-soft);
+.head { margin: var(--space-6) 0 var(--space-3); font-size: var(--text-md); font-weight: 600; }
+.head:first-of-type { margin-top: 0; }
+.card {
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
 }
+.card :deep(.srow) { padding: var(--space-3) var(--space-4); }
 </style>

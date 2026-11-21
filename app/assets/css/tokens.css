@@ -435,39 +435,49 @@
   --focus-ring: oklch(0.46 0.09 245 / 0.7);
 }
 
-/* Uchiha: near-black grounds with a crimson accent (white text on the red fill). Dark deepens
-   the grounds below the usual steps; light keeps the standard ones with the red accent. */
+/* Uchiha: blood-dark grounds that are visibly red, with a crimson accent (white text on the red fill). Dark
+   goes below the usual steps and carries real chroma (the other schemes only tint); light turns the grounds
+   rose-white, so the scheme reads as red everywhere, not only on the accent. */
 :root[data-scheme='uchiha'],
 [data-scheme='uchiha'] {
-  --hue-ground: 20;
-  --hue-ink: 20;
-  --ground-tint: 0.8;
+  --hue-ground: 22;
+  --hue-ink: 22;
+  --ground-tint: 2.4;
 
   --accent: oklch(0.56 0.22 27);
   --accent-strong: oklch(0.62 0.23 27);
   --accent-fg: oklch(0.98 0.01 25);
-  --accent-soft: oklch(0.56 0.22 27 / 0.2);
-  --accent-ink: oklch(0.73 0.18 25);
+  --accent-soft: oklch(0.56 0.22 27 / 0.24);
+  --accent-ink: oklch(0.74 0.18 25);
   --accent-line: oklch(0.60 0.22 27 / 0.55);
-  --selection: oklch(0.56 0.22 27 / 0.35);
+  --selection: oklch(0.56 0.22 27 / 0.38);
   --focus-ring: oklch(0.66 0.22 27 / 0.8);
 }
 :root[data-theme='dark'][data-scheme='uchiha'],
 [data-theme='dark'] [data-scheme='uchiha'] {
-  --bg-app: oklch(0.12 calc(0.006 * var(--ground-tint)) var(--hue-ground));
-  --bg-canvas: oklch(0.145 calc(0.007 * var(--ground-tint)) var(--hue-ground));
-  --bg-panel: oklch(0.17 calc(0.008 * var(--ground-tint)) var(--hue-ground));
-  --bg-raised: oklch(0.21 calc(0.010 * var(--ground-tint)) var(--hue-ground));
-  --bg-hover: oklch(0.24 calc(0.012 * var(--ground-tint)) var(--hue-ground) / 0.55);
-  --bg-active: oklch(0.28 calc(0.016 * var(--ground-tint)) var(--hue-ground) / 0.7);
-  --bg-inset: oklch(0.10 calc(0.005 * var(--ground-tint)) var(--hue-ground));
-  --line: oklch(0.27 calc(0.012 * var(--ground-tint)) var(--hue-ground));
-  --line-soft: oklch(0.22 calc(0.010 * var(--ground-tint)) var(--hue-ground));
-  --line-strong: oklch(0.36 calc(0.016 * var(--ground-tint)) var(--hue-ground));
-  --term-bg: oklch(0.10 calc(0.005 * var(--ground-tint)) var(--hue-ground));
+  --bg-app: oklch(0.105 calc(0.022 * var(--ground-tint)) var(--hue-ground));
+  --bg-canvas: oklch(0.135 calc(0.024 * var(--ground-tint)) var(--hue-ground));
+  --bg-panel: oklch(0.165 calc(0.026 * var(--ground-tint)) var(--hue-ground));
+  --bg-raised: oklch(0.205 calc(0.028 * var(--ground-tint)) var(--hue-ground));
+  --bg-hover: oklch(0.24 calc(0.030 * var(--ground-tint)) var(--hue-ground) / 0.6);
+  --bg-active: oklch(0.28 calc(0.034 * var(--ground-tint)) var(--hue-ground) / 0.75);
+  --bg-inset: oklch(0.085 calc(0.018 * var(--ground-tint)) var(--hue-ground));
+  --line: oklch(0.28 calc(0.028 * var(--ground-tint)) var(--hue-ground));
+  --line-soft: oklch(0.22 calc(0.024 * var(--ground-tint)) var(--hue-ground));
+  --line-strong: oklch(0.38 calc(0.032 * var(--ground-tint)) var(--hue-ground));
+  --term-bg: oklch(0.085 calc(0.018 * var(--ground-tint)) var(--hue-ground));
 }
 :root[data-theme='light'][data-scheme='uchiha'],
 [data-theme='light'] [data-scheme='uchiha'] {
+  --bg-app: oklch(0.94 calc(0.013 * var(--ground-tint)) var(--hue-ground));
+  --bg-canvas: oklch(0.975 calc(0.012 * var(--ground-tint)) var(--hue-ground));
+  --bg-panel: oklch(0.955 calc(0.016 * var(--ground-tint)) var(--hue-ground));
+  --bg-raised: oklch(0.985 calc(0.008 * var(--ground-tint)) var(--hue-ground));
+  --bg-inset: oklch(0.94 calc(0.014 * var(--ground-tint)) var(--hue-ground));
+  --line: oklch(0.86 calc(0.024 * var(--ground-tint)) var(--hue-ground));
+  --line-soft: oklch(0.90 calc(0.020 * var(--ground-tint)) var(--hue-ground));
+  --line-strong: oklch(0.78 calc(0.030 * var(--ground-tint)) var(--hue-ground));
+
   --accent: oklch(0.54 0.22 27);
   --accent-strong: oklch(0.49 0.21 27);
   --accent-fg: oklch(0.99 0.005 25);
