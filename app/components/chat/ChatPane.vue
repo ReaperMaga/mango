@@ -427,7 +427,7 @@ onBeforeUnmount(unpaint)
   flex: none;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: var(--space-1);
   min-height: 30px;
   padding: var(--space-1) var(--space-3) 0;
@@ -483,7 +483,7 @@ onBeforeUnmount(unpaint)
   position: absolute;
   z-index: 5;
   top: 34px;
-  right: var(--space-3);
+  left: var(--space-3);
   width: min(340px, calc(100% - var(--space-6)));
   max-height: min(60%, 420px);
   display: flex;
