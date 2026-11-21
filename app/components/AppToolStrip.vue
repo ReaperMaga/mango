@@ -5,6 +5,7 @@ import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { read, reg, shown } from '~/plugin-host/registry'
 import { iconComponent } from '~/plugin-host/icons'
+import { parsePanelEditorTab } from '~/plugin-host/ids'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
@@ -48,6 +49,23 @@ watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { imme
 const releaseWatch = useReleaseWatch()
 const releaseMark = releaseWatch.mark
 const RELEASE_MARK = { running: 'a release is building', failed: 'a release build failed' } as const
+
+/** Plugins' bottom panel tabs: a button each at the foot, above the terminal's (bottom-docked tools sit low, as in an IDE). */
+const panelTabs = computed(() => reg.panelTabs.filter(t => shown(t)).map((t) => {
+  const badge = read(t.badge, t.pluginId, null, 'badge')
+  return { ref: t.fullId, label: t.title, icon: iconComponent(t.icon)!, count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0 }
+}))
+/** In view: showing in the open panel, or the tab of the active pane when it sits in the main area. */
+function panelShowing(ref: string) {
+  if (ws.panelTabPlaces[ref]?.at === 'editor') return parsePanelEditorTab(threads.activePane.threadId)?.ref === ref
+  return ws.terminalOpen && ws.activePanelTab?.fullId === ref
+}
+/** In the panel and showing: hide the panel. Otherwise bring it into view (in the main area when it is there; a closed one opens in the panel). */
+function togglePanelTab(ref: string) {
+  if (panelShowing(ref) && ws.panelTabPlaces[ref]?.at !== 'editor') ws.toggleTerminal(false)
+  else ws.openPanelTab(ref)
+}
+const terminalShowing = computed(() => ws.terminalOpen && !ws.activePanelTab)
 
 const tools = computed(() => [
   { id: 'files' as ToolView, label: 'Files', icon: Files, keys: ws.keyLabel('files'), count: 0, counts: '' },
@@ -111,10 +129,24 @@ watch(() => ws.toolPanel, async (id) => {
     </div>
     <div class="ts__foot">
     <button
+      v-for="p in panelTabs"
+      :key="p.ref"
       type="button"
       class="ts__btn ts__btn--solo"
-      :class="{ 'is-active': ws.terminalOpen }"
-      :aria-pressed="ws.terminalOpen"
+      :class="{ 'is-active': panelShowing(p.ref) }"
+      :aria-pressed="panelShowing(p.ref)"
+      :aria-label="p.count ? `${p.label}, ${p.count} item${p.count === 1 ? '' : 's'}` : p.label"
+      :title="p.label"
+      @click="togglePanelTab(p.ref)"
+    >
+      <component :is="p.icon" />
+      <span v-if="p.count" class="ts__count tabular" aria-hidden="true">{{ p.count > 99 ? '99+' : p.count }}</span>
+    </button>
+    <button
+      type="button"
+      class="ts__btn ts__btn--solo"
+      :class="{ 'is-active': terminalShowing }"
+      :aria-pressed="terminalShowing"
       aria-label="Terminal"
       :title="ws.withKey('Toggle terminal', 'terminal')"
       @click="ws.toggleTerminal()"
@@ -146,7 +178,7 @@ watch(() => ws.toolPanel, async (id) => {
   width: 40px;
   background: var(--bg-app);
 }
-/* The terminal and environment buttons sit apart at the foot of the stripe. */
+/* Plugins' panel tabs, the terminal and the environment sit apart at the foot of the stripe. */
 .ts__foot {
   flex: none;
   display: flex;

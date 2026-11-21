@@ -1,7 +1,7 @@
 import { parseDiffTab } from '~/utils/diffTabs'
 import { parseBrowserTab } from '~/utils/browserTabs'
 import { parseTerminalTab } from '~/utils/terminalTabs'
-import { parsePluginTab } from '~/plugin-host/ids'
+import { parsePanelEditorTab, parsePluginTab } from '~/plugin-host/ids'
 
 /**
  * Project files open in the main pane as tabs next to chats and diffs. The
@@ -23,4 +23,4 @@ export function parseFileTab(id: string | null | undefined) {
 /** The project a diff, file, browser, terminal or plugin tab belongs to; null for chats (ask the threads store). */
 export const tabProject = (id: string | null | undefined) =>
   parseFileTab(id)?.projectPath ?? parseDiffTab(id)?.projectPath ?? parseBrowserTab(id)?.projectPath
-  ?? parseTerminalTab(id)?.projectPath ?? parsePluginTab(id)?.projectPath ?? null
+  ?? parseTerminalTab(id)?.projectPath ?? parsePluginTab(id)?.projectPath ?? parsePanelEditorTab(id)?.projectPath ?? null

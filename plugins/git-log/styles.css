@@ -1,0 +1,721 @@
+/*
+ * Git log. Only Mango's design tokens, so it follows the theme and colour scheme.
+ *
+ * Lane colours borrow the file-type tints (`--file-*`): Mango's one set of categorical marks, defined for both
+ * themes and never used as text. They colour graph lines and nodes only.
+ */
+
+.gitlog-lane-0 { color: var(--file-blue); }
+.gitlog-lane-1 { color: var(--file-orange); }
+.gitlog-lane-2 { color: var(--file-green); }
+.gitlog-lane-3 { color: var(--file-purple); }
+.gitlog-lane-4 { color: var(--file-yellow); }
+
+.gitlog {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.gitlog-icon {
+  width: 15px;
+  height: 15px;
+  flex: none;
+}
+
+/* ---------- toolbar ---------- */
+
+.gitlog-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.gitlog-search {
+  flex: 0 1 320px;
+  min-width: 120px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.gitlog-bar__gap { flex: 1 1 0; }
+.gitlog-search:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.gitlog-search > .gitlog-icon { width: 14px; height: 14px; color: var(--fg-subtle); }
+.gitlog-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+}
+.gitlog-search input::placeholder { color: var(--fg-faint); }
+.gitlog-search input:focus-visible { outline: none; }
+.gitlog-search__clear {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-subtle);
+  cursor: default;
+}
+.gitlog-search__clear .gitlog-icon { width: 13px; height: 13px; }
+.gitlog-search__clear:hover { background: var(--bg-hover); color: var(--fg); }
+.gitlog-search__clear:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+
+.gitlog-filter {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 148px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 6px 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-subtle);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 540;
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.gitlog-filter .gitlog-icon { width: 14px; height: 14px; }
+.gitlog-filter__label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitlog-filter__label.is-mono { font-family: var(--font-mono); font-size: var(--text-2xs); font-weight: 500; }
+.gitlog-filter__chev.gitlog-icon { width: 12px; height: 12px; color: var(--fg-faint); }
+.gitlog-filter:hover, .gitlog-filter[aria-expanded='true'] { background: var(--bg-hover); color: var(--fg); }
+.gitlog-filter.is-set { color: var(--fg); }
+.gitlog-filter.is-set > .gitlog-icon:first-child { color: var(--accent-ink); }
+.gitlog-filter:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.gitlog-iconbtn {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-subtle);
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.gitlog-iconbtn .gitlog-icon { width: 15px; height: 15px; }
+.gitlog-iconbtn.is-small { width: 22px; height: 22px; border-radius: var(--radius-xs); }
+.gitlog-iconbtn.is-small .gitlog-icon { width: 13px; height: 13px; }
+.gitlog-iconbtn:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
+.gitlog-iconbtn:active:not(:disabled) { background: var(--bg-active); }
+.gitlog-iconbtn:disabled { opacity: 0.55; }
+.gitlog-iconbtn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.gitlog-iconbtn.is-busy .gitlog-icon { animation: gitlog-spin 900ms linear infinite; }
+@keyframes gitlog-spin { to { transform: rotate(360deg); } }
+
+.gitlog-note {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+
+.gitlog-link {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-ink);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 540;
+  cursor: pointer;
+}
+.gitlog-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+.gitlog-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-xs); }
+
+/* ---------- the list ---------- */
+
+.gitlog-thead {
+  flex: none;
+  display: grid;
+  align-items: center;
+  column-gap: var(--space-3);
+  height: 26px;
+  padding-right: var(--space-2);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-weight: 560;
+}
+
+.gitlog-list {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  outline: none;
+  overscroll-behavior: contain;
+}
+.gitlog-list__inner { position: relative; }
+
+.gitlog-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: grid;
+  align-items: center;
+  column-gap: var(--space-3);
+  padding-right: var(--space-2);
+  cursor: default;
+  contain: layout style;
+}
+.gitlog-row:hover { background: var(--bg-hover); }
+.gitlog-row.is-selected { background: var(--bg-active); }
+.gitlog-list:focus-visible .gitlog-row.is-selected { box-shadow: inset 0 0 0 1px var(--focus-ring); }
+
+.gitlog-graph {
+  display: block;
+  overflow: hidden;
+}
+.gitlog-graph path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+.gitlog-node { fill: currentColor; }
+.gitlog-node.is-merge { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.gitlog-head-ring { fill: none; stroke: currentColor; stroke-width: 1.25; opacity: 0.6; }
+
+.gitlog-row__text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+}
+.gitlog-row__main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.gitlog-row__subject {
+  flex: 0 1 auto;
+  min-width: 2.5em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+}
+.gitlog-row.is-merge .gitlog-row__subject { color: var(--fg-subtle); }
+.gitlog-row__meta {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+.gitlog-row__meta .gitlog-row__author { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.gitlog-row__meta .gitlog-row__time { flex: none; font-variant-numeric: tabular-nums; }
+.gitlog-dot { flex: none; color: var(--fg-faint); }
+.gitlog-row__hash {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-faint);
+}
+.gitlog-row > .gitlog-row__author,
+.gitlog-row > .gitlog-row__time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.gitlog-row > .gitlog-row__hash { font-size: var(--text-xs); color: var(--fg-subtle); }
+
+.gitlog-row__more {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-subtle);
+  opacity: 0;
+  cursor: default;
+}
+.gitlog-row__more .gitlog-icon { width: 14px; height: 14px; }
+.gitlog-row:hover .gitlog-row__more, .gitlog-row.is-selected .gitlog-row__more { opacity: 1; }
+.gitlog-row__more:hover { background: var(--bg-active); color: var(--fg); }
+
+.gitlog-list__more {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-faint);
+  font-size: var(--text-xs);
+}
+
+/* ---------- ref chips ---------- */
+
+.gitlog-refs {
+  flex: 0 10 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+}
+.gitlog-refs.is-wrap { flex-wrap: wrap; gap: 4px; overflow: visible; }
+.gitlog-ref {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1;
+}
+.gitlog-ref__icon { width: 11px; height: 11px; flex: none; color: var(--fg-subtle); }
+.gitlog-ref__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitlog-ref.is-remote { background: none; color: var(--fg-subtle); }
+.gitlog-ref.is-tag .gitlog-ref__icon { color: var(--fg-muted); }
+.gitlog-ref.is-current, .gitlog-ref.is-head { border-color: var(--accent-line); color: var(--accent-ink); }
+.gitlog-ref.is-current .gitlog-ref__icon, .gitlog-ref.is-head .gitlog-ref__icon { color: var(--accent-ink); }
+.gitlog-ref.is-more { flex: none; font-family: var(--font-ui); background: none; color: var(--fg-subtle); }
+
+/* ---------- empty, loading ---------- */
+
+.gitlog-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1);
+  padding: var(--space-5) var(--space-4);
+}
+.gitlog-diffview .gitlog-empty { align-items: center; padding: var(--space-10) var(--space-6); text-align: center; }
+.gitlog-empty__title { margin: 0; color: var(--fg-muted); font-size: var(--text-md); font-weight: 560; }
+.gitlog-empty__hint { margin: 0 0 var(--space-1); max-width: 44ch; color: var(--fg-subtle); font-size: var(--text-sm); line-height: var(--leading-normal); text-wrap: pretty; overflow-wrap: anywhere; }
+
+.gitlog-skeleton__row { display: flex; align-items: center; gap: var(--space-3); padding: 0 var(--space-3); }
+.gitlog-skeleton__dot { flex: none; width: 7px; height: 7px; margin-left: 6px; border-radius: 50%; background: var(--line-strong); }
+.gitlog-skeleton__bar { height: 8px; border-radius: var(--radius-xs); background: var(--bg-hover); animation: gitlog-breathe 1.6s var(--ease-in-out) infinite alternate; }
+@keyframes gitlog-breathe { from { opacity: 0.55; } to { opacity: 1; } }
+
+/* ---------- menu (teleported to <body>) ---------- */
+
+.gitlog-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 180px;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(420px, calc(100vh - 16px));
+  padding: var(--space-1);
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  animation: gitlog-pop var(--dur-fast) var(--ease-out);
+}
+@keyframes gitlog-pop { from { opacity: 0; transform: scale(0.97); } }
+.gitlog-menu__sep { height: 1px; margin: var(--space-1) var(--space-2); background: var(--line-soft); }
+.gitlog-menu__group { padding: var(--space-1) var(--space-2) 2px; color: var(--fg-subtle); font-size: var(--text-xs); font-weight: 600; }
+.gitlog-menu__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  cursor: default;
+}
+.gitlog-menu__item.is-active { background: var(--bg-hover); }
+.gitlog-menu__item.is-disabled { color: var(--fg-faint); }
+.gitlog-menu__icon { flex: none; display: grid; place-items: center; width: 16px; color: var(--fg-subtle); }
+.gitlog-menu__icon .gitlog-icon { width: 15px; height: 15px; }
+.gitlog-menu__label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitlog-menu__label.is-mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.gitlog-menu__aside { flex: 0 1 auto; min-width: 0; max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-subtle); font-size: var(--text-xs); }
+.gitlog-menu__aside.is-mono { font-family: var(--font-mono); font-size: var(--text-2xs); }
+.gitlog-menu__check { flex: none; display: grid; place-items: center; width: 22px; color: var(--accent-ink); }
+.gitlog-menu__check .gitlog-icon { width: 14px; height: 14px; }
+.gitlog-menu__side {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-subtle);
+  opacity: 0;
+  cursor: default;
+}
+.gitlog-menu__side .gitlog-icon { width: 13px; height: 13px; }
+.gitlog-menu__item:hover .gitlog-menu__side, .gitlog-menu.is-keyed .gitlog-menu__item.is-active .gitlog-menu__side,
+.gitlog-menu__item[aria-checked='true'] .gitlog-menu__side { opacity: 1; }
+.gitlog-menu__side:hover { background: var(--bg-active); color: var(--fg); }
+.gitlog-menu__item[aria-checked='true'] .gitlog-menu__label { color: var(--fg); font-weight: 560; }
+
+/* ---------- the panel body and the split ---------- */
+
+.gitlog-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.gitlog-main {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gitlog-split {
+  flex: none;
+  position: relative;
+  width: 1px;
+  background: var(--line-soft);
+  cursor: col-resize;
+  outline: none;
+  touch-action: none;
+}
+/* A 7px grip over the 1px rule. */
+.gitlog-split::before { content: ''; position: absolute; inset: 0 -3px; z-index: 5; }
+.gitlog-split:hover, .gitlog-split:active, .gitlog-split:focus-visible { background: var(--accent-line); }
+.gitlog-detail {
+  flex: none;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gitlog-detail.is-full { flex: 1; }
+
+.gitlog-pane {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: var(--space-3);
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.gitlog-pane.is-stale { opacity: 0.6; }
+.gitlog-pane__quiet { margin: 0; padding: var(--space-4); color: var(--fg-subtle); font-size: var(--text-sm); }
+.gitlog-pane__head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+.gitlog-pane__subject {
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-md);
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  overflow-wrap: anywhere;
+}
+.gitlog-pane__body {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.gitlog-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  margin: var(--space-2) 0 0 var(--space-2);
+  padding: 0 var(--space-2) 0 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-subtle);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: default;
+}
+.gitlog-back .gitlog-icon { width: 14px; height: 14px; }
+.gitlog-back:hover { background: var(--bg-hover); color: var(--fg); }
+.gitlog-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+.gitlog-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--space-3);
+  row-gap: 1px;
+  margin: 0;
+  font-size: var(--text-xs);
+}
+.gitlog-facts dt { color: var(--fg-subtle); line-height: 22px; }
+.gitlog-facts dd { margin: 0; min-width: 0; color: var(--fg); line-height: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitlog-facts__soft { color: var(--fg-subtle); }
+.gitlog-facts__line { display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap; }
+.gitlog-mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono); font-size: var(--text-2xs); color: var(--fg-muted); }
+.gitlog-hashlink {
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--accent-ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 20px;
+  cursor: pointer;
+}
+.gitlog-hashlink:hover { background: var(--bg-hover); text-decoration: underline; text-underline-offset: 2px; }
+.gitlog-hashlink:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+
+.gitlog-files__title {
+  flex: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  border-top: 1px solid var(--line-soft);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  font-variant-numeric: tabular-nums;
+}
+.gitlog-files {
+  padding: 2px var(--space-2);
+  outline: none;
+}
+.gitlog-file {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+.gitlog-file + .gitlog-file { margin-top: 1px; }
+.gitlog-file:hover { background: var(--bg-hover); }
+.gitlog-file.is-selected { background: var(--bg-active); }
+.gitlog-files:focus-visible .gitlog-file.is-selected { box-shadow: inset 0 0 0 1px var(--focus-ring); }
+.gitlog-file__st {
+  flex: none;
+  width: 12px;
+  color: var(--fg-subtle);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  text-align: center;
+}
+.gitlog-file__st.is-A { color: var(--diff-add-fg); }
+.gitlog-file__st.is-D { color: var(--diff-del-fg); }
+.gitlog-file__st.is-R, .gitlog-file__st.is-C { color: var(--fg-muted); }
+.gitlog-file__path {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.gitlog-file__dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg-faint); direction: rtl; text-align: left; }
+.gitlog-file__name { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
+.gitlog-file__counts { flex: none; display: flex; gap: 4px; font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
+.gitlog-file__bin { flex: none; color: var(--fg-faint); font-size: var(--text-2xs); }
+.gitlog-add { color: var(--diff-add-fg); }
+.gitlog-del { color: var(--diff-del-fg); }
+
+.gitlog-diffview {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-canvas);
+}
+.gitlog-diff__commit {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 45%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--fg-subtle);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.gitlog-diff__commit .gitlog-mono { flex: none; color: var(--accent-ink); }
+.gitlog-diff__subject { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gitlog-diff__commit:hover { background: var(--bg-hover); color: var(--fg); }
+.gitlog-diff__commit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 0; }
+.gitlog-diff__head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: 40px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border-bottom: 1px solid var(--line-soft);
+}
+.gitlog-diff__path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.gitlog-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  cursor: default;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.gitlog-btn .gitlog-icon { width: 13px; height: 13px; color: var(--fg-subtle); }
+.gitlog-btn:hover:not(:disabled) { background: var(--bg-raised); border-color: var(--line-strong); }
+.gitlog-btn:disabled { opacity: 0.55; }
+.gitlog-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+.gitlog-diff__note { margin: 0; padding: var(--space-3) var(--space-4); color: var(--fg-subtle); font-size: var(--text-sm); }
+.gitlog-diff__note.is-error { color: var(--ripe-error-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.gitlog-diff__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 var(--space-4);
+  background: var(--bg-inset);
+  font-family: var(--font-mono);
+  font-variant-ligatures: none;
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  tab-size: 4;
+  user-select: text;
+  -webkit-user-select: text;
+}
+.gitlog-diff__scroll:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.gitlog-diff__lines { width: max-content; min-width: 100%; }
+.gitlog-dl { display: flex; padding-right: var(--space-4); white-space: pre; }
+.gitlog-dl__num {
+  flex: none;
+  width: calc(var(--gitlog-digits, 2) * 1ch + var(--space-3));
+  padding-right: 2px;
+  text-align: right;
+  color: var(--fg-faint);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.gitlog-dl__sign {
+  flex: none;
+  width: 20px;
+  text-align: center;
+  color: var(--fg-faint);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.gitlog-dl__text { color: var(--fg-muted); }
+.gitlog-dl.is-add { background: var(--diff-add-bg); }
+.gitlog-dl.is-add .gitlog-dl__sign, .gitlog-dl.is-add .gitlog-dl__text { color: var(--diff-add-fg); }
+.gitlog-dl.is-del { background: var(--diff-del-bg); }
+.gitlog-dl.is-del .gitlog-dl__sign, .gitlog-dl.is-del .gitlog-dl__text { color: var(--diff-del-fg); }
+.gitlog-dl.is-hunk { margin: 4px 0; padding-left: var(--space-4); border-block: 1px solid var(--line-soft); background: var(--bg-hover); }
+.gitlog-dl.is-hunk:first-child { margin-top: -6px; border-top: 0; }
+.gitlog-dl.is-hunk .gitlog-dl__text, .gitlog-dl.is-meta .gitlog-dl__text { color: var(--fg-faint); }
+.gitlog-dl.is-meta { padding-left: var(--space-4); }
+.gitlog-diff__all {
+  display: block;
+  width: 100%;
+  height: 30px;
+  margin-top: var(--space-2);
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  background: none;
+  color: var(--fg-subtle);
+  font: inherit;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  cursor: default;
+}
+.gitlog-diff__all:hover { background: var(--bg-hover); color: var(--fg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .gitlog-iconbtn.is-busy .gitlog-icon, .gitlog-skeleton__bar, .gitlog-menu { animation: none; }
+}

@@ -185,6 +185,32 @@ export interface PluginToolWindow {
   view: PluginView<ToolWindowContext>
 }
 
+export interface PanelTabContext {
+  /** The project in view (the active chat's worktree when it has one). */
+  projectPath: string | null
+  /** True while the tab is in view: showing in the open bottom panel, or shown in its pane in the main area. */
+  visible: boolean
+  /** In the panel: hide the panel. In the main area: close the tab. */
+  close(): void
+}
+
+/**
+ * A tab in the bottom panel among the terminals (like a JetBrains tool window docked at the bottom), with a
+ * button at the foot of the tool strip. There is one of each: the user moves it like a terminal's tab (along
+ * the strip, into the main area and back) and may close it; its button or `panelTabs.open` brings it back.
+ * Where it is persists. `when` hides it from the panel's strip and the tool strip.
+ */
+export interface PluginPanelTab {
+  id: string
+  title: string
+  icon: PluginIcon
+  /** Small number on the tab (e.g. unread count). */
+  badge?: Reactive<number | null>
+  /** Hidden from the strip while false. */
+  when?: () => boolean
+  view: PluginView<PanelTabContext>
+}
+
 export interface TabContext {
   /** What `tabs.open` was given. */
   state: unknown
@@ -249,6 +275,11 @@ export interface PluginUiApi {
     register(win: PluginToolWindow): Disposable
     open(id: string): void
     close(): void
+  }
+  panelTabs: {
+    register(tab: PluginPanelTab): Disposable
+    /** Bring this tab into view: the panel at it, or its tab in the main area when it was moved there. A closed one reopens in the panel. */
+    open(id: string): void
   }
   tabs: {
     register(view: PluginTabView): Disposable

@@ -1,0 +1,11 @@
+{
+  "id": "git-log",
+  "name": "Git log",
+  "version": "1.0.0",
+  "description": "A commit graph in the bottom panel: branches and merges as lanes, search by text or hash, each commit's files beside it and their diffs in a tab.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/git-log",
+  "main": "main.js",
+  "styles": "styles.css",
+  "minAppVersion": "0.1.38"
+}

@@ -315,6 +315,26 @@ mango.ui.toolWindows.open('scratchpad')   // this plugin's tool window, by its o
 mango.ui.toolWindows.close()
 ```
 
+**Panel tabs** sit in the bottom panel among the terminals (like a tool window docked at the bottom of an IDE), and
+each gets a button at the foot of the tool strip, above the terminal's. There is one of each, and the user handles it
+like a terminal's tab: drags it along the strip, into the main area (a tab of its own, a split) and back, or closes it.
+Mango remembers where it is. A closed tab comes back into the panel from its button, `panelTabs.open` or a command of
+yours that calls it; `when` hides it from the panel and the tool strip. The view mounts the first time the tab shows and
+stays mounted while it is moved or another tab is in front; `ctx.visible` says whether it is in view, so pause polling
+while it is false.
+
+```js
+mango.ui.panelTabs.register({
+  id: 'output',
+  title: 'Build output',
+  icon: 'scroll-text',
+  badge: () => errors.value || null,   // a small number on the tab and its button
+  when: () => mango.workspace.activeProject() !== null,
+  view: { component: Output },         // ctx: { projectPath, visible, close() } (hides the panel, or closes its main-area tab)
+})
+mango.ui.panelTabs.open('output')      // brings it into view wherever it is; a closed one opens in the panel (no shell is started)
+```
+
 **Tabs** in the main area, beside chats, diffs and files:
 
 ```js

@@ -14,8 +14,11 @@ import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/uti
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
-import { effectiveScheme, isPluginRef, type PluginRef } from '~/plugin-host/ids'
-import { isPluginSchemeRegistered, pluginShortcutDefs } from '~/plugin-host/registry'
+import {
+  effectiveScheme, isPanelTabRef, isPluginRef, normalizePanelOrder, normalizePanelPlaces, panelEditorTabId, panelStrip,
+  parsePanelEditorTab, type PanelTabPlace, type PluginRef,
+} from '~/plugin-host/ids'
+import { isPluginSchemeRegistered, pluginShortcutDefs, reg as pluginReg, shown as pluginShown, shownPanelTab } from '~/plugin-host/registry'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -219,7 +222,7 @@ let tabSeq = 0
  * storage; another window (`stores/windows.ts`) keeps its own in memory and leaves the stored ones
  * alone. Every other pref is shared: a change in one window reaches the others (`syncShared`).
  */
-const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
+const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
   'openProjectIn'] as const
@@ -254,6 +257,19 @@ const initialState = () => {
       terminalHeight: (prefs.terminalHeight ?? 0.34) as number,
       terminalTabs: [] as TerminalTab[],
       activeTerminalId: null as string | null,
+      /**
+       * The plugin panel tab (`<pluginId>.<id>`) chosen in the bottom panel instead of a terminal, or null.
+       * Kept while its plugin is not loaded yet or its `when()` is false: the panel shows the terminals then
+       * (`activePanelTab`), and the tab again once it is back. A plugin that stops clears it (`plugin-host/api.ts`).
+       */
+      panelPluginTab: (isPanelTabRef(prefs.panelPluginTab) ? prefs.panelPluginTab : null) as string | null,
+      /**
+       * The panel strip's hand-made order: terminal ids and panel tab refs (see `panelStrip` in plugin-host/ids).
+       * Empty until something is moved: then the terminals keep their own order. Only the refs are saved.
+       */
+      panelOrder: normalizePanelOrder(prefs.panelOrder) as string[],
+      /** Where each plugin panel tab is when not in the panel (the main area, or closed), by ref; kept while its plugin is away. */
+      panelTabPlaces: normalizePanelPlaces(prefs.panelTabPlaces) as Record<string, PanelTabPlace>,
       /** Shells found on this machine. */
       terminalProfiles: [] as TerminalProfile[],
       terminalProfilesLoading: false,
@@ -345,6 +361,17 @@ export const useWorkspace = defineStore('workspace', {
       ?? null,
     /** The terminals in the docked panel, in order (the rest are tabs in the main area). */
     panelTerminals: s => s.terminalTabs.filter(t => !t.inEditor),
+    /** The plugin tab the bottom panel shows (registered, `when()` holding), or null: it shows a terminal. */
+    activePanelTab: (s): ReturnType<typeof shownPanelTab> => {
+      const t = shownPanelTab(s.panelPluginTab)
+      return t && !s.panelTabPlaces[t.fullId] ? t : null
+    },
+    /** The plugin panel tabs in the panel's strip now (registered, `when()` holding, not moved out or closed). */
+    panelPluginTabs: (s): string[] => pluginReg.panelTabs.filter(t => !s.panelTabPlaces[t.fullId] && pluginShown(t)).map(t => t.fullId),
+    /** The panel's strip, in order: terminal ids and panel tab refs. */
+    panelStrip(): string[] {
+      return panelStrip(this.panelOrder, this.panelTerminals.map(t => t.id), this.panelPluginTabs)
+    },
   },
 
   actions: {
@@ -378,6 +405,9 @@ export const useWorkspace = defineStore('workspace', {
           sidebarWidth: this.sidebarWidth,
           terminalOpen: this.terminalOpen,
           terminalHeight: this.terminalHeight,
+          panelPluginTab: this.panelPluginTab,
+          panelOrder: normalizePanelOrder(this.panelOrder),
+          panelTabPlaces: this.panelTabPlaces,
           toolPanel: this.toolPanel,
           toolWidth: this.toolWidth,
           lastToolPanel: this.lastToolPanel,
@@ -932,9 +962,18 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /* ---------- terminal ---------- */
+    /**
+     * Show or hide the bottom panel. Without `force` it is about the terminals (the Terminal button, its
+     * shortcut): it hides the panel while they show, and otherwise shows them, also over a plugin tab.
+     */
     toggleTerminal(force?: boolean) {
+      if (force === undefined && this.activePanelTab) {
+        this.panelPluginTab = null
+        this.terminalOpen = false
+        force = true
+      }
       this.terminalOpen = force ?? !this.terminalOpen
-      if (this.terminalOpen) {
+      if (this.terminalOpen && !this.activePanelTab) {
         // A remote project's terminal is a shell in its environment: show one (open it when there is none yet).
         const path = this.activeProjectPath
         if (isEnvPath(path)) {
@@ -944,6 +983,107 @@ export const useWorkspace = defineStore('workspace', {
         } else if (this.panelTerminals.length === 0) this.newTerminal()
       }
       this.persist()
+    },
+    /**
+     * Bring a plugin's panel tab (`<pluginId>.<id>`) into view: its tab in the main area when it is there,
+     * else the panel at it (a closed one comes back into the panel). No shell is started for it.
+     */
+    openPanelTab(ref: string) {
+      const place = this.panelTabPlaces[ref]
+      if (place?.at === 'editor') {
+        this._addPanelEditorTab(ref)
+        const tabId = this.panelEditorTab(ref)
+        if (tabId) useThreads().show(tabId)
+        return
+      }
+      if (place) delete this.panelTabPlaces[ref]
+      this.panelPluginTab = ref
+      this.terminalOpen = true
+      this.persist()
+    },
+    /** A panel tab's tab in the main area, if it has one. */
+    panelEditorTab(ref: string): string | null {
+      return useThreads().tabs.find(id => parsePanelEditorTab(id)?.ref === ref) ?? null
+    },
+    /** Put a panel tab placed in the main area back into its pane's strip (its plugin is back, or a reload), without showing it. */
+    _addPanelEditorTab(ref: string) {
+      const place = this.panelTabPlaces[ref]
+      if (place?.at !== 'editor' || this.panelEditorTab(ref)) return
+      const threads = useThreads()
+      const tabId = panelEditorTabId(place.projectPath, ref)
+      threads.addTab(tabId)
+      if (threads.panes.some(p => p.id === place.paneId)) threads._setGroup(tabId, place.paneId)
+    },
+    /**
+     * Keep the main area in step with the panel tabs: a tab for each registered one placed there, and none
+     * for one whose plugin is away (its place is remembered, with the pane it was in) or that moved elsewhere.
+     */
+    syncPanelEditorTabs() {
+      const threads = useThreads()
+      const live = new Set(pluginReg.panelTabs.map(t => t.fullId))
+      for (const id of [...threads.tabs]) {
+        const p = parsePanelEditorTab(id)
+        if (!p) continue
+        const place = this.panelTabPlaces[p.ref]
+        if (live.has(p.ref) && place?.at === 'editor') continue
+        if (place?.at === 'editor') place.paneId = threads.groupOf(id)
+        threads.removeTab(id)
+      }
+      for (const ref of live) this._addPanelEditorTab(ref)
+    },
+    /** A panel tab leaves the panel's view: the strip's neighbour shows instead (a terminal or another tab); with none, the panel hides. */
+    _panelTabLeaving(ref: string) {
+      if (this.panelPluginTab !== ref) return
+      const strip = this.panelStrip
+      const i = strip.indexOf(ref)
+      const next = (i > 0 ? strip[i - 1] : strip[i + 1]) ?? null
+      this.panelPluginTab = null
+      if (next && isPanelTabRef(next)) this.panelPluginTab = next
+      else if (next) this.activeTerminalId = next
+      else this.terminalOpen = false
+    },
+    /** Close a panel tab wherever it is. Nothing is lost: its button, `panelTabs.open` or a command brings it back into the panel. */
+    closePanelTab(ref: string) {
+      if (this.panelTabPlaces[ref]?.at !== 'editor') this._panelTabLeaving(ref)
+      const tabId = this.panelEditorTab(ref)
+      this.panelTabPlaces[ref] = { at: 'closed' }
+      if (tabId) useThreads().removeTab(tabId)
+      this.persist()
+    },
+    /** Show a panel tab as a tab in the main area (like `moveTerminalToEditor`); it belongs to the project in view. */
+    movePanelTabToEditor(ref: string, at: TerminalPlacement = {}) {
+      const project = this.activeProjectPath
+      if (!project) return
+      const threads = useThreads()
+      if (this.panelTabPlaces[ref]?.at !== 'editor') this._panelTabLeaving(ref)
+      const tabId = this.panelEditorTab(ref) ?? panelEditorTabId(project, ref)
+      const projectPath = parsePanelEditorTab(tabId)!.projectPath
+      // Placed first: the main area keeps this tab only while its place says so (`syncPanelEditorTabs`).
+      this.panelTabPlaces[ref] = { at: 'editor', projectPath, paneId: threads.activePaneId }
+      if (at.before !== undefined) threads.placeTab(tabId, at.before)
+      else threads.addTab(tabId, threads.activePane.threadId)
+      threads.showOnly(tabId, at.split ? 'split' : at.paneId ?? threads.activePaneId)
+      this.panelTabPlaces[ref] = { at: 'editor', projectPath, paneId: threads.groupOf(tabId) }
+      this.persist()
+    },
+    /** Dock a panel tab in the panel before `before` (a strip key; null: at the end; left out: where it was) and show it there. */
+    movePanelTabToPanel(ref: string, before?: string | null) {
+      const tabId = this.panelEditorTab(ref)
+      delete this.panelTabPlaces[ref]
+      if (tabId) useThreads().removeTab(tabId)
+      if (before !== undefined) this.panelOrder = placeBefore(this.panelStrip, ref, before)
+      this.panelPluginTab = ref
+      this.terminalOpen = true
+      this.persist()
+    },
+    /** Show a terminal of the panel (the active one when left out) instead of a plugin tab; starts a shell when there is none. */
+    showTerminals(id?: string) {
+      const changed = this.panelPluginTab !== null || !this.terminalOpen
+      this.panelPluginTab = null
+      if (id && this.panelTerminals.some(t => t.id === id)) this.activeTerminalId = id
+      if (this.panelTerminals.length === 0) this.newTerminal()
+      this.terminalOpen = true
+      if (changed) this.persist()
     },
     setTerminalHeight(fraction: number) {
       this.terminalHeight = Math.min(0.8, Math.max(0.14, fraction))
@@ -992,6 +1132,7 @@ export const useWorkspace = defineStore('workspace', {
         return id
       }
       this.activeTerminalId = id
+      this.panelPluginTab = null
       this.terminalOpen = true
       return id
     },
@@ -1016,7 +1157,12 @@ export const useWorkspace = defineStore('workspace', {
         const before = this.terminalTabs.slice(0, index).filter(t => !t.inEditor)
         this.activeTerminalId = before[before.length - 1]?.id ?? panel[0]?.id ?? null
       }
-      if (panel.length === 0) this.terminalOpen = false
+      // A plugin tab showing keeps the panel up without terminals.
+      if (panel.length === 0 && !this.activePanelTab) {
+        const tab = this.panelPluginTabs[0]
+        if (tab && this.terminalOpen) this.panelPluginTab = tab
+        else this.terminalOpen = false
+      }
     },
     /**
      * Show a terminal as a tab in the main area, with the same shell and scrollback (TerminalPanel
@@ -1047,7 +1193,10 @@ export const useWorkspace = defineStore('workspace', {
       }
       const target = before ? this.terminalTabs.find(t => t.id === before) ?? null : null
       this.terminalTabs = placeBefore(this.terminalTabs, tab, target)
+      // With panel tabs in the strip, its order says where the terminal goes among them.
+      if (this.panelOrder.length || (before && isPanelTabRef(before))) this.panelOrder = placeBefore(this.panelStrip, id, before)
       this.activeTerminalId = id
+      this.panelPluginTab = null
       this.terminalOpen = true
       this.persist()
     },

@@ -68,7 +68,8 @@ official catalog, install from any git repository (a branch, tag or folder of it
 all in **Settings > Plugins**, where each plugin can be turned off, updated, reloaded or removed and shows its settings
 and log. A plugin is trusted code with the same rights as Mango, so install only ones you trust.
 
-The official plugins are in [`plugins/`](plugins/). Writing one: [docs/plugins.md](docs/plugins.md).
+The official plugins are in [`plugins/`](plugins/): among them **Git log**, a commit graph in the bottom panel with
+search, branch and author filters, each commit's files beside it and their diffs in a tab. Writing one: [docs/plugins.md](docs/plugins.md).
 
 ## Run it
 

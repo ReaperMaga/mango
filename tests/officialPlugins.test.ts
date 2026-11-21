@@ -171,6 +171,7 @@ function fakeApi(id: string) {
     },
     ui: {
       toolWindows: { register: reg('toolWindows'), open() {}, close() {} },
+      panelTabs: { register: reg('panelTabs'), open() {} },
       tabs: { register: reg('tabs'), open() {} },
       statusItems: { register: reg('statusItems') },
       settingsPages: { register: reg('settingsPages') },
@@ -203,6 +204,7 @@ const expected: Record<string, string[]> = {
   'csv-preview': ['codeBlocks'],
   'turn-chime': ['turnEnd', 'commands'],
   'copy-as-markdown': ['messageActions', 'menus', 'commands'],
+  'git-log': ['panelTabs', 'tabs', 'commands', 'shortcuts', 'turnEnd'],
 }
 
 test('every entry module exports activate, which registers what the plugin is for', async () => {

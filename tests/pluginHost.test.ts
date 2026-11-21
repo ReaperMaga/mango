@@ -9,7 +9,8 @@ import assert from 'node:assert/strict'
 import { DisposableScope, once } from '../app/plugin-host/scope.ts'
 import { compareVersions, incompatibility, parseVersion } from '../app/plugin-host/semver.ts'
 import {
-  effectiveScheme, isPluginRef, isPluginTab, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations,
+  effectiveScheme, fullId, isPanelEditorTab, isPanelTabRef, isPluginRef, isPluginTab, normalizePanelOrder, normalizePanelPlaces,
+  panelEditorTabId, panelStrip, parsePanelEditorTab, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations,
 } from '../app/plugin-host/ids.ts'
 import { capped, emitAll, logText, parseSlash, runBeforeSend } from '../app/plugin-host/hooks.ts'
 
@@ -101,6 +102,57 @@ test('tool windows and schemes are plugin refs, kept whole', () => {
   assert.ok(!isPluginRef('plugin:'))
   assert.ok(!isPluginRef('plugin:Bad Id'))
   assert.ok(!isPluginRef(42))
+})
+
+test('panel tabs are `<pluginId>.<id>`; a saved one must be well formed', () => {
+  const ref = fullId('acme.tools', 'output')
+  assert.equal(ref, 'acme.tools.output')
+  assert.ok(isPanelTabRef(ref))
+  assert.ok(isPanelTabRef('git-log.log'))
+  assert.ok(!isPanelTabRef('plugin:acme.output'))
+  assert.ok(!isPanelTabRef('noid'))
+  assert.ok(!isPanelTabRef('Acme.output'))
+  assert.ok(!isPanelTabRef(`a.${'x'.repeat(300)}`))
+  assert.ok(!isPanelTabRef(null))
+})
+
+test('the panel strip keeps the hand-made order; new panel tabs go first, new terminals last', () => {
+  // Nothing moved yet: the panel tabs, then the terminals in their own order.
+  assert.deepEqual(panelStrip([], ['term-1', 'term-2'], ['x.log']), ['x.log', 'term-1', 'term-2'])
+  // A tab dragged between two terminals stays there; a terminal opened since joins the end.
+  assert.deepEqual(panelStrip(['term-1', 'x.log', 'term-2'], ['term-1', 'term-2', 'term-3'], ['x.log']), ['term-1', 'x.log', 'term-2', 'term-3'])
+  // What is gone (a closed shell, a tab moved out) leaves no gap; one never placed opens at the start.
+  assert.deepEqual(panelStrip(['term-1', 'x.log', 'term-2', 'y.out'], ['term-2'], ['y.out', 'z.new']), ['z.new', 'term-2', 'y.out'])
+  // A key listed twice counts once.
+  assert.deepEqual(panelStrip(['x.log', 'x.log'], [], ['x.log']), ['x.log'])
+})
+
+test('saved panel tab state is read leniently: refs only, places that make sense', () => {
+  assert.deepEqual(normalizePanelOrder(['x.log', 'term-1', 'x.log', 3, 'Bad Ref', 'y.out']), ['x.log', 'y.out'])
+  assert.deepEqual(normalizePanelOrder('x.log'), [])
+  assert.deepEqual(normalizePanelPlaces({
+    'x.log': { at: 'editor', projectPath: 'C:\work\app', paneId: 'pane-b' },
+    'y.out': { at: 'closed' },
+    'z.a': { at: 'editor' },
+    'w.b': { at: 'editor', projectPath: '/p' },
+    'v.c': { at: 'panel' },
+    'nodot': { at: 'closed' },
+    'u.d': 'closed',
+  }), {
+    'x.log': { at: 'editor', projectPath: 'C:\work\app', paneId: 'pane-b' },
+    'y.out': { at: 'closed' },
+    'w.b': { at: 'editor', projectPath: '/p', paneId: 'pane-a' },
+  })
+  assert.deepEqual(normalizePanelPlaces(null), {})
+  assert.deepEqual(normalizePanelPlaces(['x.log']), {})
+})
+
+test('a panel tab in the main area has its own tab id, round-tripping project and ref', () => {
+  const id = panelEditorTabId('env://h/dev/home/agent/app', 'acme.tools.output')
+  assert.ok(isPanelEditorTab(id))
+  assert.ok(!isPluginTab(id))
+  assert.deepEqual(parsePanelEditorTab(id), { projectPath: 'env://h/dev/home/agent/app', ref: 'acme.tools.output' })
+  assert.equal(parsePanelEditorTab('term/xterm-1'), null)
 })
 
 test('a plugin scheme applies while registered, else Mango', () => {

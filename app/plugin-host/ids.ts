@@ -30,6 +30,71 @@ export function effectiveScheme(wanted: string, registered: (id: string) => bool
   return registered(wanted) ? wanted : fallback
 }
 
+/*
+ * ---------- panel tabs (`ui.panelTabs`): `<pluginId>.<id>`
+ *
+ * One instance each. It lives in the bottom panel's strip (among the terminals, in `workspace.panelOrder`),
+ * as a tab in the main area, or nowhere (closed): `workspace.panelTabPlaces`, by ref (no entry: the panel).
+ * Terminal ids (`term-N`) never hold a dot, so a ref and a terminal id never collide in one list.
+ */
+
+/** A well-formed panel tab ref (what a saved pref may hold; whether it is registered is another question). */
+export const isPanelTabRef = (v: unknown): v is string =>
+  typeof v === 'string' && v.length < 200 && /^[a-z0-9][a-z0-9._-]*\.[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(v)
+
+export type PanelTabPlace =
+  | { at: 'panel' }
+  /** A tab in the main area: the project it belongs to and the pane whose strip holds it. */
+  | { at: 'editor'; projectPath: string; paneId: string }
+  /** Closed by the user: its button, `panelTabs.open` or a command brings it back, into the panel. */
+  | { at: 'closed' }
+
+/** Saved places, dropping anything unreadable (older or newer builds, a hand-edited file). Panel places are implied: not kept. */
+export function normalizePanelPlaces(v: unknown): Record<string, PanelTabPlace> {
+  const out: Record<string, PanelTabPlace> = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [ref, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (!isPanelTabRef(ref) || !raw || typeof raw !== 'object') continue
+    const p = raw as Partial<Record<string, unknown>>
+    if (p.at === 'closed') out[ref] = { at: 'closed' }
+    else if (p.at === 'editor' && typeof p.projectPath === 'string' && p.projectPath) {
+      out[ref] = { at: 'editor', projectPath: p.projectPath, paneId: typeof p.paneId === 'string' && p.paneId ? p.paneId : 'pane-a' }
+    }
+  }
+  return out
+}
+
+/** A saved strip order: panel tab refs only (terminals do not outlive the app), once each. */
+export function normalizePanelOrder(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  return [...new Set(v.filter(isPanelTabRef))]
+}
+
+/**
+ * The bottom panel's strip: `order` (the hand-made order) kept for what is there now, panel tabs not in
+ * it first (one never placed opens at the start) and terminals not in it last (a new shell joins the end).
+ */
+export function panelStrip(order: readonly string[], terminals: readonly string[], tabs: readonly string[]): string[] {
+  const here = new Set([...terminals, ...tabs])
+  const placed = order.filter((k, i) => here.has(k) && order.indexOf(k) === i)
+  const known = new Set(placed)
+  return [...tabs.filter(k => !known.has(k)), ...placed, ...terminals.filter(k => !known.has(k))]
+}
+
+/* ---------- a panel tab shown in the main area: `ptab\u0001<projectPath>\u0001<ref>` (not saved with the layout) */
+
+const PANEL_TAB = 'ptab\u0001'
+
+export const panelEditorTabId = (projectPath: string, ref: string) => `${PANEL_TAB}${projectPath}\u0001${ref}`
+
+export const isPanelEditorTab = (id: string | null | undefined): id is string => !!id && id.startsWith(PANEL_TAB)
+
+export function parsePanelEditorTab(id: string | null | undefined): { projectPath: string; ref: string } | null {
+  if (!isPanelEditorTab(id)) return null
+  const [, projectPath = '', ref = ''] = id.split('\u0001')
+  return { projectPath, ref }
+}
+
 /* ---------- main-area tabs */
 
 const TAB = 'plugin\u0001'

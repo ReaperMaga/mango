@@ -12,7 +12,7 @@ import { useFiles } from '~/stores/files'
 import { browserTitle, useBrowser, type Browser } from '~/stores/browser'
 import { isBrowserTab, isBlank } from '~/utils/browserTabs'
 import { isTerminalTab, parseTerminalTab } from '~/utils/terminalTabs'
-import { dragJustEnded, pressChatTab, pressTerminalTab, tabDrag } from '~/composables/useTabDrag'
+import { dragJustEnded, pressChatTab, pressPanelTab, pressTerminalTab, tabDrag } from '~/composables/useTabDrag'
 import { useWindows } from '~/stores/windows'
 import { isEnvPath } from '~/utils/envPath'
 import { openExternal } from '~/composables/useBackend'
@@ -22,11 +22,12 @@ import { isBusy } from '~/stores/threads'
 import { copyToClipboard } from '~/utils/agentCli'
 import { sepOf, withTrailingSep } from '~/utils/paths'
 import type { MenuItem } from '~/types/ui'
-import { isPluginTab, parsePluginTab } from '~/plugin-host/ids'
-import { pluginNames, pluginTabView, pluginTabs } from '~/plugin-host/registry'
+import { isPanelEditorTab, isPluginTab, parsePanelEditorTab, parsePluginTab } from '~/plugin-host/ids'
+import { pluginNames, pluginTabView, pluginTabs, reg as pluginReg } from '~/plugin-host/registry'
 import type { PluginIcon as PluginIconValue } from '~/plugin-host/types'
 import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import PluginTabPane from '~/plugin-host/ui/PluginTabPane.vue'
+import PanelTabPane from '~/plugin-host/ui/PanelTabPane.vue'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -43,6 +44,8 @@ type Tab =
   | { id: string; kind: 'browser'; title: string; browser: Browser }
   | { id: string; kind: 'terminal'; title: string; term: TerminalTab }
   | { id: string; kind: 'plugin'; title: string; icon: PluginIconValue | null; plugin: string }
+  /** A plugin's panel tab moved out of the bottom panel (`ref`: its `<pluginId>.<id>`). */
+  | { id: string; kind: 'panel'; title: string; icon: PluginIconValue | null; plugin: string; ref: string }
 
 /** Tabs belonging to the active project (chats, diffs, files); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
@@ -55,6 +58,12 @@ const tabs = computed<Tab[]>(() => {
     if (isBrowserTab(id)) {
       const b = browsers.forTab(id)
       if (b) out.push({ id, kind: 'browser', title: browserTitle(b), browser: b })
+      continue
+    }
+    const panel = parsePanelEditorTab(id)
+    if (panel) {
+      const pt = pluginReg.panelTabs.find(x => x.fullId === panel.ref)
+      if (pt) out.push({ id, kind: 'panel', title: pt.title, icon: pt.icon, plugin: pluginNames[pt.pluginId] ?? pt.pluginId, ref: panel.ref })
       continue
     }
     const plugin = parsePluginTab(id)
@@ -105,7 +114,7 @@ function tabTitle(t: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
   if (t.kind === 'file') return `${t.file}${keys}`
-  if (t.kind === 'plugin') return `${t.title}
+  if (t.kind === 'plugin' || t.kind === 'panel') return `${t.title}
 From ${t.plugin}${keys}`
   if (t.kind === 'terminal') {
     const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
@@ -193,9 +202,10 @@ function onTabClick(id: string) {
  */
 function onTabPress(e: PointerEvent, t: Tab) {
   if (t.kind === 'terminal') pressTerminalTab(e, t.term.id, 'editor')
+  else if (t.kind === 'panel') pressPanelTab(e, t.ref, 'editor')
   else if (t.kind === 'chat') pressChatTab(e, t.id)
 }
-const isDragged = (t: Tab) => !!tabDrag.item && tabDrag.item.id === (t.kind === 'terminal' ? t.term.id : t.kind === 'chat' ? t.id : null)
+const isDragged = (t: Tab) => !!tabDrag.item && tabDrag.item.id === (t.kind === 'terminal' ? t.term.id : t.kind === 'panel' ? t.ref : t.kind === 'chat' ? t.id : null)
 
 function onTabAux(e: MouseEvent, id: string) {
   if (e.button === 1) { e.preventDefault(); threads.closeTab(id) }
@@ -269,6 +279,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
 
   if (tab.kind === 'plugin') {
     items.push(splitItem)
+    return items
+  }
+
+  if (tab.kind === 'panel') {
+    items.push(
+      splitItem,
+      { label: 'Move to panel', icon: ArrowDownToLine, divider: true, onSelect: () => ws.movePanelTabToPanel(tab.ref) },
+    )
     return items
   }
 
@@ -359,7 +377,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 <span class="ca__tab-title">{{ t.title }}</span>
                 <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
               </template>
-              <template v-else-if="t.kind === 'plugin'">
+              <template v-else-if="t.kind === 'plugin' || t.kind === 'panel'">
                 <PluginIcon :icon="t.icon" class="ca__tab-icon" />
                 <span class="ca__tab-title">{{ t.title }}</span>
               </template>
@@ -441,6 +459,18 @@ const tabMenuItems = computed<MenuItem[]>(() => {
         />
         <BrowserPane
           v-else-if="isBrowserTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="paneBasis(i)"
+          data-tab-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <PanelTabPane
+          v-else-if="isPanelEditorTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"
