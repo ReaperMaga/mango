@@ -179,7 +179,7 @@ async function logout() {
             <span class="sf__name">{{ AGENTS[current].name }}</span>
             <span v-if="line" class="sf__sub" :class="`is-${line.tone}`">
               <span v-if="line.plan" class="sf__plan">{{ line.plan }}</span>
-              <span v-if="line.meter !== null" class="sf__meter" aria-hidden="true"><i :style="{ width: `${line.meter}%` }" /></span>
+              <span v-if="line.meter !== null" class="sf__meter" aria-hidden="true"><i :style="{ transform: `scaleX(${line.meter / 100})` }" /></span>
               <span v-if="line.text" class="sf__line tabular">{{ line.text }}</span>
             </span>
           </span>
@@ -268,7 +268,7 @@ async function logout() {
 
 /* The one meter: neutral while there is room, the running hue from 80%, the error hue when used up. */
 .sf__meter { flex: none; display: block; width: 22px; height: 4px; border-radius: var(--radius-pill); background: var(--bg-active); overflow: hidden; }
-.sf__meter i { display: block; height: 100%; border-radius: var(--radius-pill); background: var(--fg-muted); transition: width var(--dur-med) var(--ease-out); }
+.sf__meter i { display: block; width: 100%; height: 100%; border-radius: var(--radius-pill); background: var(--fg-muted); transform-origin: left center; transition: transform var(--dur-med) var(--ease-out); }
 .sf__sub.is-high .sf__meter i { background: var(--ripe-running); }
 .sf__sub.is-full .sf__meter i { background: var(--ripe-error); }
 
