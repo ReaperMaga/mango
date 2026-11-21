@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, FolderGit2, FolderMinus, MessageSquarePlus, MoreHorizontal, Plus, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, FolderGit2, FolderMinus, MessageSquarePlus, MoreHorizontal, PanelLeftClose, Plus, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type Thread } from '~/types/chat'
@@ -364,6 +364,7 @@ function endResize() {
         <span>New chat</span>
         <kbd v-for="k in ws.keyParts('new-chat')" :key="k">{{ k }}</kbd>
       </button>
+      <UiIconButton class="sb__hide" label="Hide sidebar" :shortcut="ws.keyLabel('sidebar')" @click="ws.toggleSidebar()"><PanelLeftClose /></UiIconButton>
     </div>
 
     <nav class="sb__scroll">
@@ -565,12 +566,14 @@ function endResize() {
   min-height: 0;
   background: var(--bg-app);
 }
-.sb__top { padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.sb__top { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.sb__hide { width: 32px; height: 32px; }
 .sb__new {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 32px;
   padding: 0 6px 0 10px;
   border-radius: var(--radius-sm);
