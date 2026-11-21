@@ -171,6 +171,10 @@ export function palette(rules: Rule[], theme: Theme, scheme: Scheme): { colors: 
   colors.waitingWash = mix('ripe-waiting', 7, 'bg-panel')
   colors.waitingLine = withAlpha('ripe-waiting', 0.55)
   colors.accentWash = mix('accent', 9, 'bg-panel')
+  // The app mark's lighter half (`ui/MangoMark.vue`): the accent lighter and turned towards gold,
+  // `oklch(from var(--accent) calc(l + 0.07) calc(c * 0.85) calc(h + 20))`.
+  const accent = col('accent').color
+  colors.markLight = hex(oklchToRgb({ l: Math.min(1, accent.l + 0.07), c: accent.c * 0.85, h: (accent.h + 20) % 360 }))
   colors.errorWash = withAlpha('ripe-error', 0.12)
   colors.errorLine = withAlpha('ripe-error', 0.4)
   colors.errorLineStrong = withAlpha('ripe-error', 0.6)

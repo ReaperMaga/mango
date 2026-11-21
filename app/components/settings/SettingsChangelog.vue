@@ -16,6 +16,10 @@ import SettingsSection from './SettingsSection.vue'
 const build = useBuildInfo()
 const releases = parseChangelog(changelogSource)
 
+/* Opening the changelog, from anywhere, clears the "What's new" dot in the sidebar footer. */
+const { markSeen } = useWhatsNew()
+onMounted(markSeen)
+
 /** The file is ours, but the text still goes through the allow-list before `v-html`. */
 const md = new Marked({ gfm: true, renderer: { html: ({ text }) => text } })
 const inline = (text: string) => safeHtml(md.parseInline(text) as string)
