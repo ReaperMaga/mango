@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.33
+
+### Fixes
+
+- Remove recent projects from the project menu.
+- Remove a branch's worktree when deleting the branch.
+
 ## 0.1.32
 
 ### New
