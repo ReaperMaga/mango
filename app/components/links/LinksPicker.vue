@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Link2, MessageSquare, RefreshCw } from 'lucide-vue-next'
+import { Link2, MessageSquare, RefreshCw, Search } from 'lucide-vue-next'
+import type { LinkedItem } from '~/types/chat'
 import type { GhListItem } from '~/types/ipc'
 import { useLinks } from '~/stores/links'
 import { itemKey } from '~/utils/githubLinks'
@@ -10,19 +11,25 @@ import { highlight, numberMatch, pickerRows } from '~/utils/linkPicker'
  * Picking a pull request or issue to link to a chat: one field over the project's open pull requests
  * and issues. Typing filters them (a number, a title, a branch); a link, `owner/repo#12` or a number
  * the list lacks is offered as itself. Enter links the highlighted row.
+ *
+ * Without a chat it only browses: the row chosen is read and handed back (`pick`), linked to nothing.
  */
 
 const props = withDefaults(defineProps<{
-  chatId: string
+  /** The chat to link to; without one the picker browses (see `pick`). */
+  chatId?: string
   projectPath: string
   /** Keys already linked to the chat: not offered again. */
   linked?: string[]
   /** Fills the tool window (the empty state) rather than sitting under its header (the link form). */
   fill?: boolean
   autofocus?: boolean
-}>(), { linked: () => [], fill: false, autofocus: false })
+}>(), { chatId: undefined, linked: () => [], fill: false, autofocus: false })
 
-const emit = defineEmits<{ linked: []; cancel: [] }>()
+const emit = defineEmits<{ linked: []; cancel: []; pick: [link: LinkedItem] }>()
+
+/** Browsing (no chat): a row opens its item rather than linking it. */
+const browsing = computed(() => !props.chatId)
 
 const links = useLinks()
 const query = ref('')
@@ -71,9 +78,13 @@ async function choose(row: Row | undefined) {
   busy.value = reference
   error.value = null
   try {
-    await links.linkByReference(props.chatId, reference)
-    query.value = ''
-    emit('linked')
+    if (props.chatId) {
+      await links.linkByReference(props.chatId, reference)
+      query.value = ''
+      emit('linked')
+    } else {
+      emit('pick', await links.lookup(props.projectPath, reference))
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -101,28 +112,31 @@ function onKey(e: KeyboardEvent) {
 }
 
 const isBusy = (row: Row) => busy.value === (row.kind === 'reference' ? row.reference : row.item.url)
-const refLabel = (reference: string) => (reference.startsWith('#') ? `Link ${reference}` : 'Link this one')
+const refLabel = (reference: string) => {
+  const verb = browsing.value ? 'Open' : 'Link'
+  return reference.startsWith('#') ? `${verb} ${reference}` : `${verb} this one`
+}
 </script>
 
 <template>
   <div class="pick" :class="{ 'pick--fill': fill }">
     <div class="pick__field">
       <div class="pick__box" :class="{ 'is-invalid': error }">
-        <Link2 class="pick__lead" aria-hidden="true" />
+        <component :is="browsing ? Search : Link2" class="pick__lead" aria-hidden="true" />
         <input
           ref="input"
           v-model="query"
           class="pick__input"
           type="text"
           role="combobox"
-          aria-label="Pull request or issue to link"
+          :aria-label="browsing ? 'Find a pull request or issue' : 'Pull request or issue to link'"
           aria-autocomplete="list"
           :aria-expanded="options.length > 0"
           :aria-controls="listId"
           :aria-activedescendant="options.length ? optionId(active) : undefined"
           :aria-invalid="!!error || undefined"
           :aria-describedby="error ? `${listId}-error` : undefined"
-          placeholder="Paste a link, or type #12 or a title"
+          :placeholder="browsing ? 'Search by title, branch or #12, or paste a link' : 'Paste a link, or type #12 or a title'"
           spellcheck="false"
           autocomplete="off"
           @keydown="onKey"
@@ -196,12 +210,12 @@ const refLabel = (reference: string) => (reference.startsWith('#') ? `Link ${ref
           Could not list the open ones: {{ listError }}
           <span class="pick__note-hint">A full link still works.</span>
         </p>
-        <p v-else-if="searching" class="pick__note">Nothing open matches. Paste its link, or type its number to link a closed one.</p>
-        <p v-else-if="state?.list" class="pick__note">Nothing open in {{ repoName }}. Paste a link, or type a number to link a closed one.</p>
+        <p v-else-if="searching" class="pick__note">Nothing open matches. Paste its link, or type its number to {{ browsing ? 'open' : 'link' }} a closed one.</p>
+        <p v-else-if="state?.list" class="pick__note">Nothing open in {{ repoName }}. Paste a link, or type a number to {{ browsing ? 'open' : 'link' }} a closed one.</p>
       </template>
     </div>
 
-    <p v-if="fill" class="pick__foot"><MessageSquare aria-hidden="true" />The agent links the pull requests it opens on its own.</p>
+    <p v-if="fill" class="pick__foot"><MessageSquare aria-hidden="true" />{{ browsing ? 'Open a chat to link one to it.' : 'The agent links the pull requests it opens on its own.' }}</p>
   </div>
 </template>
 

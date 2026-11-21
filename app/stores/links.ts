@@ -137,16 +137,28 @@ export const useLinks = defineStore('links', {
       const threads = useThreads()
       const chat = threads.rootOf(threadId)
       if (!chat) throw new Error('That chat is gone.')
+      const link = await this.lookup(chat.projectPath, reference)
+      threads.link(chat.id, link)
+      this.focused = link.key
+      return link
+    },
+
+    /**
+     * Read the pull request or issue the user named (a link, `owner/repo#12` or `#12`, the last
+     * looked up in `projectPath`'s repository) and keep what was read. Links it to nothing.
+     * Rejects with a message to show when GitHub cannot be asked or has no such item.
+     */
+    async lookup(projectPath: string, reference: string): Promise<LinkedItem> {
       let item: GhItem
       try {
-        item = await call('gh_item', { path: chat.projectPath, reference: reference.trim() })
+        item = await call('gh_item', { path: projectPath, reference: reference.trim() })
       } catch (e) {
         throw new Error(message(e))
       }
       const link = linkFromItem(item, 'user')
+      reads.set(link.key, (reads.get(link.key) ?? 0) + 1)
+      sources.set(link.key, { url: link.url, projectPath })
       this.details[link.key] = { item, loading: false, quiet: false, error: null, fetchedAt: Date.now(), bodyAt: Date.now() }
-      threads.link(chat.id, link)
-      this.focused = link.key
       return link
     },
 

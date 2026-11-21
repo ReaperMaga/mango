@@ -1,8 +1,9 @@
+import type { PermissionMode } from '~/agents/types'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { View } from 'react-native'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, Plus, SquarePen, Tag } from 'lucide-react-native'
+import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, ShieldCheck, Plus, SquarePen, Tag } from 'lucide-react-native'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Button, EmptyState, IconButton, ListRow, ListSection, Text } from '@/ui'
 import { ThreadRow, useNow } from '@/chat'
@@ -17,6 +18,9 @@ import { useThreads } from '@/state/threads'
 import { useReleases } from '@/state/releases'
 import { releasesSummary } from '@/chat/releases'
 import { sortReleases } from '~/utils/releaseRuns'
+import { usePrefs } from '@/state/prefs'
+import { MODES, modeForProject, modeLabel } from '@/state/prefsModel'
+import { OptionSheet } from '@/screens/OptionSheet'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { ThreadActions } from '@/screens/ThreadActions'
@@ -41,6 +45,9 @@ export default function ProjectScreen() {
   const [git, setGit] = useState<GitState | null>(null)
   const [gitError, setGitError] = useState<string | null>(null)
   const [newChat, setNewChat] = useState(false)
+  const [pickingMode, setPickingMode] = useState(false)
+  const ownMode = usePrefs(st => st.projectModes[path])
+  const startMode = usePrefs(st => modeForProject(st, path))
   const [actionsFor, setActionsFor] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const releases = useReleases(st => st.lists[path])
@@ -117,6 +124,13 @@ export default function ProjectScreen() {
               />
             )
           : null}
+        <ListRow
+          title="Permissions"
+          subtitle={ownMode ? 'For new chats in this project' : 'The default from Settings'}
+          leading={<ShieldCheck size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+          detail={modeLabel(startMode)}
+          onPress={() => setPickingMode(true)}
+        />
       </ListSection>
 
       {chats.length
@@ -163,6 +177,21 @@ export default function ProjectScreen() {
           )
         : null}
 
+      <OptionSheet<PermissionMode | 'default'>
+        visible={pickingMode}
+        title="Permissions"
+        options={[{ value: 'default', label: 'Use the default', hint: `Currently ${modeLabel(usePrefs.getState().defaultMode)}, set in Settings > Chats.` }, ...MODES]}
+        value={ownMode ?? 'default'}
+        onChange={(v) => {
+          const { projectModes, set } = usePrefs.getState()
+          const next = { ...projectModes }
+          if (v === 'default') delete next[path]
+          else next[path] = v
+          set('projectModes', next)
+        }}
+        onClose={() => setPickingMode(false)}
+        footer="How new chats in this project start. You can still change it in any chat."
+      />
       <NewChatSheet
         visible={newChat}
         path={path}

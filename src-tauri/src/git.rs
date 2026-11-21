@@ -2112,15 +2112,50 @@ pub(crate) fn branch_rename(at: &At, from: &str, to: &str) -> Result<(), String>
 /// Delete a local branch. Without `force`, git refuses branches whose commits
 /// are not merged anywhere; that refusal comes back as an error mentioning
 /// "not fully merged" so the UI can offer to delete anyway.
-pub(crate) fn branch_delete(at: &At, branch: &str, force: bool) -> Result<(), String> {
+///
+/// Git refuses a branch checked out in a linked worktree. With `with_worktree` that
+/// worktree goes too, but only once git has agreed to delete the branch, and never one
+/// with uncommitted or untracked changes (`force` is about commits, not about those) or
+/// the one `at` is in. Returns the removed worktree's folder, in the form [`worktrees`] gives.
+pub(crate) fn branch_delete(at: &At, branch: &str, force: bool, with_worktree: bool) -> Result<Option<String>, String> {
     let root = require_root(at)?;
     let branch = safe_ref(branch)?;
-    git(&root)
-        .arg("branch")
-        .arg(if force { "-D" } else { "-d" })
-        .arg(branch)
-        .run_ok("git branch -d")?;
-    Ok(())
+    let delete = || {
+        git(&root)
+            .arg("branch")
+            .arg(if force { "-D" } else { "-d" })
+            .arg(branch)
+            .run_ok("git branch -d")
+            .map(|_| ())
+    };
+    let list = if with_worktree { worktree_list(&root)? } else { Vec::new() };
+    let Some(entry) = list.iter().skip(1).find(|w| !w.bare && w.branch.as_deref() == Some(branch)) else {
+        delete()?;
+        return Ok(None);
+    };
+    let folder = worktree_path(&root, &entry.path);
+    if folder_key(&root, &entry.path) == folder_key(&root, &root_dir(&root)) {
+        return Err(format!("{branch} is checked out in this worktree; switch to another branch first"));
+    }
+    if entry.prunable {
+        // The folder is gone already: forget it, then the branch is free.
+        worktree_remove(&root, &folder, false)?;
+        delete()?;
+        return Ok(Some(folder));
+    }
+    let place = root.moved(entry.path.clone());
+    let status = git(&place).read_only().args(["status", "--porcelain", "-z"]).run_ok("git status")?;
+    if !status.stdout.is_empty() {
+        return Err(format!("{branch} has uncommitted changes in its worktree {folder}; commit or discard them first"));
+    }
+    // Let go of the branch so git can judge it (merged or not) and delete it; put it back if git refuses.
+    git(&place).args(["checkout", "--quiet", "--detach"]).run_ok("git checkout --detach")?;
+    if let Err(e) = delete() {
+        let _ = git(&place).args(["checkout", "--quiet"]).arg(branch).arg("--").run();
+        return Err(e);
+    }
+    worktree_remove(&root, &folder, false).map_err(|e| format!("Deleted {branch}, but its worktree {folder} stays: {e}"))?;
+    Ok(Some(folder))
 }
 
 // ---------------------------------------------------------------------------
@@ -2637,11 +2672,11 @@ mod tests {
         sh(&work, &["add", "."]);
         sh(&work, &["commit", "-q", "-m", "unmerged work"]);
         checkout(path, "main", false).unwrap();
-        let refused = branch_delete(path, "spike-2", false).unwrap_err();
+        let refused = branch_delete(path, "spike-2", false, false).unwrap_err();
         assert!(refused.contains("not fully merged"), "{refused}");
-        branch_delete(path, "spike-2", true).unwrap();
+        branch_delete(path, "spike-2", true, false).unwrap();
         assert!(!branch_list(path).unwrap().local.iter().any(|b| b.name == "spike-2"));
-        assert!(branch_delete(path, "-D", false).is_err());
+        assert!(branch_delete(path, "-D", false, false).is_err());
 
         // A detached HEAD lists the branches with none current.
         sh(&work, &["switch", "-q", "--detach", "main"]);
@@ -3121,6 +3156,58 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         // A folder that is already gone is just pruned.
         fs::remove_dir_all(beside.0.join("other")).unwrap();
         worktree_remove(&s.at(), &other.path, false).unwrap();
+        assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_branch_can_take_its_worktree() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        struct Gone(PathBuf);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let _beside = Gone(PathBuf::from(format!("{}.worktrees", s.path())));
+        s.write("a.txt", "base\n");
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+        let has = |name: &str| branches(&s.at()).unwrap().local.iter().any(|b| b == name);
+
+        // Merged: without the flag git refuses (as before); with it, branch and worktree go.
+        let merged = worktree_add(&s.at(), "feat/merged", None, true).unwrap();
+        assert!(branch_delete(&s.at(), "feat/merged", false, false).unwrap_err().contains("worktree"));
+        assert_eq!(branch_delete(&s.at(), "feat/merged", false, true).unwrap(), Some(merged.path.clone()));
+        assert!(!has("feat/merged") && !PathBuf::from(&merged.path).exists());
+
+        // Unmerged: refused and left exactly as it was, then forced.
+        let ahead = worktree_add(&s.at(), "feat/ahead", None, true).unwrap();
+        let place = At::local(PathBuf::from(&ahead.path));
+        fs::write(PathBuf::from(&ahead.path).join("b.txt"), "b\n").unwrap();
+        stage(&place, &[]).unwrap();
+        commit(&place, "ahead", false).unwrap();
+        assert!(branch_delete(&s.at(), "feat/ahead", false, true).unwrap_err().contains("not fully merged"));
+        assert_eq!(status_of(&place).unwrap().branch.as_deref(), Some("feat/ahead"));
+
+        // Uncommitted changes: refused even when forced, nothing touched.
+        fs::write(PathBuf::from(&ahead.path).join("c.txt"), "c\n").unwrap();
+        assert!(branch_delete(&s.at(), "feat/ahead", true, true).unwrap_err().contains("uncommitted"));
+        assert!(has("feat/ahead") && PathBuf::from(&ahead.path).exists());
+        fs::remove_file(PathBuf::from(&ahead.path).join("c.txt")).unwrap();
+        assert_eq!(branch_delete(&s.at(), "feat/ahead", true, true).unwrap(), Some(ahead.path.clone()));
+        assert!(!has("feat/ahead") && !PathBuf::from(&ahead.path).exists());
+
+        // A worktree whose folder is gone is pruned on the way; a plain branch returns no folder.
+        let gone = worktree_add(&s.at(), "feat/gone", None, true).unwrap();
+        fs::remove_dir_all(&gone.path).unwrap();
+        assert_eq!(branch_delete(&s.at(), "feat/gone", false, true).unwrap(), Some(gone.path));
+        let main_branch = status_of(&s.at()).unwrap().branch.unwrap();
+        checkout(&s.at(), "plain", true).unwrap();
+        checkout(&s.at(), &main_branch, false).unwrap();
+        assert_eq!(branch_delete(&s.at(), "plain", false, true).unwrap(), None);
         assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
     }
 

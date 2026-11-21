@@ -9,7 +9,7 @@ import { backend } from '@/remote'
 import { AGENT_HOME, validInstanceDir } from '@/remote/shell'
 import { projectsKey, useEnvs } from '@/state/envs'
 import { usePrefs } from '@/state/prefs'
-import { MODE_SHORT } from '@/state/prefsModel'
+import { MODE_SHORT, modeForProject } from '@/state/prefsModel'
 import { useThreads } from '@/state/threads'
 import { messageOf, placeOf, projectName } from './names'
 import { knownProjects, placesOf, type Place } from './places'
@@ -222,7 +222,7 @@ function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) 
   }, [path, env])
 
   const defaultAgent = usePrefs(st => st.defaultAgent)
-  const defaultMode = usePrefs(st => st.defaultMode)
+  const defaultMode = usePrefs(st => modeForProject(st, path))
   // The agent set in Settings comes first.
   const agents = (Object.keys(AGENTS) as AgentId[]).sort((a, b) => Number(b === defaultAgent) - Number(a === defaultAgent))
   return (
