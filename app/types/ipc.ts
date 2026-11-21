@@ -1034,8 +1034,11 @@ export interface Commands {
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
    * Unity VCS refuses branches with changesets or children; rebase and remote checkout are git only.
+   * `withWorktree`: a branch checked out in a linked git worktree takes that worktree with it, once git
+   * agrees to delete the branch; one with uncommitted changes is refused. Resolves to the removed
+   * worktree's folder, null when there was none.
    */
-  git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
+  git_branch_delete: [{ path: string; branch: string; force: boolean; withWorktree: boolean }, string | null]
   /** The repository's working trees, the main one first. Empty for Unity VCS or no repository. */
   git_worktrees: [{ path: string }, GitWorktree[]]
   /**

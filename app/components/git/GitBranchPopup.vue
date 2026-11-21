@@ -9,6 +9,7 @@ import type { GitBranchList, GitLocalBranch, GitRemoteBranch, MergePreview } fro
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
+import { useThreads } from '~/stores/threads'
 import { shortAgo } from '~/utils/time'
 import { useOverlay } from '~/composables/useOverlay'
 import { resultLines, units, vcsTerms } from '~/utils/vcs'
@@ -29,6 +30,7 @@ const props = defineProps<{ path: string | null }>()
 
 const ws = useWorkspace()
 const git = useGit()
+const threads = useThreads()
 
 const WIDTH = 380
 const SUB_WIDTH = 270
@@ -406,6 +408,7 @@ function startDelete(row: Row) {
   view.value = 'delete'
   unmerged.value = false
   message.value = null
+  void readTrees()
 }
 async function backToList() {
   view.value = 'list'
@@ -431,11 +434,41 @@ async function submitName() {
     if (ok) { await backToList(); active.value = `l:${full}` }
   }
 }
+/**
+ * Linked git worktrees by the branch they have checked out (the main one and the one this
+ * folder is in left out): deleting such a branch removes its worktree too. `main` is the
+ * repository's main folder, whose worktree list the Changes view shows.
+ */
+const trees = ref<{ main: string | null; byBranch: Record<string, string> }>({ main: null, byBranch: {} })
+let treesRead: Promise<void> | null = null
+function readTrees() {
+  trees.value = { main: null, byBranch: {} }
+  if (!terms.value.remotes || !props.path) return (treesRead = Promise.resolve())
+  const at = p()
+  return (treesRead = call('git_worktrees', { path: at }).then((list) => {
+    if (at !== props.path) return
+    const byBranch: Record<string, string> = {}
+    for (const w of list) if (!w.isMain && !w.isCurrent && w.branch) byBranch[w.branch] = w.path
+    trees.value = { main: list.find(w => w.isMain)?.path ?? null, byBranch }
+  }, () => {}))
+}
+/** Delete a local branch and the worktree it is checked out in, if any. Resolves to whether a worktree went. */
+async function deleteBranch(name: string, force: boolean): Promise<boolean> {
+  await treesRead
+  const folder = trees.value.byBranch[name]
+  if (folder && threads.threads.some(t => t.worktree === folder && threads.isBusyChat(t.id))) {
+    throw new Error(`A chat is still working in its worktree ${folder}. Stop it first.`)
+  }
+  const removed = await call('git_branch_delete', { path: p(), branch: name, force, withWorktree: true })
+  if (removed) threads.forgetWorktree(trees.value.main ?? p(), removed)
+  return !!removed
+}
+
 async function remove(force: boolean) {
   const row = target.value
   if (!row || row.kind !== 'local') return
   const name = row.b.name
-  const ok = await run('delete', () => call('git_branch_delete', { path: p(), branch: name, force }), () => `Deleted ${name}.`)
+  const ok = await run('delete', () => deleteBranch(name, force), tree => tree ? `Deleted ${name} and its worktree.` : `Deleted ${name}.`)
   if (ok) await backToList()
   else if (/not fully merged/i.test(message.value?.text ?? '')) {
     unmerged.value = true
@@ -457,6 +490,7 @@ async function startClear() {
   view.value = 'clear'
   clearUnmerged.value = []
   message.value = null
+  void readTrees()
   // Focus lands on Cancel, so Enter alone never deletes.
   await nextTick()
   pop.value?.querySelector<HTMLElement>('[data-cancel]')?.focus()
@@ -467,10 +501,11 @@ async function clearLocal(force: boolean) {
   const deleted: string[] = []
   const unmergedNames: string[] = []
   const failed: string[] = []
+  let treesGone = 0
   await run('clear', async () => {
     for (const name of names) {
       try {
-        await call('git_branch_delete', { path: p(), branch: name, force })
+        if (await deleteBranch(name, force)) treesGone++
         deleted.push(name)
       } catch (e) {
         if (!force && /not fully merged/i.test(reason(e))) unmergedNames.push(name)
@@ -480,7 +515,8 @@ async function clearLocal(force: boolean) {
   })
   clearUnmerged.value = unmergedNames
   const branches = (n: number) => `${n} ${n === 1 ? 'branch' : 'branches'}`
-  const done = deleted.length ? `Deleted ${branches(deleted.length)}. ` : ''
+  const andTrees = treesGone ? ` and ${treesGone} ${treesGone === 1 ? 'worktree' : 'worktrees'}` : ''
+  const done = deleted.length ? `Deleted ${branches(deleted.length)}${andTrees}. ` : ''
   if (unmergedNames.length) {
     const has = unmergedNames.length === 1 ? 'has' : 'have'
     message.value = { error: true, text: `${done}${branches(unmergedNames.length)} ${has} commits not merged anywhere else.\n${unmergedNames.join('\n')}` }
@@ -488,7 +524,7 @@ async function clearLocal(force: boolean) {
     message.value = { error: true, text: `${done}${branches(failed.length)} could not be deleted.\n${failed.join('\n')}` }
   } else {
     await backToList()
-    message.value = { error: false, text: `Deleted ${branches(deleted.length)}.` }
+    message.value = { error: false, text: `Deleted ${branches(deleted.length)}${andTrees}.` }
   }
 }
 
@@ -684,7 +720,12 @@ defineExpose({ show, close })
 
           <div v-else-if="view === 'delete' && target" class="bp__form">
             <p class="bp__form-title">Delete <span class="bp__mono">{{ target.b.name }}</span>?</p>
-            <p v-if="terms.remotes" class="bp__hint">Only the local branch is removed. The remote branch, if any, stays.</p>
+            <p v-if="terms.remotes" class="bp__hint">
+              Only the local branch is removed. The remote branch, if any, stays.
+              <template v-if="trees.byBranch[target.b.name]">
+                Its worktree <span class="bp__mono">{{ trees.byBranch[target.b.name] }}</span> is removed too, unless it has uncommitted changes.
+              </template>
+            </p>
             <p v-else class="bp__hint">Removed from the repository for everyone. Unity VCS only deletes a branch that has no changesets or child branches.</p>
             <div class="bp__form-actions">
               <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? 'Delete anyway' : 'Delete' }}</UiButton>
@@ -736,10 +777,15 @@ defineExpose({ show, close })
             <template v-else>
               <p class="bp__form-title">Delete {{ clearable.length }} local {{ clearable.length === 1 ? 'branch' : 'branches' }}?</p>
               <ul class="bp__names">
-                <li v-for="name in clearable" :key="name" class="bp__mono">{{ name }}</li>
+                <li v-for="name in clearable" :key="name" class="bp__mono">
+                  {{ name }}<span v-if="trees.byBranch[name]" class="bp__names-note"> + worktree</span>
+                </li>
               </ul>
               <p class="bp__hint">
                 Remote branches stay. Branches with unmerged commits are skipped and listed.
+                <template v-if="clearable.some(n => trees.byBranch[n])">
+                  Worktrees on them are removed too, unless they have uncommitted changes.
+                </template>
                 <template v-if="clearKept.length">Kept: <span class="bp__mono">{{ clearKept.join(', ') }}</span>.</template>
               </p>
             </template>
@@ -970,6 +1016,7 @@ defineExpose({ show, close })
   color: var(--fg-muted);
 }
 .bp__names li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.7; }
+.bp__names-note { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--fg-muted); }
 .bp__reading { display: flex; align-items: center; gap: var(--space-2); }
 .bp__note { display: flex; align-items: flex-start; gap: var(--space-2); margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--fg-muted); }
 .bp__note svg { width: 14px; height: 14px; flex: none; margin-top: 2px; stroke-width: 1.85; color: var(--ripe-waiting-fg); }
