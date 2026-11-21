@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.37
+
+### New
+
+- Install plugins from git, browse the official catalog, plugin api.
+
 ## 0.1.36
 
 ### New
