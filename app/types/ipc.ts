@@ -411,6 +411,88 @@ export interface GhJob {
   logTruncated: boolean
 }
 
+/* ---------- releases (the Releases tool window) ---------- */
+
+/** A file attached to a release. */
+export interface GhAsset {
+  name: string
+  size: number
+  downloads: number
+  /** Where it downloads from (https). */
+  url: string
+  /** "uploaded", or "starter" while its upload is under way. */
+  state: string
+}
+
+/** One GitHub release as `gh_releases` lists it. */
+export interface GhRelease {
+  id: number
+  tag: string
+  /** Its title; the tag when it has none. */
+  name: string
+  draft: boolean
+  prerelease: boolean
+  url: string
+  author: { login: string; avatarUrl: string | null } | null
+  /** ISO timestamps; a draft has no `publishedAt`. */
+  createdAt: string
+  publishedAt: string | null
+  /** The branch or commit the tag was made from. */
+  target: string
+  /** The notes as GitHub renders them. Untrusted: goes through `safeHtml` before `v-html`. */
+  bodyHtml: string
+  assets: GhAsset[]
+}
+
+/** One GitHub Actions workflow run. */
+export interface GhRun {
+  id: number
+  workflowId: number
+  /** The workflow's name. */
+  workflow: string
+  /** The head commit's subject for a push. */
+  title: string
+  /** "push", "release", "workflow_dispatch", … */
+  event: string
+  /** The branch, or for a tag push the tag. */
+  headBranch: string | null
+  headSha: string
+  state: GhRunState
+  url: string
+  number: number
+  attempt: number
+  createdAt: string
+  startedAt: string | null
+  /** For a finished run, about when it finished. */
+  updatedAt: string
+}
+
+/** One job of a run; `url` is what `gh_job` reads its log from. */
+export interface GhRunJob {
+  id: number
+  name: string
+  state: GhRunState
+  url: string
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface GhRunDetail {
+  run: GhRun
+  jobs: GhRunJob[]
+}
+
+/** A repository's releases, newest first, and its recent workflow runs (`gh_releases`). */
+export interface GhReleases {
+  host: string
+  owner: string
+  repo: string
+  releases: GhRelease[]
+  runs: GhRun[]
+}
+
+export type GhRunAction = 'rerun-failed' | 'rerun' | 'cancel'
+
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
  * refuses anything that leads outside it.
@@ -1022,6 +1104,17 @@ export interface Commands {
    * and once it finished, its log split into them. Other links are refused.
    */
   gh_job: [{ url: string }, GhJob]
+  /**
+   * The GitHub releases of the project at `path` (which may be a remote project), newest first, up to
+   * `count` (at most 100), with the repository's 50 most recent workflow runs.
+   */
+  gh_releases: [{ path: string; count: number }, GhReleases]
+  /** The newest workflow run for a release's tag (its push, or its publishing), with its jobs; null when none ran. */
+  gh_tag_run: [{ path: string; tag: string }, GhRunDetail | null]
+  /** A workflow run by id, with its jobs. */
+  gh_run: [{ path: string; id: number }, GhRunDetail]
+  /** Re-run a run's failed jobs, the whole run, or cancel it. The error says when GitHub refuses. */
+  gh_run_action: [{ path: string; id: number; action: GhRunAction }, void]
   /**
    * Unity VCS code reviews for the workspace holding `path`: its branch's, and the repository's open
    * ones. Fails for a git folder.

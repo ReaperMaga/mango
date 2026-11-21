@@ -4,6 +4,7 @@ import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
@@ -466,6 +467,10 @@ const mock = (() => {
       case 'gh_open_items': await new Promise(r => setTimeout(r, 600)); return mockGhOpenItems(args.path)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
+      case 'gh_releases': await new Promise(r => setTimeout(r, 650)); return mockGhReleases(args.path, args.count)
+      case 'gh_tag_run': await new Promise(r => setTimeout(r, 400)); return mockGhTagRun(args.path, args.tag)
+      case 'gh_run': await new Promise(r => setTimeout(r, 400)); return mockGhRun(args.path, args.id)
+      case 'gh_run_action': await new Promise(r => setTimeout(r, 700)); return mockGhRunAction(args.path, args.id, args.action)
       case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))
       case 'plastic_reviews': await new Promise(r => setTimeout(r, 500)); return mockPlasticReviews(args.path)
       case 'plastic_review_create': await new Promise(r => setTimeout(r, 900)); return mockPlasticReviewCreate(args.path, args.title, args.reviewers)

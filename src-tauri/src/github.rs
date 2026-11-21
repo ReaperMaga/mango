@@ -12,11 +12,11 @@ use tauri::AppHandle;
 
 use crate::git::{blocking, run_process, At, Output};
 
-const TIMEOUT: Duration = Duration::from_secs(45);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(45);
 /// A pull request with a long description and many images is still far below this.
-const STDOUT_CAP: usize = 8 * 1024 * 1024;
+pub(crate) const STDOUT_CAP: usize = 8 * 1024 * 1024;
 
-const MISSING: &str = "The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, \
+pub(crate) const MISSING: &str = "The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, \
      then sign in with `gh auth login` in the terminal.";
 const SIGNED_OUT: &str = "The GitHub CLI is not signed in. Run `gh auth login` in the terminal, then try again.";
 const BAD_REFERENCE: &str =
@@ -187,7 +187,7 @@ fn gh_bin() -> PathBuf {
 }
 
 /// A `gh` invocation that never prompts and never prints colour or update notices.
-fn gh(dir: Option<&Path>) -> Command {
+pub(crate) fn gh(dir: Option<&Path>) -> Command {
     let bin = gh_bin();
     let mut cmd = Command::new(&bin);
     crate::bin::hide_console(&mut cmd);
@@ -234,11 +234,22 @@ fn run(cmd: Command, target: Option<&Target>) -> Result<Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("The GitHub CLI answered with something unexpected: {e}"))
 }
 
-const NO_REPO: &str = "Could not tell which GitHub repository this project belongs to; paste the full link instead.";
+/// A `gh api` call whose answer is JSON, for the other GitHub modules (releases).
+pub(crate) fn run_json(cmd: Command) -> Result<Value, String> {
+    run(cmd, None)
+}
+
+/// A `gh api` call that answers with nothing worth reading (a POST that starts something).
+pub(crate) fn run_ok(cmd: Command) -> Result<(), String> {
+    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "gh", MISSING)?;
+    if out.ok() { Ok(()) } else { Err(gh_error(&out, None)) }
+}
+
+pub(crate) const NO_REPO: &str = "Could not tell which GitHub repository this project belongs to; paste the full link instead.";
 
 /// The GitHub repository the project belongs to: for a folder on this computer as `gh` picks it,
 /// for a remote project from the git remotes inside its environment.
-fn project_repo(app: &AppHandle, path: &str) -> Result<(String, String, String), String> {
+pub(crate) fn project_repo(app: &AppHandle, path: &str) -> Result<(String, String, String), String> {
     if let Some(env) = crate::vcs::env_at(app, path) {
         return env_repo(&At::Env(Box::new(env?)));
     }
@@ -390,7 +401,7 @@ fn fetch(target: &Target) -> Result<GhItem, String> {
     item_from_json(&v, target)
 }
 
-fn text(v: &Value) -> String {
+pub(crate) fn text(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_string()
 }
 
@@ -398,7 +409,7 @@ fn lower(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_ascii_lowercase)
 }
 
-fn some_text(v: &Value) -> Option<String> {
+pub(crate) fn some_text(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
@@ -870,7 +881,7 @@ fn parse_job_url(url: &str) -> Result<JobTarget, String> {
 }
 
 /// A job's or step's `status` and `conclusion` in the words the window uses.
-fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
+pub(crate) fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
     match status {
         Some("completed") => match conclusion.unwrap_or_default() {
             "success" => "success",

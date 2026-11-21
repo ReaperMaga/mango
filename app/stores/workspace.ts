@@ -56,7 +56,7 @@ export interface TerminalPlacement {
  * The tool windows that open on the right: where the project runs (this computer or an environment),
  * the project's files, source control, and the chat's pull requests and issues.
  */
-export type ToolView = 'env' | 'files' | 'changes' | 'links'
+export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases'
 /** Enter sends (Shift+Enter breaks the line), or Ctrl/Cmd+Enter sends (Enter breaks the line). */
 /** Interface and code fonts (see tokens.css). */
 export const UI_FONTS = ['inter', 'geist', 'dm-sans', 'manrope', 'system'] as const
@@ -196,7 +196,7 @@ function envExtraOf(v: unknown): Record<string, string[]> {
   return out
 }
 
-const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' ? v : null)
+const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
 const whereOf = (v: unknown): EnvRemote | null => {
@@ -852,6 +852,10 @@ export const useWorkspace = defineStore('workspace', {
     /** Show the chat's pull requests and issues on the right; again to close it. */
     toggleLinks(force?: boolean) {
       this.toggleTool('links', force)
+    },
+    /** Show the project's GitHub releases and the runs that build them on the right; again to close it. */
+    toggleReleases(force?: boolean) {
+      this.toggleTool('releases', force)
     },
     /** Show where the project runs (this computer or an environment) on the right; again to close it. */
     toggleEnv(force?: boolean) {

@@ -4,12 +4,12 @@ import { holdOverlay } from '~/composables/useOverlay'
 
 /**
  * The open tool window on the right of the chats: where the project runs, its files,
- * source control, or the chat's pull requests and issues. Owns the width; the panel
+ * source control, the chat's pull requests and issues, or the project's releases. Owns the width; the panel
  * inside owns its own header.
  */
 
 const ws = useWorkspace()
-const LABELS = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests' } as const
+const LABELS = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests', releases: 'Releases' } as const
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
@@ -39,6 +39,7 @@ function endResize() {
       <AppToolEnv v-if="ws.toolPanel === 'env'" />
       <FilesPanel v-else-if="ws.toolPanel === 'files'" />
       <LinksPanel v-else-if="ws.toolPanel === 'links'" />
+      <ReleasesPanel v-else-if="ws.toolPanel === 'releases'" />
       <GitPanel v-else />
     </Transition>
     <div

@@ -42,6 +42,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'changes', label: 'Changes', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+G' },
   { id: 'files', label: 'Files', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+E' },
   { id: 'links', label: 'Pull requests', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+P' },
+  { id: 'releases', label: 'Releases', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+R' },
   { id: 'env', label: 'Environment', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
 
   { id: 'close-tab', label: 'Close tab', group: 'Tabs', scope: 'workspace', key: 'Mod+W' },
