@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -245,15 +245,10 @@ const branchTitle = computed(() => {
       </button>
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
-      <div class="tb__grp tb__usage"><AppUsageMeter /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
         <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="ws.withKey('Toggle sidebar', 'sidebar')" @click="ws.toggleSidebar()"><PanelLeft /></button>
         <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="ws.withKey('Toggle terminal', 'terminal')" @click="ws.toggleTerminal()"><PanelBottom /></button>
-        <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="ws.withKey('Toggle tool panel', 'tool-panel')" @click="ws.toggleToolPanel()"><PanelRight /></button>
       </div>
-      <UiIconButton label="Settings" :shortcut="ws.keyLabel('settings')" :active="!!ws.settings" size="sm" @click="ws.openSettings()">
-        <Settings />
-      </UiIconButton>
 
       <div v-if="native && !mac" class="tb__win">
         <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
@@ -399,7 +394,7 @@ const branchTitle = computed(() => {
 }
 /* A chat window may be as small as 640px: the search and the way back keep only their icons. */
 @media (max-width: 820px) {
-  .tb__keys, .tb__return-label, .tb__usage { display: none; }
+  .tb__keys, .tb__return-label { display: none; }
   .tb__search { width: 28px; flex: none; justify-content: center; padding: 0; }
   .tb__return { width: 28px; justify-content: center; padding: 0; }
   .tb__branch-name { max-width: 72px; }
