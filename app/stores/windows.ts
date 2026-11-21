@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { appWindow, call, isTauri, on, onWindows, postWindows, windowLabel } from '~/composables/useBackend'
 import {
-  MAIN_WINDOW, claimsFor, holderOf, lostChats, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
+  MAIN_WINDOW, claimsFor, holderOf, lostChats, onlyOpen, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
   type ChatRef, type Claim, type ClaimTable, type WindowPlace, type WindowSpec,
 } from '~/utils/windows'
 import { flushHistory } from '~/utils/chatHistory'
@@ -106,6 +106,10 @@ export const useWindows = defineStore('windows', {
           if (m.t === 'here') this.table = { ...this.table, [m.from]: m.claims }
         }
       }
+      // A reload keeps the label but not what the page had open: drop what the others still list for it.
+      if (peers === null || peers.length) await this._post({ t: 'claims', claims: [] })
+      // Coming back to a window: forget windows that went without a word.
+      window.addEventListener('focus', () => { void this.prune() })
       // Leaving: what this window held goes back. A window that is closed on purpose has saved
       // first (`_closing`); a reload just says goodbye, and takes its things again when it is back.
       window.addEventListener('pagehide', () => { void this._post({ t: 'bye', id: this.self }) })
@@ -283,6 +287,18 @@ export const useWindows = defineStore('windows', {
       }, 60)
     },
 
+    /**
+     * Forget windows the backend no longer has (they went without `bye` or `window://closed`), so
+     * nothing stays listed as open in a window that is not there. The browser preview cannot list them.
+     */
+    async prune() {
+      if (!isTauri()) return
+      const open = await call('window_list', {}).catch(() => null)
+      if (!open) return
+      const kept = onlyOpen(this.table, open, this.self)
+      for (const id of Object.keys(this.table)) if (!(id in kept)) this._gone(id)
+    },
+
     /** A window is gone: forget its claims; what it held goes to whoever owns it next. */
     _gone(id: string) {
       if (!(id in this.table)) return
@@ -317,10 +333,17 @@ export const useWindows = defineStore('windows', {
      */
     async _park() {
       this.parked = true
-      await this._shutDown()
-      this.chats = []
-      useWorkspace().park()
-      await this.sync()
+      // Hidden, it must let go whatever happens while saving: otherwise its projects stay
+      // “open in another window” that nobody can see.
+      try {
+        await this._shutDown()
+      } catch (e) {
+        console.error('Mango could not save everything before hiding the main window:', e)
+      } finally {
+        this.chats = []
+        useWorkspace().park()
+        await this.sync()
+      }
     },
 
     async _receive(m: Message) {
