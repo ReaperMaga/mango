@@ -259,6 +259,22 @@ export function createApi(host: ApiHost): MangoPluginApi {
           if (open && reg.toolWindows.some(w => w.fullId === open && w.pluginId === id)) ws().closeTool()
         },
       },
+      panelTabs: {
+        register(tab) {
+          checkId(tab?.id, 'panelTabs.register')
+          const view = rawView(tab.view, 'panelTabs.register')
+          const ref = fullId(id, tab.id)
+          const d = track(reg.panelTabs, owned({ ...tab, view }, id, ref), 'panelTabs')
+          // Gone while showing: the panel goes back to its terminals.
+          const back = scope.add(() => { if (ws().panelPluginTab === ref) ws().panelPluginTab = null })
+          return { dispose() { back.dispose(); d.dispose() } }
+        },
+        open(tabId) {
+          const ref = fullId(id, tabId)
+          if (!reg.panelTabs.some(t => t.fullId === ref)) throw new Error(`No panel tab "${tabId}".`)
+          ws().openPanelTab(ref)
+        },
+      },
       tabs: {
         register(view) {
           checkId(view?.id, 'tabs.register')

@@ -5,7 +5,7 @@ import type { AgentEvent, AgentMcpServer } from '~/agents/types'
 import type { ShortcutDef } from '~/utils/shortcuts'
 import type {
   BeforeSendContext, BeforeSendHook, MenuLocation, PluginColorScheme, PluginCodeBlockRenderer, PluginCommand,
-  PluginMcpServer, PluginMenuItem, PluginMessageAction, PluginShortcut, PluginSlashCommand, PluginStatusItem,
+  PluginMcpServer, PluginMenuItem, PluginMessageAction, PluginPanelTab, PluginShortcut, PluginSlashCommand, PluginStatusItem,
   PluginTabView, PluginToolWindow, Reactive,
 } from './types'
 import { emitAll, parseSlash, runBeforeSend, type HookEntry } from './hooks'
@@ -30,6 +30,8 @@ export const reg = {
   codeBlocks: shallowReactive<Owned<PluginCodeBlockRenderer>[]>([]),
   /** `fullId` is `plugin:<pluginId>.<id>`, the `ToolView` value. */
   toolWindows: shallowReactive<Owned<PluginToolWindow>[]>([]),
+  /** `fullId` is `<pluginId>.<id>`, the `panelPluginTab` value. */
+  panelTabs: shallowReactive<Owned<PluginPanelTab>[]>([]),
   /** `fullId` is `<pluginId>.<id>`. */
   tabViews: shallowReactive<Owned<PluginTabView>[]>([]),
   statusItems: shallowReactive<Owned<PluginStatusItem>[]>([]),
@@ -179,7 +181,12 @@ export function pluginSystemPrompt(): string {
 
 export const isPluginSchemeRegistered = (id: string) => reg.schemes.some(s => s.fullId === id)
 export const pluginToolWindow = (ref: string | null | undefined) => (ref ? reg.toolWindows.find(w => w.fullId === ref) ?? null : null)
-export const pluginTabView = (pluginId: string, viewId: string) => reg.tabViews.find(v => v.pluginId === pluginId && v.id === viewId) ?? null
+/** A panel tab by its ref, while registered and its `when()` holds; else null (the panel shows the terminals). */
+export const shownPanelTab = (ref: string | null | undefined) => {
+  const t = ref ? reg.panelTabs.find(p => p.fullId === ref) ?? null : null
+  return t && shown(t) ? t : null
+}
+export const pluginTabView =(pluginId: string, viewId: string) => reg.tabViews.find(v => v.pluginId === pluginId && v.id === viewId) ?? null
 export const pluginMenus = <L extends MenuLocation>(location: L) =>
   reg.menus.filter(m => m.location === location) as unknown as Array<Owned<PluginMenuItem<L>>>
 

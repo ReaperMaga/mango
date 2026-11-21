@@ -26,7 +26,7 @@ import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
 import { normalizeContext } from '~/agents/context'
 import { transcript } from '~/utils/transcript'
-import { isPluginTab } from '~/plugin-host/ids'
+import { isPanelEditorTab, isPluginTab, parsePanelEditorTab } from '~/plugin-host/ids'
 import { emitThreadCreated, emitTurnEnd, hooks as pluginHooks, pluginBeforeSend, pluginTabs, reg as pluginReg, runPluginSlash } from '~/plugin-host/registry'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
@@ -600,6 +600,9 @@ export const useThreads = defineStore('threads', {
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
       if (isPluginTab(id)) delete pluginTabs[id]
+      // A plugin's panel tab is closed wherever it is (it can be opened again, into the panel).
+      const panelTab = parsePanelEditorTab(id)
+      if (panelTab) return useWorkspace().closePanelTab(panelTab.ref)
       this.removeTab(id)
       // Closing a terminal's tab ends its shell, as closing it in the panel does.
       const term = parseTerminalTab(id)
@@ -1389,7 +1392,7 @@ const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
 /** A tab that shows something other than a chat; none of them is saved with the layout. */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id)
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'

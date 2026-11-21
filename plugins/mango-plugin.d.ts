@@ -209,6 +209,19 @@ export interface PluginToolWindow {
   view: PluginView<ToolWindowContext>
 }
 
+/** `visible`: the tab is in view (in the open panel, or in its pane). `close()`: hide the panel, or close its tab in the main area. */
+export interface PanelTabContext { projectPath: string | null; visible: boolean; close(): void }
+
+/** A tab in the bottom panel among the terminals: one of each, moved and closed by the user like a terminal's tab; `when` hides it. */
+export interface PluginPanelTab {
+  id: string
+  title: string
+  icon: PluginIcon
+  badge?: Reactive<number | null>
+  when?: () => boolean
+  view: PluginView<PanelTabContext>
+}
+
 export interface TabContext {
   state: unknown
   projectPath: string | null
@@ -266,6 +279,7 @@ export interface ToastOptions {
 
 export interface PluginUiApi {
   toolWindows: { register(win: PluginToolWindow): Disposable; open(id: string): void; close(): void }
+  panelTabs: { register(tab: PluginPanelTab): Disposable; open(id: string): void }
   tabs: {
     register(view: PluginTabView): Disposable
     open(viewId: string, opts: { title: string; key?: string; state?: unknown }): void

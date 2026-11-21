@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { AppWindow, Server, SquareTerminal } from 'lucide-vue-next'
 import { tabDrag, type Box } from '~/composables/useTabDrag'
+import { reg } from '~/plugin-host/registry'
+import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 
@@ -14,6 +16,8 @@ const win = useWindows()
 const at = (b: Box) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` })
 
 const chat = computed(() => (tabDrag.item?.kind === 'chat' ? threads.byId(tabDrag.item.id) : null))
+/** A plugin's panel tab being dragged (its icon). */
+const panelTab = computed(() => (tabDrag.item?.kind === 'panelTab' ? reg.panelTabs.find(t => t.fullId === tabDrag.item!.id) ?? null : null))
 /** The chat window's own chat goes back when it is let go over another window; anything else gets a new window. */
 const own = computed(() => win.spec.kind === 'chat' && !!chat.value && threads.rootOf(chat.value.id)?.id === win.spec.threadId)
 /* A chat at work cannot move: its run stays in this window. */
@@ -64,6 +68,7 @@ const area = computed(() => {
         <span class="tdl__tab">
           <AppWindow v-if="out && !own" class="tdl__icon" />
           <UiRipenessDot v-else-if="chat" :status="chat.archived ? 'archived' : chat.status" :size="11" />
+          <PluginIcon v-else-if="panelTab" :icon="panelTab.icon" class="tdl__icon" />
           <component :is="tabDrag.remote ? Server : SquareTerminal" v-else class="tdl__icon" />
           <span class="tdl__title">{{ tabDrag.title }}</span>
         </span>
