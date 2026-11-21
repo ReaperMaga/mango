@@ -6,7 +6,9 @@
 #
 # The tag must match package.json (`pnpm bump X.Y.Z` sets every copy of the version).
 # Needs the repository secret TAURI_SIGNING_PRIVATE_KEY (and _PASSWORD if the key has
-# one): the in-app updater only installs bundles signed with it.
+# one): the in-app updater only installs bundles signed with it. The macOS app is signed and
+# notarized with the APPLE_* secrets (see docs/development/releasing.md); the notarizing is
+# done by scripts/release-macos.sh, which gives Apple a deadline.
 name: Release
 
 on:
@@ -115,6 +117,8 @@ jobs:
             os: macos-latest
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.os }}
+    # Builds take minutes; macOS adds up to 40 for notarization. Nothing should sit for hours.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
@@ -152,6 +156,39 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # Developer ID signing, and notarization with an App Store Connect API key. Only the
+      # secrets that are set are exported: Tauri treats an empty variable as set and would fail.
+      # The API key goes out as NOTARY_*, not APPLE_API_*: Tauri would notarize itself on seeing
+      # those and wait on Apple with no time limit. scripts/release-macos.sh notarizes instead.
+      - name: Apple signing secrets
+        if: runner.os == 'macOS'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY KEYCHAIN_PASSWORD; do
+            value="${!name}"
+            [ -n "$value" ] || continue
+            { echo "$name<<APPLE_EOF"; echo "$value"; echo "APPLE_EOF"; } >> "$GITHUB_ENV"
+          done
+          [ -z "$APPLE_API_KEY" ] || echo "NOTARY_API_KEY=$APPLE_API_KEY" >> "$GITHUB_ENV"
+          [ -z "$APPLE_API_ISSUER" ] || echo "NOTARY_API_ISSUER=$APPLE_API_ISSUER" >> "$GITHUB_ENV"
+          if [ -n "$APPLE_API_KEY_P8" ]; then
+            key="$RUNNER_TEMP/AuthKey_$APPLE_API_KEY.p8"
+            (umask 077 && printf '%s\n' "$APPLE_API_KEY_P8" > "$key")
+            echo "NOTARY_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+          fi
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "::warning::No APPLE_CERTIFICATE secret: the macOS app is not signed."
+          elif [ -z "$APPLE_API_KEY" ] || [ -z "$APPLE_API_ISSUER" ] || [ -z "$APPLE_API_KEY_P8" ]; then
+            echo "::warning::APPLE_API_KEY, APPLE_API_ISSUER or APPLE_API_KEY_P8 missing: the macOS app is signed but not notarized."
+          fi
+
       - name: Build and upload
         uses: tauri-apps/tauri-action@v1
         env:
@@ -160,15 +197,18 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tauriScript: pnpm tauri
+          # On macOS the script runs `pnpm tauri build` (signs the app and DMG), then
+          # notarizes and staples the DMG with a deadline instead of waiting on Apple forever.
+          tauriScript: ${{ runner.os == 'macOS' && 'bash scripts/release-macos.sh' || 'pnpm tauri' }}
           # Updater bundles + .sig files are made only here, so local builds need no key.
-          # macOS is ad-hoc signed (tauri.macos.conf.json), not notarized.
           args: --config src-tauri/tauri.updater.conf.json ${{ matrix.target && format('--target {0}', matrix.target) || '' }}
           releaseId: ${{ needs.prepare.outputs.release-id }}
           # latest.json: what the in-app updater reads from the latest release.
           uploadUpdaterJson: true
           updaterJsonPreferNsis: true
-          retryAttempts: 1
+          # A retry rebuilds and resubmits: no help when Apple's queue is slow, and the
+          # script already retries its own network calls. ('0' as a string: a bare 0 is falsy.)
+          retryAttempts: ${{ runner.os == 'macOS' && '0' || '1' }}
           # Manual runs have no release: keep the installers on the run instead.
           uploadWorkflowArtifacts: ${{ github.ref_type != 'tag' }}
           workflowArtifactNamePattern: '[name]_[version]_[platform]_[arch]_[bundle]'

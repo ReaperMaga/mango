@@ -55,6 +55,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#1b251d",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#1d2920",
@@ -66,7 +73,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 1, 0, 0.6), 0px 2px 6px 0px rgba(0, 1, 0, 0.35)",
@@ -119,6 +127,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#fff5ed",
@@ -130,7 +145,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(32, 51, 41, 0.28), 0px 2px 6px 0px rgba(32, 51, 41, 0.1)",
@@ -185,6 +201,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#1c222d",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#1c2531",
@@ -196,7 +219,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 0, 1, 0.6), 0px 2px 6px 0px rgba(0, 0, 1, 0.35)",
@@ -249,6 +273,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#f0f6ff",
@@ -260,7 +291,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(32, 47, 65, 0.28), 0px 2px 6px 0px rgba(32, 47, 65, 0.1)",
@@ -315,6 +347,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#152523",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#172928",
@@ -326,7 +365,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 1, 1, 0.6), 0px 2px 6px 0px rgba(0, 1, 1, 0.35)",
@@ -379,6 +419,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#eef9f8",
@@ -390,7 +437,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(21, 51, 51, 0.28), 0px 2px 6px 0px rgba(21, 51, 51, 0.1)",
@@ -445,6 +493,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#1d241a",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#1e291e",
@@ -456,7 +511,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 1, 0, 0.6), 0px 2px 6px 0px rgba(0, 1, 0, 0.35)",
@@ -509,6 +565,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#f0f9f0",
@@ -520,7 +583,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(34, 51, 35, 0.28), 0px 2px 6px 0px rgba(34, 51, 35, 0.1)",
@@ -575,6 +639,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#241f2b",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#252230",
@@ -586,7 +657,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 0, 1, 0.6), 0px 2px 6px 0px rgba(0, 0, 1, 0.35)",
@@ -639,6 +711,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#f5f3fe",
@@ -650,7 +729,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(47, 42, 63, 0.28), 0px 2px 6px 0px rgba(47, 42, 63, 0.1)",
@@ -705,6 +785,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#2a1d23",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#2e2027",
@@ -716,7 +803,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(1, 0, 0, 0.6), 0px 2px 6px 0px rgba(1, 0, 0, 0.35)",
@@ -769,6 +857,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#fff2f7",
@@ -780,7 +875,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(59, 39, 48, 0.28), 0px 2px 6px 0px rgba(59, 39, 48, 0.1)",
@@ -835,6 +931,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#2b1e1c",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#2f1f1e",
@@ -846,7 +949,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(1, 0, 0, 0.6), 0px 2px 6px 0px rgba(1, 0, 0, 0.35)",
@@ -899,6 +1003,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#fff1ef",
@@ -910,7 +1021,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(61, 39, 37, 0.28), 0px 2px 6px 0px rgba(61, 39, 37, 0.1)",
@@ -965,6 +1077,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#1c222a",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#20262b",
@@ -976,7 +1095,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 0, 1, 0.6), 0px 2px 6px 0px rgba(0, 0, 1, 0.35)",
@@ -1029,6 +1149,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#f0f4f8",
@@ -1040,7 +1167,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(38, 47, 54, 0.28), 0px 2px 6px 0px rgba(38, 47, 54, 0.1)",
@@ -1095,6 +1223,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#1f1515",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#221212",
@@ -1106,7 +1241,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(1, 0, 0, 0.6), 0px 2px 6px 0px rgba(1, 0, 0, 0.35)",
@@ -1159,6 +1295,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#ffedea",
@@ -1170,7 +1313,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(57, 41, 41, 0.28), 0px 2px 6px 0px rgba(57, 41, 41, 0.1)",
@@ -1225,6 +1369,13 @@ export const generated = {
         "fileGreen": "#6fc884",
         "filePurple": "#b093e5",
         "fileRed": "#ed7473",
+        "termRed": "#f0766b",
+        "termGreen": "#8fcf9a",
+        "termYellow": "#f4c062",
+        "termBlue": "#7fb2f0",
+        "termMagenta": "#d39af0",
+        "termCyan": "#78d0c8",
+        "termBrightBlack": "#5d6b64",
         "waitingWash": "#27201f",
         "waitingLine": "rgba(244, 124, 110, 0.55)",
         "accentWash": "#2b241f",
@@ -1236,7 +1387,8 @@ export const generated = {
         "chipDel": "rgba(246, 132, 130, 0.14)",
         "chipQueued": "rgba(130, 203, 146, 0.14)",
         "chipError": "rgba(255, 125, 124, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(244, 192, 98, 0.09)"
       },
       "shadow": {
         "pop": "0px 12px 32px -8px rgba(0, 0, 0, 0.6), 0px 2px 6px 0px rgba(0, 0, 0, 0.35)",
@@ -1289,6 +1441,13 @@ export const generated = {
         "fileGreen": "#2d8949",
         "filePurple": "#8059bb",
         "fileRed": "#c8393a",
+        "termRed": "#c4362c",
+        "termGreen": "#2e8a4a",
+        "termYellow": "#a86a00",
+        "termBlue": "#2a64b8",
+        "termMagenta": "#8e3fb0",
+        "termCyan": "#11807a",
+        "termBrightBlack": "#6b7570",
         "waitingWash": "#fef3f2",
         "waitingLine": "rgba(217, 84, 72, 0.55)",
         "accentWash": "#fff5ed",
@@ -1300,7 +1459,8 @@ export const generated = {
         "chipDel": "rgba(179, 34, 40, 0.14)",
         "chipQueued": "rgba(15, 106, 49, 0.14)",
         "chipError": "rgba(183, 24, 36, 0.14)",
-        "brandClaude": "#d97757"
+        "brandClaude": "#d97757",
+        "termYellowWash": "rgba(168, 106, 0, 0.09)"
       },
       "shadow": {
         "pop": "0px 14px 34px -10px rgba(46, 46, 46, 0.28), 0px 2px 6px 0px rgba(46, 46, 46, 0.1)",

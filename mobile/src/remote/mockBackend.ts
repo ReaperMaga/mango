@@ -1,8 +1,11 @@
 import type { AgentId, Thread } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { AgentAuth } from './auth'
-import { MOCK_GITHUB, mockChats } from './mockChats'
-import { ghFailure, ghItemArgv } from './github'
+import { mockChats } from './mockChats'
+import {
+  ghDetailArgv, ghFailure, ghItemArgv, ghMergeArgv, ghPrCreateArgv, parseJobUrl, parseReference, targetOf, targetOfRef,
+} from './github'
+import { createMockGithub, mockRepoOf, stateOf } from './mockGithub'
 import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
@@ -174,6 +177,8 @@ export function createMockBackend(): RemoteBackend {
   const worktrees = new Map<string, { dir: string; branch: string }[]>()
   /** Chats "in the environment", per `<hostId>/<instance>`: revision and shared JSON, or a tombstone. */
   const kept = new Map<string, Map<string, { rev: number; json: string } | { rev: null }>>()
+  /** Its GitHub: a merge or a new pull request stays for this backend's life. */
+  const github = createMockGithub()
 
   const envOf = (hostId: string) => {
     const env = lookup(hostId)
@@ -427,9 +432,63 @@ export function createMockBackend(): RemoteBackend {
       ghItemArgv(ref) // the same validation as the real one
       const { instance } = parseProjectPath(projectPath)
       await wait(300, 700)
-      const found = MOCK_GITHUB[`github.com/${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase()]
-      if (!found) throw new Error(ghFailure(instance, ref, 4, 'To get started with GitHub CLI, please run:  gh auth login'))
-      return { ...found }
+      // What the pull request screen changed (a merge, a new one) shows in the list too.
+      try {
+        return stateOf(github.detail(targetOfRef(ref), instance))
+      } catch {
+        throw new Error(ghFailure(instance, ref, 4, 'To get started with GitHub CLI, please run:  gh auth login'))
+      }
+    },
+
+    async ghDetail(projectPath, ref) {
+      const t = targetOfRef(ref)
+      ghDetailArgv(t) // the same validation as the real one
+      const { instance } = parseProjectPath(projectPath)
+      await wait(300, 800)
+      return github.detail(t, instance)
+    },
+
+    async ghResolve(projectPath, reference) {
+      const parsed = parseReference(reference)
+      const { instance, dir } = parseProjectPath(projectPath)
+      await wait(300, 800)
+      let repo = { owner: '', repo: '' }
+      if (parsed.kind === 'number') {
+        // The real one reads the project's git remotes: every mock project is on github.com/acme.
+        if (!repoOf(projectPath)) throw new Error('Could not tell which GitHub repository this project belongs to; paste the full link instead. (The project folder is not a git repository.)')
+        repo = mockRepoOf(mainOf(projectPath).dir.split('/').pop() ?? dir)
+      }
+      const t = targetOf(parsed, repo)
+      ghDetailArgv(t)
+      return github.detail(t, instance)
+    },
+
+    async ghMerge(projectPath, ref, method, headSha) {
+      const t = targetOfRef(ref)
+      if (ref.kind !== 'pr') throw new Error('Only a pull request can be merged.')
+      ghMergeArgv(t, method, headSha) // the same validation as the real one
+      const { instance } = parseProjectPath(projectPath)
+      await wait(700, 1400)
+      github.merge(t, method, headSha, instance)
+    },
+
+    async ghJob(projectPath, url) {
+      parseJobUrl(url)
+      parseProjectPath(projectPath)
+      await wait(400, 900)
+      return github.job(url)
+    },
+
+    async ghPrCreate(projectPath, base) {
+      ghPrCreateArgv(base) // the same validation as the real one
+      await wait(900, 1600)
+      const repo = repoOf(projectPath)
+      const { instance } = parseProjectPath(projectPath)
+      if (!repo) throw new Error(`The project folder in ${instance} is not a git repository.`)
+      if (!repo.branch) throw new Error('HEAD is detached, so there is no branch to open a pull request from. Switch to a branch first.')
+      if (!repo.upstream) throw new Error(`${repo.branch} is not on GitHub yet. Push it first, then open the pull request.`)
+      const name = mainOf(projectPath).dir.split('/').pop() ?? 'project'
+      return github.prCreate(mockRepoOf(name), repo.branch, base === null ? null : base.trim(), instance)
     },
 
     spawnFor(agent, projectPath): SpawnFn {

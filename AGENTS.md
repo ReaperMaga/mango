@@ -63,7 +63,7 @@ app/
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
-    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log)
+    links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
@@ -76,7 +76,7 @@ app/
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
-                     githubLinks.ts (find created PRs/issues), linkState.ts, safeHtml.ts (sanitise outside HTML),
+                     githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events

@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GhCheck, GhItem, GhJob, GhMergeMethod } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhMergeMethod, GhOpenItems } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
@@ -31,6 +31,14 @@ export interface JobDetail {
   fetchedAt: number
 }
 
+/** A project's open pull requests and issues as last listed, to pick one to link. */
+export interface OpenList {
+  list: GhOpenItems | null
+  loading: boolean
+  error: string | null
+  fetchedAt: number
+}
+
 /** The check whose log the tool window shows, over the pull request it belongs to. */
 export interface OpenCheck {
   /** The pull request's link key: the log closes when another item opens. */
@@ -44,6 +52,9 @@ export interface OpenCheck {
 /** A check's details link that `gh_job` can read: a GitHub Actions job. */
 export const isJobUrl = (url: string | null | undefined): url is string =>
   !!url && /^https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+
+/** The open list is listed again when it is older than this. */
+const OPEN_FRESH_MS = 60_000
 
 /** The picture links in a description are signed for a few minutes only: read it again before they lapse. */
 const STALE_MS = 4 * 60_000
@@ -67,6 +78,8 @@ export const useLinks = defineStore('links', {
     jobs: {} as Record<string, JobDetail>,
     /** The check whose log is open over its pull request; null shows the pull request. */
     check: null as OpenCheck | null,
+    /** Open pull requests and issues, by project path. */
+    open: {} as Record<string, OpenList>,
   }),
 
   actions: {
@@ -135,6 +148,21 @@ export const useLinks = defineStore('links', {
       threads.link(chat.id, link)
       this.focused = link.key
       return link
+    },
+
+    /** List the project's open pull requests and issues, unless the last list is recent (or `force`). */
+    async loadOpen(projectPath: string, force = false) {
+      const had = this.open[projectPath]
+      if (had?.loading) return
+      if (!force && had?.list && !had.error && Date.now() - had.fetchedAt < OPEN_FRESH_MS) return
+      const keep = { list: had?.list ?? null, fetchedAt: had?.fetchedAt ?? 0 }
+      this.open[projectPath] = { ...keep, loading: true, error: null }
+      try {
+        const list = await call('gh_open_items', { path: projectPath })
+        this.open[projectPath] = { list, loading: false, error: null, fetchedAt: Date.now() }
+      } catch (e) {
+        this.open[projectPath] = { ...keep, loading: false, error: message(e) }
+      }
     },
 
     /** Show a check's log over the pull request `linkKey`. Only GitHub Actions jobs have one here. */

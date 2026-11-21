@@ -23,6 +23,8 @@ import { ThreadActions } from '@/screens/ThreadActions'
 import { useAttachments, type AttachSource } from '@/screens/useAttachments'
 import { placeOf, projectName, reconnectingText } from '@/screens/names'
 import { useLinkDetails } from '@/screens/useLinkDetails'
+import { useLinks } from '@/state/links'
+import { validGhRef } from '@/remote/github'
 
 /** How close to the end (pt) still counts as "at the bottom": new output then keeps it in view. */
 const STICK = 80
@@ -104,6 +106,20 @@ export default function ChatScreen() {
   const readOnly = !!thread.parentId
   const store = useThreads.getState()
 
+  const chatId = root?.id ?? id
+  /** One linked item's screen; from the sheet, once the sheet has gone (iOS won't push under a closing modal). */
+  const openLink = (l: LinkedItem, fromSheet = false) => {
+    const go = () => router.push({ pathname: '/pull', params: { chat: chatId, key: l.key } })
+    if (!fromSheet) return go()
+    setLinksOpen(false)
+    setTimeout(go, 350)
+  }
+  // With one item the bar goes straight to it, as the desktop's tool window does.
+  const onLinksBar = () => {
+    if (links.length === 1 && validGhRef(links[0]!)) openLink(links[0]!)
+    else setLinksOpen(true)
+  }
+
   const send = (text: string) => {
     store.setDraft(id, '')
     atBottom.current = true
@@ -135,7 +151,7 @@ export default function ChatScreen() {
         ),
         headerRight: () => (
           <View style={s.headerButtons}>
-            <IconButton icon={GitCompareArrows} label="Changes" onPress={() => router.push({ pathname: '/changes', params: { path: thread.worktree ?? thread.projectPath } })} />
+            <IconButton icon={GitCompareArrows} label="Changes" onPress={() => router.push({ pathname: '/changes', params: { path: thread.worktree ?? thread.projectPath, chat: chatId } })} />
             <IconButton icon={Ellipsis} label="Chat actions" onPress={() => setMenu(true)} />
           </View>
         ),
@@ -150,7 +166,7 @@ export default function ChatScreen() {
       keyboardVerticalOffset={headerHeight}
     >
       {header}
-      <ChatLinksBar links={links} onPress={() => setLinksOpen(true)} />
+      <ChatLinksBar links={links} onPress={onLinksBar} />
       <FlatList
         ref={list}
         data={thread.messages}
@@ -269,8 +285,16 @@ export default function ChatScreen() {
         live={linkDetails.live}
         loading={linkDetails.loading}
         error={linkDetails.error}
+        onOpen={l => openLink(l, true)}
+        onLink={reference => useLinks.getState().linkByReference(chatId, reference)}
       />
-      <ThreadActions threadId={id} visible={menu} onClose={() => setMenu(false)} onDeleted={() => router.back()} />
+      <ThreadActions
+        threadId={id}
+        visible={menu}
+        onClose={() => setMenu(false)}
+        onDeleted={() => router.back()}
+        onLinks={() => { setMenu(false); setTimeout(() => setLinksOpen(true), 350) }}
+      />
     </KeyboardAvoidingView>
   )
 }

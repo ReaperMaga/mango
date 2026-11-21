@@ -1,7 +1,8 @@
 import type { AgentId } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { SshEndpoint } from '@/ssh/types'
-import type { GhRef, GhState } from './github'
+import type { GhJob, GhMergeMethod } from '~/types/ipc'
+import type { GhDetail, GhRef, GhState } from './github'
 import type { ChatPicture } from './images'
 import type { AgentAuth } from './auth'
 
@@ -174,6 +175,36 @@ export interface RemoteBackend {
    * missing or signed out there, or the item is not on github.com.
    */
   ghItem(projectPath: string, ref: GhRef): Promise<GhState>
+
+  /*
+   * The pull request screen: the desktop's `gh_item`, `gh_merge`, `gh_job` and `gh_pr_create`, with gh
+   * run inside the project's environment (the phone has none of its own). Only github.com. Each rejects
+   * with a message a person can act on (gh missing or signed out there, no such item, a refused merge).
+   */
+
+  /** One pull request or issue in full: state, branches, checks, reviews, labels, description, merge options. */
+  ghDetail(projectPath: string, ref: GhRef): Promise<GhDetail>
+  /**
+   * The item `reference` names, to link it to a chat: a github.com link, `owner/repo#12`, or `#12` / `12`
+   * in the project's own repository (read from its git remotes inside the environment).
+   */
+  ghResolve(projectPath: string, reference: string): Promise<GhDetail>
+  /**
+   * Merge a pull request on GitHub with `method`, only while its branch still points at `headSha`
+   * (GitHub refuses with 409 otherwise). Nothing in the environment's checkout changes.
+   */
+  ghMerge(projectPath: string, ref: GhRef, method: GhMergeMethod, headSha: string): Promise<void>
+  /**
+   * A GitHub Actions job by its details link (`https://github.com/o/r/actions/runs/<run>/job/<job>`):
+   * its steps, and once it finished, its log split into them (the desktop's `split_log`).
+   */
+  ghJob(projectPath: string, url: string): Promise<GhJob>
+  /**
+   * Open a pull request from the branch checked out in `projectPath` (pushed already) into `base`
+   * (null: the repository's default branch), titled and described from its commits (`gh pr create
+   * --fill`), or find the one already open for the branch; then read it.
+   */
+  ghPrCreate(projectPath: string, base: string | null): Promise<GhDetail>
 
   /**
    * A picture an agent's reply points at (`![alt](path)`): a file inside the project's environment,

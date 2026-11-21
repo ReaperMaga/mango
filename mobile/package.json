@@ -1,6 +1,6 @@
 {
   "name": "mango-mobile",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "main": "expo-router/entry",
   "dependencies": {
     "@expo-google-fonts/dm-sans": "^0.4.2",
@@ -51,6 +51,7 @@
     "zustand": "^5.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@types/react": "~19.3.0",
     "typescript": "~6.0.3",
     "vitest": "^5.1.0"

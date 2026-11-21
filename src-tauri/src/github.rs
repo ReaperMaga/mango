@@ -617,6 +617,112 @@ pub async fn gh_item(app: AppHandle, path: String, reference: String) -> Result<
     blocking(move || item(&reference, || project_repo(&app, &path))).await
 }
 
+// ---------------------------------------------------------------------------
+// The project's open pull requests and issues, to pick one to link
+// ---------------------------------------------------------------------------
+
+/// How many of each kind are read, most recently updated first; the picker filters them as the user types.
+const OPEN_LIMIT: u32 = 30;
+
+const OPEN_QUERY: &str = r#"query($owner: String!, $name: String!, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url isDraft headRefName updatedAt author { login } }
+    }
+    issues(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url updatedAt author { login } }
+    }
+  }
+}"#;
+
+/// One open pull request or issue, as the picker lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhListItem {
+    /// "pr" or "issue".
+    pub kind: &'static str,
+    pub url: String,
+    pub number: u64,
+    pub title: String,
+    /// "open" or "draft".
+    pub state: &'static str,
+    /// A pull request's branch.
+    pub head_ref: Option<String>,
+    pub author: Option<String>,
+    pub updated_at: String,
+}
+
+/// The open pull requests and issues of the project's GitHub repository.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhOpenItems {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    /// Pull requests and issues together, most recently updated first.
+    pub items: Vec<GhListItem>,
+}
+
+fn list_item(n: &Value, kind: &'static str) -> Option<GhListItem> {
+    let number = n["number"].as_u64().filter(|n| *n > 0)?;
+    let url = n["url"].as_str().filter(|u| u.starts_with("https://"))?.to_string();
+    let state = if kind == "pr" && n["isDraft"].as_bool() == Some(true) { "draft" } else { "open" };
+    Some(GhListItem {
+        kind,
+        url,
+        number,
+        title: text(&n["title"]),
+        state,
+        head_ref: some_text(&n["headRefName"]),
+        author: some_text(&n["author"]["login"]),
+        updated_at: text(&n["updatedAt"]),
+    })
+}
+
+fn open_items_from_json(v: &Value, host: String, owner: String, repo: String) -> Result<GhOpenItems, String> {
+    let node = &v["data"]["repository"];
+    if node.is_null() {
+        return Err(match v["errors"][0]["message"].as_str() {
+            Some(msg) => format!("GitHub: {msg}"),
+            None => format!("GitHub has no repository {owner}/{repo}, or the account gh is signed in with cannot see it."),
+        });
+    }
+    let nodes = |field: &str, kind: &'static str| -> Vec<GhListItem> {
+        node[field]["nodes"].as_array().map(|a| a.iter().filter_map(|n| list_item(n, kind)).collect()).unwrap_or_default()
+    };
+    let mut items = nodes("pullRequests", "pr");
+    items.extend(nodes("issues", "issue"));
+    // ISO 8601 stamps from one source sort as text.
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(GhOpenItems { host, owner, repo, items })
+}
+
+fn open_items((host, owner, repo): (String, String, String)) -> Result<GhOpenItems, String> {
+    let target = Target { host: host.clone(), owner: owner.clone(), repo: repo.clone(), number: 0 };
+    let mut cmd = gh(None);
+    cmd.args(["api", "graphql"]);
+    if host != "github.com" {
+        cmd.args(["--hostname", &host]);
+    }
+    cmd.arg("-f")
+        .arg(format!("owner={owner}"))
+        .arg("-f")
+        .arg(format!("name={repo}"))
+        .arg("-F")
+        .arg(format!("first={OPEN_LIMIT}"))
+        .arg("-f")
+        .arg(format!("query={OPEN_QUERY}"));
+    let v = run(cmd, Some(&target))?;
+    open_items_from_json(&v, host, owner, repo)
+}
+
+/// The open pull requests and issues of the GitHub repository of the project at `path` (which may
+/// be a remote project), most recently updated first, up to 30 of each.
+#[tauri::command]
+pub async fn gh_open_items(app: AppHandle, path: String) -> Result<GhOpenItems, String> {
+    blocking(move || open_items(project_repo(&app, &path)?)).await
+}
+
 /// The pull request a `gh pr create` printed: its link on success, or the one that already
 /// exists for the branch ("a pull request for branch … already exists: <link>").
 fn created_target(text: &str) -> Option<Target> {
@@ -976,6 +1082,31 @@ pub async fn gh_job(url: String) -> Result<GhJob, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn lists_open_items_newest_first() {
+        let v = json!({ "data": { "repository": {
+            "pullRequests": { "nodes": [
+                { "number": 75, "title": "feat: a", "url": "https://github.com/acme/app/pull/75", "isDraft": false,
+                  "headRefName": "feat/a", "updatedAt": "2026-11-20T10:00:00Z", "author": { "login": "ann" } },
+                { "number": 76, "title": "fix: b", "url": "https://github.com/acme/app/pull/76", "isDraft": true,
+                  "headRefName": "fix/b", "updatedAt": "2026-11-21T09:00:00Z", "author": null },
+                { "number": 77, "title": "no link", "url": "javascript:alert(1)", "updatedAt": "2026-11-21T11:00:00Z" }
+            ] },
+            "issues": { "nodes": [
+                { "number": 70, "title": "Crash", "url": "https://github.com/acme/app/issues/70",
+                  "updatedAt": "2026-11-20T12:00:00Z", "author": { "login": "bo" } }
+            ] }
+        } } });
+        let list = open_items_from_json(&v, "github.com".into(), "acme".into(), "app".into()).unwrap();
+        let got: Vec<_> = list.items.iter().map(|i| (i.number, i.kind, i.state)).collect();
+        assert_eq!(got, [(76, "pr", "draft"), (70, "issue", "open"), (75, "pr", "open")]);
+        assert_eq!(list.items[2].head_ref.as_deref(), Some("feat/a"));
+        assert_eq!(list.items[0].author, None);
+
+        let missing = json!({ "data": { "repository": null }, "errors": [{ "message": "Could not resolve to a Repository" }] });
+        assert!(open_items_from_json(&missing, "github.com".into(), "acme".into(), "gone".into()).unwrap_err().starts_with("GitHub: "));
+    }
 
     #[test]
     fn finds_the_pull_request_gh_created() {

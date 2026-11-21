@@ -2,6 +2,7 @@ import type { LinkedItem, Message, Part, Thread } from '~/types/chat'
 import type { GhState } from './github'
 import { demoThreads } from '~/utils/demoThreads'
 import { MOCK_SHOT_PATH } from './mockPictures'
+import { MOCK_GITHUB_ITEMS } from './mockGithub'
 
 /**
  * The chats the web preview's environments hold before anyone writes one: a few per project, each
@@ -63,14 +64,11 @@ function mockLink(kind: LinkedItem['kind'], owner: string, repo: string, number:
 }
 
 /**
- * What the preview's "GitHub" answers for the linked items above (`backend.ghItem`). An item
- * missing here reads as gh not being signed in, so that state shows too (the shop-admin draft).
+ * What the preview's "GitHub" answers for the linked items above (`backend.ghItem`); the full
+ * items, their checks and jobs are in `mockGithub.ts`. An item missing here reads as gh not
+ * being signed in, so that state shows too (the shop-admin draft).
  */
-export const MOCK_GITHUB: Record<string, GhState> = {
-  'github.com/acme/shop-api#128': { kind: 'pr', title: 'Refund endpoint with idempotency keys', state: 'merged', stateReason: null },
-  'github.com/acme/shop-api#97': { kind: 'issue', title: 'Refunds can run twice when the client retries', state: 'closed', stateReason: 'completed' },
-  'github.com/acme/shop-api#131': { kind: 'issue', title: 'checkout.test.ts > reserves stock is flaky on CI', state: 'open', stateReason: null },
-}
+export const MOCK_GITHUB: Record<string, GhState> = MOCK_GITHUB_ITEMS
 
 const SEEDS: Record<string, Seed[]> = {
   'shop-api': [
@@ -120,7 +118,10 @@ const SEEDS: Record<string, Seed[]> = {
       effort: null,
       status: 'error',
       branch: 'feat/orders',
-      links: [mockLink('issue', 'acme', 'shop-api', 131, 'user')],
+      links: [
+        mockLink('issue', 'acme', 'shop-api', 131, 'user'),
+        mockLink('pr', 'acme', 'shop-api', 134, 'agent', 'Wait for the stock reservation before asserting in checkout tests', 'open'),
+      ],
       created: 5 * 60,
       updated: 4 * 60,
       turns: [[

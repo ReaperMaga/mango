@@ -71,6 +71,14 @@ export const darkColors: Colors = {
   fileGreen: '#6fc884',
   filePurple: '#b093e5',
   fileRed: '#ed7473',
+  termRed: '#f0766b',
+  termGreen: '#8fcf9a',
+  termYellow: '#f4c062',
+  termBlue: '#7fb2f0',
+  termMagenta: '#d39af0',
+  termCyan: '#78d0c8',
+  termBrightBlack: '#5d6b64',
+  termYellowWash: 'rgba(244, 192, 98, 0.09)',
 }
 
 export const lightColors: Colors = {
@@ -139,6 +147,14 @@ export const lightColors: Colors = {
   fileGreen: '#2d8949',
   filePurple: '#8059bb',
   fileRed: '#c8393a',
+  termRed: '#c4362c',
+  termGreen: '#2e8a4a',
+  termYellow: '#a86a00',
+  termBlue: '#2a64b8',
+  termMagenta: '#8e3fb0',
+  termCyan: '#11807a',
+  termBrightBlack: '#6b7570',
+  termYellowWash: 'rgba(168, 106, 0, 0.09)',
 }
 
 export const darkShadows: Shadows = {
