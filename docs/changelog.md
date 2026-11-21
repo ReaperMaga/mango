@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.31
+
+### Fixes
+
+- Stop listing projects as open in a window that let them go.
+
 ## 0.1.30
 
 ### New
