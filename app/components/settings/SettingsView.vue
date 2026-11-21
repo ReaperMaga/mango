@@ -45,6 +45,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'appearance', label: 'Appearance', icon: SunMoon },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'voice', label: 'Voice', icon: Mic },
+      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
     ],
   },
   {
@@ -53,7 +54,6 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'environments', label: 'Environments', icon: Server },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
       { id: 'mcp', label: 'MCP servers', icon: Plug },
-      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
       { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
       { id: 'maintenance', label: 'Maintenance', icon: Wrench },
     ],

@@ -145,6 +145,8 @@ export type AgentEvent =
    * taken mid-turn: it only updates the total (see `mergeContext`).
    */
   | { type: 'context'; usage: ContextUsage }
+  /** What the run has used so far, in total (each event replaces the one before). */
+  | { type: 'usage'; usage: TurnUsage }
   /** Exactly one per run, always last. */
   | { type: 'turn-end'; status: 'done' | 'error' | 'stopped'; error?: string }
 
@@ -235,6 +237,13 @@ export interface AgentRun {
    * CLI cannot say. Read-only: no turn is run, no quota is spent.
    */
   taskOutput?(id: string): Promise<string | null>
+}
+
+/** What one run (a turn, with its steering messages) spent: tokens in (cached ones too) and out, and the cost when the CLI says. */
+export interface TurnUsage {
+  input: number
+  output: number
+  costUsd?: number
 }
 
 /** One thing that takes room in the context window ("System prompt", "Messages", "Free space"). */

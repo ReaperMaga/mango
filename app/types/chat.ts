@@ -95,6 +95,12 @@ export interface Message {
   outcome?: 'done' | 'stopped' | 'error'
   /** User messages in a sub-agent's chat: the task the parent agent wrote, not the person. */
   fromAgent?: boolean
+  /** Kept by the user: listed under "Pinned" in the message list. */
+  pinned?: true
+  /** Agent messages: what the turn used (tokens in, with cached ones, and out; the cost when the CLI says). */
+  usage?: { input: number; output: number; costUsd?: number }
+  /** User messages that waited in the queue: when the person wrote it (`createdAt` is when it went out). */
+  writtenAt?: number
 }
 
 /**
@@ -182,6 +188,11 @@ export interface Thread {
   agentType?: string
   /** Pull requests and issues linked to this chat, oldest first. Sub-agent chats link to their top-level chat. */
   links?: LinkedItem[]
+  /**
+   * The earlier messages as text, for the agent's next turn: set when the conversation was cut back
+   * (edit, regenerate) or branched, since the CLI's own session cannot be rewound. Sent once, ahead of the next message.
+   */
+  history?: string
   /** How full the conversation's context window was at its last reading; unset before the first reply or after `/clear`. */
   context?: ContextUsage
 }

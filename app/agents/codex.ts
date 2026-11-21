@@ -2,7 +2,7 @@ import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, codexMcp } from './mcp.ts'
-import { codexContext } from './context.ts'
+import { codexContext, codexTurnUsage } from './context.ts'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -297,6 +297,8 @@ function run(options: AgentRunOptions): AgentRun {
   let turnId: string | null = null
   let lastStderr = ''
   let lastError: Json = null
+  /** The conversation's token totals just before this turn's first request. */
+  let usageBase: { input: number; output: number } | null = null
   let stopTimer: ReturnType<typeof setTimeout> | null = null
 
   let nextRpcId = 1
@@ -608,6 +610,8 @@ function run(options: AgentRunOptions): AgentRun {
       case 'thread/tokenUsage/updated': {
         const usage = codexContext(p.tokenUsage)
         if (usage) emit({ type: 'context', usage })
+        const spent = codexTurnUsage(p.tokenUsage, usageBase)
+        if (spent) { usageBase = spent.base; emit({ type: 'usage', usage: spent.usage }) }
         break
       }
       case 'turn/started':

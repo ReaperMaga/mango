@@ -27,6 +27,7 @@ const steerable = computed(() => props.thread.status !== undefined && isRunning(
     <li v-for="q in waiting" :key="q.id" class="qu__row">
       <Clock class="qu__icon" aria-hidden="true" />
       <span class="qu__text" :title="q.text">{{ q.text || 'Attachment' }}</span>
+      <time v-if="q.queuedAt" class="qu__time tabular" :datetime="new Date(q.queuedAt).toISOString()" :title="`Written ${new Date(q.queuedAt).toLocaleTimeString()}`">{{ new Date(q.queuedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</time>
       <span v-if="q.attachments.length" class="qu__files tabular" :title="`${q.attachments.length} attached`">
         <Paperclip aria-hidden="true" />{{ q.attachments.length }}
       </span>
@@ -69,4 +70,5 @@ const steerable = computed(() => props.thread.status !== undefined && isRunning(
 .qu__files svg { width: 12px; height: 12px; stroke-width: 1.75; }
 .qu__row :deep(.btn svg) { width: 13px; height: 13px; }
 .qu__row :deep(.icon-btn svg) { width: 13px; height: 13px; }
+.qu__time { flex: none; font-size: var(--text-xs); color: var(--fg-faint); }
 </style>

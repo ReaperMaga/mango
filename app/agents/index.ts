@@ -1,6 +1,6 @@
 import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, ContextUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, ContextUsage, SpawnFn, SpawnHandlers, ToolImage, TurnUsage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
@@ -310,6 +310,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   store._setStatus(threadId, 'running')
 
   const main: Target = { threadId, msgs: [first], msg: first }
+  let runUsage: TurnUsage | null = null
   const place = placeOf(workdir)
   /** Sub-agents' chats, by the id of the tool call that started each. */
   const subs = new Map<string, Target>()
@@ -487,6 +488,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (!pendingApprovals() && t.status === 'waiting') store._setStatus(threadId, 'running')
         break
       }
+      case 'usage':
+        runUsage = e.usage
+        break
       case 'turn-end': {
         settleParts(main.msgs, e.status)
         // Sub-agents end with the run that started them.
@@ -499,6 +503,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.status === 'stopped') push(main, { type: 'notice', level: 'info', text: 'Stopped.' })
         // An agent message with nothing in it (stopped before any output) would render as a gap.
         for (const m of main.msgs) if (!m.parts.length && t.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
+        // What the turn spent goes on its last reply, beside how long it took.
+        const lastReply = t.messages[t.messages.length - 1]
+        if (runUsage && lastReply?.role === 'agent') lastReply.usage = { ...runUsage }
         runs.delete(threadId)
         store._clearLive(threadId)
         // Answering never settles a chat: it stays Working until the user marks it settled.

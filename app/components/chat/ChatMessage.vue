@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { CircleAlert, FileText } from 'lucide-vue-next'
+import { Check, CircleAlert, Copy, FileText, GitBranch, Pencil, Pin, RefreshCw } from 'lucide-vue-next'
 import type { Message, Part, Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
+import { formatCost, formatTokens } from '~/agents/context'
+import { copyText } from '~/utils/clipboard'
 import { formatSize } from '~/utils/attachments'
 import { openImage } from '~/utils/imageViewer'
 import { AGENTS } from '~/types/chat'
@@ -64,6 +66,72 @@ const segments = computed<Segment[]>(() => {
   return out
 })
 
+const clock = computed(() => new Date(props.message.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))
+const sentAt = computed(() => new Date(props.message.createdAt).toLocaleString())
+const plainText = computed(() => props.message.parts.flatMap(p => (p.type === 'text' ? [p.text] : [])).join('\n\n'))
+
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+async function copy() {
+  if (!(await copyText(plainText.value))) return
+  copied.value = true
+  clearTimeout(copiedTimer)
+  copiedTimer = setTimeout(() => (copied.value = false), 1600)
+}
+onBeforeUnmount(() => clearTimeout(copiedTimer))
+
+const busy = computed(() => ['running', 'queued', 'waiting'].includes(props.thread.status))
+/** A sub-agent's chat is written by its parent's run only: nothing to edit or ask again there. */
+const writable = computed(() => !props.thread.parentId && !props.message.fromAgent)
+/** Messages (this one included) that editing or asking again here would remove. */
+const cuts = computed(() => threads.cutCount(props.thread.id, props.message.id))
+const sentTitle = computed(() => (props.message.writtenAt
+  ? `Written ${new Date(props.message.writtenAt).toLocaleTimeString()}, sent ${new Date(props.message.createdAt).toLocaleTimeString()}`
+  : sentAt.value))
+
+/* Editing: the bubble turns into a field; saving cuts the chat back to here and runs it again. */
+const editing = ref(false)
+const draft = ref('')
+const field = ref<HTMLTextAreaElement | null>(null)
+async function startEdit() {
+  draft.value = plainText.value
+  editing.value = true
+  await nextTick()
+  field.value?.focus()
+  field.value?.setSelectionRange(draft.value.length, draft.value.length)
+}
+function saveEdit() {
+  if (!draft.value.trim() && !props.message.attachments?.length) return
+  editing.value = false
+  void threads.editMessage(props.thread.id, props.message.id, draft.value)
+}
+function onEditKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); editing.value = false }
+  else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) { e.preventDefault(); saveEdit() }
+}
+watch(busy, (b) => { if (b) editing.value = false })
+
+/* Asking again removes what follows: with more than this exchange after it, the button asks twice. */
+const confirmAgain = ref(false)
+let confirmTimer: ReturnType<typeof setTimeout> | undefined
+function again() {
+  if (cuts.value > 2 && !confirmAgain.value) {
+    confirmAgain.value = true
+    clearTimeout(confirmTimer)
+    confirmTimer = setTimeout(() => (confirmAgain.value = false), 4000)
+    return
+  }
+  confirmAgain.value = false
+  void threads.regenerate(props.thread.id, props.message.id)
+}
+onBeforeUnmount(() => clearTimeout(confirmTimer))
+
+const usageLine = computed(() => {
+  const u = props.message.usage
+  if (!u) return ''
+  return [`${formatTokens(u.input)} in`, `${formatTokens(u.output)} out`, ...(u.costUsd !== undefined ? [formatCost(u.costUsd)] : [])].join(' · ')
+})
+
 const lastTextIndex = computed(() => {
   for (let i = props.message.parts.length - 1; i >= 0; i--) if (props.message.parts[i]!.type === 'text') return i
   return -1
@@ -71,7 +139,7 @@ const lastTextIndex = computed(() => {
 </script>
 
 <template>
-  <article v-if="message.role === 'user'" class="msg msg--user">
+  <article v-if="message.role === 'user'" class="msg msg--user" :data-message-id="message.id">
     <p v-if="message.fromAgent" class="msg__from">Task from {{ AGENTS[thread.agent].name }}</p>
     <ul v-if="message.attachments?.length" class="msg__files" aria-label="Attachments">
       <li
@@ -94,14 +162,44 @@ ${a.path}`"
         </template>
       </li>
     </ul>
-    <div v-if="message.parts.length" class="msg__bubble selectable">
+    <form v-if="editing" class="msg__edit" @submit.prevent="saveEdit">
+      <textarea
+        ref="field"
+        v-model="draft"
+        class="msg__edit-field"
+        rows="3"
+        aria-label="Edit message"
+        @keydown="onEditKey"
+      />
+      <p v-if="cuts > 1" class="msg__edit-note">Sending replaces this message and the {{ cuts - 1 }} after it.</p>
+      <div class="msg__edit-actions">
+        <UiButton size="sm" variant="ghost" type="button" @click="editing = false">Cancel</UiButton>
+        <UiButton size="sm" variant="primary" type="submit" :disabled="!draft.trim() && !message.attachments?.length">Send again</UiButton>
+      </div>
+    </form>
+    <div v-else-if="message.parts.length" class="msg__bubble selectable">
       <template v-for="(p, i) in message.parts" :key="i">
         <p v-if="p.type === 'text'" class="msg__user-text">{{ p.text }}</p>
       </template>
     </div>
+    <div v-if="message.parts.length && !editing" class="msg__meta msg__meta--user">
+      <time class="msg__time tabular" :datetime="new Date(message.createdAt).toISOString()" :title="sentTitle">{{ clock }}</time>
+      <UiIconButton v-if="plainText" size="sm" :label="copied ? 'Copied' : 'Copy message'" @click="copy">
+        <Check v-if="copied" /><Copy v-else />
+      </UiIconButton>
+      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? 'Unpin message' : 'Pin message'" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
+        <Pin />
+      </UiIconButton>
+      <UiIconButton v-if="writable && !busy" size="sm" label="Edit and send again" @click="startEdit">
+        <Pencil />
+      </UiIconButton>
+      <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
+        <GitBranch />
+      </UiIconButton>
+    </div>
   </article>
 
-  <article v-else class="msg msg--agent">
+  <article v-else class="msg msg--agent" :data-message-id="message.id">
     <template v-for="seg in segments" :key="seg.key">
       <ChatSteps
         v-if="seg.kind === 'steps'"
@@ -144,8 +242,23 @@ ${a.path}`"
     </template>
     <ChatChanges v-if="!live" :message="message" :thread="thread" />
     <p v-if="message.elapsedMs !== undefined && !live" class="msg__ran tabular">
-      {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}
+      {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}<template v-if="usageLine"> · {{ usageLine }}</template>
     </p>
+    <div v-if="!live" class="msg__meta">
+      <time class="msg__time tabular" :datetime="new Date(message.createdAt).toISOString()" :title="sentTitle">{{ clock }}</time>
+      <UiIconButton v-if="plainText" size="sm" :label="copied ? 'Copied' : 'Copy message'" @click="copy">
+        <Check v-if="copied" /><Copy v-else />
+      </UiIconButton>
+      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? 'Unpin message' : 'Pin message'" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
+        <Pin />
+      </UiIconButton>
+      <UiIconButton v-if="writable && !busy" size="sm" class="msg__again" :class="{ 'msg__again--ask': confirmAgain }" :label="confirmAgain ? `Ask again: removes ${cuts - 1} later message${cuts - 1 === 1 ? '' : 's'}. Click to confirm` : 'Ask again'" @click="again">
+        <RefreshCw />
+      </UiIconButton>
+      <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
+        <GitBranch />
+      </UiIconButton>
+    </div>
   </article>
 </template>
 
@@ -198,6 +311,56 @@ ${a.path}`"
 .msg__from { margin: 0 0 2px; font-size: var(--text-xs); color: var(--fg-faint); }
 .msg__user-text { margin: 0; white-space: pre-wrap; line-height: var(--leading-chat); overflow-wrap: anywhere; }
 .msg__text { margin: 6px 0 2px; }
+.msg__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}
+.msg__meta--user { justify-content: flex-end; }
+.msg__meta :deep(.icon-btn) { opacity: 0; }
+.msg:hover .msg__meta :deep(.icon-btn),
+.msg:focus-within .msg__meta :deep(.icon-btn),
+.msg__meta :deep(.icon-btn:focus-visible),
+.msg__meta :deep(.msg__pin--on),
+.msg__meta :deep(.msg__again--ask) { opacity: 1; }
+.msg__meta :deep(.msg__again--ask) { color: var(--ripe-error-fg); }
+
+/* Editing one of your messages in place. */
+.msg__edit {
+  width: min(88%, 620px);
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--bg-panel);
+}
+.msg__edit-field {
+  width: 100%;
+  min-height: 72px;
+  max-height: 320px;
+  padding: var(--space-1) var(--space-2);
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  line-height: var(--leading-chat);
+}
+.msg__edit-note { margin: 0 var(--space-2); font-size: var(--text-xs); color: var(--fg-subtle); }
+.msg__edit-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+
+/* Where a jump from the message list or a find lands: a brief wash, then gone. */
+.msg.is-flash { animation: msg-flash 1400ms var(--ease-out); }
+@keyframes msg-flash {
+  0%, 40% { background: var(--bg-active); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .msg.is-flash { animation: none; } }
 .msg__ran { margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--fg-faint); }
 .msg__notice {
   display: flex;

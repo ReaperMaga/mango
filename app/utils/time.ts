@@ -28,3 +28,21 @@ export function formatDuration(ms: number): string {
   if (m < 60) return `${m}m ${total % 60}s`
   return `${Math.floor(m / 60)}h ${m % 60}m`
 }
+
+/** Whether two moments fall on the same calendar day here. */
+export function sameDay(a: number, b: number): boolean {
+  const x = new Date(a)
+  const y = new Date(b)
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate()
+}
+
+/** "Today", "Yesterday", "Mon 3 Mar", "3 Mar 2025": the mark between a chat's days. */
+export function dayLabel(ts: number, now = Date.now()): string {
+  if (sameDay(ts, now)) return 'Today'
+  if (sameDay(ts, now - 86_400_000)) return 'Yesterday'
+  const d = new Date(ts)
+  const thisYear = d.getFullYear() === new Date(now).getFullYear()
+  return d.toLocaleDateString(undefined, thisYear
+    ? { weekday: 'short', day: 'numeric', month: 'short' }
+    : { day: 'numeric', month: 'short', year: 'numeric' })
+}
