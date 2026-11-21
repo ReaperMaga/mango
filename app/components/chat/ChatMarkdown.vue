@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { Marked } from 'marked'
+import { h, render } from 'vue'
 import type { Attachment } from '~/types/chat'
 import { chatImage, localImagePath } from '~/utils/chatImages'
 import { openImage } from '~/utils/imageViewer'
 import { baseName } from '~/utils/paths'
 import { useBrowser } from '~/stores/browser'
 import { copyText } from '~/utils/clipboard'
+import { reg as pluginReg, type Owned } from '~/plugin-host/registry'
+import type { PluginCodeBlockRenderer } from '~/plugin-host/types'
+import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
 
 /**
  * Renders agent markdown. Raw HTML in the source is escaped, never injected:
@@ -13,6 +17,10 @@ import { copyText } from '~/utils/clipboard'
  * files on this computer, or inside the environment for a remote project, never fetched
  * from the web; `base` is the chat's project folder, for relative paths. A link to a dev server on this computer (localhost and the
  * like) opens in Mango's browser beside the chat; other links open as they always have.
+ *
+ * A fenced block in a language a plugin renders (`chat.codeBlocks`) becomes an empty placeholder;
+ * once the reply has finished streaming the plugin's view is mounted into it and gets the code as
+ * data (never as HTML).
  */
 const props = defineProps<{ text: string; streaming?: boolean; base?: string | null; threadId?: string | null }>()
 
@@ -20,6 +28,8 @@ const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '
 
 /** The pictures of the last render, in order, for the viewer. */
 let shown: Attachment[] = []
+/** Code blocks plugins render, of the last render, in order. */
+let blocks: Array<{ code: string; language: string; renderer: Owned<PluginCodeBlockRenderer> }> = []
 
 const md = new Marked({
   gfm: true,
@@ -29,6 +39,11 @@ const md = new Marked({
     // A code block carries its own copy button; the click is handled once for the whole reply (see onClick).
     code({ text, lang }) {
       const name = (lang ?? '').trim().split(/\s+/)[0] ?? ''
+      const renderer = name && !props.streaming ? pluginReg.codeBlocks.find(r => r.languages.includes(name.toLowerCase())) : undefined
+      if (renderer) {
+        const i = blocks.push({ code: text, language: name.toLowerCase(), renderer }) - 1
+        return `<div class="md__plugin" data-plugin-block="${i}"></div>\n`
+      }
       return `<div class="md__code"><button type="button" class="md__copy" data-copy aria-label="Copy code">Copy</button><pre><code${name ? ` class="language-${escape(name)}"` : ''}>${escape(text)}</code></pre></div>\n`
     },
     link({ href, text }) {
@@ -50,8 +65,34 @@ const md = new Marked({
 
 const html = computed(() => {
   shown = []
+  blocks = []
+  // Read here so a renderer coming or going re-renders the reply.
+  void pluginReg.codeBlocks.length
   return md.parse(props.text) as string
 })
+
+/* Plugin views into their placeholders, after each render (v-html replaced the old ones). */
+const root = ref<HTMLElement | null>(null)
+const appContext = getCurrentInstance()?.appContext ?? null
+let filled: HTMLElement[] = []
+function unmountBlocks() {
+  for (const el of filled) render(null, el)
+  filled = []
+}
+function mountBlocks() {
+  unmountBlocks()
+  for (const el of root.value?.querySelectorAll<HTMLElement>('[data-plugin-block]') ?? []) {
+    const b = blocks[Number(el.dataset.pluginBlock)]
+    if (!b) continue
+    const vnode = h(PluginViewHost, { view: b.renderer.view, ctx: { code: b.code, language: b.language, threadId: props.threadId ?? '' }, pluginId: b.renderer.pluginId })
+    vnode.appContext = appContext
+    render(vnode, el)
+    filled.push(el)
+  }
+}
+watch(html, mountBlocks, { flush: 'post' })
+onMounted(mountBlocks)
+onBeforeUnmount(unmountBlocks)
 
 function onClick(e: MouseEvent) {
   const copy = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-copy]')
@@ -72,7 +113,7 @@ function onClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="md selectable" :class="{ 'is-streaming': streaming }" @click="onClick" v-html="html" />
+  <div ref="root" class="md selectable" :class="{ 'is-streaming': streaming }" @click="onClick" v-html="html" />
 </template>
 
 <style scoped>
@@ -93,6 +134,7 @@ function onClick(e: MouseEvent) {
   border: 1px solid var(--line-soft);
 }
 .md :deep(.md__code) { position: relative; margin: 0 0 0.8em; }
+.md :deep(.md__plugin) { margin: 0 0 0.8em; min-width: 0; }
 .md :deep(.md__code pre) { margin: 0; }
 .md :deep(.md__copy) {
   position: absolute;

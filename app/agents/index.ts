@@ -8,6 +8,7 @@ import { mergeContext } from '~/agents/context'
 import { forAgent, makeThumb } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
+import { emitAgentEvent, pluginMcpFor, pluginSystemPrompt } from '~/plugin-host/registry'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -339,6 +340,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   const finished = new Promise<void>(resolve => (finish = () => { over = true; resolve() }))
 
   const emit = (e: AgentEvent) => {
+    // Plugins see every event as it arrives (`chat.onAgentEvent`); one that throws is skipped.
+    emitAgentEvent(threadId, e)
     const t = store.byId(threadId)
     if (!t) return
     switch (e.type) {
@@ -539,10 +542,16 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     if (place.remote && !input.prompt.trim() && !input.images.length) {
       throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
     }
-    const [browserMcp, mcpServers] = await Promise.all([
+    const [browserMcp, userMcp] = await Promise.all([
       browserToolsFor(store, threadId),
       userMcpFor(thread.agent, (store.rootOf(threadId) ?? thread).projectPath),
     ])
+    // Plugins' servers come after the user's (a name the user has, or the browser's, stays theirs). Their
+    // env values and headers are secrets like the user's: the adapters put them in the CLI's environment.
+    // A remote project gets none: like the user's global servers, they would start in the wrong place.
+    const pluginMcp = place.remote ? [] : pluginMcpFor(thread.agent, [...userMcp.map(s => s.name), ...(browserMcp ? [browserMcp.name] : [])])
+    const mcpServers = [...userMcp, ...pluginMcp]
+    const appendSystemPrompt = pluginSystemPrompt()
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
@@ -553,6 +562,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       sessionId: thread.sessionId ?? null,
       ...(browserMcp ? { browserMcp } : {}),
       ...(mcpServers.length ? { mcpServers } : {}),
+      ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
       // Through a drop the run goes on in its environment: the chat says it is reconnecting, and stays Working.
       spawn: spawnFor(thread.agent, workdir, (state) => { if (!over) store._setReconnecting(threadId, state === 'lost') }),
       emit,

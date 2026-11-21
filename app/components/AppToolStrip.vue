@@ -4,6 +4,8 @@ import type { MenuItem } from '~/types/ui'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
+import { read, reg, shown } from '~/plugin-host/registry'
+import { iconComponent } from '~/plugin-host/icons'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
@@ -54,6 +56,11 @@ const tools = computed(() => [
   ...(releaseWatch.path.value
     ? [{ id: 'releases' as ToolView, label: 'Releases', icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: '', mark: releaseMark.value }]
     : []),
+  // Plugins' tool windows, after Mango's own.
+  ...reg.toolWindows.filter(w => shown(w)).map((w) => {
+    const badge = read(w.badge, w.pluginId, null, 'badge')
+    return { id: w.fullId as ToolView, label: w.title, icon: iconComponent(w.icon)!, keys: '', count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0, counts: 'item' }
+  }),
 ])
 
 /*
@@ -66,7 +73,8 @@ const menuItems = computed<MenuItem[]>(() => tools.value
   .map(t => ({ label: t.label, icon: t.icon, kbd: t.keys, aside: t.count ? String(t.count) : undefined, onSelect: () => ws.toggleTool(t.id, true) })))
 const currentTitle = computed(() => {
   const t = current.value as (typeof tools.value)[number] & { mark?: 'running' | 'failed' | null }
-  return t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]} (${t.keys})` : `${t.label} (${t.keys})`
+  const keys = t.keys ? ` (${t.keys})` : ''
+  return t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]}${keys}` : `${t.label}${keys}`
 })
 </script>
 

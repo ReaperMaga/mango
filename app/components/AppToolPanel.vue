@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
 import { holdOverlay } from '~/composables/useOverlay'
+import { pluginToolWindow } from '~/plugin-host/registry'
+import { isPluginRef } from '~/plugin-host/ids'
+import PluginToolWindow from '~/plugin-host/ui/PluginToolWindow.vue'
 
 /**
  * The open tool window on the right of the chats: where the project runs, its files,
@@ -9,7 +12,10 @@ import { holdOverlay } from '~/composables/useOverlay'
  */
 
 const ws = useWorkspace()
-const LABELS = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests', releases: 'Releases' } as const
+const LABELS: Record<string, string> = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests', releases: 'Releases' }
+/** A plugin's tool window, while its plugin runs (see `plugin-host/`). */
+const pluginWin = computed(() => pluginToolWindow(ws.toolPanel))
+const label = computed(() => pluginWin.value?.title ?? LABELS[ws.toolPanel ?? 'files'] ?? 'Tool window')
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
@@ -33,13 +39,14 @@ function endResize() {
 </script>
 
 <template>
-  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
+  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="label">
     <!-- Switching tools: the old one goes at once, the new one settles in. Not on open: the window itself slides then. -->
     <Transition name="tp-swap">
       <AppToolEnv v-if="ws.toolPanel === 'env'" />
       <FilesPanel v-else-if="ws.toolPanel === 'files'" />
       <LinksPanel v-else-if="ws.toolPanel === 'links'" />
       <ReleasesPanel v-else-if="ws.toolPanel === 'releases'" />
+      <PluginToolWindow v-else-if="isPluginRef(ws.toolPanel)" :key="ws.toolPanel" :win="pluginWin" />
       <GitPanel v-else />
     </Transition>
     <div

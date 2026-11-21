@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
+import { pluginMenuItems } from '~/plugin-host/menus'
 import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
@@ -136,6 +138,7 @@ const projectItems = computed<MenuItem[]>(() => [
   ...(ws.activeProject
     ? [
         { label: 'Project settings…', icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        ...pluginMenuItems('project', { projectPath: ws.activeProject.path }),
       ]
     : []),
 ])
@@ -243,6 +246,7 @@ const branchTitle = computed(() => {
       >
         <Undo2 aria-hidden="true" /><span class="tb__return-label">Return to main window</span>
       </button>
+      <PluginStatusItems location="titlebar" class="tb__grp" />
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
       <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">

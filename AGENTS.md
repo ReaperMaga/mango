@@ -65,6 +65,7 @@ app/
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
+    plugins/         Settings > Plugins: PluginsBrowse (the official catalog: search, filters), PluginsInstalled, PluginDetail (+ PluginSettingsForm), PluginAddDialog (from a git link or a local folder), PluginViewHost (renders any plugin-provided view)
     settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
@@ -74,6 +75,9 @@ app/
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
+                     plugins.ts (installed plugins, the catalog, each plugin's settings values)
+  plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
+                     registry.ts (everything plugins registered), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
@@ -93,6 +97,7 @@ src-tauri/src/
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   mcp.rs             the user's own MCP servers (`mcp_servers`, `mcp_servers_save`): mcp-servers.json, owner-only, checked on save
+  plugins/           plugins (`plugins_*`): install from a git repository (or a folder in one) or a local folder, updates, confined file reads, the official catalog
   browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
   chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
   chats_remote.rs    remote projects' chats kept inside their environment (`chats_remote_*`), so other computers see them
@@ -107,6 +112,7 @@ src-tauri/src/
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
+plugins/             the official plugins (one folder each) and catalog.json, the catalog Settings > Plugins > Browse shows (also compiled in as the offline copy)
 mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its own package, see mobile/AGENTS.md
 ```
 
@@ -159,6 +165,12 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   and reads skip the login shell (`EnvAt::run_plain`, which falls back to it when a tool is missing); anything that may run
   hooks keeps it. Long commands and the connection check (`ssh::run_alone`) use their own connection. Measure with the ignored
   `files::tests::remote_timing` test.
+- Plugins (`app/plugin-host/`, `src-tauri/src/plugins/`, `docs/plugins.md`): installed plugins are trusted code running in Mango's
+  window; the user is told so before installing. `app/plugin-host/types.ts` is their API: change it additively, keep `docs/plugins.md`
+  and `plugins/mango-plugin.d.ts` in step. Nuxt auto-loads files in `app/plugins/` as its own plugins, so nothing of this lives there.
+  Everything a plugin registers goes through its scope and is undone when it stops; a plugin's error is caught, logged to it, and never
+  breaks the app. Git sources pass `validate.rs` (URL, ref, subpath) before reaching git, and a plugin's files are read only from inside its
+  folder. An official plugin is a folder in `plugins/` plus its entry in `plugins/catalog.json` (`tests/officialPlugins.test.ts` checks them).
 - User MCP servers (Settings > MCP servers, `stores/mcp.ts`, `utils/mcpServers.ts`): each run gets the enabled ones for its agent
   and project (`mcpServersForRun`; a remote project only its own), and `agents/mcp.ts` turns them into the CLI's arguments.
   Their env values and headers are secrets: never log them or put them on the command line; they go into the CLI's

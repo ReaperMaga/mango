@@ -854,6 +854,7 @@ function run(options: AgentRunOptions): AgentRun {
   // MCP servers, for this session only. Their secrets travel in the environment, not in `args`.
   const mcp = claudeMcp(options.mcpServers ?? [], options.browserMcp)
   args.push(...mcp.args)
+  if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
 
   options.spawn(args, {
     onLine,

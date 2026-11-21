@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { AGENTS, type AgentCommand, type AgentId } from '~/types/chat'
 import { listAgentCommands } from '~/agents'
+import { pluginSlashList } from '~/plugin-host/registry'
 
 /**
  * The slash commands the composer offers, per agent and project: what the agent's CLI
@@ -62,11 +63,12 @@ export const useCommands = defineStore('commands', {
   state: () => load(),
 
   getters: {
-    /** Commands for `agent` in the project at `cwd`: Mango's first, then the CLI's. */
+    /** Commands for `agent` in the project at `cwd`: Mango's first, then plugins' (Mango runs them too), then the CLI's. */
     list: s => (agent: AgentId, cwd: string | null): AgentCommand[] => {
       const live = cwd ? s.lists[keyOf(agent, cwd)] : undefined
-      const own = (live?.length ? live : FALLBACK[agent]).filter(c => !MANGO_COMMANDS.some(m => m.name === c.name))
-      return [...MANGO_COMMANDS, ...own]
+      const plugins = pluginSlashList(agent)
+      const own = (live?.length ? live : FALLBACK[agent]).filter(c => !MANGO_COMMANDS.some(m => m.name === c.name) && !plugins.some(m => m.name === c.name))
+      return [...MANGO_COMMANDS, ...plugins, ...own]
     },
   },
 

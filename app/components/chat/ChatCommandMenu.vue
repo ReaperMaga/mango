@@ -107,7 +107,7 @@ defineExpose({ optionId })
           <span class="cmdm__name">/<template v-for="(p, pi) in parts(m)" :key="pi"><mark v-if="p.hit">{{ p.text }}</mark><template v-else>{{ p.text }}</template></template></span>
           <span v-if="m.command.argumentHint" class="cmdm__args">{{ m.command.argumentHint }}</span>
           <span class="cmdm__desc">{{ m.command.description }}</span>
-          <span v-if="m.command.mango" class="cmdm__tag">Mango</span>
+          <span v-if="m.command.mango" class="cmdm__tag" :title="m.command.plugin ? `From the ${m.command.plugin} plugin` : undefined">{{ m.command.plugin ?? 'Mango' }}</span>
         </li>
       </ul>
       <p v-else class="cmdm__empty">

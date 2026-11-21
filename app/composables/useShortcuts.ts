@@ -7,6 +7,7 @@ import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
 import { SHORTCUTS, eventCombo } from '~/utils/shortcuts'
+import { reg as pluginReg, report as reportPlugin } from '~/plugin-host/registry'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
 export const isMod = (e: KeyboardEvent | MouseEvent) =>
@@ -89,10 +90,24 @@ export function useShortcuts() {
     if (!combo) return
     const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm')
 
-    const id = SHORTCUTS.find(s => ws.bindings[s.id] === combo)?.id
+    const builtin = SHORTCUTS.find(s => ws.bindings[s.id] === combo)?.id
       // Mod+J has always toggled the terminal too; unless the user gave it away.
       ?? (combo === 'Mod+J' ? 'terminal' : undefined)
-    const scope = id ? scopeOf.get(id) : undefined
+    // A plugin's shortcut (`plugin:<pluginId>.<id>`): bindings never give it a key a built-in has.
+    const plugin = builtin ? undefined : pluginReg.shortcuts.find(s => ws.bindings[s.fullId] === combo)
+    const id = builtin ?? plugin?.fullId
+    const scope = builtin ? scopeOf.get(builtin) : plugin ? plugin.scope ?? 'workspace' : undefined
+    if (plugin) {
+      const run = () => {
+        try { plugin.run() } catch (err) { reportPlugin(plugin.pluginId, err, `shortcut ${plugin.id}`) }
+      }
+      if (scope === 'always') { e.preventDefault(); e.stopPropagation(); run(); return }
+      if (inTerminal) return
+      if (scope === 'workspace' && ws.settings) return
+      e.preventDefault()
+      run()
+      return
+    }
 
     // 'always' works everywhere, including inside the terminal (xterm stops key events from
     // bubbling, hence the capture-phase listener below).

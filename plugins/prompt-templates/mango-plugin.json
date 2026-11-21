@@ -1,0 +1,19 @@
+{
+  "id": "prompt-templates",
+  "name": "Prompt templates",
+  "version": "1.0.0",
+  "description": "Your own slash commands: each template line becomes a /command that sends the filled-in prompt.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/prompt-templates",
+  "main": "main.js",
+  "minAppVersion": "0.1.36",
+  "settings": [
+    {
+      "key": "templates",
+      "type": "text",
+      "label": "Templates",
+      "description": "One per line: name: prompt. {{args}} is what you type after the command ({{args|fallback}} when you type nothing), {{project}} the project folder's name. \\n starts a new line. Lines starting with # are ignored.",
+      "default": "explain: Explain {{args|the code we just looked at}} step by step: what it does, why it is written this way, and anything surprising.\ntests: Write tests for {{args|the code you just changed}}. Follow the project's existing test style, cover the edge cases, and run them.\nreview-diff: Review the uncommitted changes in this repository (git diff, staged and unstaged) for bugs, missing tests and unclear names. List the findings by severity and do not change any files. {{args}}\ndocs: Write or update the documentation for {{args|the code you just changed}}: doc comments where the code needs them, and the README if behaviour visible to users changed."
+    }
+  ]
+}

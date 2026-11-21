@@ -8,6 +8,9 @@ import { useFiles } from '~/stores/files'
 import { useGit } from '~/stores/git'
 import { parseFileTab } from '~/utils/fileTabs'
 import { parseEnvPath } from '~/utils/envPath'
+import { sepOf, withTrailingSep } from '~/utils/paths'
+import type { MenuItem } from '~/types/ui'
+import { pluginMenuItems } from '~/plugin-host/menus'
 
 /**
  * The Files tool window on the right: the active project's folders as a tree,
@@ -24,6 +27,24 @@ const git = useGit()
 
 /** The working copy in view: the active chat's worktree, or the project. */
 const path = computed(() => threads.workdir ?? ws.activeProjectPath)
+
+/* A right-click on a row: plugins' items for that file or folder (`ui.menus` 'file'); none, the system's own menu. */
+const rowMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
+const menuRow = ref<{ path: string; isDir: boolean } | null>(null)
+const rowMenuItems = computed<MenuItem[]>(() => {
+  const r = menuRow.value
+  const project = path.value
+  if (!r || !project) return []
+  const sep = sepOf(project)
+  const abs = withTrailingSep(project) + (sep === '\\' ? r.path.replace(/\//g, '\\') : r.path)
+  return pluginMenuItems('file', { path: abs, projectPath: project, isDir: r.isDir }).map((m, i) => (i === 0 ? { ...m, divider: false } : m))
+})
+function onRowMenu(row: { entry: { path: string; isDir: boolean } }, e: MouseEvent) {
+  menuRow.value = { path: row.entry.path, isDir: row.entry.isDir }
+  if (!rowMenuItems.value.length) return
+  e.preventDefault()
+  rowMenu.value?.showAt(e.clientX, e.clientY)
+}
 const tree = computed(() => files.tree(path.value))
 
 watch(path, (p) => { if (p) files.ensureTree(p) }, { immediate: true })
@@ -268,6 +289,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
           @pointerenter="preloadSoon(row)"
           @pointerleave="preloadCancel"
           @dblclick="!row.entry.isDir && activate(row, true)"
+          @contextmenu="onRowMenu(row, $event)"
         >
           <ChevronRight v-if="row.entry.isDir" class="fp__caret" :class="{ 'is-open': row.open }" aria-hidden="true" />
           <span v-else class="fp__caret" aria-hidden="true" />
@@ -280,6 +302,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
         <div v-else class="fp__note" :class="{ 'is-error': row.error }" :style="{ '--depth': row.depth }" role="none">{{ row.text }}</div>
       </template>
     </div>
+    <UiMenu ref="rowMenu" class="fp__ctx" :items="rowMenuItems" :width="220" label="File actions" />
   </section>
 </template>
 

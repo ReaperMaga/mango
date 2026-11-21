@@ -1,0 +1,115 @@
+/* CSV preview: a table in a chat reply. Only Mango's design tokens, so it matches both themes and every scheme. */
+
+.mango-csv {
+  margin: var(--space-2) 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-inset);
+  overflow: hidden;
+}
+
+.mango-csv__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-panel);
+}
+
+.mango-csv__label {
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.mango-csv__toggle {
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.mango-csv__toggle:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.mango-csv__toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.mango-csv__toggle[aria-pressed='true'] {
+  background: var(--bg-active);
+  color: var(--fg);
+}
+
+.mango-csv__scroll {
+  max-height: 420px;
+  overflow: auto;
+}
+
+.mango-csv__table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+.mango-csv__table th,
+.mango-csv__table td {
+  max-width: 360px;
+  padding: 6px var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.mango-csv__table th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-panel);
+  color: var(--fg-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mango-csv__table td {
+  color: var(--fg);
+}
+
+.mango-csv__table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mango-csv__table tbody tr:hover td {
+  background: var(--bg-hover);
+}
+
+.mango-csv__table .is-num {
+  text-align: right;
+}
+
+.mango-csv__raw {
+  margin: 0;
+  padding: var(--space-3);
+  max-height: 420px;
+  overflow: auto;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+  white-space: pre;
+}

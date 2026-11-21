@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { Monitor, Moon, Sun } from 'lucide-vue-next'
-import { useWorkspace, type ColorScheme, type Corners, type MonoFont, type Motion, type TextSize, type Theme, type UiFont } from '~/stores/workspace'
+import { useWorkspace, type ColorScheme, type SchemeId, type Corners, type MonoFont, type Motion, type TextSize, type Theme, type UiFont } from '~/stores/workspace'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 import SettingsSchemePicker from './SettingsSchemePicker.vue'
 import SettingsSelect from './SettingsSelect.vue'
+import { effectiveScheme } from '~/plugin-host/ids'
+import { isPluginSchemeRegistered, pluginNames, reg } from '~/plugin-host/registry'
 
 const ws = useWorkspace()
 
@@ -15,7 +17,7 @@ const themes: Array<{ value: Theme; label: string; icon: typeof Sun }> = [
   { value: 'system', label: 'System', icon: Monitor },
 ]
 
-const schemes: Array<{ value: ColorScheme; label: string }> = [
+const builtinSchemes: Array<{ value: ColorScheme; label: string }> = [
   { value: 'mango', label: 'Mango' },
   { value: 'blue', label: 'Blue' },
   { value: 'teal', label: 'Teal' },
@@ -31,6 +33,18 @@ const schemes: Array<{ value: ColorScheme; label: string }> = [
   { value: 'neon', label: 'Neon' },
   { value: 'solar', label: 'Solar' },
 ]
+/** Mango's schemes, then the ones plugins add (named by their plugin in the tooltip). */
+const schemes = computed<Array<{ value: SchemeId; label: string; swatch?: string; hint?: string }>>(() => [
+  ...builtinSchemes,
+  ...reg.schemes.map(s => ({
+    value: s.fullId as SchemeId,
+    label: s.label,
+    ...(typeof s.swatch === 'string' && /^[#\w(),.%\s/-]{1,64}$/.test(s.swatch) ? { swatch: s.swatch } : {}),
+    hint: `From ${pluginNames[s.pluginId] ?? s.pluginId}`,
+  })),
+])
+/** A plugin scheme whose plugin is not running shows as what applies: Mango. */
+const schemeShown = computed(() => effectiveScheme(ws.scheme, isPluginSchemeRegistered) as SchemeId)
 
 const uiFonts: Array<{ value: UiFont; label: string }> = [
   { value: 'inter', label: 'Inter' },
@@ -84,7 +98,7 @@ const motions: Array<{ value: Motion; label: string }> = [
       <SettingsRow stacked label="Color scheme" hint="Tints the background and sets the accent color. Status colors stay the same.">
         <template #default="{ labelId }">
           <SettingsSchemePicker
-            :model-value="ws.scheme"
+            :model-value="schemeShown"
             :options="schemes"
             :labelledby="labelId"
             @update:model-value="ws.setScheme"

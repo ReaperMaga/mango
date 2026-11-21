@@ -1,0 +1,11 @@
+{
+  "id": "scratchpad",
+  "name": "Scratchpad",
+  "version": "1.0.0",
+  "description": "A notes tool window per project: draft prompts and keep findings, then send a note to the active chat.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/scratchpad",
+  "main": "main.js",
+  "styles": "styles.css",
+  "minAppVersion": "0.1.36"
+}
