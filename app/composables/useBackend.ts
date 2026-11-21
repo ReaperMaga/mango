@@ -152,6 +152,15 @@ export const appWindow = {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().toggleMaximize()
   },
+  /** The window's title: what the taskbar, Alt+Tab and window previews show. */
+  async setTitle(title: string) {
+    if (!isTauri()) {
+      document.title = title
+      return
+    }
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().setTitle(title)
+  },
   async close() {
     if (!isTauri()) {
       // The browser preview: a window Mango opened (window.open) can close itself.
