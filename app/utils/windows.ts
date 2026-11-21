@@ -94,6 +94,17 @@ export function withoutWindow(table: ClaimTable, window: string): ClaimTable {
   return next
 }
 
+/**
+ * The table with only the windows that are still open (`open`, the backend's list) and `self`. A
+ * window that went without saying goodbye (crashed, killed, a reload whose `bye` was lost) would
+ * otherwise keep its projects listed as open elsewhere until Mango restarts.
+ */
+export function onlyOpen(table: ClaimTable, open: readonly string[], self: string): ClaimTable {
+  const next: ClaimTable = {}
+  for (const [id, claims] of Object.entries(table)) if (id === self || open.includes(id)) next[id] = claims
+  return next
+}
+
 /** Of the chats `self` holds, the ones it no longer owns under `table`: they must be let go. */
 export function lostChats(held: ChatRef[], table: ClaimTable, self: string): ChatRef[] {
   return held.filter(c => ownerOf(table, c) !== self)
