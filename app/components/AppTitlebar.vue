@@ -75,6 +75,32 @@ function chooseWhere() {
   void refreshEnvs()
 }
 
+/*
+ * Recent projects not open in this window, so every window can reach them (a window opened on one
+ * project otherwise lists only that one). One open in another window brings that window forward.
+ */
+const RECENT_IN_MENU = 8
+const recentItems = computed<MenuItem[]>(() =>
+  ws.listedRecent
+    .filter(p => !ws.openProjects.some(o => o.path === p.path))
+    .slice(0, RECENT_IN_MENU)
+    .map((p, i) => ({
+      label: p.name,
+      group: i === 0 ? 'Recent' : undefined,
+      divider: i === 0 && ws.openProjects.length > 0,
+      hint: win.projectElsewhere(p.path) ? 'Open in another window' : remotePlace(p.path)?.where ?? (p.branch || undefined),
+      hintMono: !win.projectElsewhere(p.path) && !remotePlace(p.path) && !!p.branch,
+      icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
+      onSelect: () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
+        ws.notify('Could not open the project', e instanceof Error ? e.message : String(e))),
+    })),
+)
+/* Another window may have opened a project since this one read the list. */
+function toggleProjects(toggle: () => void, open: boolean) {
+  if (!open) void ws.refreshRecent()
+  toggle()
+}
+
 const projectItems = computed<MenuItem[]>(() => [
   ...ws.openProjects.map(p => ({
     label: p.name,
@@ -90,7 +116,8 @@ const projectItems = computed<MenuItem[]>(() => [
   ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
     ? [moveItem(ws.activeProject.path)]
     : []),
-  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
+  ...recentItems.value,
+  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: (!(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0) || recentItems.value.length > 0, onSelect: () => win.openInNewWindow(null) },
   { label: 'Open folder…', icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
   { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
   { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
@@ -151,7 +178,7 @@ const branchTitle = computed(() => {
           <!-- The Where list opens from the project menu and hangs from the same button. -->
           <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
             <template #default>
-              <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+              <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggleProjects(toggle, open)">
                 <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
                 <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
                 <ChevronDown class="tb__chev" />
