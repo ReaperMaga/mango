@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread, ThreadStatus } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
 import { createdBy } from '~/utils/githubLinks'
+import { transcript } from '~/utils/transcript'
 import { createPrPrompt } from '~/utils/createPr'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
@@ -36,6 +37,8 @@ export interface QueuedMessage {
   attachments: Attachment[]
   /** Already in the chat (sent now, but the run could not take it): only its turn is still due. */
   shown?: boolean
+  /** When the person wrote it. */
+  queuedAt?: number
 }
 
 /** What a running chat has going on besides its reply. Not saved: it dies with the run. */
@@ -156,6 +159,16 @@ export interface ThreadsState {
   sendNow(id: string, queuedId: string): Promise<void>
   /** Take a waiting message back without sending it. */
   dropQueued(id: string, queuedId: string): void
+  /** Keep a message (or let it go): the chat's message list shows pinned ones first. */
+  togglePin(id: string, messageId: string): void
+  /** Messages that would go if the chat were cut back at `messageId` (the message itself included). */
+  cutCount(id: string, messageId: string): number
+  /** Replace one of your messages and run it again: it and everything after it make way. */
+  editMessage(id: string, messageId: string, text: string): Promise<void>
+  /** Ask again: an answer and everything after it make way, and the message before it runs once more. */
+  regenerate(id: string, messageId: string): Promise<void>
+  /** A new chat that continues from a message (the earlier part goes to the agent as text). Null when it cannot. */
+  branchFrom(id: string, messageId: string): Thread | null
   /** Answer an approval request inside a message. */
   resolveApproval(threadId: string, messageId: string, partIndex: number, allow: boolean): void
   /** Answer an agent's questions (null: dismissed without an answer). */
@@ -178,7 +191,7 @@ export interface ThreadsState {
    */
   _addWorktreeFor(id: string): Promise<void>
   _adoptRemote(incoming: Thread[]): Thread[]
-  _appendUser(id: string, text: string, attachments: Attachment[]): void
+  _appendUser(id: string, text: string, attachments: Attachment[], writtenAt?: number): void
   _runTurn(id: string, text: string, attachments: Attachment[]): Promise<void>
   _sendFollowUps(id: string): Promise<void>
   _createSubagent(parentId: string, opts: { toolId: string; title: string; agentType?: string; prompt?: string }): Thread | null
@@ -494,7 +507,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (!t || t.parentId || (!text.trim() && !attachments.length)) return
     if (t.archived) get().edit(id, (d) => { d.archived = false }) // writing in an archived chat brings it back
     if (isBusy(t)) {
-      const queued: QueuedMessage = { id: uid('q'), text: text.trim(), attachments }
+      const queued: QueuedMessage = { id: uid('q'), text: text.trim(), attachments, queuedAt: Date.now() }
       set(s => ({ queue: { ...s.queue, [id]: [...(s.queue[id] ?? []), queued] } }))
       // Steer: hand it to the running turn now. Queue: it waits for the turn to end. `opposite` flips the
       // setting for this one message. When the agent has answered and only background tasks keep the
@@ -526,7 +539,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       return { queue }
     })
     held.delete(id)
-    get()._appendUser(id, q.text, q.attachments)
+    get()._appendUser(id, q.text, q.attachments, q.queuedAt)
     if (!isBusy(get().byId(id)!)) {
       await get()._runTurn(id, q.text, q.attachments)
       await get()._sendFollowUps(id)
@@ -550,13 +563,100 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     })
   },
 
+  togglePin(id, messageId) {
+    const m = get().byId(id)?.messages.find(x => x.id === messageId)
+    if (!m) return
+    get().edit(id, (d) => {
+      const x = d.messages.find(y => y.id === messageId)
+      if (!x) return
+      if (x.pinned) delete x.pinned
+      else x.pinned = true
+    }, [messageId])
+    get().persist(id)
+  },
+
+  cutCount(id, messageId) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    return t && i >= 0 ? t.messages.length - i : 0
+  },
+
+  async editMessage(id, messageId, text) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    const old = t?.messages[i]
+    if (!t || !old || old.role !== 'user' || t.parentId || isBusy(t) || (!text.trim() && !old.attachments?.length)) return
+    const attachments = old.attachments ?? []
+    // The CLI's session cannot be rewound: the next turn starts a fresh one and gets what came before as text.
+    get().edit(id, (d) => {
+      d.messages.splice(i)
+      d.sessionId = null
+      d.context = undefined
+      const earlier = transcript(d.messages)
+      if (earlier) d.history = earlier
+      else delete d.history
+    }, 'all')
+    get().persist(id)
+    await get().send(id, text, attachments)
+  },
+
+  async regenerate(id, messageId) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    if (!t || i < 0 || t.parentId || isBusy(t)) return
+    let ask = i
+    while (ask >= 0 && t.messages[ask]!.role !== 'user') ask--
+    const old = t.messages[ask]
+    if (!old || old.fromAgent) return
+    const text = old.parts.map(p => (p.type === 'text' ? p.text : '')).join('')
+    await get().editMessage(id, old.id, text)
+  },
+
+  branchFrom(id, messageId) {
+    const src = get().byId(id)
+    const i = src?.messages.findIndex(m => m.id === messageId) ?? -1
+    if (!src || i < 0 || src.parentId) return null
+    const now = Date.now()
+    const kept = src.messages.slice(0, i + 1).map((m): Message => {
+      const copy = JSON.parse(JSON.stringify(m)) as Message
+      delete copy.pinned
+      // A question or approval that was still open stays open only in the chat it was asked in.
+      copy.parts = copy.parts.filter(p => !awaitsUser(p))
+      return { ...copy, id: uid('m') }
+    }).filter(m => m.parts.length || m.attachments?.length)
+    const t: Thread = {
+      id: uid('t'),
+      projectPath: src.projectPath,
+      title: `${src.title} (branch)`,
+      agent: src.agent,
+      model: src.model,
+      mode: src.mode,
+      effort: src.effort ?? null,
+      status: 'working',
+      messages: kept,
+      createdAt: now,
+      updatedAt: now,
+      seen: true,
+      branch: src.branch ?? null,
+      ...(src.worktree ? { worktree: src.worktree } : {}),
+    }
+    const earlier = transcript(kept)
+    if (earlier) t.history = earlier
+    set(s => ({ threads: { ...s.threads, [t.id]: t } }))
+    get().persist(t.id)
+    return t
+  },
+
   /** A user message into the chat (the title follows the first one). */
-  _appendUser(id, text, attachments) {
+  _appendUser(id, text, attachments, writtenAt) {
+    const now = Date.now()
     const msg: Message = {
       id: uid('m'),
       role: 'user',
       parts: text ? [{ type: 'text', text }] : [],
-      createdAt: Date.now(),
+      createdAt: now,
+      // Only worth a note when it waited a while for the turn before it.
+      ...(writtenAt && now - writtenAt > 5000 ? { writtenAt } : {}),
     }
     if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
     get().edit(id, (d) => {
@@ -606,7 +706,12 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       if (get().byId(id)?.status !== 'queued') return
     }
     // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-    await runAgentTurn(id, createPrPrompt(text) ?? text, attachments)
+    const prompt = createPrPrompt(text) ?? text
+    // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
+    const handOver = t.history && !t.sessionId
+    await runAgentTurn(id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+    const after = get().byId(id)
+    if (after?.history && (after.sessionId || after.status !== 'error')) get().edit(id, (d) => { delete d.history })
   },
 
   /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -626,7 +731,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         else delete queue[id]
         return { queue }
       })
-      for (const w of batch) if (!w.shown) get()._appendUser(id, w.text, w.attachments)
+      for (const w of batch) if (!w.shown) get()._appendUser(id, w.text, w.attachments, w.queuedAt)
       await get()._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
     }
   },

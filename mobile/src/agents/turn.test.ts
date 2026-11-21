@@ -190,3 +190,23 @@ describe('applying agent events (desktop parity)', () => {
     expect(thread().messages[0]).toBe(firstMessage)
   })
 })
+
+describe('what a turn used', () => {
+  it('puts the last reading on the reply, beside how long it took', async () => {
+    const { turn, thread } = start()
+    play(turn.emit, [
+      { type: 'text', id: 'm1:0', text: 'Done.' },
+      { type: 'usage', usage: { input: 1200, output: 80 } },
+      { type: 'usage', usage: { input: 2400, output: 150, costUsd: 0.04 } },
+      { type: 'turn-end', status: 'done' },
+    ])
+    await turn.finished
+    expect(thread().messages[1]!.usage).toEqual({ input: 2400, output: 150, costUsd: 0.04 })
+  })
+  it('leaves it off when the CLI reported nothing', async () => {
+    const { turn, thread } = start()
+    play(turn.emit, [{ type: 'text', id: 'm1:0', text: 'Done.' }, { type: 'turn-end', status: 'done' }])
+    await turn.finished
+    expect(thread().messages[1]!.usage).toBeUndefined()
+  })
+})

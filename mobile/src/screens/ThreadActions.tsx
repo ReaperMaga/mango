@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View } from 'react-native'
-import { GitPullRequest, Trash2 } from 'lucide-react-native'
+import { GitPullRequest, Search, Trash2 } from 'lucide-react-native'
 import { displayStatus, type Thread } from '~/types/chat'
 import { isBusy } from '@/state/threadModel'
 import { makeStyles, space, useTheme } from '@/theme'
@@ -31,13 +31,15 @@ function statusNote(th: Thread): string | undefined {
  * Deleting and archiving ask first unless Settings > Confirmations says otherwise; deleting also deletes it in the
  * environment, on every computer.
  */
-export function ThreadActions({ threadId, visible, onClose, onDeleted, onLinks }: {
+export function ThreadActions({ threadId, visible, onClose, onDeleted, onLinks, onFind }: {
   threadId: string
   visible: boolean
   onClose: () => void
   onDeleted?: () => void
   /** Show the chat's pull requests and issues (where linking one by hand starts). */
   onLinks?: () => void
+  /** Search the chat's messages and see the pinned ones. */
+  onFind?: () => void
 }) {
   const t = useTheme()
   const s = useStyles()
@@ -114,15 +116,22 @@ export function ThreadActions({ threadId, visible, onClose, onDeleted, onLinks }
             />
           ))}
         </ListSection>
-        {onLinks
+        {onLinks || onFind
           ? (
               <ListSection>
-                <ListRow
-                  title="Pull requests and issues"
-                  detail={thread.links?.length ? String(thread.links.length) : undefined}
-                  leading={<GitPullRequest size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
-                  onPress={onLinks}
-                />
+                {onFind
+                  ? <ListRow title="Find in chat" detail={thread.messages.some(m => m.pinned) ? 'Pinned' : undefined} leading={<Search size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />} onPress={onFind} />
+                  : null}
+                {onLinks
+                  ? (
+                      <ListRow
+                        title="Pull requests and issues"
+                        detail={thread.links?.length ? String(thread.links.length) : undefined}
+                        leading={<GitPullRequest size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+                        onPress={onLinks}
+                      />
+                    )
+                  : null}
               </ListSection>
             )
           : null}

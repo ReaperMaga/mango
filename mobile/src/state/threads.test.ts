@@ -334,3 +334,42 @@ describe('the chat store', () => {
     })
   })
 })
+
+describe('message actions', () => {
+  const chat = (): Thread => ({
+    ...oldChat({ id: 't-act1', status: 'working', sessionId: 's1' }),
+    messages: [
+      { id: 'a', role: 'user', parts: [{ type: 'text', text: 'first' }], createdAt: 1 },
+      { id: 'b', role: 'agent', parts: [{ type: 'text', text: 'answer' }], createdAt: 2 },
+      { id: 'c', role: 'user', parts: [{ type: 'text', text: 'second' }], createdAt: 3, pinned: true },
+    ],
+  })
+  const seed = () => useThreads.setState(s => ({ threads: { ...s.threads, 't-act1': chat() } }))
+
+  it('pins and unpins a message', () => {
+    seed()
+    store().togglePin('t-act1', 'a')
+    expect(store().byId('t-act1')!.messages[0]!.pinned).toBe(true)
+    store().togglePin('t-act1', 'a')
+    expect(store().byId('t-act1')!.messages[0]!.pinned).toBeUndefined()
+  })
+
+  it('counts what a cut would remove', () => {
+    seed()
+    expect(store().cutCount('t-act1', 'b')).toBe(2)
+    expect(store().cutCount('t-act1', 'nope')).toBe(0)
+  })
+
+  it('branches a new chat with the earlier messages as text and nothing pinned', () => {
+    seed()
+    const made = store().branchFrom('t-act1', 'b')!
+    expect(made.id).not.toBe('t-act1')
+    expect(made.title).toBe('Old one (branch)')
+    expect(made.messages.map(m => m.role)).toEqual(['user', 'agent'])
+    expect(made.messages.every(m => !m.pinned)).toBe(true)
+    expect(made.history).toMatch(/User: first\n\nAssistant: answer/)
+    expect(made.sessionId).toBeUndefined()
+    // The source is untouched.
+    expect(store().byId('t-act1')!.messages).toHaveLength(3)
+  })
+})
