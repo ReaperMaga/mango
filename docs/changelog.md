@@ -2,6 +2,19 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.36
+
+### New
+
+- Show the agent's plan and usage in the sidebar footer.
+- Group appearance options and make uchiha visibly red.
+- Show the tokens and cost a reply used.
+- Put the tool windows behind one button with a dropdown, and clear the env, panel, settings and usage buttons from the titlebar.
+
+### Fixes
+
+- Stop the agent with Esc wherever focus is.
+
 ## 0.1.35
 
 ### New
