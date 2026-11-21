@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelLeft, Search, Server, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -164,6 +164,16 @@ const branchTitle = computed(() => {
   <header class="tb" :class="{ 'tb--mac': mac }" data-tauri-drag-region @dblclick.self="appWindow.toggleMaximize()">
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
+      <!-- The sidebar hides from its own top row; while it is away, it comes back from here. -->
+      <UiIconButton
+        v-if="!chatWindow && ws.hasProject && !ws.sidebarOpen"
+        class="tb__show-sb"
+        label="Show sidebar"
+        :shortcut="ws.keyLabel('sidebar')"
+        @click="ws.toggleSidebar()"
+      >
+        <PanelLeftOpen />
+      </UiIconButton>
 
       <!-- A chat window: its project, as a plain label, and the way back. -->
       <template v-if="chatWindow">
@@ -249,9 +259,6 @@ const branchTitle = computed(() => {
       <PluginStatusItems location="titlebar" class="tb__grp" />
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
-      <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
-        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="ws.withKey('Toggle sidebar', 'sidebar')" @click="ws.toggleSidebar()"><PanelLeft /></button>
-      </div>
 
       <div v-if="native && !mac" class="tb__win">
         <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
@@ -281,6 +288,7 @@ const branchTitle = computed(() => {
 .tb__right { display: flex; align-items: center; gap: var(--space-4); flex: none; align-self: stretch; }
 .tb__center { flex: 1; display: flex; justify-content: center; min-width: 0; }
 .tb__mark { margin: 0 var(--space-2) 0 var(--space-1); flex: none; }
+.tb__show-sb { margin-right: var(--space-1); }
 /* The project keeps its width; a long branch (Unity VCS paths such as /main/feature/x) is what gets cut short. */
 .tb__left > :deep(.menu) { flex: none; }
 
@@ -348,28 +356,6 @@ const branchTitle = computed(() => {
 .tb__search svg { width: 14px; height: 14px; flex: none; }
 .tb__ph { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__keys { display: flex; align-items: center; gap: 2px; flex: none; }
-
-/* Layout cluster: one connected segmented group of panel toggles. */
-.tb__cluster {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--bg-inset);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
-}
-.tb__cluster button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-subtle);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.tb__cluster button:hover { background: var(--bg-hover); color: var(--fg); }
-.tb__cluster button[aria-pressed='true'] { background: var(--bg-raised); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
-.tb__cluster svg { width: 16px; height: 16px; }
 
 .tb__win { display: flex; align-self: stretch; margin-left: var(--space-1); }
 .tb__win-btn {
