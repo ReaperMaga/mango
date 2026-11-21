@@ -2,6 +2,156 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.29
+
+### New
+
+- Add a releases tool window with the runs that build them.
+- Split two chats from different projects side by side.
+
+## 0.1.28
+
+### Agents and chats
+
+- **Link pull requests and issues:** pick an open pull request or issue from the Pull requests tool window to link it to the chat.
+
+### Mobile
+
+- Pull requests on the phone, as on the desktop.
+- Categorized settings, live chats and four new color schemes (Ink, Cocoa, Neon and Solar).
+
+### Builds
+
+- The macOS app is signed and notarized, and the iOS app ships through TestFlight.
+
+## 0.1.27
+
+### Agents and chats
+
+- Menu flyouts of the run menu open from their row and animate.
+
+## 0.1.26
+
+### Agents and chats
+
+- **One run menu:** pick agent, model, effort and permissions from a single menu.
+- **Context window:** a chat shows how full the agent's context window is.
+
+### Mobile
+
+- Categorized settings, appearance options and project folders.
+
+## 0.1.25
+
+### Environments
+
+- The browser reaches dev servers that listen only on IPv6 in remote environments.
+
+## 0.1.24
+
+### Windows
+
+- Each window closes on its own, and Mango asks where to open a project.
+
+## 0.1.23
+
+### Settings
+
+- **Notifications and shortcuts:** desktop notifications when a chat needs you, finishes or fails, and keyboard shortcuts you can rebind.
+
+### Environments
+
+- **Java:** add Java through SDKMAN, and pick Node and Java versions.
+- Remote agent runs get the login's umask.
+
+## 0.1.22
+
+### Agents and chats
+
+- **Tabs per pane:** each split pane has its own tab strip.
+- A chat's tab and pane close when the chat is settled.
+
+### Environments
+
+- **Docker** is a one-click component.
+- Remote agent runs stay alive and reconnect after a dropped connection.
+
+## 0.1.21
+
+### Windows
+
+- Open projects and chats in their own windows.
+- Long project names fit in the project menu.
+
+### Mobile
+
+- Pictures from agent replies show on the phone.
+
+## 0.1.20
+
+### Agents and chats
+
+- **MCP servers:** add your own MCP servers to agent chats.
+- The empty chat pane no longer suggests prompts.
+
+### Environments
+
+- A headless Chromium component for agents.
+
+### Mobile
+
+- **The iOS app:** open remote environments and their chats from the phone.
+
+## 0.1.19
+
+### Environments
+
+- A remote project's chats are kept in its environment, so other computers see them.
+
+## 0.1.18
+
+### Builds
+
+- **macOS:** builds and downloads for Apple Silicon and Intel.
+
+## 0.1.17
+
+### Interface
+
+- Smooth transitions across chats, panels, lists and settings.
+
+### Environments
+
+- The branch popup and Files are faster on remote projects.
+
+## 0.1.16
+
+### Interface
+
+- Polish for the titlebar, menus and the in-app browser preview.
+
+## 0.1.15
+
+### Interface
+
+- A rebuilt titlebar with widgets and one aligned header row.
+- Tab titles no longer sit below their icons.
+
+## 0.1.14
+
+### Agents and chats
+
+- **Questions in the chat:** answer questions from the agent and from MCP servers right in the chat.
+- **Changed files:** shown under replies and as markers in the editor gutter.
+
+### Version control
+
+- **Unity VCS:** locks, shelves, merge, per-chat workspaces and code reviews.
+
+### Interface
+
+- Tabs are pills with file-type icons.
+
 ## 0.1.13
 
 ### Environments

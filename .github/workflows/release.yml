@@ -44,6 +44,15 @@ jobs:
       - name: Every copy of the version agrees
         run: node scripts/version.ts --check
 
+      - name: The changelog has an entry for this version
+        if: github.ref_type == 'tag'
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if ! grep -qE "^## ${version//./\\.}\s*$" docs/changelog.md; then
+            echo "::error::docs/changelog.md has no '## $version' section. Run 'pnpm bump $version' (it writes the changelog) before tagging."
+            exit 1
+          fi
+
       - name: The updater signing key is set
         env:
           KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

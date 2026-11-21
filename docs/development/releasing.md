@@ -38,7 +38,7 @@ Updater bundles and their signatures are only produced in the release workflow, 
 
    `pnpm version:check` confirms that every copy agrees (it exits with 1 if not). The bump script never commits or tags; it prints the commands for that.
 
-2. Add an entry to the [changelog](../changelog) (`docs/changelog.md`).
+2. The [changelog](../changelog) (`docs/changelog.md`) was written by the bump: the `feat`, `fix` and `perf` commits since the last tag, plus anything under `## Unreleased`. Read it over and polish the wording before committing. The release workflow stops if the version has no section.
 
 3. Commit and tag:
 

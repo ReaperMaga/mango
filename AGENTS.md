@@ -252,3 +252,4 @@ unless asked for them. Ask at most one short batch of product questions, then bu
   after the type (or a `BREAKING CHANGE:` footer) for breaking changes. Write the subject in the imperative, lower
   case, no trailing period. One logical change per commit.
 - Keep `README.md` in step with user-visible changes.
+- `docs/changelog.md` writes itself: `pnpm bump` turns the `feat`/`fix`/`perf` commits since the last tag (not `mobile`-scoped ones) into the new version's section, so commit subjects must read well to a user. Hand-written bullets under `## Unreleased` are kept and come first.
