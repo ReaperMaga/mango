@@ -20,6 +20,8 @@ export interface AppPrefs {
   toolCalls: ToolCalls
   /** The permission mode a new chat starts with. */
   defaultMode: PermissionMode
+  /** Projects with their own mode for new chats, by project path; the others use `defaultMode`. */
+  projectModes: Record<string, PermissionMode>
   /** The agent a new chat starts with; null asks every time. */
   defaultAgent: AgentId | null
   followUp: FollowUp
@@ -53,6 +55,7 @@ export const DEFAULT_PREFS: AppPrefs = {
   homeView: 'projects',
   toolCalls: 'all',
   defaultMode: 'ask',
+  projectModes: {},
   defaultAgent: null,
   followUp: 'queue',
   confirmArchive: false,
@@ -66,6 +69,23 @@ const oneOf = <T extends string>(v: unknown, allowed: readonly T[], fallback: T)
 
 const flag = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
 
+const MODE_VALUES = MODES.map(m => m.value)
+
+/** The saved per-project modes, dropping anything that is not a known mode. */
+function projectModesOf(v: unknown): Record<string, PermissionMode> {
+  const out: Record<string, PermissionMode> = {}
+  if (v && typeof v === 'object') {
+    for (const [path, mode] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof mode === 'string' && (MODE_VALUES as string[]).includes(mode)) out[path] = mode as PermissionMode
+    }
+  }
+  return out
+}
+
+/** The mode a new chat in this project starts with: the project's own, else the default. */
+export const modeForProject = (prefs: Pick<AppPrefs, 'defaultMode' | 'projectModes'>, path: string): PermissionMode =>
+  prefs.projectModes[path] ?? prefs.defaultMode
+
 /** Preferences from whatever was saved, tolerating missing, old or hand-edited data. */
 export function normalizePrefs(raw: unknown): AppPrefs {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
@@ -74,6 +94,7 @@ export function normalizePrefs(raw: unknown): AppPrefs {
     homeView: oneOf(o.homeView, HOME_VIEWS.map(v => v.value), DEFAULT_PREFS.homeView),
     toolCalls: oneOf(o.toolCalls, TOOL_CALLS.map(t => t.value), DEFAULT_PREFS.toolCalls),
     defaultMode: oneOf(o.defaultMode, MODES.map(m => m.value), DEFAULT_PREFS.defaultMode),
+    projectModes: projectModesOf(o.projectModes),
     defaultAgent: typeof o.defaultAgent === 'string' && o.defaultAgent in AGENTS ? (o.defaultAgent as AgentId) : null,
     followUp: oneOf(o.followUp, ['queue', 'steer'] as const, DEFAULT_PREFS.followUp),
     confirmArchive: flag(o.confirmArchive, DEFAULT_PREFS.confirmArchive),

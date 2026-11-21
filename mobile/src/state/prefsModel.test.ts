@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_PREFS, modeLabel, normalizePrefs } from './prefsModel'
+import { DEFAULT_PREFS, modeForProject, modeLabel, normalizePrefs } from './prefsModel'
 
 describe('normalizePrefs', () => {
   it('gives the defaults for nothing, junk or a first run', () => {
@@ -24,5 +24,13 @@ describe('normalizePrefs', () => {
 
   it('names the modes', () => {
     expect(modeLabel('edits')).toBe('Accept edits')
+  })
+
+  it('lets a project override the default mode', () => {
+    const p = normalizePrefs({ defaultMode: 'ask', projectModes: { '/a': 'auto', '/b': 'yolo', '/c': 3 } })
+    expect(p.projectModes).toEqual({ '/a': 'auto' })
+    expect(modeForProject(p, '/a')).toBe('auto')
+    expect(modeForProject(p, '/b')).toBe('ask')
+    expect(normalizePrefs(null).projectModes).toEqual({})
   })
 })
