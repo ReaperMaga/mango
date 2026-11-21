@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.38
+
+### New
+
+- Show every tool window on the stripe again, with terminal and environment at its foot.
+
 ## 0.1.37
 
 ### New
