@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitFile, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitCommitDetail, GitCommitFile, GitFile, GitGraph, GitRef, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -22,6 +22,8 @@ interface Repo {
   repository: string | null
   isRepo: boolean
   branch: string
+  /** A commit checked out on its own (`git_checkout_commit`): HEAD is detached there. */
+  detached?: string | null
   branches: Record<string, Tracking>
   files: MockFile[]
   log: GitCommit[]
@@ -753,6 +755,7 @@ function statusOf(r: Repo, path: string): GitStatus {
     const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null
     return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
   }
+  if (r.detached) return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: null, head: r.detached.slice(0, 7), upstream: null, ahead: 0, behind: 0, files }
   return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
 }
 
@@ -925,6 +928,13 @@ function checkout(r: Repo, branch: string, create: boolean) {
     throw new Error(`fatal: invalid reference: ${name}`)
   }
   r.branch = name
+  r.detached = null
+}
+
+/** `git switch --detach <hash>`: HEAD on one commit, no branch. */
+function checkoutCommit(path: string, r: Repo, hash: string) {
+  if (!/^[0-9a-f]{4,64}$/i.test(hash.trim())) throw new Error(`"${hash}" is not a commit hash`)
+  r.detached = resolveRev(graphOf(path), hash)
 }
 
 /* ---------- worktrees ---------- */
@@ -991,6 +1001,399 @@ async function worktreeRemove(path: string, folder: string, force: boolean) {
   linkedTrees.delete(folder)
 }
 
+/* ---------- the history graph (`git_graph`, `git_commit_show`, `git_commit_diff`) ----------
+ * A commit graph over the fake repositories: each worktree's `log` is a chain of commits (so commits made in the
+ * preview show up), and the `mango` project's chain sits on a longer, fixed history with merged feature branches,
+ * remote branches and tags. Hashes, files and diffs are derived from seeds, so they stay put across calls.
+ */
+
+interface GNode {
+  hash: string
+  parents: string[]
+  subject: string
+  body: string
+  author: string
+  email: string
+  time: number
+  files: GitCommitFile[]
+}
+interface Deep { nodes: Map<string, GNode>; tips: Record<string, string>; remotes: Record<string, string>; tags: Record<string, string>; main: string }
+
+const GRAPH_GIT_ONLY = "The commit graph is for git repositories; Unity Version Control workspaces don't have one."
+
+/** A small seeded generator (mulberry32 over an FNV-1a hash of the seed). */
+function rng(seed: string) {
+  let h = 2166136261
+  for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619)
+  let a = h >>> 0
+  return () => {
+    a = (a + 0x6D2B79F5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const seededHex = (seed: string, n = 40) => {
+  const r = rng(seed)
+  return Array.from({ length: n }, () => Math.floor(r() * 16).toString(16)).join('')
+}
+
+const PEOPLE: Array<[string, string]> = [
+  ['You', 'you@example.com'],
+  ['Priya Nair', 'priya@orchard.dev'],
+  ['Jonas Weber', 'jonas.weber@orchard.dev'],
+  ['Lena Fischer', 'lena@orchard.dev'],
+  ['Tomás Ortega', 'tomas@orchard.dev'],
+]
+const emailOf = (name: string) => PEOPLE.find(p => p[0] === name)?.[1] ?? `${name.toLowerCase().replace(/[^a-z]+/g, '.')}@example.com`
+
+const FILE_POOL: Record<string, string[]> = {
+  terminal: ['app/components/terminal/TerminalPanel.vue', 'app/components/terminal/TerminalView.vue', 'src-tauri/src/pty.rs', 'src-tauri/src/shells.rs'],
+  chat: ['app/components/chat/ChatPane.vue', 'app/components/chat/ChatComposer.vue', 'app/components/chat/ChatMessage.vue', 'app/stores/threads.ts'],
+  git: ['app/components/git/GitPanel.vue', 'app/stores/git.ts', 'src-tauri/src/git.rs', 'app/components/git/GitDiff.vue'],
+  agents: ['app/agents/claude.ts', 'app/agents/codex.ts', 'app/agents/index.ts', 'src-tauri/src/agent_proc.rs'],
+  ui: ['app/assets/css/tokens.css', 'app/components/ui/UiMenu.vue', 'app/components/AppSidebar.vue', 'app/components/AppTitlebar.vue'],
+  persistence: ['src-tauri/src/chats.rs', 'app/utils/chatHistory.ts', 'src-tauri/Cargo.toml'],
+  build: ['package.json', 'nuxt.config.ts', 'src-tauri/tauri.conf.json', '.github/workflows/release.yml'],
+  docs: ['README.md', 'docs/changelog.md', 'AGENTS.md'],
+}
+const CODE_LINES = [
+  'const open = ref(false)', 'if (!path) return null', 'await call(\'git_status\', { path })', 'export function relativeTime(ts: number) {',
+  'let rows = Math.max(1, Math.floor(height / ROW))', 'emit(\'close\')', 'props.items.filter(i => !i.hidden)', 'return { ok: true, value }',
+  '.panel { display: flex; min-height: 0; }', 'pub(crate) fn read(at: &At) -> Result<String, String> {', 'cmd.arg("--no-color");',
+  'const width = computed(() => clamp(ws.panelWidth, 260, 640))', 'watch(() => props.path, load, { immediate: true })',
+  'thread.status = \'working\'', 'self.persist()', 'for (const f of files) stage(f)', 'onBeforeUnmount(() => stop())',
+  'return t(\'settings.title\')', 'let out = git(&root).read_only().run()?;', 'if (e.key === \'Escape\') close()',
+]
+
+function areaOf(subject: string): string {
+  const m = /^\w+\(([^)]+)\)/.exec(subject)?.[1] ?? ''
+  if (FILE_POOL[m]) return m
+  if (/terminal|pty|shell/i.test(subject)) return 'terminal'
+  if (/git|diff|branch|commit/i.test(subject)) return 'git'
+  if (/chat|composer|thread|message/i.test(subject)) return 'chat'
+  if (/agent|claude|codex/i.test(subject)) return 'agents'
+  if (/persist|sqlite|history/i.test(subject)) return 'persistence'
+  if (/^(build|ci|chore)/.test(subject)) return 'build'
+  if (/^docs/.test(subject)) return 'docs'
+  return 'ui'
+}
+
+/** The files a commit touched, from its hash (so the same commit always shows the same files). */
+function filesFor(hash: string, subject: string, root: boolean): GitCommitFile[] {
+  const r = rng(`files:${hash}`)
+  const pool = FILE_POOL[areaOf(subject)]!
+  const n = root ? pool.length : 1 + Math.floor(r() * Math.min(4, pool.length))
+  const start = Math.floor(r() * pool.length)
+  const files: GitCommitFile[] = []
+  for (let i = 0; i < n; i++) {
+    const path = pool[(start + i) % pool.length]!
+    const roll = r()
+    const status = root ? 'A' : roll < 0.12 ? 'A' : roll < 0.17 ? 'D' : roll < 0.21 ? 'R' : 'M'
+    const additions = status === 'D' ? 0 : 1 + Math.floor(r() * 18)
+    const deletions = status === 'A' ? 0 : status === 'D' ? 4 + Math.floor(r() * 20) : Math.floor(r() * 9)
+    const oldPath = status === 'R' ? path.replace(/(\w+)(\.\w+)$/, 'Old$1$2') : null
+    files.push({ path, oldPath, status, additions, deletions })
+  }
+  if (/^docs|README/.test(subject) && !files.some(f => f.path === 'README.md')) files.push({ path: 'README.md', oldPath: null, status: 'M', additions: 3, deletions: 1 })
+  if (subject.includes('icons')) files.push({ path: 'public/icon.png', oldPath: null, status: 'M', additions: null, deletions: null })
+  return files.sort((a, b) => a.path.localeCompare(b.path))
+}
+
+/** A unified diff whose line counts match the file's numbers. */
+function commitDiffText(hash: string, f: GitCommitFile): string {
+  const r = rng(`diff:${hash}:${f.path}`)
+  const line = () => CODE_LINES[Math.floor(r() * CODE_LINES.length)]!
+  const lines = (n: number, p: string) => Array.from({ length: n }, () => `${p}${line()}`)
+  const idx = `index ${seededHex(`a${hash}${f.path}`, 7)}..${seededHex(`b${hash}${f.path}`, 7)}`
+  const from = f.oldPath ?? f.path
+  if (f.additions === null) return `diff --git a/${from} b/${f.path}\n${idx}\nBinary files a/${from} and b/${f.path} differ\n`
+  if (f.status === 'A') return `diff --git a/${f.path} b/${f.path}\nnew file mode 100644\n${idx.replace(/index \w+/, 'index 0000000')}\n--- /dev/null\n+++ b/${f.path}\n@@ -0,0 +1,${f.additions} @@\n${lines(f.additions, '+').join('\n')}\n`
+  if (f.status === 'D') return `diff --git a/${f.path} b/${f.path}\ndeleted file mode 100644\n${idx}\n--- a/${f.path}\n+++ /dev/null\n@@ -1,${f.deletions} +0,0 @@\n${lines(f.deletions ?? 0, '-').join('\n')}\n`
+  const top = f.status === 'R'
+    ? `diff --git a/${from} b/${f.path}\nsimilarity index 87%\nrename from ${from}\nrename to ${f.path}\n${idx}\n--- a/${from}\n+++ b/${f.path}\n`
+    : `diff --git a/${f.path} b/${f.path}\n${idx} 100644\n--- a/${f.path}\n+++ b/${f.path}\n`
+  // Split into one or two hunks, each with three lines of context around the change.
+  const add = f.additions ?? 0
+  const del = f.deletions ?? 0
+  const parts = add + del > 10 ? [[Math.ceil(del / 2), Math.ceil(add / 2)], [Math.floor(del / 2), Math.floor(add / 2)]] : [[del, add]]
+  let at = 12 + Math.floor(r() * 40)
+  let shift = 0
+  const hunks = parts.map(([d, a]) => {
+    const ctx = lines(3, ' ')
+    const tail = lines(3, ' ')
+    const h = `@@ -${at},${d! + 6} +${at + shift},${a! + 6} @@ ${r() < 0.5 ? 'export function setup() {' : ''}`.trimEnd()
+    const body = [...ctx, ...lines(d!, '-'), ...lines(a!, '+'), ...tail]
+    shift += a! - d!
+    at += d! + 6 + 20 + Math.floor(r() * 30)
+    return `${h}\n${body.join('\n')}`
+  })
+  return `${top}${hunks.join('\n')}\n`
+}
+
+/**
+ * The longer history under the `mango` project's own commits, oldest first: a list of steps on named branches
+ * (`b` starts a branch at another's tip, `m` merges one into another, `t` tags main). Times are spread evenly back
+ * from `end`, so every parent is older than its children.
+ */
+const DEEP_SCRIPT: Array<[string, ...string[]]> = [
+  ['c', 'main', 'chore: initial commit', 'You'],
+  ['c', 'main', 'build: nuxt 4 spa inside a tauri 2 shell', 'You'],
+  ['c', 'main', 'feat(ui): design tokens for the orchard-at-dusk theme', 'Lena Fischer'],
+  ['c', 'main', 'feat(ui): custom titlebar with window controls', 'Lena Fischer'],
+  ['b', 'feat/terminal', 'main'],
+  ['c', 'feat/terminal', 'feat(terminal): pty backed by portable-pty', 'Jonas Weber'],
+  ['c', 'main', 'feat(chat): chat pane and composer', 'You'],
+  ['c', 'feat/terminal', 'feat(terminal): xterm.js view with the theme palette', 'Jonas Weber'],
+  ['c', 'main', 'feat(agents): claude code adapter over stream-json', 'You'],
+  ['c', 'feat/terminal', 'fix(terminal): resize the pty with the panel', 'Jonas Weber'],
+  ['c', 'main', 'feat(chat): thread sidebar with ripeness dots', 'Lena Fischer'],
+  ['m', 'main', 'feat/terminal', "Merge branch 'feat/terminal'", 'You'],
+  ['t', 'v0.1.0'],
+  ['b', 'feat/git-panel', 'main'],
+  ['c', 'feat/git-panel', 'feat(git): status and diffs in the changes panel', 'Priya Nair'],
+  ['c', 'main', 'docs: readme with screenshots', 'You'],
+  ['c', 'feat/git-panel', 'feat(git): stage, unstage and discard', 'Priya Nair'],
+  ['b', 'fix/sidebar-scroll', 'main'],
+  ['c', 'fix/sidebar-scroll', 'fix(ui): keep the sidebar scroll position on rename', 'Tomás Ortega'],
+  ['c', 'feat/git-panel', 'feat(git): commit, amend and push', 'Priya Nair'],
+  ['c', 'main', 'feat(agents): codex adapter', 'You'],
+  ['m', 'main', 'fix/sidebar-scroll', "Merge pull request #12 from fix/sidebar-scroll", 'Tomás Ortega'],
+  ['c', 'feat/git-panel', 'feat(git): branch popup with search', 'Priya Nair'],
+  ['c', 'main', 'perf(chat): render long transcripts lazily', 'Jonas Weber'],
+  ['m', 'main', 'feat/git-panel', "Merge pull request #14 from feat/git-panel", 'Priya Nair'],
+  ['c', 'main', 'chore(release): v0.1.10', 'You'],
+  ['t', 'v0.1.10'],
+  ['b', 'feat/persistence', 'main'],
+  ['c', 'feat/persistence', 'feat(persistence): sqlite chat history', 'Jonas Weber'],
+  ['c', 'main', 'fix(chat): composer keeps its height on resize', 'Lena Fischer'],
+  ['b', 'fix/terminal-resize', 'main'],
+  ['c', 'feat/persistence', 'feat(persistence): save chats incrementally', 'Jonas Weber'],
+  ['c', 'fix/terminal-resize', 'fix(terminal): debounce resize while dragging', 'Tomás Ortega'],
+  ['c', 'main', 'feat(ui): command palette and global shortcuts', 'You'],
+  ['b', 'feat/worktrees', 'main'],
+  ['c', 'feat/worktrees', 'feat(git): chats in their own worktree', 'Priya Nair'],
+  ['c', 'feat/persistence', 'fix(persistence): tolerate rows from older builds', 'Jonas Weber'],
+  ['c', 'feat/worktrees', 'feat(git): name the worktree branch from the first message', 'Priya Nair'],
+  ['c', 'main', 'refactor(agents): one turn-end per run', 'You'],
+  ['c', 'feat/worktrees', 'fix(git): remove a worktree with its branch', 'Priya Nair'],
+  ['m', 'main', 'feat/worktrees', "Merge pull request #23 from feat/worktrees", 'Priya Nair'],
+  ['c', 'main', 'build: bump tauri to 2.11', 'Jonas Weber'],
+  ['c', 'main', 'ci: build installers for windows, macos and linux', 'Jonas Weber'],
+  ['c', 'feat/terminal', 'feat(terminal): shell picker per tab', 'Jonas Weber'],
+  ['c', 'main', 'chore(release): v0.1.20', 'You'],
+  ['t', 'v0.1.20'],
+  ['b', 'fix/composer-height', 'main'],
+  ['c', 'fix/composer-height', 'fix(chat): composer grows to 280px, then scrolls', 'Lena Fischer'],
+  ['c', 'main', 'feat(ui): light theme', 'Lena Fischer'],
+  ['c', 'feat/terminal', 'feat(terminal): split terminals side by side', 'Jonas Weber'],
+  ['b', 'feat/browser', 'main'],
+  ['c', 'feat/browser', 'feat(browser): browser tabs as native webviews', 'Tomás Ortega'],
+  ['c', 'main', 'fix(agents): resume a codex thread after restart', 'You'],
+  ['c', 'feat/browser', 'feat(browser): mcp tools for agents', 'Tomás Ortega'],
+  ['c', 'main', 'docs: agents.md for coding agents', 'You'],
+  ['c', 'feat/browser', 'fix(browser): hide webviews under menus and dialogs', 'Tomás Ortega'],
+  ['m', 'main', 'feat/browser', "Merge pull request #31 from feat/browser", 'Tomás Ortega'],
+  ['c', 'main', 'perf(git): one ssh round trip for status reads', 'Priya Nair'],
+  ['c', 'main', 'style(ui): tighten the tool stripe', 'Lena Fischer'],
+  ['c', 'main', 'feat(ui): app icons', 'Lena Fischer'],
+  ['c', 'main', 'chore(release): v0.1.30', 'You'],
+  ['t', 'v0.1.30'],
+  ['c', 'main', 'feat(git): history in the changes panel', 'Priya Nair'],
+  ['c', 'main', 'fix(ui): menus flip above the trigger near the bottom', 'Lena Fischer'],
+  ['c', 'main', 'feat(ui): welcome hub: open, create and clone projects', 'You'],
+]
+const DEEP_BODIES: Record<string, string> = {
+  'feat(persistence): sqlite chat history': 'One row per chat holding its JSON, saved debounced.\n\nThe file lives in the app data folder; loading tolerates rows written by older builds.',
+  'refactor(agents): one turn-end per run': 'Every adapter now ends a run with exactly one turn-end event, even when the CLI dies.\n\nCloses #19.',
+  'perf(git): one ssh round trip for status reads': 'Reads that ran one after another go in one call now.\n\nOn a distant server this takes a status refresh from ~3 s to ~1 s.',
+  'feat(browser): mcp tools for agents': 'An MCP server on 127.0.0.1 with one secret URL per chat.\n\nCo-authored-by: Priya Nair <priya@orchard.dev>',
+}
+
+const deepCache = new Map<string, Deep>()
+function deepHistory(key: string, end: number): Deep {
+  const cached = deepCache.get(key)
+  if (cached) return cached
+  const steps = DEEP_SCRIPT.filter(s => s[0] === 'c' || s[0] === 'm')
+  const span = 46 * 24 * 60 * MIN
+  const tips: Record<string, string> = {}
+  const tags: Record<string, string> = {}
+  const nodes = new Map<string, GNode>()
+  const jitter = rng(`time:${key}`)
+  let i = 0
+  for (const step of DEEP_SCRIPT) {
+    const [op, a, b, c, d] = step
+    if (op === 'b') { tips[a!] = tips[b!]!; continue }
+    if (op === 't') { tags[a!] = tips.main!; continue }
+    const subject = op === 'c' ? b! : c!
+    const author = op === 'c' ? c! : d!
+    const parents = op === 'c' ? (tips[a!] ? [tips[a!]!] : []) : [tips[a!]!, tips[b!]!]
+    const hash = seededHex(`${key}:${i}:${subject}`)
+    const time = Math.round(end - span + (span * (i + 0.5 + (jitter() - 0.5) * 0.6)) / steps.length)
+    nodes.set(hash, { hash, parents, subject, body: DEEP_BODIES[subject] ?? (op === 'm' ? `Brings in ${b}.` : ''), author, email: emailOf(author), time, files: filesFor(hash, subject, parents.length === 0) })
+    tips[a!] = hash
+    i++
+  }
+  const remotes: Record<string, string> = {
+    'origin/feat/persistence': tips['feat/persistence']!,
+    'origin/fix/terminal-resize': tips['fix/terminal-resize']!,
+    // One commit behind the local branch: the newest one isn't pushed yet.
+    'origin/feat/terminal': nodes.get(tips['feat/terminal']!)!.parents[0]!,
+  }
+  const deep: Deep = { nodes, tips, remotes, tags, main: tips.main! }
+  deepCache.set(key, deep)
+  return deep
+}
+
+/** The graph of the repository at `path`: every worktree's commits, the deep history, and the refs. */
+function graphOf(path: string) {
+  const main = linkedTrees.get(path) ?? path
+  const nodes = new Map<string, GNode>()
+  const refs = new Map<string, GitRef[]>()
+  const named = new Map<string, string>() // ref name -> hash
+  const addRef = (hash: string | undefined, ref: GitRef) => {
+    if (!hash || !nodes.has(hash)) return
+    ;(refs.get(hash) ?? refs.set(hash, []).get(hash)!).push(ref)
+    if (!named.has(ref.name)) named.set(ref.name, hash)
+  }
+  const mainRepo = repoAt(main)
+  const oldest = mainRepo.log[mainRepo.log.length - 1]
+  const deep = baseName(main) === 'mango' && oldest ? deepHistory(`${main}:${oldest.hash}`, oldest.time - 30 * MIN) : null
+  if (deep) for (const [h, n] of deep.nodes) nodes.set(h, n)
+
+  const trees = worktreeList(path).map(w => ({ at: w.path, r: repoAt(w.path) }))
+  for (const { r } of trees) {
+    // With the deep history, the projects' own "Initial commit" gives way to it.
+    const log = deep && r.log[r.log.length - 1]?.subject === 'Initial commit' ? r.log.slice(0, -1) : r.log
+    log.forEach((c, i) => {
+      if (nodes.has(c.hash)) return
+      const parent = log[i + 1]?.hash ?? (deep ? deep.main : null)
+      nodes.set(c.hash, { hash: c.hash, parents: parent ? [parent] : [], subject: c.subject, body: '', author: c.author, email: emailOf(c.author), time: c.time, files: filesFor(c.hash, c.subject, !parent) })
+    })
+  }
+  const here = repoAt(path)
+  const tipOf = (r: Repo) => (deep && r.log.length === 1 && r.log[0]!.subject === 'Initial commit' ? deep.main : r.log[0]?.hash)
+  // HEAD first, so it leads its commit's chips: the detached HEAD, or HEAD's branch.
+  const detached = here.detached && nodes.has(here.detached) ? here.detached : null
+  if (detached) addRef(detached, { name: 'HEAD', kind: 'head', current: true })
+  addRef(tipOf(here), { name: here.branch, kind: 'branch', current: !detached })
+  for (const { at, r } of trees) if (at !== path) addRef(tipOf(r), { name: r.branch, kind: 'branch', current: false })
+  const t = here.branches[here.branch]
+  if (t?.upstream) addRef(here.log[Math.min(t.ahead, here.log.length - 1)]?.hash, { name: t.upstream, kind: 'remote', current: false })
+  const fallback = here.log[Math.min(1, here.log.length - 1)]?.hash
+  for (const name of Object.keys(here.branches)) {
+    if (named.has(name)) continue
+    addRef(deep?.tips[name] ?? fallback, { name, kind: 'branch', current: false })
+  }
+  if (deep) {
+    for (const [name, hash] of Object.entries(deep.remotes)) if (!named.has(name)) addRef(hash, { name, kind: 'remote', current: false })
+    for (const [name, hash] of Object.entries(deep.tags)) addRef(hash, { name, kind: 'tag', current: false })
+  }
+  return { nodes, refs, named, head: detached ?? (here.log.length ? (tipOf(here) ?? null) : null), branch: detached ? null : here.branch }
+}
+
+type Graph = ReturnType<typeof graphOf>
+
+function resolveRev(g: Graph, rev: string): string {
+  const name = rev.trim()
+  if (name === 'HEAD' && g.head) return g.head
+  const byName = g.named.get(name)
+  if (byName) return byName
+  if (/^[0-9a-f]{4,64}$/i.test(name)) {
+    const hits = [...g.nodes.keys()].filter(h => h.startsWith(name.toLowerCase()))
+    if (hits.length === 1) return hits[0]!
+    if (hits.length > 1) throw new Error(`The short hash ${name} is ambiguous; type a few more characters`)
+  }
+  throw new Error(`fatal: bad revision '${name}'`)
+}
+
+/** Newest first, a commit never before one of its children (`--date-order`). */
+function dateOrder(g: Graph, starts: string[]): GNode[] {
+  const seen = new Set<string>()
+  const stack = [...starts]
+  while (stack.length) {
+    const h = stack.pop()!
+    if (seen.has(h) || !g.nodes.has(h)) continue
+    seen.add(h)
+    stack.push(...g.nodes.get(h)!.parents)
+  }
+  const children = new Map<string, number>()
+  for (const h of seen) for (const p of g.nodes.get(h)!.parents) if (seen.has(p)) children.set(p, (children.get(p) ?? 0) + 1)
+  const ready = [...seen].filter(h => !children.get(h)).map(h => g.nodes.get(h)!)
+  const out: GNode[] = []
+  while (ready.length) {
+    ready.sort((a, b) => b.time - a.time)
+    const n = ready.shift()!
+    out.push(n)
+    for (const p of n.parents) {
+      if (!seen.has(p)) continue
+      const left = (children.get(p) ?? 0) - 1
+      children.set(p, left)
+      if (left === 0) ready.push(g.nodes.get(p)!)
+    }
+  }
+  return out
+}
+
+const shortOf = (hash: string) => hash.slice(0, 7)
+
+async function gitGraph(path: string, args: any): Promise<GitGraph> {
+  await wait(140)
+  const g = graphOf(path)
+  const refs: string[] = (args.refs ?? []).map((x: unknown) => String(x).trim()).filter(Boolean)
+  if (!g.head && !refs.length) return { head: null, branch: g.branch, commits: [], more: false }
+  const starts = refs.length ? refs.map(x => resolveRev(g, x)) : [...new Set([...g.named.values(), ...(g.head ? [g.head] : [])])]
+  const text = String(args.text ?? '').trim().toLowerCase()
+  const author = String(args.author ?? '').trim().toLowerCase()
+  const paths: string[] = (args.paths ?? []).map((p: unknown) => String(p).trim().replace(/\/+$/, '')).filter(Boolean)
+  const matches = (n: GNode) =>
+    (!text || `${n.subject}\n${n.body}`.toLowerCase().includes(text))
+    && (!author || n.author.toLowerCase().includes(author) || n.email.toLowerCase().includes(author))
+    && (!paths.length || n.files.some(f => paths.some(p => f.path === p || f.path.startsWith(`${p}/`))))
+  const all = dateOrder(g, starts).filter(matches)
+  const skip = Math.max(0, Number(args.skip) || 0)
+  const limit = Math.min(1000, Math.max(1, Number(args.limit) || 1))
+  const page = all.slice(skip, skip + limit)
+  return {
+    head: g.head,
+    branch: g.branch,
+    commits: page.map(n => ({
+      hash: n.hash, shortHash: shortOf(n.hash), parents: [...n.parents], subject: n.subject, author: n.author,
+      authorEmail: n.email, time: n.time, refs: (g.refs.get(n.hash) ?? []).map(r => ({ ...r })),
+    })),
+    more: all.length > skip + limit,
+  }
+}
+
+function commitNode(path: string, hash: unknown): { g: Graph; n: GNode } {
+  const h = String(hash ?? '').trim()
+  if (!/^[0-9a-f]{4,64}$/i.test(h)) throw new Error(`"${h}" is not a commit hash`)
+  const g = graphOf(path)
+  const hits = [...g.nodes.keys()].filter(k => k.startsWith(h.toLowerCase()))
+  if (hits.length !== 1) throw new Error(`There is no commit ${h} in this repository`)
+  return { g, n: g.nodes.get(hits[0]!)! }
+}
+
+async function gitCommitShow(path: string, hash: unknown): Promise<GitCommitDetail> {
+  await wait(120)
+  const { g, n } = commitNode(path, hash)
+  return {
+    hash: n.hash, shortHash: shortOf(n.hash), parents: [...n.parents], subject: n.subject, body: n.body,
+    author: n.author, authorEmail: n.email, time: n.time,
+    // Merged pull requests were committed by whoever pressed the button, a little later.
+    committer: n.parents.length > 1 ? 'GitHub' : n.author, commitTime: n.parents.length > 1 ? n.time + 4 * MIN : n.time,
+    refs: (g.refs.get(n.hash) ?? []).map(r => ({ ...r })),
+    files: n.files.map(f => ({ ...f })),
+  }
+}
+
+async function gitCommitDiff(path: string, hash: unknown, file: unknown): Promise<string> {
+  await wait(90)
+  const { n } = commitNode(path, hash)
+  const f = n.files.find(x => x.path === String(file ?? ''))
+  return f ? commitDiffText(n.hash, f) : ''
+}
+
 export async function mockGit(cmd: string, args: any): Promise<any> {
   const path = String(args?.path ?? '')
   const r = repoAt(path)
@@ -1052,6 +1455,8 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       case 'git_merge_preview': await wait(450); return mergePreview(r, String(args.branch ?? ''))
       case 'git_rebase': throw UNITY_ONLY('Rebase')
       case 'git_checkout_remote': throw UNITY_ONLY('Remote branches')
+      case 'git_graph': case 'git_commit_show': case 'git_commit_diff': throw new Error(GRAPH_GIT_ONLY)
+      case 'git_checkout_commit': throw new Error('Checking out a single commit is for git repositories; in Unity Version Control, switch to a branch or changeset in its own app.')
       case 'git_checkout':
         if (args.create) return createBranch(r, childBranch(String(args.branch ?? ''), r.branch), true)
         await wait(500)
@@ -1104,8 +1509,12 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
     case 'git_pull': return pull(r)
     case 'git_push': return push(r, path)
     case 'git_log': return r.log.slice(0, args.limit ?? 20)
+    case 'git_graph': return gitGraph(path, args)
+    case 'git_commit_show': return gitCommitShow(path, args.hash)
+    case 'git_commit_diff': return gitCommitDiff(path, args.hash, args.file)
     case 'git_branches': return { current: r.branch, local: Object.keys(r.branches).sort() } satisfies GitBranches
     case 'git_checkout': return checkout(r, String(args.branch ?? ''), !!args.create)
+    case 'git_checkout_commit': return checkoutCommit(path, r, String(args.hash ?? ''))
     case 'git_branch_list': {
       const now = Date.now()
       const names = Object.keys(r.branches)

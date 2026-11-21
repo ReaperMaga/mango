@@ -120,6 +120,76 @@ export interface GitStatus {
   files: GitFile[]
 }
 
+/* ---------- history graph (`git_graph`, `git_commit_show`, `git_commit_diff`) ----------
+ * Read-only views of a repository's history for the commit graph (the "Git log" plugin uses them).
+ * Git only: Unity VCS answers with an error a person can read.
+ */
+
+/** A ref pointing at a commit. `head` is a detached HEAD; the checked-out branch is a `branch` with `current`. */
+export interface GitRef {
+  /** Short name: "main", "origin/main", "v1.2.0", "HEAD". */
+  name: string
+  kind: 'branch' | 'remote' | 'tag' | 'head'
+  /** The checked-out branch (or the detached HEAD). */
+  current: boolean
+}
+
+/** One commit of the history graph. */
+export interface GitGraphCommit {
+  hash: string
+  shortHash: string
+  /** Parent hashes, first parent first; empty for a root commit. */
+  parents: string[]
+  subject: string
+  author: string
+  authorEmail: string
+  /** Author date, unix ms. */
+  time: number
+  refs: GitRef[]
+}
+
+export interface GitGraph {
+  /** Full hash of HEAD, null on an unborn branch. */
+  head: string | null
+  /** The checked-out branch, null when detached. */
+  branch: string | null
+  /** Newest first in `--date-order` (a parent never comes before its children). */
+  commits: GitGraphCommit[]
+  /** More commits follow: ask again with `skip` advanced by `commits.length`. */
+  more: boolean
+}
+
+/** One file a commit changed, compared with its first parent (a root commit: with nothing). */
+export interface GitCommitFile {
+  /** Path relative to the repository root, forward slashes (the new path for a rename). */
+  path: string
+  /** The path before a rename or copy, else null. */
+  oldPath: string | null
+  /** 'A' | 'M' | 'D' | 'R' | 'C' | 'T' */
+  status: string
+  /** Null for binary files. */
+  additions: number | null
+  deletions: number | null
+}
+
+export interface GitCommitDetail {
+  hash: string
+  shortHash: string
+  parents: string[]
+  subject: string
+  /** The message after the subject line, trimmed ("" when there is none). */
+  body: string
+  author: string
+  authorEmail: string
+  /** Author date, unix ms. */
+  time: number
+  committer: string
+  /** Committer date, unix ms. */
+  commitTime: number
+  refs: GitRef[]
+  files: GitCommitFile[]
+}
+
 /** How far a folder's branch is ahead of another (`git_ahead`). */
 export interface GitAhead {
   /** The branch compared with. */
@@ -1144,8 +1214,33 @@ export interface Commands {
   git_pull: [{ path: string }, string]
   git_push: [{ path: string }, string]
   git_log: [{ path: string; limit: number }, GitCommit[]]
+  /**
+   * A page of the history graph. `refs` null: every local branch, remote branch, tag and HEAD; else only
+   * those refs (branch names, tags or commit hashes, each checked like any ref from the UI). `text`
+   * keeps commits whose message contains it (case-insensitive, literal), `author` those whose author
+   * name or email contains it, `paths` those touching one of these repository-relative paths (literal).
+   * `limit` is clamped to 1..1000. Unity VCS: refused.
+   */
+  git_graph: [
+    {
+      path: string
+      refs: string[] | null
+      skip: number
+      limit: number
+      text?: string | null
+      author?: string | null
+      paths?: string[] | null
+    },
+    GitGraph,
+  ]
+  /** One commit with its full message and the files it changed against its first parent. `hash`: 4–64 hex digits. */
+  git_commit_show: [{ path: string; hash: string }, GitCommitDetail]
+  /** Unified diff of one file of a commit against its first parent (a root commit: against nothing). `file` as in `GitCommitFile.path`. */
+  git_commit_diff: [{ path: string; hash: string; file: string }, string]
   git_branches: [{ path: string }, GitBranches]
   git_checkout: [{ path: string; branch: string; create: boolean }, void]
+  /** Check out one commit as a detached HEAD (`git switch --detach`); git refuses if uncommitted changes would be overwritten. `hash`: 4–64 hex digits. Unity VCS: refused. */
+  git_checkout_commit: [{ path: string; hash: string }, void]
   /** `git init` in `path`. Does nothing when the folder is already inside a repository. */
   git_init: [{ path: string }, void]
 

@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use tauri::AppHandle;
 
 use crate::envs::{self, hosts};
-use crate::git::{self, blocking, At, EnvAt, GitAhead, GitBranchList, GitBranches, GitCommit, GitStatus, GitWorktree, Vcs};
+use crate::git::{self, blocking, At, EnvAt, GitAhead, GitBranchList, GitBranches, GitCommit, GitCommitDetail, GitGraph, GitStatus, GitWorktree, Vcs};
 use crate::plastic::{self, MergePreview};
 
 /// Where a folder's version control lives.
@@ -134,6 +134,38 @@ pub async fn git_log(app: AppHandle, path: String, limit: u32) -> Result<Vec<Git
     dispatch!(app, path, git(at) => git::log(&at, limit), plastic(root) => plastic::log(&root, limit))
 }
 
+/// The history graph's commands' answer for a Unity VCS workspace.
+const GRAPH_GIT_ONLY: &str = "The commit graph is for git repositories; Unity Version Control workspaces don't have one.";
+
+/// A page of the history graph. `refs` null or empty: every local branch, remote branch, tag and HEAD.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn git_graph(
+    app: AppHandle,
+    path: String,
+    refs: Option<Vec<String>>,
+    skip: u32,
+    limit: u32,
+    text: Option<String>,
+    author: Option<String>,
+    paths: Option<Vec<String>>,
+) -> Result<GitGraph, String> {
+    let query = git::GraphQuery { refs, skip, limit, text, author, paths };
+    dispatch!(app, path, git(at) => git::graph(&at, &query), plastic(_root) => Err(GRAPH_GIT_ONLY.into()))
+}
+
+/// One commit with its full message and the files it changed against its first parent.
+#[tauri::command]
+pub async fn git_commit_show(app: AppHandle, path: String, hash: String) -> Result<GitCommitDetail, String> {
+    dispatch!(app, path, git(at) => git::commit_show(&at, &hash), plastic(_root) => Err(GRAPH_GIT_ONLY.into()))
+}
+
+/// Unified diff of one file of a commit against its first parent.
+#[tauri::command]
+pub async fn git_commit_diff(app: AppHandle, path: String, hash: String, file: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::commit_diff(&at, &hash, &file), plastic(_root) => Err(GRAPH_GIT_ONLY.into()))
+}
+
 #[tauri::command]
 pub async fn git_branches(app: AppHandle, path: String) -> Result<GitBranches, String> {
     dispatch!(app, path, git(at) => git::branches(&at), plastic(root) => plastic::branches(&root))
@@ -142,6 +174,12 @@ pub async fn git_branches(app: AppHandle, path: String) -> Result<GitBranches, S
 #[tauri::command]
 pub async fn git_checkout(app: AppHandle, path: String, branch: String, create: bool) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::checkout(&at, &branch, create), plastic(root) => plastic::checkout(&root, &branch, create))
+}
+
+/// Check out one commit (a detached HEAD). Git only.
+#[tauri::command]
+pub async fn git_checkout_commit(app: AppHandle, path: String, hash: String) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::checkout_commit(&at, &hash), plastic(_root) => Err("Checking out a single commit is for git repositories; in Unity Version Control, switch to a branch or changeset in its own app.".into()))
 }
 
 /// Local and remote branches with upstream state, newest commit first.
