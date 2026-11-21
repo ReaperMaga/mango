@@ -102,7 +102,11 @@ watch(() => job.value?.logReady, async (ready) => {
   if (!ready || scrolled) return
   scrolled = true
   await nextTick()
-  root.value?.querySelector('.cl__line.is-error')?.scrollIntoView({ block: 'center' })
+  const line = root.value?.querySelector<HTMLElement>('.cl__line.is-error')
+  // Only the tool window's own scroll area moves: scrollIntoView would also scroll the window's frame.
+  let box = line?.parentElement ?? null
+  while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement
+  if (line && box) box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 2
 }, { immediate: true })
 </script>
 
