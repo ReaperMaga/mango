@@ -112,37 +112,14 @@ function unlink(l: LinkedItem) {
 }
 
 /* ---------- linking by hand ---------- */
+/** The link form under the header, for a chat that has links already (an empty chat shows the picker itself). */
 const adding = ref(false)
-const reference = ref('')
-const addError = ref<string | null>(null)
-const addBusy = ref(false)
-const input = ref<HTMLInputElement | null>(null)
 
-async function startAdd() {
-  adding.value = !adding.value
-  addError.value = null
-  if (adding.value) { await nextTick(); input.value?.focus() }
-}
-function cancelAdd() {
-  adding.value = false
-  reference.value = ''
-  addError.value = null
-}
-async function submitAdd() {
-  if (!chat.value || !reference.value.trim() || addBusy.value) return
-  addBusy.value = true
-  addError.value = null
-  try {
-    await links.linkByReference(chat.value.id, reference.value)
-    cancelAdd()
-  } catch (e) {
-    addError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    addBusy.value = false
-  }
-}
-// Another chat, another list: a half-typed link does not follow.
+function startAdd() { adding.value = !adding.value }
+function cancelAdd() { adding.value = false }
+// Another chat, another list: an open link form does not follow.
 watch(() => chat.value?.id, cancelAdd)
+const linkedKeys = computed(() => list.value.map(l => l.key))
 </script>
 
 <template>
@@ -167,42 +144,28 @@ watch(() => chat.value?.id, cancelAdd)
         <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
         <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
       </template>
-      <div v-if="chat && !check" class="lp__tools">
+      <div v-if="chat && list.length && !check" class="lp__tools">
         <UiIconButton label="Link a pull request or issue" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
       </div>
     </header>
 
-    <form v-if="adding && chat" class="lp__add" @submit.prevent="submitAdd">
-      <label class="lp__label" for="lp-add-ref">Pull request or issue</label>
-      <div class="lp__add-row">
-        <input
-          id="lp-add-ref"
-          ref="input"
-          v-model="reference"
-          class="lp__input"
-          :class="{ 'is-invalid': addError }"
-          placeholder="Link, owner/repo#12 or #12"
-          :aria-invalid="!!addError || undefined"
-          :aria-describedby="addError ? 'lp-add-error' : 'lp-add-hint'"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown.esc.prevent="cancelAdd"
-        >
-        <UiButton type="submit" variant="primary" :loading="addBusy" :disabled="!reference.trim() || undefined">Link</UiButton>
-      </div>
-      <p v-if="addError" id="lp-add-error" class="lp__add-error selectable" role="alert">{{ addError }}</p>
-      <p v-else id="lp-add-hint" class="lp__add-hint">A number is looked up in this project's GitHub repository.</p>
-    </form>
+    <div v-if="adding && chat && list.length" class="lp__add">
+      <LinksPicker
+        :key="chat.id"
+        :chat-id="chat.id"
+        :project-path="chat.projectPath"
+        :linked="linkedKeys"
+        autofocus
+        @linked="cancelAdd"
+        @cancel="cancelAdd"
+      />
+    </div>
 
     <div v-if="!chat" class="lp__quiet">
       <p>Open a chat to see the pull requests and issues linked to it.</p>
     </div>
 
-    <div v-else-if="!list.length" class="lp__quiet">
-      <p class="lp__quiet-title">Nothing linked to this chat</p>
-      <p>When the agent opens a pull request or an issue in this chat, it shows up here with its description and pictures. Ask it to “open a pull request” when the work is done.</p>
-      <UiButton v-if="!adding" size="sm" @click="startAdd"><Link2 aria-hidden="true" />Link one by hand</UiButton>
-    </div>
+    <LinksPicker v-else-if="!list.length" :key="chat.id" :chat-id="chat.id" :project-path="chat.projectPath" fill />
 
     <template v-else-if="current && check">
       <div class="lp__scroll">
@@ -291,28 +254,7 @@ watch(() => chat.value?.id, cancelAdd)
 .lp__back-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
-.lp__add { flex: none; display: grid; gap: 6px; padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--line-soft); }
-.lp__label { font-size: var(--text-xs); font-weight: 560; color: var(--fg-muted); }
-.lp__add-row { display: flex; align-items: center; gap: var(--space-2); }
-.lp__input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-inset);
-  font-size: var(--text-sm);
-  color: var(--fg);
-  caret-color: var(--accent);
-  outline: none;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
-}
-.lp__input::placeholder { color: var(--fg-faint); }
-.lp__input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
-.lp__input.is-invalid { border-color: color-mix(in oklch, var(--ripe-error) 60%, transparent); }
-.lp__add-hint, .lp__add-error { margin: 0; font-size: var(--text-xs); color: var(--fg-faint); overflow-wrap: anywhere; }
-.lp__add-error { color: var(--ripe-error-fg); }
+.lp__add { flex: none; border-top: 1px solid var(--line-soft); }
 
 .lp__quiet {
   display: grid;
@@ -324,8 +266,6 @@ watch(() => chat.value?.id, cancelAdd)
   color: var(--fg-subtle);
 }
 .lp__quiet p { margin: 0; max-width: 46ch; }
-.lp__quiet-title { color: var(--fg); font-weight: 600; }
-.lp__quiet :deep(svg) { width: 14px; height: 14px; stroke-width: 1.85; }
 
 .lp__foot {
   flex: none;
