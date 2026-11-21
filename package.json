@@ -2,7 +2,7 @@
   "name": "mango",
   "private": true,
   "type": "module",
-  "version": "0.1.34",
+  "version": "0.1.35",
   "scripts": {
     "dev": "nuxt dev",
     "build": "nuxt generate",

@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.35
+
+### New
+
+- Replace the app mark with a mango split down its ridge.
+- Copy, edit, ask again, branch and pin messages, find and jump through a chat.
+
 ## 0.1.34
 
 ### New
