@@ -108,9 +108,10 @@ function tabTitle(t: Tab, i: number) {
 }
 
 /*
- * A pane only ever shows the active project's tabs. Checked when the project changes and
- * whenever a pane gets something new: a chat of another project would sit there with no tab
- * and no sidebar row, and a message typed into it would run in the other project's folder.
+ * A pane shows the active project's tabs, or a chat of another project put there on purpose
+ * ("Open to the side"; it runs in its own project's folder). A diff, file, browser or terminal
+ * of another project would have no tab to belong to: checked when the project changes and
+ * whenever a pane gets something new.
  */
 watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join('\n')], ([path]) => {
   if (!path) return
@@ -119,7 +120,8 @@ watch([() => ws.activeProjectPath, () => threads.panes.map(p => p.threadId).join
   const free = (ids: string[]) => ids.find(x => !threads.panes.some(p => p.threadId === x)) ?? null
   for (const pane of threads.panes) {
     const owner = threads.projectOf(pane.threadId)
-    if (owner && owner !== path) {
+    // A chat of another project may stay: that is a split of two repos. Its tab sits in its pane's strip.
+    if (owner && owner !== path && !threads.byId(pane.threadId)) {
       pane.threadId = null
       // Its own strip first (a project's tabs remember their pane), else any tab no pane shows.
       const next = free(threads.groupTabs(pane.id)) ?? free(threads.visibleTabs)

@@ -278,7 +278,7 @@ function threadMenu(t: Thread): MenuItem[] {
   const order = threads.forProject(t.projectPath).map(x => x.id)
   return [
     { label: 'Rename', icon: Pencil, onSelect: () => startRename(t) },
-    { label: 'Open to the side', icon: Columns2, onSelect: () => { ws.setActiveProject(t.projectPath); threads.split(t.id) } },
+    { label: 'Open to the side', icon: Columns2, onSelect: () => threads.split(t.id) },
     { ...win.moveChatAction(t.id), icon: AppWindow, divider: false },
     ...(t.archived ? [] : [
       { label: 'Move up', icon: ArrowUp, kbd: 'Alt+↑', divider: true, disabled: order.indexOf(t.id) <= 0, onSelect: () => threads.move(t.id, -1) },
