@@ -2,6 +2,14 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.30
+
+### New
+
+- Write the changelog from commits when bumping.
+- List recent projects in the project menu.
+- Title each window with its project's name.
+
 ## 0.1.29
 
 ### New
