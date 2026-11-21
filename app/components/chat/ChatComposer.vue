@@ -36,7 +36,9 @@ const props = withDefaults(defineProps<{
   contextPending?: boolean
   /** The chat already has messages (switching agent starts a new conversation). */
   started?: boolean
-}>(), { effort: null, busy: false, autofocus: false, large: false, started: false })
+  /** What was written in this chat, newest first: Arrow Up in an empty field brings it back. */
+  history?: string[]
+}>(), { effort: null, busy: false, autofocus: false, large: false, started: false, history: () => [] })
 
 const emit = defineEmits<{
   /** `opposite`: the other follow-up behaviour, for this message only. */
@@ -74,8 +76,25 @@ function submit(opposite = false) {
   armFiles()
 }
 
+/* Arrow Up in an empty field recalls what you sent before, and Arrow Down goes back; typing anything leaves it. */
+let recall = -1
+let recalled = ''
+let unsent = ''
+function onHistoryKey(e: KeyboardEvent): boolean {
+  if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || e.isComposing || !props.history.length) return false
+  if (recall >= 0 && text.value !== recalled) recall = -1 // edited since: it is a draft again
+  if (recall < 0 && (e.key === 'ArrowDown' || text.value.trim() || attachments.value.length)) return false
+  e.preventDefault()
+  if (recall < 0) unsent = text.value
+  recall = Math.max(-1, Math.min(props.history.length - 1, recall + (e.key === 'ArrowUp' ? 1 : -1)))
+  recalled = recall < 0 ? unsent : props.history[recall]!
+  text.value = recalled
+  return true
+}
+
 function onKey(e: KeyboardEvent) {
   if (menuOpen.value && onMenuKey(e)) return
+  if (onHistoryKey(e)) return
   if (e.code === 'Space' && e.shiftKey && isMod(e)) {
     e.preventDefault()
     toggleDictation()

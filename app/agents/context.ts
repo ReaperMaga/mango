@@ -1,4 +1,4 @@
-import type { ContextPart, ContextUsage } from './types.ts'
+import type { ContextPart, ContextUsage, TurnUsage } from './types.ts'
 
 /**
  * How full a conversation's context window is, read from what each CLI reports. Plain
@@ -119,4 +119,39 @@ export function normalizeContext(c: any): ContextUsage | undefined {
     ...(typeof c.model === 'string' && c.model ? { model: c.model } : {}),
     at: num(c.at) ?? 0,
   }
+}
+
+/**
+ * A Claude Code `result` message's usage added to what the run used before. `total_cost_usd` is
+ * the CLI's own running total, so it replaces the cost rather than adding to it.
+ */
+export function addClaudeUsage(prev: TurnUsage | null, result: any): TurnUsage | null {
+  const u = result?.usage
+  const input = [u?.input_tokens, u?.cache_creation_input_tokens, u?.cache_read_input_tokens].reduce<number>((s, v) => s + (num(v) ?? 0), 0)
+  const output = num(u?.output_tokens) ?? 0
+  const cost = typeof result?.total_cost_usd === 'number' && result.total_cost_usd >= 0 ? result.total_cost_usd : undefined
+  if (!input && !output && cost === undefined) return prev
+  const costUsd = cost ?? prev?.costUsd
+  return { input: (prev?.input ?? 0) + input, output: (prev?.output ?? 0) + output, ...(costUsd !== undefined ? { costUsd } : {}) }
+}
+
+/**
+ * Codex reports the conversation's running totals. What this run used is the growth since just
+ * before its first request: `total - last` of the first reading is the total from before it.
+ * `base` carries that starting point between readings.
+ */
+export function codexTurnUsage(tokenUsage: any, base: { input: number; output: number } | null): { usage: TurnUsage; base: { input: number; output: number } } | null {
+  const total = tokenUsage?.total
+  const last = tokenUsage?.last
+  const tin = num(total?.inputTokens)
+  const tout = num(total?.outputTokens)
+  if (tin === null || tout === null) return null
+  const start = base ?? { input: Math.max(0, tin - (num(last?.inputTokens) ?? 0)), output: Math.max(0, tout - (num(last?.outputTokens) ?? 0)) }
+  return { usage: { input: Math.max(0, tin - start.input), output: Math.max(0, tout - start.output) }, base: start }
+}
+
+/** "$0.04", "$1.27", "<$0.01" */
+export function formatCost(usd: number): string {
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  return `$${usd.toFixed(2)}`
 }

@@ -25,6 +25,7 @@ import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
 import { normalizeContext } from '~/agents/context'
+import { transcript } from '~/utils/transcript'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -43,6 +44,8 @@ export interface QueuedMessage {
   attachments: Attachment[]
   /** Already in the chat (sent now, but the run could not take it): only its turn is still due. */
   shown?: boolean
+  /** When the person wrote it. */
+  queuedAt?: number
 }
 
 /** What a running chat has going on besides its reply. Not saved: it dies with the run. */
@@ -892,7 +895,7 @@ export const useThreads = defineStore('threads', {
       if (!t || t.parentId || (!text.trim() && !attachments.length)) return
       t.archived = false // writing in an archived chat brings it back
       if (isBusy(t)) {
-        const queued = { id: uid('q'), text: text.trim(), attachments }
+        const queued = { id: uid('q'), text: text.trim(), attachments, queuedAt: Date.now() }
         ;(this.queue[id] ??= []).push(queued)
         // Steer: hand it to the running turn now. Queue: it waits for the turn to end. `opposite` flips the
         // setting for this one message. When the agent has answered and only background tasks (a dev server)
@@ -922,7 +925,7 @@ export const useThreads = defineStore('threads', {
       const [q] = list.splice(i, 1) as [QueuedMessage]
       if (!list.length) delete this.queue[id]
       held.delete(id)
-      this._appendUser(t, q.text, q.attachments)
+      this._appendUser(t, q.text, q.attachments, q.queuedAt)
       if (!isBusy(t)) {
         await this._runTurn(id, q.text, q.attachments)
         await this._sendFollowUps(id)
@@ -943,13 +946,111 @@ export const useThreads = defineStore('threads', {
       else delete this.queue[id]
     },
 
+    /** Keep a message (or let it go): it is listed under "Pinned" in the chat's message list. */
+    togglePin(id: string, messageId: string) {
+      const m = this.byId(id)?.messages.find(x => x.id === messageId)
+      if (!m) return
+      if (m.pinned) delete m.pinned
+      else m.pinned = true
+      this.persist(id)
+    },
+
+    /**
+     * Cut a chat back to just before message `index`. The CLI's session cannot be rewound, so the next
+     * turn starts a fresh one and gets what came before as text (`Thread.history`).
+     */
+    _cutBack(t: Thread, index: number) {
+      t.messages.splice(index)
+      t.sessionId = null
+      t.context = undefined
+      const earlier = transcript(t.messages)
+      if (earlier) t.history = earlier
+      else delete t.history
+      this.persist(t.id)
+    },
+
+    /** Messages that would go if the chat were cut back at `messageId` (the message itself included). */
+    cutCount(id: string, messageId: string): number {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      return t && i >= 0 ? t.messages.length - i : 0
+    },
+
+    /** Replace one of your messages and run it again: it and everything after it make way. */
+    async editMessage(id: string, messageId: string, text: string) {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      const old = t?.messages[i]
+      if (!t || !old || old.role !== 'user' || t.parentId || isBusy(t) || (!text.trim() && !old.attachments?.length)) return
+      const attachments = old.attachments ?? []
+      this._cutBack(t, i)
+      await this.send(id, text, attachments)
+    },
+
+    /** Ask again: an answer and everything after it make way, and the message before it runs once more. */
+    async regenerate(id: string, messageId: string) {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      if (!t || i < 0 || t.parentId || isBusy(t)) return
+      let ask = i
+      while (ask >= 0 && t.messages[ask]!.role !== 'user') ask--
+      const old = t.messages[ask]
+      if (!old || old.fromAgent) return
+      const text = old.parts.map(p => (p.type === 'text' ? p.text : '')).join('')
+      await this.editMessage(id, old.id, text)
+    },
+
+    /**
+     * A new chat that continues from a message: it holds the conversation up to and including it, in
+     * the same folder and with the same settings. The agent gets the earlier part as text.
+     */
+    branchFrom(id: string, messageId: string): Thread | null {
+      const src = this.byId(id)
+      const i = src?.messages.findIndex(m => m.id === messageId) ?? -1
+      if (!src || i < 0 || src.parentId) return null
+      const now = Date.now()
+      const kept = src.messages.slice(0, i + 1).map((m): Message => {
+        const copy = JSON.parse(JSON.stringify(m)) as Message
+        delete copy.pinned
+        // A question or approval that was still open stays open only in the chat it was asked in.
+        copy.parts = copy.parts.filter(p => !awaitsUser(p))
+        return { ...copy, id: uid('m') }
+      }).filter(m => m.parts.length || m.attachments?.length)
+      const t: Thread = {
+        id: uid('t'),
+        projectPath: src.projectPath,
+        title: `${src.title} (branch)`,
+        agent: src.agent,
+        model: src.model,
+        mode: src.mode,
+        effort: src.effort ?? null,
+        status: 'working',
+        messages: kept,
+        createdAt: now,
+        updatedAt: now,
+        seen: true,
+        branch: src.branch ?? null,
+        ...(src.worktree ? { worktree: src.worktree } : {}),
+      }
+      const earlier = transcript(kept)
+      if (earlier) t.history = earlier
+      this.threads.push(t)
+      useWindows().claimNew(t.id, src.projectPath)
+      this.show(t.id)
+      this.persist(t.id)
+      return t
+    },
+
     /** A user message into the chat (the title follows the first one). */
-    _appendUser(t: Thread, text: string, attachments: Attachment[]) {
+    _appendUser(t: Thread, text: string, attachments: Attachment[], writtenAt?: number) {
+      const now = Date.now()
       const msg: Message = {
         id: uid('m'),
         role: 'user',
         parts: text ? [{ type: 'text', text }] : [],
-        createdAt: Date.now(),
+        createdAt: now,
+        // Only worth a note when it waited a while for the turn before it.
+        ...(writtenAt && now - writtenAt > 5000 ? { writtenAt } : {}),
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
@@ -998,7 +1099,11 @@ export const useThreads = defineStore('threads', {
         if (t.status !== 'queued') { stopFlags.delete(id); return }
       }
       // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-      await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
+      const prompt = createPrPrompt(text) ?? text
+      // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
+      const handOver = t.history && !t.sessionId
+      await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+      if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
     },
 
     /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -1012,7 +1117,7 @@ export const useThreads = defineStore('threads', {
         if (!isCommand(waiting[0]!.text)) while (n < waiting.length && !isCommand(waiting[n]!.text)) n++
         const batch = waiting.splice(0, n)
         if (!waiting.length) delete this.queue[id]
-        for (const w of batch) if (!w.shown) this._appendUser(t, w.text, w.attachments)
+        for (const w of batch) if (!w.shown) this._appendUser(t, w.text, w.attachments, w.queuedAt)
         await this._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
       }
     },
@@ -1284,7 +1389,7 @@ function normalizeLoaded(t: Thread): Thread {
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
   const context = normalizeContext(t.context)
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context }
+  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context, history: typeof t.history === 'string' && t.history ? t.history : undefined }
 }
 
 /** The reason in a rejected backend call or a thrown error, without a trailing period. */

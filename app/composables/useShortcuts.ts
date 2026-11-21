@@ -74,6 +74,7 @@ export function useShortcuts() {
       const id = threads.activePane.threadId
       if (isFileTab(id)) void useFiles().save(id)
     },
+    'find-chat': () => { findRequest.value++ },
     'new-terminal': () => ws.newTerminal(),
     'close-tab': () => {
       const id = threads.activePane.threadId
@@ -104,6 +105,8 @@ export function useShortcuts() {
     if (id) {
       // Close tab only claims the key when there is a tab to close.
       if (id === 'close-tab' && !threads.activePane.threadId) return
+      // Find in chat only claims the key in front of a chat: an editor keeps its own find.
+      if (id === 'find-chat' && !threads.byId(threads.activePane.threadId)) return
       e.preventDefault()
       actions[id]?.()
       return

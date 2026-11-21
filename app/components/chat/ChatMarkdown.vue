@@ -5,6 +5,7 @@ import { chatImage, localImagePath } from '~/utils/chatImages'
 import { openImage } from '~/utils/imageViewer'
 import { baseName } from '~/utils/paths'
 import { useBrowser } from '~/stores/browser'
+import { copyText } from '~/utils/clipboard'
 
 /**
  * Renders agent markdown. Raw HTML in the source is escaped, never injected:
@@ -25,6 +26,11 @@ const md = new Marked({
   breaks: false,
   renderer: {
     html({ text }) { return escape(text) },
+    // A code block carries its own copy button; the click is handled once for the whole reply (see onClick).
+    code({ text, lang }) {
+      const name = (lang ?? '').trim().split(/\s+/)[0] ?? ''
+      return `<div class="md__code"><button type="button" class="md__copy" data-copy aria-label="Copy code">Copy</button><pre><code${name ? ` class="language-${escape(name)}"` : ''}>${escape(text)}</code></pre></div>\n`
+    },
     link({ href, text }) {
       const safe = /^(https?:|mailto:)/i.test(href) ? href : '#'
       return `<a href="${escape(safe)}" target="_blank" rel="noopener noreferrer">${text}</a>`
@@ -48,6 +54,16 @@ const html = computed(() => {
 })
 
 function onClick(e: MouseEvent) {
+  const copy = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-copy]')
+  if (copy) {
+    const code = copy.parentElement?.querySelector('code')?.textContent ?? ''
+    void copyText(code).then((ok) => {
+      if (!ok) return
+      copy.textContent = 'Copied'
+      setTimeout(() => { if (copy.isConnected) copy.textContent = 'Copy' }, 1600)
+    })
+    return
+  }
   const el = (e.target as HTMLElement).closest<HTMLElement>('[data-img]')
   if (el) { openImage(shown, Number(el.dataset.img)); return }
   const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[href]')
@@ -76,6 +92,26 @@ function onClick(e: MouseEvent) {
   background: var(--bg-hover);
   border: 1px solid var(--line-soft);
 }
+.md :deep(.md__code) { position: relative; margin: 0 0 0.8em; }
+.md :deep(.md__code pre) { margin: 0; }
+.md :deep(.md__copy) {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  height: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--bg-raised);
+  border: 1px solid var(--line-soft);
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  font-family: inherit;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.md :deep(.md__code:hover .md__copy), .md :deep(.md__copy:focus-visible) { opacity: 1; }
+.md :deep(.md__copy:hover) { color: var(--fg); }
+.md :deep(.md__copy:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .md :deep(pre) {
   margin: 0 0 0.8em;
   padding: var(--space-3) var(--space-4);

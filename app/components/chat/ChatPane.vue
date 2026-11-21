@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { CornerLeftUp, Square } from 'lucide-vue-next'
+import { ArrowDown, ChevronDown, ChevronUp, CornerLeftUp, List, Pin, Search, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
 import { useModels } from '~/stores/models'
-import { AGENTS, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { AGENTS, type AgentId, type Attachment, type Message, type Thread } from '~/types/chat'
 import { worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
 import { DUR, EASE_OUT, motionMs } from '~/utils/motion'
+import { findRequest } from '~/utils/chatFind'
+import { dayLabel, sameDay } from '~/utils/time'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
 
@@ -120,14 +122,185 @@ watch(() => thread.value?.id, (id, was) => {
 }, { flush: 'post' })
 
 function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && listOpen.value) { listOpen.value = false; return }
   if (e.key === 'Escape' && busy.value && thread.value) threads.stop(thread.value.id)
 }
+
+/* ---------- the way back down, and day marks between messages ---------- */
+
+function toLatest() {
+  pinned.value = true
+  scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' })
+}
+
+/** Whether a day mark goes above message `i`: the first one, and each time the day changes. */
+function newDay(i: number) {
+  const ms = thread.value?.messages
+  if (!ms?.[i]) return false
+  return i === 0 || !sameDay(ms[i - 1]!.createdAt, ms[i]!.createdAt)
+}
+
+/* ---------- jumping to a message ---------- */
+
+/** Brings a message into view and marks it for a moment; the view stops following new output. */
+function reveal(el: Element | null | undefined, block: ScrollLogicalPosition = 'start') {
+  if (!el) return
+  pinned.value = false
+  el.scrollIntoView({ block, behavior: 'smooth' })
+}
+function jumpTo(messageId: string) {
+  const el = scroller.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
+  if (!el) return
+  reveal(el)
+  el.classList.remove('is-flash')
+  void el.offsetWidth
+  el.classList.add('is-flash')
+  setTimeout(() => el.classList.remove('is-flash'), 1500)
+  listOpen.value = false
+}
+
+/* The message list: what you asked, in order, to jump to; pinned ones can be told apart. */
+const listOpen = ref(false)
+const onlyPinned = ref(false)
+/** What you wrote in this chat, newest first: the composer's arrow keys walk through it. */
+const history = computed(() => asks.value.map(preview).reverse())
+const asks = computed(() => (thread.value?.messages ?? []).filter(m => m.role === 'user' && !m.fromAgent && (m.parts.length || m.attachments?.length)))
+const pins = computed(() => (thread.value?.messages ?? []).filter(m => m.pinned))
+/** Pinned messages of either side; otherwise your questions. */
+const listed = computed(() => (onlyPinned.value ? pins.value : asks.value))
+const preview = (m: Message) => m.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ').replace(/\s+/g, ' ').trim() || m.attachments?.[0]?.name || 'Attachment'
+const clock = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+watch(() => thread.value?.id, () => { listOpen.value = false; onlyPinned.value = false; closeFind() })
+
+/* ---------- find in this chat ---------- */
+
+const findOpen = ref(false)
+const query = ref('')
+const hits = shallowRef<Range[]>([])
+const at = ref(0)
+const findField = ref<HTMLInputElement | null>(null)
+const hasHighlights = typeof CSS !== 'undefined' && 'highlights' in CSS
+
+function paint() {
+  if (!hasHighlights) return
+  const all = hits.value
+  CSS.highlights.set(`mango-find-${props.pane.id}`, new Highlight(...all.filter((_, i) => i !== at.value)))
+  CSS.highlights.set(`mango-find-now-${props.pane.id}`, new Highlight(...(all[at.value] ? [all[at.value]!] : [])))
+}
+function unpaint() {
+  if (!hasHighlights) return
+  CSS.highlights.delete(`mango-find-${props.pane.id}`)
+  CSS.highlights.delete(`mango-find-now-${props.pane.id}`)
+}
+
+/** Every place the words appear in what the chat shows (rows folded away are not in the page, so not searched). */
+function search(keep = false) {
+  const root = scroller.value?.firstElementChild
+  const q = query.value.trim().toLowerCase()
+  const found: Range[] = []
+  if (root && q) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode: n => (n.parentElement?.closest('textarea, script, style, [data-nofind]') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+    })
+    for (let n = walker.nextNode(); n && found.length < 500; n = walker.nextNode()) {
+      const text = n.nodeValue!.toLowerCase()
+      for (let from = text.indexOf(q); from >= 0 && found.length < 500; from = text.indexOf(q, from + q.length)) {
+        const r = document.createRange()
+        r.setStart(n, from)
+        r.setEnd(n, from + q.length)
+        found.push(r)
+      }
+    }
+  }
+  hits.value = found
+  at.value = keep ? Math.min(at.value, Math.max(0, found.length - 1)) : 0
+  paint()
+  if (!keep) show()
+}
+/** Scrolls to the current hit. */
+function show() {
+  const r = hits.value[at.value]
+  if (r) reveal(r.startContainer.parentElement, 'center')
+}
+function step(by: number) {
+  const n = hits.value.length
+  if (!n) return
+  at.value = (at.value + by + n) % n
+  paint()
+  show()
+}
+async function openFind() {
+  if (!thread.value) return
+  findOpen.value = true
+  await nextTick()
+  findField.value?.focus()
+  findField.value?.select()
+  if (query.value) search()
+}
+function closeFind() {
+  if (!findOpen.value) return
+  findOpen.value = false
+  hits.value = []
+  unpaint()
+  composer.value?.focus()
+}
+function onFindKey(e: KeyboardEvent) {
+  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeFind() }
+  else if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); step(e.shiftKey ? -1 : 1) }
+}
+watch(query, () => search())
+/* New output while looking: the hits follow it, and the view stays where it is. */
+watch(contentSig, () => { if (findOpen.value && query.value) nextTick(() => search(true)) })
+watch(findRequest, () => { if (props.active) void openFind() })
+onBeforeUnmount(unpaint)
 </script>
 
 <template>
   <section class="pane" :class="{ 'is-active': active, 'is-split': split }" data-drop-zone @keydown="onKey">
     <!-- Thread -->
     <template v-if="thread">
+      <div v-if="thread.messages.length" class="pane__bar">
+        <div v-if="findOpen" class="find" role="search">
+          <Search class="find__icon" aria-hidden="true" />
+          <input
+            ref="findField"
+            v-model="query"
+            class="find__field"
+            type="search"
+            placeholder="Find in this chat"
+            aria-label="Find in this chat"
+            autocomplete="off"
+            spellcheck="false"
+            @keydown="onFindKey"
+          >
+          <span class="find__count tabular" aria-live="polite">{{ query.trim() ? (hits.length ? `${at + 1} of ${hits.length}` : 'No matches') : '' }}</span>
+          <UiIconButton size="sm" label="Previous match (Shift+Enter)" @click="step(-1)"><ChevronUp /></UiIconButton>
+          <UiIconButton size="sm" label="Next match (Enter)" @click="step(1)"><ChevronDown /></UiIconButton>
+          <UiIconButton size="sm" label="Close find (Esc)" @click="closeFind"><X /></UiIconButton>
+        </div>
+        <template v-else>
+          <UiIconButton size="sm" label="Find in this chat" @click="openFind"><Search /></UiIconButton>
+        </template>
+        <UiIconButton size="sm" label="Message list" :active="listOpen" @click="listOpen = !listOpen"><List /></UiIconButton>
+      </div>
+
+      <div v-if="listOpen" class="mlist" role="dialog" aria-label="Messages in this chat">
+        <div class="mlist__head">
+          <button type="button" class="mlist__tab" :class="{ 'is-on': !onlyPinned }" @click="onlyPinned = false">Asked <span class="tabular">{{ asks.length }}</span></button>
+          <button type="button" class="mlist__tab" :class="{ 'is-on': onlyPinned }" @click="onlyPinned = true"><Pin aria-hidden="true" /> Pinned <span class="tabular">{{ pins.length }}</span></button>
+        </div>
+        <ul v-if="listed.length" class="mlist__items">
+          <li v-for="m in listed" :key="m.id">
+            <button type="button" class="mlist__item" @click="jumpTo(m.id)">
+              <span class="mlist__text">{{ preview(m) }}</span>
+              <span class="mlist__meta tabular">{{ m.role === 'agent' ? `${AGENTS[thread.agent].name} · ` : '' }}{{ clock(m.createdAt) }}</span>
+            </button>
+          </li>
+        </ul>
+        <p v-else class="mlist__empty">{{ onlyPinned ? 'Nothing pinned yet. Pin a message from its row of buttons.' : 'Nothing asked yet.' }}</p>
+      </div>
+
+      <div class="pane__stage">
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
@@ -140,18 +313,25 @@ function onKey(e: KeyboardEvent) {
           </div>
           <!-- Keyed by chat: opening one shows its history at once, only messages that arrive after rise in. -->
           <TransitionGroup :key="thread.id" name="msg">
-            <ChatMessage
-              v-for="(m, i) in thread.messages"
-              :key="m.id"
-              :message="m"
-              :thread="thread"
-              :last="i === thread.messages.length - 1"
-            />
+            <template v-for="(m, i) in thread.messages" :key="m.id">
+              <p v-if="newDay(i)" :key="`day-${m.id}`" class="pane__day tabular">{{ dayLabel(m.createdAt) }}</p>
+              <ChatMessage
+                :message="m"
+                :thread="thread"
+                :last="i === thread.messages.length - 1"
+              />
+            </template>
           </TransitionGroup>
           <Transition name="msg">
             <ChatWorking v-if="busy" :thread="thread" />
           </Transition>
         </div>
+      </div>
+      <Transition name="latest">
+        <button v-if="!pinned && thread.messages.length" type="button" class="pane__latest" @click="toLatest">
+          <ArrowDown aria-hidden="true" /> {{ busy ? 'Follow latest' : 'Jump to latest' }}
+        </button>
+      </Transition>
       </div>
 
       <div v-if="thread.parentId" class="pane__composer">
@@ -180,6 +360,7 @@ function onKey(e: KeyboardEvent) {
           :context="thread.context ?? null"
           :context-pending="!!threads.contextReading[thread.id]"
           :started="thread.messages.length > 0"
+          :history="history"
           @send="(text, attachments, opposite) => threads.send(thread!.id, text, attachments, opposite)"
           @compact="threads.send(thread!.id, '/compact')"
           @stop="threads.stop(thread!.id)"
@@ -224,7 +405,102 @@ function onKey(e: KeyboardEvent) {
   position: relative;
 }
 
+.pane__stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pane__scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+
+.pane__bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  min-height: 30px;
+  padding: var(--space-1) var(--space-3) 0;
+}
+.find {
+  flex: 1;
+  max-width: 420px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+.find:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.find__icon { flex: none; width: 13px; height: 13px; color: var(--fg-faint); }
+.find__field { flex: 1; min-width: 0; height: 100%; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; font-size: var(--text-sm); }
+.find__field::-webkit-search-cancel-button { display: none; }
+.find__count { flex: none; font-size: var(--text-xs); color: var(--fg-subtle); }
+
+.pane__day { align-self: center; margin: var(--space-2) 0 0; font-size: var(--text-xs); color: var(--fg-faint); }
+
+/* The way back down once the view is no longer following the output. */
+.pane__latest {
+  position: absolute;
+  left: 50%;
+  bottom: var(--space-3);
+  translate: -50% 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 28px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-soft);
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.pane__latest:hover { color: var(--fg); }
+.pane__latest:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.pane__latest svg { width: 13px; height: 13px; }
+.latest-enter-active, .latest-leave-active { transition: opacity var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
+.latest-enter-from, .latest-leave-to { opacity: 0; transform: translateY(4px); }
+
+/* The message list: a floating layer under the bar. */
+.mlist {
+  position: absolute;
+  z-index: 5;
+  top: 34px;
+  right: var(--space-3);
+  width: min(340px, calc(100% - var(--space-6)));
+  max-height: min(60%, 420px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.mlist__head { flex: none; display: flex; gap: var(--space-1); padding: var(--space-1); border-bottom: 1px solid var(--line-soft); }
+.mlist__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  font-weight: 560;
+  color: var(--fg-subtle);
+}
+.mlist__tab svg { width: 12px; height: 12px; }
+.mlist__tab:hover { background: var(--bg-hover); color: var(--fg); }
+.mlist__tab.is-on { background: var(--bg-active); color: var(--fg); }
+.mlist__tab:focus-visible, .mlist__item:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.mlist__items { margin: 0; padding: var(--space-1); list-style: none; overflow-y: auto; }
+.mlist__item { width: 100%; display: grid; gap: 1px; padding: 6px var(--space-2); border-radius: var(--radius-sm); text-align: left; }
+.mlist__item:hover { background: var(--bg-hover); }
+.mlist__text { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: var(--text-sm); color: var(--fg); overflow-wrap: anywhere; }
+.mlist__meta { font-size: var(--text-2xs); color: var(--fg-faint); }
+.mlist__empty { margin: 0; padding: var(--space-3); font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
 .pane__col {
   max-width: 780px;
   margin: 0 auto;

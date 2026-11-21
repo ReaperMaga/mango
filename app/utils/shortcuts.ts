@@ -45,6 +45,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'releases', label: 'Releases', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+R' },
   { id: 'env', label: 'Environment', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
 
+  { id: 'find-chat', label: 'Find in chat', group: 'Tabs', scope: 'workspace', key: 'Mod+F' },
   { id: 'close-tab', label: 'Close tab', group: 'Tabs', scope: 'workspace', key: 'Mod+W' },
   { id: 'new-terminal', label: 'New terminal', group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+T' },
   { id: 'new-browser', label: 'New browser tab', group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+B' },

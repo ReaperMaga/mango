@@ -1,8 +1,8 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, TurnUsage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
-import { claudeContext, claudeRequestTokens } from './context.ts'
+import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts'
 
 /**
  * Claude Code adapter.
@@ -324,6 +324,8 @@ function run(options: AgentRunOptions): AgentRun {
   let transport: AgentTransport | null = null
   let ended = false
   let interrupted = false
+  /** What this run has used, summed over its results. */
+  let runUsage: TurnUsage | null = null
   let lastStderr = ''
   let seq = 0
   let killTimer: ReturnType<typeof setTimeout> | undefined
@@ -809,6 +811,8 @@ function run(options: AgentRunOptions): AgentRun {
       }
       case 'result': {
         if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        const spent = addClaudeUsage(runUsage, m)
+        if (spent && spent !== runUsage) { runUsage = spent; emit({ type: 'usage', usage: spent }) }
         if (interrupted) end('stopped')
         // A steering message came too late for this answer: the CLI answers it next, in the same process.
         else if (readMessages < sentMessages && !m.is_error && (!m.subtype || m.subtype === 'success')) break

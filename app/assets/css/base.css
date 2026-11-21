@@ -172,3 +172,7 @@ body.is-reordering * {
   cursor: grabbing !important;
 }
 body.is-reordering .sb__actions { opacity: 0 !important; }
+
+/* Find in chat: every hit, and the one the arrows are on. One pair per pane (pane-a, pane-b). */
+::highlight(mango-find-pane-a), ::highlight(mango-find-pane-b) { background-color: var(--accent-soft); color: inherit; }
+::highlight(mango-find-now-pane-a), ::highlight(mango-find-now-pane-b) { background-color: var(--accent); color: var(--accent-fg); }
