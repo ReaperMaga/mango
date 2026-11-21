@@ -126,6 +126,21 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && busy.value && thread.value) threads.stop(thread.value.id)
 }
 
+/*
+ * "Esc to stop" is shown whenever the agent works, so it has to work wherever focus is, not only inside
+ * this pane (after a click on the list, a tab or the page it is on the body). The pane in front takes it,
+ * unless something else owns Escape there: a menu or dialog (they stop it first), a terminal, an editor, a field.
+ */
+function onWindowKey(e: KeyboardEvent) {
+  if (e.key !== 'Escape' || e.defaultPrevented || !props.active || !busy.value || !thread.value) return
+  const el = e.target as HTMLElement | null
+  if (el && el !== document.body && el.closest('[data-drop-zone], .xterm, .monaco-editor, [role="dialog"], [role="menu"], input, textarea, select, [contenteditable="true"]')) return
+  e.preventDefault()
+  threads.stop(thread.value.id)
+}
+onMounted(() => window.addEventListener('keydown', onWindowKey))
+onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey))
+
 /* ---------- the way back down, and day marks between messages ---------- */
 
 function toLatest() {

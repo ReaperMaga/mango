@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { CircleDashed, Files, GitBranch, GitPullRequest, Laptop, Server, Tag, X } from 'lucide-vue-next'
+import { ChevronDown, CircleDashed, Files, GitBranch, GitPullRequest, Tag, X } from 'lucide-vue-next'
+import type { MenuItem } from '~/types/ui'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
@@ -56,64 +57,45 @@ const tools = computed(() => [
 ])
 
 /*
- * The highlight behind the open tool is one shape that glides from button to button, so switching
- * tools reads as a move rather than one light going off and another coming on. It fades in where it
- * is when a tool opens from nothing, and out when the tool window closes or the environment opens.
+ * One button stands for all tools: it shows the tool last used (a click opens or closes it) and its
+ * dropdown lists the others. Picking one opens it and the button takes its icon.
  */
-const btns: HTMLElement[] = []
-const glide = ref<{ y: number; on: boolean; still: boolean }>({ y: 0, on: false, still: true })
-watch(() => ws.toolPanel, async (id) => {
-  await nextTick()
-  const i = tools.value.findIndex(t => t.id === id)
-  const el = btns[i]
-  if (!el) { glide.value = { ...glide.value, on: false }; return }
-  // Opening from nothing: appear in place; only a switch between tools travels.
-  glide.value = { y: el.offsetTop, on: true, still: !glide.value.on }
-}, { immediate: true })
+const current = computed(() => tools.value.find(t => t.id === (ws.toolPanel ?? ws.lastToolPanel)) ?? tools.value[0]!)
+const menuItems = computed<MenuItem[]>(() => tools.value
+  .filter(t => t.id !== current.value.id)
+  .map(t => ({ label: t.label, icon: t.icon, kbd: t.keys, aside: t.count ? String(t.count) : undefined, onSelect: () => ws.toggleTool(t.id, true) })))
+const currentTitle = computed(() => {
+  const t = current.value as (typeof tools.value)[number] & { mark?: 'running' | 'failed' | null }
+  return t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]} (${t.keys})` : `${t.label} (${t.keys})`
+})
 </script>
 
 <template>
   <nav class="ts" aria-label="Tool windows">
     <div class="ts__first">
-    <button
-      type="button"
-      class="ts__btn ts__btn--env"
-      :class="{ 'is-active': ws.toolPanel === 'env' }"
-      :aria-pressed="ws.toolPanel === 'env'"
-      :aria-label="`Environment: ${placeTitle}`"
-      :title="ws.withKey(placeTitle, 'env')"
-      @click="ws.toggleEnv()"
-    >
-      <component :is="place ? Server : Laptop" />
-      <EnvsEnvStatus v-if="placeMark" class="ts__mark" :status="placeMark.status" />
-    </button>
-    </div>
-    <div class="ts__tools">
-    <span
-      class="ts__glide"
-      :class="{ 'is-on': glide.on, 'is-still': glide.still }"
-      :style="{ transform: `translateY(${glide.y}px)` }"
-      aria-hidden="true"
-    />
-    <button
-      v-for="(t, i) in tools"
-      :key="t.id"
-      :ref="el => { if (el) btns[i] = el as HTMLElement }"
-      type="button"
-      class="ts__btn"
-      :class="{ 'is-active': ws.toolPanel === t.id }"
-      :aria-pressed="ws.toolPanel === t.id"
-      :aria-label="t.count ? `${t.label}, ${t.count} ${t.counts}${t.count === 1 ? '' : 's'}` : 'mark' in t && t.mark ? `${t.label}, ${RELEASE_MARK[t.mark]}` : t.label"
-      :title="'mark' in t && t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]} (${t.keys})` : `${t.label} (${t.keys})`"
-      @click="ws.toggleTool(t.id)"
-    >
-      <component :is="t.icon" />
-      <span v-if="t.count" class="ts__count tabular" aria-hidden="true">{{ t.count > 99 ? '99+' : t.count }}</span>
-      <span v-if="'mark' in t && t.mark" class="ts__mark ts__run" :class="`is-${t.mark}`" aria-hidden="true">
-        <CircleDashed v-if="t.mark === 'running'" />
-        <X v-else />
-      </span>
-    </button>
+      <button
+        type="button"
+        class="ts__btn"
+        :class="{ 'is-active': ws.toolPanel === current.id }"
+        :aria-pressed="ws.toolPanel === current.id"
+        :aria-label="current.count ? `${current.label}, ${current.count} ${current.counts}${current.count === 1 ? '' : 's'}` : current.label"
+        :title="currentTitle"
+        @click="ws.toggleTool(current.id)"
+      >
+        <component :is="current.icon" />
+        <span v-if="current.count" class="ts__count tabular" aria-hidden="true">{{ current.count > 99 ? '99+' : current.count }}</span>
+        <span v-if="'mark' in current && current.mark" class="ts__mark ts__run" :class="`is-${current.mark}`" aria-hidden="true">
+          <CircleDashed v-if="current.mark === 'running'" />
+          <X v-else />
+        </span>
+      </button>
+      <UiMenu :items="menuItems" placement="bottom-end" :width="200" label="Tool windows">
+        <template #default="{ toggle, open }">
+          <button type="button" class="ts__more" :class="{ 'is-open': open }" aria-label="Choose tool window" aria-haspopup="menu" :aria-expanded="open" title="Other tool windows" @click="toggle">
+            <ChevronDown />
+          </button>
+        </template>
+      </UiMenu>
     </div>
   </nav>
 </template>
@@ -137,14 +119,6 @@ watch(() => ws.toolPanel, async (id) => {
   height: var(--tabbar-h);
   border-bottom: 1px solid var(--line);
 }
-.ts__tools {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
-}
 .ts__btn {
   position: relative;
   display: grid;
@@ -157,27 +131,10 @@ watch(() => ws.toolPanel, async (id) => {
 }
 .ts__btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
 .ts__btn:hover { background: var(--bg-hover); color: var(--fg); }
-.ts__btn.is-active { color: var(--accent-ink); }
-/* The environment button has no neighbours to glide from: it keeps its own fill. */
-.ts__btn--env.is-active { background: var(--accent-soft); }
-.ts__glide {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 28px;
-  height: 28px;
-  margin-left: -14px;
-  border-radius: var(--radius-md);
-  background: var(--accent-soft);
-  opacity: 0;
-  pointer-events: none;
-  transition: transform var(--dur-med) var(--ease-out), opacity var(--dur-fast) var(--ease-out);
-}
-.ts__glide.is-on { opacity: 1; }
-.ts__glide.is-still { transition: opacity var(--dur-fast) var(--ease-out); }
-/* Buttons sit above the glide; a hovered one still shows its own hover fill. */
-.ts__tools .ts__btn { z-index: 1; }
-.ts__tools .ts__btn.is-active:hover { background: transparent; }
+.ts__btn.is-active { color: var(--accent-ink); background: var(--accent-soft); }
+.ts__more { display: grid; place-items: center; width: 14px; height: 28px; margin-left: 1px; border-radius: var(--radius-md); color: var(--fg-muted); }
+.ts__more svg { width: 12px; height: 12px; }
+.ts__more:hover, .ts__more.is-open { background: var(--bg-hover); color: var(--fg); }
 /* The environment's state, tucked into the corner of its icon on the stripe's own ground. */
 .ts__mark {
   position: absolute;

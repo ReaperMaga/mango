@@ -1,13 +1,14 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from 'react-native'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useHeaderHeight } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
+import { ArrowDown, Camera, Ellipsis, FolderOpen, GitCompareArrows, Image as ImageIcon } from 'lucide-react-native'
 import { AGENTS, type BackgroundTask, type LinkedItem, type Message, type Thread } from '~/types/chat'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Badge, Banner, Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet, Text, haptic } from '@/ui'
-import { ChatComposer, ChatContextSheet, ChatMessage, ChatWorking } from '@/chat'
+import { ChatComposer, ChatContextSheet, ChatFind, ChatMessage, ChatMessageActions, ChatWorking } from '@/chat'
+import { dayLabel, sameDay } from '@/chat/time'
 import { ChatTasks, ChatTasksSheet } from '@/chat/ChatTasks'
 import { ChatLinksBar, ChatLinksSheet } from '@/chat/ChatLinks'
 import { readTaskOutput } from '@/agents/run'
@@ -66,8 +67,23 @@ export default function ChatScreen() {
   const linkDetails = useLinkDetails(root?.id ?? id, root?.projectPath ?? null, links, linksOpen)
   const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
-  const list = useRef<FlatList<Message>>(null)
+  const [findOpen, setFindOpen] = useState(false)
+  const [actionsFor, setActionsFor] = useState<string | null>(null)
+  const [away, setAway] = useState(false)
+  const list = useRef<FlatList<Row>>(null)
   const atBottom = useRef(true)
+  const messages = thread?.messages
+  // The messages with a mark before the first of each day.
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = []
+    ;(messages ?? []).forEach((message, index) => {
+      const prev = messages![index - 1]
+      if (!prev || !sameDay(prev.createdAt, message.createdAt)) out.push({ kind: 'day', key: `d:${message.id}`, ts: message.createdAt })
+      out.push({ kind: 'message', key: message.id, message, last: index === messages!.length - 1 })
+    })
+    return out
+  }, [messages])
+  const openActions = useCallback((m: Message) => setActionsFor(m.id), [])
 
   // A run on another computer, and its end, show up here without a pull to refresh.
   useLiveChats(thread?.projectPath, LIVE_CHAT_MS, true)
@@ -87,6 +103,19 @@ export default function ChatScreen() {
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
     atBottom.current = contentSize.height - contentOffset.y - layoutMeasurement.height < STICK
+    // Far from the end (more than a screen): offer the way back down.
+    const far = contentSize.height - contentOffset.y - layoutMeasurement.height > layoutMeasurement.height
+    setAway(prev => (prev === far ? prev : far))
+  }
+  const toLatest = () => { atBottom.current = true; list.current?.scrollToEnd({ animated: true }) }
+  const jumpTo = (messageIndex: number) => {
+    const id = thread?.messages[messageIndex]?.id
+    const at = rows.findIndex(r => r.kind === 'message' && r.message.id === id)
+    setFindOpen(false)
+    if (at < 0) return
+    atBottom.current = false
+    // The sheet's own exit first: the list scrolls under a closing modal otherwise.
+    setTimeout(() => list.current?.scrollToIndex({ index: at, animated: true, viewPosition: 0.1 }), 350)
   }
   const follow = () => { if (atBottom.current) list.current?.scrollToEnd({ animated: false }) }
 
@@ -169,17 +198,25 @@ export default function ChatScreen() {
       <ChatLinksBar links={links} onPress={onLinksBar} />
       <FlatList
         ref={list}
-        data={thread.messages}
-        keyExtractor={m => m.id}
-        renderItem={({ item, index }) => (
-          <Item
-            message={item}
-            thread={thread}
-            last={index === thread.messages.length - 1}
-            toolCalls={toolCalls}
-            onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
-          />
-        )}
+        data={rows}
+        keyExtractor={r => r.key}
+        renderItem={({ item }) => (item.kind === 'day'
+          ? <DayMark ts={item.ts} />
+          : (
+              <Item
+                message={item.message}
+                thread={thread}
+                last={item.last}
+                toolCalls={toolCalls}
+                onOpenChild={childId => router.push({ pathname: '/chat/[id]', params: { id: childId } })}
+                onActions={openActions}
+              />
+            ))}
+        onScrollToIndexFailed={(info) => {
+          // The row is not measured yet: go near it, then try again.
+          list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false })
+          setTimeout(() => list.current?.scrollToIndex({ index: info.index, animated: true, viewPosition: 0.1 }), 120)
+        }}
         contentContainerStyle={[s.content, !thread.messages.length && s.emptyContent]}
         ListHeaderComponent={(
           <View style={s.head}>
@@ -223,6 +260,15 @@ export default function ChatScreen() {
         keyboardDismissMode="interactive"
         initialNumToRender={20}
       />
+      {away
+        ? (
+            <View style={s.jump} pointerEvents="box-none">
+              <Pressable onPress={toLatest} accessibilityRole="button" accessibilityLabel="Jump to latest message" style={({ pressed }) => [s.jumpBtn, pressed && s.jumpPressed]}>
+                <ArrowDown size={18} strokeWidth={2} color={t.colors.fg} />
+              </Pressable>
+            </View>
+          )
+        : null}
       <View style={[s.composer, { paddingBottom: keyboard ? space[2] : Math.max(insets.bottom, space[2]) }]}>
         {files.error
           ? <Banner tone="error" message={files.error} onDismiss={files.clearError} style={s.attachError} />
@@ -294,9 +340,27 @@ export default function ChatScreen() {
         onClose={() => setMenu(false)}
         onDeleted={() => router.back()}
         onLinks={() => { setMenu(false); setTimeout(() => setLinksOpen(true), 350) }}
+        onFind={() => { setMenu(false); setTimeout(() => setFindOpen(true), 350) }}
+      />
+      <ChatFind visible={findOpen} onClose={() => setFindOpen(false)} messages={thread.messages} onPick={jumpTo} />
+      <ChatMessageActions
+        threadId={id}
+        messageId={actionsFor}
+        onClose={() => setActionsFor(null)}
+        onBranched={newId => { setActionsFor(null); setTimeout(() => router.push({ pathname: '/chat/[id]', params: { id: newId } }), 350) }}
       />
     </KeyboardAvoidingView>
   )
+}
+
+/** What the list draws: a message, or the mark before a day's first. */
+type Row =
+  | { kind: 'day'; key: string; ts: number }
+  | { kind: 'message'; key: string; message: Message; last: boolean }
+
+function DayMark({ ts }: { ts: number }) {
+  const s = useStyles()
+  return <Text variant="caption" tone="faint" style={s.day} accessibilityRole="header">{dayLabel(ts)}</Text>
 }
 
 const NO_LINKS: LinkedItem[] = []
@@ -314,7 +378,7 @@ function subagentChat(task: BackgroundTask): string | null {
  * One message. Kept from re-rendering while another message streams: a chat's snapshot changes on
  * every chunk, but only the message being written (and the last one's live state) needs drawing.
  */
-const Item = memo(function Item({ message, thread, last, toolCalls, onOpenChild }: { message: Message; thread: Thread; last: boolean; toolCalls: ToolCalls; onOpenChild: (id: string) => void }) {
+const Item = memo(function Item({ message, thread, last, toolCalls, onOpenChild, onActions }: { message: Message; thread: Thread; last: boolean; toolCalls: ToolCalls; onOpenChild: (id: string) => void; onActions: (m: Message) => void }) {
   const store = useThreads.getState()
   return (
     <ChatMessage
@@ -325,6 +389,7 @@ const Item = memo(function Item({ message, thread, last, toolCalls, onOpenChild 
       onResolveApproval={(i, allow) => store.resolveApproval(thread.id, message.id, i, allow)}
       onAnswerQuestion={(i, answers) => store.answerQuestion(thread.id, message.id, i, answers)}
       onOpenChild={onOpenChild}
+      onActions={thread.parentId ? undefined : onActions}
     />
   )
 }, (a, b) => a.message === b.message && a.last === b.last && a.toolCalls === b.toolCalls && a.thread.agent === b.thread.agent
@@ -357,6 +422,19 @@ const useStyles = makeStyles(t => ({
   head: { gap: space[3] },
   center: { alignSelf: 'center' },
   foot: { gap: space[3] },
+  day: { alignSelf: 'center', marginVertical: space[1] },
+  jump: { position: 'absolute', right: space[4], bottom: 96, alignItems: 'flex-end' },
+  jumpBtn: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: t.radius.pill,
+    backgroundColor: t.colors.bgRaised,
+    borderWidth: 1,
+    borderColor: t.colors.line,
+  },
+  jumpPressed: { backgroundColor: t.colors.bgActive },
   title: { alignItems: 'center', maxWidth: 220, minHeight: 44, justifyContent: 'center' },
   headerButtons: { flexDirection: 'row', alignItems: 'center' },
   composer: { paddingHorizontal: space[3], paddingTop: space[1], backgroundColor: t.colors.bgCanvas },
