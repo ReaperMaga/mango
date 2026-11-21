@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
   Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -155,6 +155,7 @@ const actions = computed<Item[]>(() => {
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: ws.keyParts('files'), keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
       { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
+      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? 'Hide releases' : 'Show releases', icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github tags versions builds actions workflow runs assets download', run: () => ws.toggleReleases() }]),
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }

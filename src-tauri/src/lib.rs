@@ -18,6 +18,7 @@ mod mcp;
 mod notify;
 mod plastic;
 mod projects;
+mod releases;
 mod pty;
 mod setup;
 mod shells;
@@ -143,6 +144,10 @@ pub fn run() {
             github::gh_merge,
             github::gh_pr_create,
             github::gh_job,
+            releases::gh_releases,
+            releases::gh_tag_run,
+            releases::gh_run,
+            releases::gh_run_action,
             files::fs_list_dir,
             files::fs_read_file,
             files::fs_read_bytes,

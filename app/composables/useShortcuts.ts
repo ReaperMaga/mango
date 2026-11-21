@@ -67,6 +67,7 @@ export function useShortcuts() {
     changes: () => { if (ws.hasProject) ws.toggleGit() },
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject) ws.toggleLinks() },
+    releases: () => { if (ws.hasProject && ws.activeProject?.vcs !== 'plastic') ws.toggleReleases() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.
     'save-file': () => {

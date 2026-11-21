@@ -71,6 +71,15 @@ function mockChecks(key: string, owner: string, repo: string, number: number, do
 /** The jobs `mockChecks` made up, by link, so `gh_job` tells the same story. */
 const jobs = new Map<string, { name: string; after: number; fails: boolean; key: string; done: boolean }>()
 
+/**
+ * A job made up elsewhere (the mock releases' workflow runs): it starts at `startedAt` and ends
+ * `after` ms later, failing if `fails`, so `gh_job` shows the same steps and log.
+ */
+export function registerMockJob(url: string, name: string, startedAt: number, after: number, fails: boolean) {
+  jobs.set(url, { name, after, fails, key: url, done: false })
+  firstRead.set(url, startedAt)
+}
+
 const ESC = '\x1b'
 const red = (s: string) => `${ESC}[31m${s}${ESC}[0m`
 const green = (s: string) => `${ESC}[32m${s}${ESC}[0m`

@@ -64,20 +64,22 @@ app/
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
+    releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
     settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, monaco.ts (lazy Monaco + token theme), useShortcuts.ts
-  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, updater.ts,
+  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), monaco.ts (lazy Monaco + token theme), useShortcuts.ts
+  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI)
+                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
+                     releaseRuns.ts (which runs build which release, job summaries, files by platform)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   auth.rs            agent sign-in status / sign-out
@@ -87,6 +89,7 @@ src-tauri/src/
   plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
+  releases.rs        `gh_releases`, `gh_tag_run`, `gh_run`, `gh_run_action`: releases and their workflow runs (re-run, cancel), through `gh` too
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   mcp.rs             the user's own MCP servers (`mcp_servers`, `mcp_servers_save`): mcp-servers.json, owner-only, checked on save

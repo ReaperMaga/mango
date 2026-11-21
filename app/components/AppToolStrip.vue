@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Files, GitBranch, GitPullRequest, Laptop, Server } from 'lucide-vue-next'
+import { CircleDashed, Files, GitBranch, GitPullRequest, Laptop, Server, Tag, X } from 'lucide-vue-next'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
@@ -41,10 +41,18 @@ const placeTitle = computed(() => {
 })
 watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { immediate: true })
 
+/** Releases: a corner mark while one builds or after its build failed (see useReleaseWatch). */
+const releaseWatch = useReleaseWatch()
+const releaseMark = releaseWatch.mark
+const RELEASE_MARK = { running: 'a release is building', failed: 'a release build failed' } as const
+
 const tools = computed(() => [
   { id: 'files' as ToolView, label: 'Files', icon: Files, keys: ws.keyLabel('files'), count: 0, counts: '' },
   { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changed file' },
   { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linked item' },
+  ...(releaseWatch.path.value
+    ? [{ id: 'releases' as ToolView, label: 'Releases', icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: '', mark: releaseMark.value }]
+    : []),
 ])
 
 /*
@@ -95,12 +103,16 @@ watch(() => ws.toolPanel, async (id) => {
       class="ts__btn"
       :class="{ 'is-active': ws.toolPanel === t.id }"
       :aria-pressed="ws.toolPanel === t.id"
-      :aria-label="t.count ? `${t.label}, ${t.count} ${t.counts}${t.count === 1 ? '' : 's'}` : t.label"
-      :title="`${t.label} (${t.keys})`"
+      :aria-label="t.count ? `${t.label}, ${t.count} ${t.counts}${t.count === 1 ? '' : 's'}` : 'mark' in t && t.mark ? `${t.label}, ${RELEASE_MARK[t.mark]}` : t.label"
+      :title="'mark' in t && t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]} (${t.keys})` : `${t.label} (${t.keys})`"
       @click="ws.toggleTool(t.id)"
     >
       <component :is="t.icon" />
       <span v-if="t.count" class="ts__count tabular" aria-hidden="true">{{ t.count > 99 ? '99+' : t.count }}</span>
+      <span v-if="'mark' in t && t.mark" class="ts__mark ts__run" :class="`is-${t.mark}`" aria-hidden="true">
+        <CircleDashed v-if="t.mark === 'running'" />
+        <X v-else />
+      </span>
     </button>
     </div>
   </nav>
@@ -192,4 +204,11 @@ watch(() => ws.toolPanel, async (id) => {
   text-align: center;
 }
 .ts__btn.is-active .ts__count { background: var(--accent); color: var(--accent-fg); }
+/* A release building (a turning ring) or failed (a cross), tucked into the corner like the environment's mark. */
+.ts__run { display: grid; }
+.ts__btn .ts__run svg { width: 9px; height: 9px; stroke-width: 2.6; }
+.ts__run.is-running { color: var(--ripe-running); }
+.ts__run.is-running svg { animation: ts-turn 2.4s linear infinite; }
+.ts__run.is-failed { color: var(--ripe-error); }
+@keyframes ts-turn { to { transform: rotate(360deg); } }
 </style>
