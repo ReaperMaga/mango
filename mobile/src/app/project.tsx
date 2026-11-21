@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { View } from 'react-native'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, Plus, SquarePen } from 'lucide-react-native'
+import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, Plus, SquarePen, Tag } from 'lucide-react-native'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Button, EmptyState, IconButton, ListRow, ListSection, Text } from '@/ui'
 import { ThreadRow, useNow } from '@/chat'
@@ -14,6 +14,9 @@ import type { GitState } from '@/remote/types'
 import { onFilesChanged } from '@/agents/run'
 import { useEnvs } from '@/state/envs'
 import { useThreads } from '@/state/threads'
+import { useReleases } from '@/state/releases'
+import { releasesSummary } from '@/chat/releases'
+import { sortReleases } from '~/utils/releaseRuns'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { ThreadActions } from '@/screens/ThreadActions'
@@ -40,6 +43,11 @@ export default function ProjectScreen() {
   const [newChat, setNewChat] = useState(false)
   const [actionsFor, setActionsFor] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const releases = useReleases(st => st.lists[path])
+  const releaseLine = useMemo(() => {
+    const data = releases?.data
+    return data ? releasesSummary(sortReleases(data.releases, data.runs), data.releases) : null
+  }, [releases?.data])
 
   const readGit = useCallback(async () => {
     try {
@@ -52,6 +60,8 @@ export default function ProjectScreen() {
 
   const load = useCallback(async () => {
     if (!at || !useEnvs.getState().byId(at.hostId)) return
+    // Releases quietly beside it, for the row's line (a read under 30s old is kept).
+    void useReleases.getState().load(path, { quiet: true })
     await Promise.all([readGit(), syncEnv(at).catch(() => {})])
     // `at` is derived from `path`, which is the real dependency.
   }, [path, readGit]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -96,6 +106,17 @@ export default function ProjectScreen() {
           detail={git?.repo ? (changeCount ? `${changeCount} changed` : 'Clean') : undefined}
           onPress={() => router.push({ pathname: '/changes', params: { path } })}
         />
+        {git?.repo
+          ? (
+              <ListRow
+                title="Releases"
+                subtitle={releaseLine?.text ?? (releases?.error ? 'Not available' : 'Reading GitHub…')}
+                subtitleTone={releaseLine?.tone ?? 'subtle'}
+                leading={<Tag size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+                onPress={() => router.push({ pathname: '/releases', params: { path } })}
+              />
+            )
+          : null}
       </ListSection>
 
       {chats.length

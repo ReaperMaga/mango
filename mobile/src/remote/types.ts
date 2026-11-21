@@ -1,9 +1,10 @@
 import type { AgentId } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { SshEndpoint } from '@/ssh/types'
-import type { GhJob, GhMergeMethod } from '~/types/ipc'
+import type { GhJob, GhMergeMethod, GhRunAction, GhRunDetail } from '~/types/ipc'
 import type { GhDetail, GhRef, GhState } from './github'
 import type { ChatPicture } from './images'
+import type { Releases } from './releases'
 import type { AgentAuth } from './auth'
 
 /**
@@ -205,6 +206,20 @@ export interface RemoteBackend {
    * --fill`), or find the one already open for the branch; then read it.
    */
   ghPrCreate(projectPath: string, base: string | null): Promise<GhDetail>
+
+  /*
+   * The Releases screen: the desktop's `gh_releases`, `gh_tag_run`, `gh_run` and `gh_run_action`, with gh run
+   * inside the project's environment against the repository its git remotes name (github.com only).
+   */
+
+  /** The project's GitHub releases, newest first, up to `count`, with the repository's recent workflow runs. */
+  ghReleases(projectPath: string, count: number): Promise<Releases>
+  /** The newest workflow run for a release's tag, with its jobs; null when no workflow ran for it. */
+  ghTagRun(projectPath: string, tag: string): Promise<GhRunDetail | null>
+  /** A workflow run by id, with its jobs. */
+  ghRun(projectPath: string, id: number): Promise<GhRunDetail>
+  /** Re-run a run's failed jobs (`rerun-failed`), the whole run (`rerun`), or cancel it (`cancel`). */
+  ghRunAction(projectPath: string, id: number, action: GhRunAction): Promise<void>
 
   /**
    * A picture an agent's reply points at (`![alt](path)`): a file inside the project's environment,

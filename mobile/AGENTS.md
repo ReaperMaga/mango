@@ -36,7 +36,8 @@ src/ssh/             types.ts (the contract), native.ts (wrapper), mock.ts, inde
 src/remote/          the environment: auth.ts (agent sign-in status: the desktop's `auth.rs`, read-only), shell.ts (quoting, command lines, validators: ports of envs/ssh.rs and envs/mod.rs),
                      shareLink.ts (envs/token.rs, join.rs), git.ts, sshBackend.ts (chats_remote.rs, git.rs, agent_proc.rs),
                      agentRun.ts (a run that reattaches after a dropped connection),
-                     mockBackend.ts, chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
+                     github.ts + releases.ts (gh inside the environment: pull requests, jobs, releases; ports of github.rs, releases.rs),
+                     mockBackend.ts (its releases are the desktop preview's story, `~/composables/mockReleases`), chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
 src/attachments/     picking (Photos, camera, Files), previews, pictures fitted for the model, upload into the
                      environment (`~/.local/share/mango/attachments/<id>/`); input.ts: what a run gets (pure)
 src/voice/           dictation: transcript.ts (merging, locales, messages: pure), engine.native.ts (Apple's recognizer via

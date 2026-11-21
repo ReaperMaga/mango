@@ -55,6 +55,21 @@ describe('mock backend', () => {
 
   afterEach(() => { vi.useRealTimers() })
 
+  it('lists releases with Markdown notes, their builds and the build jobs\' logs', async () => {
+    const b = createMockBackend()
+    const path = 'env://mock-forge/dev/home/agent/work/mango'
+    const r = await b.ghReleases(path, 5)
+    expect(r.releases).toHaveLength(5)
+    expect(r.releases.every(x => x.bodyHtml === '')).toBe(true)
+    expect(r.releases[1]!.body).toContain('Simulated')
+    const d = await b.ghTagRun(path, r.releases[1]!.tag)
+    expect(d?.jobs.length).toBeGreaterThan(0)
+    expect((await b.ghJob(path, d!.jobs[0]!.url)).name).toBe(d!.jobs[0]!.name)
+    expect(await b.ghTagRun(path, 'nope')).toBeNull()
+    // The trial build is still going: it cannot be re-run yet.
+    await expect(b.ghRunAction(path, 9002, 'rerun')).rejects.toThrow(/can't re-run it yet/)
+  }, 20_000)
+
   it('shows pull requests in full: checks, jobs with logs, merging, linking and opening', async () => {
     // The mock's delays pass at once.
     vi.useFakeTimers({ now: Date.now() })

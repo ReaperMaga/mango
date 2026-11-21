@@ -24,6 +24,10 @@ import {
   projectRepo, splitLog, targetOf, targetOfRef, unknownFlag,
   type GhDetail, type GhTarget,
 } from './github'
+import {
+  MAX_RELEASES, NO_GITHUB, actionFailure, parseReleases, parseRunRead, parseRuns, readFailure, releasesArgv, runActionArgv, runReadArgv, runsArgv,
+  type GhRepo,
+} from './releases'
 import type {
   Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
@@ -753,6 +757,45 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     return parseGhDetail(r.stdout, t, instance)
   }
 
+  /** Each project's GitHub repository, read once from its git remotes (they rarely change). */
+  const repos = new Map<string, GhRepo>()
+
+  /** The project's own repository on github.com, from its remotes in the folder (the desktop's `env_repo`). */
+  async function repoOf(projectPath: string): Promise<GhRepo> {
+    const known = repos.get(projectPath)
+    if (known) return known
+    const [o] = await runAll(placeOf(projectPath), [{ argv: gitRead(['remote', '-v']), cap: 1024 * 1024 }])
+    let list: string | null = text(o!)
+    if (!ok(o!)) {
+      if (!utf8Decode(o!.stderr).toLowerCase().includes('not a git repository')) throw new Error(`${NO_REPO} (${errorOf(o!, 'git remote')})`)
+      list = null
+    }
+    const repo = projectRepo(list)
+    repos.set(projectPath, repo)
+    return repo
+  }
+
+  /** `repoOf`, worded for releases. */
+  async function releaseRepo(projectPath: string): Promise<GhRepo> {
+    try {
+      return await repoOf(projectPath)
+    } catch (e) {
+      const m = messageOf(e)
+      throw new Error(m.startsWith(NO_REPO) ? NO_GITHUB : m)
+    }
+  }
+
+  /** A run with its jobs, by a release's tag or by id: one round trip (`RUN_READ`). */
+  async function readRun(projectPath: string, what: { tag: string } | { id: number }) {
+    const repo = await releaseRepo(projectPath)
+    const argv = runReadArgv(repo, what)
+    const { hostId, instance } = parseProjectPath(projectPath)
+    const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT * 2 })
+    const name = 'tag' in what ? `workflow run for ${what.tag}` : `workflow run ${what.id}`
+    if (r.code !== 0) throw new Error(readFailure(instance, name, r.code, r.stderr, r.stdout))
+    return parseRunRead(r.stdout, instance)
+  }
+
   const folderKey = (p: Place) => `${p.env.id}\0${p.instance}\0${p.dir}`
 
   /** The work tree root a git command needs, from the cache or one `rev-parse`. */
@@ -1116,18 +1159,44 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
 
     async ghResolve(projectPath, reference) {
       const parsed = parseReference(reference)
-      let repo = { owner: '', repo: '' }
-      if (parsed.kind === 'number') {
-        // A bare number is in the project's own repository, read from its remotes in the folder.
-        const [o] = await runAll(placeOf(projectPath), [{ argv: gitRead(['remote', '-v']), cap: 1024 * 1024 }])
-        let list: string | null = text(o!)
-        if (!ok(o!)) {
-          if (!utf8Decode(o!.stderr).toLowerCase().includes('not a git repository')) throw new Error(`${NO_REPO} (${errorOf(o!, 'git remote')})`)
-          list = null
-        }
-        repo = projectRepo(list)
-      }
+      // A bare number is in the project's own repository, read from its remotes in the folder.
+      const repo = parsed.kind === 'number' ? await repoOf(projectPath) : { owner: '', repo: '' }
       return readDetail(projectPath, targetOf(parsed, repo))
+    },
+
+    async ghReleases(projectPath, count) {
+      const repo = await releaseRepo(projectPath)
+      const { hostId, instance } = parseProjectPath(projectPath)
+      // The releases and the recent runs: one round trip.
+      const [list, runs] = await runAll(homeOf({ hostId, instance }), [
+        { argv: ghBatch(releasesArgv(repo, Math.min(count, MAX_RELEASES))), cap: 16 * 1024 * 1024 },
+        { argv: ghBatch(runsArgv(repo)), cap: 8 * 1024 * 1024 },
+      ], GH_TIMEOUT * 2)
+      if (!ok(list!)) throw new Error(readFailure(instance, `repository ${repo.owner}/${repo.repo}`, list!.code, utf8Decode(list!.stderr), text(list!)))
+      return {
+        host: GITHUB_HOST, owner: repo.owner, repo: repo.repo,
+        releases: parseReleases(text(list!), instance),
+        // A repository without Actions (or one gh may not read them in) still lists its releases.
+        runs: ok(runs!) ? parseRuns(text(runs!)) : [],
+      }
+    },
+
+    async ghTagRun(projectPath, tag) {
+      return readRun(projectPath, { tag })
+    },
+
+    async ghRun(projectPath, id) {
+      const d = await readRun(projectPath, { id })
+      if (!d) throw new Error(`GitHub has no workflow run ${id}.`)
+      return d
+    },
+
+    async ghRunAction(projectPath, id, action) {
+      const repo = await releaseRepo(projectPath)
+      const argv = runActionArgv(repo, id, action)
+      const { hostId, instance } = parseProjectPath(projectPath)
+      const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT })
+      if (r.code !== 0) throw new Error(actionFailure(instance, id, action, r.code, r.stderr, r.stdout))
     },
 
     async ghMerge(projectPath, ref, method, headSha) {

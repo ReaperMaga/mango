@@ -6,6 +6,9 @@ import {
   ghDetailArgv, ghFailure, ghItemArgv, ghMergeArgv, ghPrCreateArgv, parseJobUrl, parseReference, targetOf, targetOfRef,
 } from './github'
 import { createMockGithub, mockRepoOf, stateOf } from './mockGithub'
+import { mockGhJob } from '~/composables/mockGithub'
+import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
+import { NO_GITHUB, checkRunId, checkTag, runActionArgv, type Release } from './releases'
 import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
@@ -167,6 +170,19 @@ index 0000000..e69de29
 +- admin view for failed charges
 `,
 }
+
+/** A release's notes, as Markdown (the phone reads the source, not GitHub's HTML). */
+const mockNotes = (tag: string) => `Installers for Windows, macOS and Linux are attached below. [Install notes](https://mango.dev/guide/install)
+
+## What's Changed
+
+- feat(links): pick an open pull request or issue to link in #77
+- feat(mobile): pull requests on the phone, as on the desktop in #75
+- fix(git): keep the branch popup inside the window in #76
+
+**Full Changelog**: \`v0.1.27...${tag}\`
+
+_Simulated: the preview cannot ask GitHub. In the app this is read with the GitHub CLI inside the environment._`
 
 /* ---------- the backend ---------- */
 
@@ -476,7 +492,42 @@ export function createMockBackend(): RemoteBackend {
       parseJobUrl(url)
       parseProjectPath(projectPath)
       await wait(400, 900)
-      return github.job(url)
+      try {
+        return github.job(url)
+      } catch (e) {
+        // The release builds' jobs come from the desktop preview's story, which registered them.
+        try { return mockGhJob(url) } catch { throw e }
+      }
+    },
+
+    // The desktop preview's releases story (`~/composables/mockReleases`), the same for every repository.
+    async ghReleases(projectPath, count) {
+      await wait(400, 900)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      const data = mockGhReleases(mainOf(projectPath).dir, count)
+      const releases = data.releases.map((r): Release => ({ ...r, bodyHtml: '', body: r.bodyHtml ? mockNotes(r.tag) : '' }))
+      return { ...data, releases }
+    },
+
+    async ghTagRun(projectPath, tag) {
+      checkTag(tag)
+      await wait(300, 700)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      return mockGhTagRun(mainOf(projectPath).dir, tag)
+    },
+
+    async ghRun(projectPath, id) {
+      checkRunId(id)
+      await wait(300, 700)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      return mockGhRun(mainOf(projectPath).dir, id)
+    },
+
+    async ghRunAction(projectPath, id, action) {
+      runActionArgv({ owner: 'acme', repo: 'app' }, id, action) // the same validation as the real one
+      await wait(500, 1000)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      mockGhRunAction(mainOf(projectPath).dir, id, action)
     },
 
     async ghPrCreate(projectPath, base) {

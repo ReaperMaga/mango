@@ -5,6 +5,7 @@ import { useEnvs } from '@/state/envs'
 import { useNetwork } from '@/state/network'
 import { setStatusHook, useThreads } from '@/state/threads'
 import { useLinks } from '@/state/links'
+import { useReleases } from '@/state/releases'
 import { notifyChange } from '@/notify'
 import { usePrefs } from '@/state/prefs'
 import { backend } from '@/remote'
@@ -70,10 +71,12 @@ export const catchUp = createCatchUp({
   online: () => useNetwork.getState().online,
 })
 
-/** Catch up, then read again the pull requests and check logs that failed while the network was gone. */
+/** Catch up, then read again the pull requests, releases and check logs that failed while the network was gone. */
 function catchUpAndRetry(): Promise<void> {
   return catchUp().then(() => {
-    if (useNetwork.getState().online !== false) useLinks.getState().retryFailed()
+    if (useNetwork.getState().online === false) return
+    useLinks.getState().retryFailed()
+    useReleases.getState().retryFailed()
   })
 }
 
