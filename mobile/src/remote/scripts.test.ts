@@ -202,7 +202,7 @@ describe('projects script', () => {
     addedAt: 0,
   }
 
-  it('finds repositories under the home, outermost first', () => {
+  it('finds repositories under the home, outermost first, without worktrees', () => {
     const home = tmp('home')
     const repo = (dir: string, head: string) => {
       mkdirSync(join(home, dir, '.git'), { recursive: true })
@@ -215,7 +215,7 @@ describe('projects script', () => {
     repo('work/node_modules/dep', 'ref: refs/heads/main') // skipped
     repo('.cache/thing', 'ref: refs/heads/main') // hidden: skipped
     repo('a/b/c/d/e/too-deep', 'ref: refs/heads/main') // beyond the depth
-    // A linked worktree: `.git` is a file pointing at its git dir.
+    // A linked worktree (`.git` is a file pointing at its git dir): part of shop, skipped.
     mkdirSync(join(home, 'work/shop/.git/worktrees/wt'), { recursive: true })
     writeFileSync(join(home, 'work/shop/.git/worktrees/wt/HEAD'), 'ref: refs/heads/wt-branch\n')
     mkdirSync(join(home, 'trees/wt'), { recursive: true })
@@ -225,7 +225,6 @@ describe('projects script', () => {
     expect(r.code, r.stderr).toBe(0)
     const got = parseProjects(r.stdout, env, 'dev')
     expect(got.map(p => [p.path, p.name, p.branch])).toEqual([
-      [`env://h1/dev${home}/trees/wt`, 'wt', 'wt-branch'],
       [`env://h1/dev${home}/work/detached`, 'detached', null],
       [`env://h1/dev${home}/work/my app`, 'my app', 'feat/x'],
       [`env://h1/dev${home}/work/shop`, 'shop', 'main'],

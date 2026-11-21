@@ -48,4 +48,22 @@ describe('knownProjects', () => {
     })
     expect(list).toEqual([])
   })
+
+  it('leaves out worktrees: scanned ones beside their repository and the ones chats work in', () => {
+    const list = knownProjects(
+      places,
+      {
+        'j/shop': [
+          { path: 'env://j/shop/home/agent/shop', name: 'shop', branch: 'main' },
+          { path: 'env://j/shop/home/agent/shop.worktrees/fix-login', name: 'fix-login', branch: 'fix-login' },
+          { path: 'env://j/shop/home/agent/elsewhere/wt', name: 'wt', branch: 'wt' },
+        ],
+      },
+      {
+        a: chat('a', 'env://j/shop/home/agent/shop', 5, { worktree: 'env://j/shop/home/agent/elsewhere/wt' }),
+        b: chat('b', 'env://j/shop/home/agent/shop.worktrees/old', 6),
+      },
+    )
+    expect(list.map(p => p.path)).toEqual(['env://j/shop/home/agent/shop'])
+  })
 })
