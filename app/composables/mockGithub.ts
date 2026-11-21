@@ -1,4 +1,4 @@
-import type { GhCheck, GhItem, GhJob, GhJobStep, GhMergeMethod, GhRunState, GitStatus } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhJobStep, GhListItem, GhMergeMethod, GhOpenItems, GhRunState, GitStatus } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -216,7 +216,45 @@ export function mockGhPrCreate(path: string, base: string, status: GitStatus): G
   return mockGhItem(path, `you/${repo}#${number}`)
 }
 
+/** What the browser preview's "open" list holds, by key, so an item linked from it reads back the same. */
+const listed = new Map<string, { title: string; draft: boolean; head: string | null }>()
+
+/** `gh_open_items` for the browser preview: a few made-up open pull requests (even numbers) and issues (odd). */
+export function mockGhOpenItems(path: string): GhOpenItems {
+  const owner = 'you'
+  const repo = baseName(path || 'project')
+  const hour = 3_600_000
+  const made: Array<[number, string, boolean, string | null, number]> = [
+    [64, 'feat(links): pick a pull request to link from the open ones', false, 'feat/links-picker', 0.3],
+    [61, 'Settings crashes when an env file is empty', false, null, 2],
+    [58, 'fix(git): keep the branch popup inside the window', true, 'fix/branch-popup', 5],
+    [55, 'Terminal loses focus after a dialog closes', false, null, 20],
+    [52, 'perf(files): read big folders in pages', false, 'perf/files-pages', 30],
+    [49, 'Voice input stops after a minute on Windows', false, null, 72],
+    [46, 'docs: explain remote environments in the README', true, 'docs/remote-envs', 120],
+  ]
+  const items: GhListItem[] = made.map(([number, title, draft, head, ago]) => {
+    const kind = number % 2 === 0 ? 'pr' : 'issue'
+    listed.set(`github.com/${owner}/${repo}#${number}`, { title, draft, head })
+    return {
+      kind, number, title, state: draft ? 'draft' : 'open', headRef: head, author: 'you',
+      url: `https://github.com/${owner}/${repo}/${kind === 'pr' ? 'pull' : 'issues'}/${number}`,
+      updatedAt: new Date(Date.now() - ago * hour).toISOString(),
+    }
+  })
+  return { host: 'github.com', owner, repo, items }
+}
+
 export function mockGhItem(path: string, reference: string): GhItem {
+  const item = madeUpItem(path, reference)
+  const shown = listed.get(parse(path, reference).key)
+  if (!shown) return item
+  if (item.kind !== 'pr') return { ...item, title: shown.title }
+  if (item.state === 'merged') return { ...item, title: shown.title, headRef: shown.head }
+  return { ...item, title: shown.title, headRef: shown.head, state: shown.draft ? 'draft' : 'open', mergeState: shown.draft ? 'draft' : item.mergeState }
+}
+
+function madeUpItem(path: string, reference: string): GhItem {
   const { host, owner, repo, number, isPr, key } = parse(path, reference)
   const mine = opened.get(key)
   if (mine) {

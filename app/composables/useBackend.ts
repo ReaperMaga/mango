@@ -3,7 +3,7 @@ import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
-import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate } from '~/composables/mockGithub'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
@@ -463,6 +463,7 @@ const mock = (() => {
         return
       }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
+      case 'gh_open_items': await new Promise(r => setTimeout(r, 600)); return mockGhOpenItems(args.path)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
       case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))

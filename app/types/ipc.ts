@@ -292,6 +292,28 @@ export interface PlasticReviews {
   more: boolean
 }
 
+/** One open pull request or issue as `gh_open_items` lists it. */
+export interface GhListItem {
+  kind: 'pr' | 'issue'
+  url: string
+  number: number
+  title: string
+  state: 'open' | 'draft'
+  /** A pull request's branch. */
+  headRef: string | null
+  author: string | null
+  updatedAt: string
+}
+
+/** The open pull requests and issues of a project's GitHub repository (`gh_open_items`). */
+export interface GhOpenItems {
+  host: string
+  owner: string
+  repo: string
+  /** Pull requests and issues together, most recently updated first. */
+  items: GhListItem[]
+}
+
 /** One pull request or issue as `gh_item` reads it. */
 export interface GhItem {
   kind: 'pr' | 'issue'
@@ -979,6 +1001,11 @@ export interface Commands {
    * the project at `path`). Needs the GitHub CLI, signed in; the error says what to do when it is not.
    */
   gh_item: [{ path: string; reference: string }, GhItem]
+  /**
+   * The open pull requests and issues of the GitHub repository of the project at `path` (which may be a
+   * remote project), most recently updated first, up to 30 of each: the list to pick one to link from.
+   */
+  gh_open_items: [{ path: string }, GhOpenItems]
   /**
    * Merge a pull request on GitHub, only while its branch still points at `headSha` (otherwise it
    * fails and says the branch moved). The local checkout is not touched.
