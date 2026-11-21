@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bug, CircleArrowUp, CircleHelp, CreditCard, Gauge, History, Info, Keyboard, LogIn, LogOut, Plus, Rocket, Settings } from 'lucide-vue-next'
+import { Bug, CircleArrowUp, CircleHelp, CreditCard, Gauge, History, Info, Keyboard, LogIn, LogOut, Plus, RefreshCw, Rocket, Settings } from 'lucide-vue-next'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call, openExternal } from '~/composables/useBackend'
 import { useWhatsNew } from '~/composables/useWhatsNew'
@@ -125,8 +125,18 @@ const helpItems = computed<MenuItem[]>(() => {
   ]
   if (updater.update && !updater.busy) {
     items.push({ label: 'Update and restart', icon: CircleArrowUp, divider: true, aside: updater.update.version, asideMono: true, onSelect: () => void updater.install() })
+  } else {
+    // Like the palette's: Settings > Maintenance shows the answer (up to date, or the new version).
+    items.push({
+      label: 'Check for updates',
+      icon: RefreshCw,
+      divider: true,
+      aside: updater.phase === 'checking' ? 'Checking…' : undefined,
+      disabled: updater.busy,
+      onSelect: () => { ws.openSettings('maintenance'); void updater.check(true) },
+    })
   }
-  items.push({ label: 'About Mango', icon: Info, divider: !updater.update || updater.busy, aside: build.version, asideMono: true, onSelect: () => ws.openSettings('maintenance') })
+  items.push({ label: 'About Mango', icon: Info, aside: build.version, asideMono: true, onSelect: () => ws.openSettings('maintenance') })
   return items
 })
 
