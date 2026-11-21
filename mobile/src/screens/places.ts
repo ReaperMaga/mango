@@ -29,9 +29,20 @@ export function placesOf(envs: readonly Env[], instances: Record<string, Instanc
 }
 
 /**
+ * Whether `path` is a chat's linked worktree rather than a project: one a chat works in, or a
+ * folder where Mango puts them (`<parent>/<repo>.worktrees/<branch>`, `remote/git.ts`).
+ */
+function isWorktree(path: string, worktrees: ReadonlySet<string>): boolean {
+  if (worktrees.has(path)) return true
+  const parent = path.replace(/\/+$/, '').split('/').slice(0, -1).pop() ?? ''
+  return parent.endsWith('.worktrees') && parent !== '.worktrees'
+}
+
+/**
  * The projects of `places`: the git repositories the scan found, plus every folder a chat already
  * works in (the desktop opens any folder, git or not, anywhere in the instance; the scan only sees
- * repositories under the agent's home). Recently used first, then by name.
+ * repositories under the agent's home). Worktrees are not projects: a chat gets one from the
+ * "New worktree" switch once its project is picked. Recently used first, then by name.
  */
 export function knownProjects(
   places: readonly Place[],
@@ -40,8 +51,11 @@ export function knownProjects(
 ): KnownProject[] {
   const byPath = new Map<string, KnownProject>()
   const inPlace = new Set(places.map(p => projectsKey(p.env.id, p.instance)))
+  const worktrees = new Set<string>()
+  for (const th of Object.values(threads)) if (th.worktree) worktrees.add(th.worktree)
   for (const p of places) {
     for (const r of scanned[projectsKey(p.env.id, p.instance)] ?? []) {
+      if (isWorktree(r.path, worktrees)) continue
       byPath.set(r.path, { ...r, envId: p.env.id, instance: p.instance, lastUsed: 0 })
     }
   }
@@ -49,6 +63,7 @@ export function knownProjects(
     if (th.parentId) continue
     const loc = parseEnvPath(th.projectPath)
     if (!loc || !inPlace.has(projectsKey(loc.hostId, loc.instance))) continue
+    if (isWorktree(th.projectPath, worktrees)) continue
     const known = byPath.get(th.projectPath)
     if (known) known.lastUsed = Math.max(known.lastUsed, th.updatedAt)
     else byPath.set(th.projectPath, { path: th.projectPath, name: projectName(th.projectPath), branch: null, envId: loc.hostId, instance: loc.instance, lastUsed: th.updatedAt })

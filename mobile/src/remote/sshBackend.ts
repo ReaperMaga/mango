@@ -497,7 +497,8 @@ export function parseInstances(json: string): Instance[] {
 
 /**
  * `bash -c` script (as the agent user, in its home): the git repositories under the home, at
- * most four folders deep, skipping hidden and dependency folders. One `MANGO-PROJECTS:<base64>`
+ * most four folders deep, skipping hidden and dependency folders and linked worktrees (a chat's
+ * worktree belongs to its project; the "New worktree" switch makes one). One `MANGO-PROJECTS:<base64>`
  * line of NUL-terminated pairs, `<folder> NUL <branch or nothing> NUL`; the branch comes from
  * the repository's HEAD file, so git itself does not run. Names never pass through the shell as
  * code, and base64 keeps odd bytes intact.
@@ -517,6 +518,8 @@ list() {
     elif [ -f "$g" ]; then
       gd=$(sed -n 's/^gitdir: //p' "$g" | head -n 1)
       case $gd in /*) ;; *) gd=$(dirname -- "$g")/$gd ;; esac
+      # A linked worktree is a folder of a project found on its own, not a project.
+      case $gd in */worktrees/*) continue ;; esac
     else continue
     fi
     head=$(head -n 1 -- "$gd/HEAD" 2>/dev/null)
