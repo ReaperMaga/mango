@@ -391,6 +391,44 @@ describe('ssh backend', () => {
     expect(calls).toHaveLength(4)
   })
 
+  it('lists releases: the repository once from git, then releases and runs in one round trip', async () => {
+    const remotes = 'origin\tgit@github.com:acme/shop.git (fetch)\norigin\tgit@github.com:acme/shop.git (push)\n'
+    const rel = [{ id: 1, tag_name: 'v1', name: 'One', html_url: 'https://github.com/acme/shop/releases/tag/v1', body: 'hi', assets: [] }]
+    const runs = { workflow_runs: [{ id: 5, name: 'Release', event: 'push', head_branch: 'v1', status: 'completed', conclusion: 'success', html_url: 'https://github.com/acme/shop/actions/runs/5' }] }
+    const { b, calls } = backendWith(c => c.includes('remote -v')
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }
+      : { code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(rel) }, { code: 0, stdout: JSON.stringify(runs) }]), stderr: '' })
+    const p = 'env://h/dev/home/agent/work/shop'
+    const r = await b.ghReleases(p, 30)
+    expect(r).toMatchObject({ owner: 'acme', repo: 'shop', releases: [{ tag: 'v1', body: 'hi' }], runs: [{ id: 5, state: 'success' }] })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.command).toContain(' mango /home/agent bash -c ')
+    expect(calls[1]!.command).toContain(" 'repos/acme/shop/releases?per_page=30' ")
+    expect(calls[1]!.command).toContain(" 'repos/acme/shop/actions/runs?per_page=50' ")
+    await b.ghReleases(p, 60)
+    expect(calls).toHaveLength(3)
+  })
+
+  it('reads a run, posts an action, and words a missing remote', async () => {
+    const remotes = 'origin\thttps://github.com/acme/shop (fetch)\n'
+    let { b, calls } = backendWith(c => c.includes('remote -v')
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }
+      : c.includes('mango-run-read')
+        ? { code: 0, stdout: '', stderr: '' }
+        : { code: 1, stdout: '', stderr: 'gh: Conflict (HTTP 409)' })
+    const p = 'env://h/dev/home/agent/work/shop'
+    expect(await b.ghTagRun(p, 'v1')).toBeNull()
+    expect(calls[1]!.command).toContain(' mango-run-read repos/acme/shop tag v1 ')
+    await expect(b.ghRunAction(p, 5, 'cancel')).rejects.toThrow('The run has already finished.')
+    expect(calls[2]!.command).toContain(' gh api --hostname github.com -X POST repos/acme/shop/actions/runs/5/cancel')
+    await expect(b.ghRunAction(p, 5, 'delete' as never)).rejects.toThrow(/Unknown action/)
+    await expect(b.ghTagRun(p, '--x')).rejects.toThrow()
+    expect(calls).toHaveLength(3)
+
+    ;({ b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: '' }]), stderr: '' })))
+    await expect(b.ghReleases(p, 30)).rejects.toThrow('This project has no GitHub remote, so it has no releases to show.')
+  })
+
   it('merges with the sha, and words a refusal', async () => {
     const { b, calls } = backendWith(() => ({ code: 1, stdout: '{"message":"Head branch was modified."}', stderr: 'gh: Head branch was modified. (HTTP 409)' }))
     const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop', number: 12 }

@@ -25,8 +25,10 @@ export default function CheckScreen() {
   const t = useTheme()
   const s = useStyles()
   const insets = useSafeAreaInsets()
-  const { chat: chatId = '', url = '', name = '', workflow = '' } = useLocalSearchParams<{ chat: string; key: string; url: string; name: string; workflow: string }>()
-  const projectPath = useThreads(st => (st.threads[chatId] ? st.rootOf(chatId)?.projectPath ?? null : null))
+  // From a pull request: its chat names the project. From a release: the project's path itself.
+  const { chat: chatId = '', path = '', url = '', name = '', workflow = '' } = useLocalSearchParams<{ chat: string; path: string; key: string; url: string; name: string; workflow: string }>()
+  const chatProject = useThreads(st => (st.threads[chatId] ? st.rootOf(chatId)?.projectPath ?? null : null))
+  const projectPath = path || chatProject
   const detail = useLinks(st => st.jobs[url])
   const job = detail?.job ?? null
   const valid = isJobUrl(url)
