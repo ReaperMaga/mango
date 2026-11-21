@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.34
+
+### New
+
+- Browse the project's open pull requests when no chat is open.
+
 ## 0.1.33
 
 ### Fixes
