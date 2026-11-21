@@ -77,6 +77,8 @@ export interface Colors {
   waitingLine: string
   /** `color-mix(in oklch, accent 9%, bg-panel)`: a picked option. */
   accentWash: string
+  /** The app mark's lighter half: the accent lighter and turned towards gold (`ui/MangoMark.vue`). */
+  markLight: string
   /** `ripe-error` at 12%, 40% and 60%: error banner wash, danger button border, field error border. */
   errorWash: string
   errorLine: string
