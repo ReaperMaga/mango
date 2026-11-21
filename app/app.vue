@@ -6,7 +6,7 @@ import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
 import { useWindows } from '~/stores/windows'
 import { useConnectivity } from '~/stores/connectivity'
-import { on } from '~/composables/useBackend'
+import { on, appWindow } from '~/composables/useBackend'
 
 const ws = useWorkspace()
 const threads = useThreads()
@@ -35,6 +35,11 @@ onMounted(async () => {
 })
 
 useShortcuts()
+
+/* The window's title is the project it shows (the taskbar, Alt+Tab and window previews read it). */
+watch(() => ws.activeProject?.name, (name) => {
+  void appWindow.setTitle(name || 'Mango').catch(() => {})
+}, { immediate: true })
 
 /* Something this window could not take over (a chat still running in another window). */
 watch(() => win.refused, (reason) => {
