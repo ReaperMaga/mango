@@ -62,6 +62,8 @@ function Root() {
           headerLargeStyle: { backgroundColor: t.colors.bgCanvas },
           headerLargeTitleShadowVisible: false,
           headerBackButtonDisplayMode: 'minimal',
+          // iOS always centres it; the web preview would put it at the left, beside the back arrow.
+          headerTitleAlign: 'center',
         }}
       >
         <Stack.Screen name="index" options={{ title: 'Mango', headerLargeTitle: true }} />
