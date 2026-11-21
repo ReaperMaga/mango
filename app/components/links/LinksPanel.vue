@@ -13,6 +13,7 @@ import { stateOf } from '~/utils/linkState'
  * The Pull requests tool window: the pull requests and issues linked to the chat in front of
  * the user. The agent links the ones it opens (`gh pr create`); the user can link others by
  * hand. With one linked item it opens straight away, with several the list comes first.
+ * With no chat in front it browses the project's open ones: picking one opens it, linked to nothing.
  */
 
 const threads = useThreads()
@@ -34,11 +35,18 @@ const chat = computed(() => {
   return id && threads.byId(id) ? threads.rootOf(id) : null
 })
 const list = computed<LinkedItem[]>(() => chat.value?.links ?? [])
-const current = computed(() =>
-  list.value.find(l => l.key === links.focused) ?? (list.value.length === 1 ? list.value[0]! : null))
+/** Where items are read from: the chat's project, or with no chat the project in view. */
+const projectPath = computed(() => chat.value?.projectPath ?? workspace.activeProjectPath ?? null)
+/** With no chat in front: the item opened from the project's open ones (linked to nothing). */
+const browsed = ref<LinkedItem | null>(null)
+// Another project: what was opened from the last one does not follow.
+watch(() => workspace.activeProjectPath, () => { browsed.value = null })
+const current = computed(() => (chat.value
+  ? list.value.find(l => l.key === links.focused) ?? (list.value.length === 1 ? list.value[0]! : null)
+  : browsed.value))
 
 watch(() => current.value?.key, () => {
-  if (current.value && chat.value) void links.load(current.value, chat.value.projectPath)
+  if (current.value && projectPath.value) void links.load(current.value, projectPath.value)
 }, { immediate: true })
 // Titles and states of the list come from the last read; read the ones never read.
 watch(list, (items) => {
@@ -82,11 +90,15 @@ function schedule() {
 function poll() {
   // Nobody is looking at a hidden window: try again later rather than spend requests.
   if (document.hidden) { schedule(); return }
-  if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true, true)
+  if (current.value && projectPath.value) void links.load(current.value, projectPath.value, true, true)
 }
 watch(() => [current.value?.key, currentDetail.value?.loading, currentDetail.value?.fetchedAt], schedule, { immediate: true })
 onBeforeUnmount(() => clearTimeout(poller))
-function back() { links.focused = null }
+function back() {
+  if (chat.value) links.focused = null
+  else browsed.value = null
+}
+function browse(l: LinkedItem) { browsed.value = l }
 
 /* ---------- a check's log, over its pull request ---------- */
 /** The check whose log is open, while its pull request is the one in front. */
@@ -104,7 +116,7 @@ function closeCheck() { links.closeCheck() }
 watch(() => current.value?.key, (key) => { if (links.check && links.check.linkKey !== key) links.closeCheck() })
 const jobRefreshing = computed(() => !!(job.value?.loading && job.value.job))
 function refreshJob() { if (check.value) void links.loadJob(check.value.url) }
-function refresh() { if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true) }
+function refresh() { if (current.value && projectPath.value) void links.load(current.value, projectPath.value, true) }
 function unlink(l: LinkedItem) {
   if (!chat.value) return
   threads.unlink(chat.value.id, l.key)
@@ -142,6 +154,7 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
       </button>
       <template v-else>
         <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <UiIconButton v-else-if="current && !chat" label="All open pull requests and issues" size="sm" @click="back"><ArrowLeft /></UiIconButton>
         <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
       </template>
       <div v-if="chat && list.length && !check" class="lp__tools">
@@ -161,11 +174,18 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
       />
     </div>
 
-    <div v-if="!chat" class="lp__quiet">
-      <p>Open a chat to see the pull requests and issues linked to it.</p>
+    <div v-if="!projectPath" class="lp__quiet">
+      <p>Open a project to see its pull requests and issues.</p>
     </div>
 
-    <LinksPicker v-else-if="!list.length" :key="chat.id" :chat-id="chat.id" :project-path="chat.projectPath" fill />
+    <LinksPicker
+      v-else-if="!current && !list.length"
+      :key="chat?.id ?? projectPath"
+      :chat-id="chat?.id"
+      :project-path="projectPath"
+      fill
+      @pick="browse"
+    />
 
     <template v-else-if="current && check">
       <div class="lp__scroll">
@@ -181,11 +201,11 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
       <div class="lp__scroll">
         <LinksItem :key="current.key" :link="current" :detail="currentDetail" @open-check="openCheck" />
       </div>
-      <LinksMerge v-if="mergeable && chat" :key="current.key" :link="current" :item="mergeable" :project-path="chat.projectPath" />
+      <LinksMerge v-if="mergeable && projectPath" :key="current.key" :link="current" :item="mergeable" :project-path="projectPath" />
       <footer class="lp__foot">
         <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
         <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />Refresh</UiButton>
-        <UiButton size="sm" variant="ghost" class="lp__unlink" title="Remove it from this chat; nothing changes on GitHub" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
+        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" title="Remove it from this chat; nothing changes on GitHub" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
       </footer>
     </template>
 
