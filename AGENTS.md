@@ -61,7 +61,7 @@ app/
   components/        AppTitlebar, AppSidebar (threads) + AppSidebarFoot (account, usage, help, settings), AppToolStrip + AppToolPanel (right tool windows), AppWorkspace, ChatArea, CommandPalette
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup, GitLogPanel (the Git log, a bottom panel tab) + GitLogGraph, GitLogRefs, GitLogCommit, GitCommitDiffPane (a commit's file diff in a tab)
-    files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesImageView (pictures, SVG preview)
+    files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesDecompiledPane (a library's decompiled source, read-only), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
@@ -72,7 +72,7 @@ app/
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
   composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), windowClose.ts (saves before a window goes), useShortcuts.ts
-  lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
+  lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
@@ -80,7 +80,7 @@ app/
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
                      registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
-  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, autoSave.ts (when open files save themselves; plain-Node testable), reloadEdits.ts, time.ts, paths.ts,
+  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, decompiledTabs.ts (decompiled source tabs, the server's answer checked; plain-Node testable), browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, autoSave.ts (when open files save themselves; plain-Node testable), reloadEdits.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
@@ -166,7 +166,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   the program outside the project (never `node_modules/.bin`, the current folder or a rustup proxy). `lsp_send` and `lsp_stop` are
   synchronous commands on purpose (message order) and must not block. What servers say is untrusted: keep `lsp/convert.ts` strict
   and Monaco's markdown text-only (`monaco.ts`; check that deep import when upgrading Monaco). Prove backend changes with the
-  ignored `lsp::tests::real_*` tests. A chat's worktree takes its project's answer only while `lsp/folder.rs` proves it a
+  ignored `lsp::tests::real_*` tests. Go to definition opens only the project's own files; a library's source comes only as
+  text its server decompiled (`csharp/metadata`, checked in `utils/decompiledTabs.ts`), shown read-only and never read from disk. A chat's worktree takes its project's answer only while `lsp/folder.rs` proves it a
   linked git worktree of it, and a yes only while it is also the folder bound to that yes (`languageServersWorktree`: where
   Mango adds a worktree, it calls `worktreeMade`); any other folder, Unity VCS workspaces included, answers for itself. A
   folder's own no always wins. `lsp/folder.rs` follows a path it read only past `near`: looking asks no other computer.

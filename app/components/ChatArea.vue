@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, GitCommitHorizontal, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileCode, FileDiff, FolderGit2, GitCommitHorizontal, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
@@ -8,6 +8,8 @@ import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
+import { isDecompiledTab, parseDecompiledTab, shortSymbol } from '~/utils/decompiledTabs'
+import { decompiledSource } from '~/lsp/decompiled'
 import { fileLook } from '~/plugin-host/fileHooks'
 import { tabProject } from '~/utils/fileTabs'
 import { parseEnvPath } from '~/utils/envPath'
@@ -47,6 +49,8 @@ type Tab =
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
   | { id: string; kind: 'commit'; title: string; file: string; short: string }
   | { id: string; kind: 'file'; title: string; file: string }
+  /** A library's source a language server decompiled (go to definition into a compiled assembly). */
+  | { id: string; kind: 'decompiled'; title: string; symbol: string; assembly: string }
   | { id: string; kind: 'browser'; title: string; browser: Browser }
   | { id: string; kind: 'terminal'; title: string; term: TerminalTab }
   | { id: string; kind: 'plugin'; title: string; icon: PluginIconValue | null; plugin: string }
@@ -63,6 +67,12 @@ const tabs = computed<Tab[]>(() => {
     if (commit) { out.push({ id, kind: 'commit', title: `${commit.name} @ ${commit.short}`, file: commit.file, short: commit.short }); continue }
     const file = parseFileTab(id)
     if (file) { out.push({ id, kind: 'file', title: file.name, file: file.file }); continue }
+    const lib = parseDecompiledTab(id)
+    if (lib) {
+      const source = decompiledSource(id)
+      out.push({ id, kind: 'decompiled', title: source ? shortSymbol(source.symbol) : lib.name, symbol: source?.symbol ?? lib.name, assembly: source?.assembly ?? '' })
+      continue
+    }
     if (isBrowserTab(id)) {
       const b = browsers.forTab(id)
       if (b) out.push({ id, kind: 'browser', title: browserTitle(b), browser: b })
@@ -123,6 +133,8 @@ function tabTitle(t: Tab, i: number) {
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
   if (t.kind === 'file') return `${t.file}${keys}`
   if (t.kind === 'commit') return `Changes in ${t.file} at ${t.short}${keys}`
+  if (t.kind === 'decompiled') return `${t.symbol}${keys}
+Decompiled${t.assembly ? ` from ${t.assembly}` : ''}, read-only`
   if (t.kind === 'plugin' || t.kind === 'panel') return `${t.title}${t.plugin ? `\nFrom ${t.plugin}` : ''}${keys}`
   if (t.kind === 'terminal') {
     const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
@@ -294,6 +306,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     return items
   }
 
+  if (tab.kind === 'decompiled') {
+    items.push(
+      splitItem,
+      { label: 'Copy type name', icon: Copy, divider: true, onSelect: () => void copyToClipboard(tab.symbol) },
+    )
+    return items
+  }
+
   if (tab.kind === 'plugin') {
     items.push(splitItem)
     return items
@@ -418,6 +438,11 @@ function lookOf(t: { id: string, kind: string, file: string }) {
                 <GitCommitHorizontal class="ca__tab-icon" aria-hidden="true" />
                 <span class="ca__tab-title">{{ t.title }}</span>
               </template>
+              <template v-else-if="t.kind === 'decompiled'">
+                <FileCode class="ca__tab-icon" aria-hidden="true" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+                <span class="ca__tab-note">decompiled</span>
+              </template>
               <template v-else-if="t.kind === 'terminal'">
                 <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
                 <span class="ca__tab-title">{{ t.title }}</span>
@@ -541,6 +566,18 @@ function lookOf(t: { id: string, kind: string, file: string }) {
         />
         <PluginTabPane
           v-else-if="isPluginTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="paneBasis(i)"
+          data-tab-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <FilesDecompiledPane
+          v-else-if="isDecompiledTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"

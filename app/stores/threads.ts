@@ -6,6 +6,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
+import { isDecompiledTab, parseDecompiledTab } from '~/utils/decompiledTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
 import { useLanguageServers } from '~/lsp/store'
@@ -1451,12 +1452,12 @@ const addingWorktree = new Map<string, Promise<void>>()
 const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
-/** The folder a diff or file tab was opened from: the project, or a worktree of it. */
+/** The folder a diff, file or decompiled source tab was opened from: the project, or a worktree of it. */
 const folderOfTab = (id: string | null | undefined) =>
-  parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath
+  parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath ?? parseDecompiledTab(id)?.projectPath
 
 /** A tab that shows something other than a chat; none of them is saved with the layout. */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isDecompiledTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'

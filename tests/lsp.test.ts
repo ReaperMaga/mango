@@ -13,7 +13,8 @@ import { escapeMarkdown, inertSnippet, toCompletions, toHover, toMarkers, toReso
 import { WatchedFiles, FILE_CHANGED, FILE_CREATED, FILE_DELETED, compileGlob } from '../app/lsp/watched.ts'
 import { Session, crashReason, type SessionView } from '../app/lsp/session.ts'
 import { Pool, type PoolKey } from '../app/lsp/pool.ts'
-import { lspLanguage } from '../app/lsp/languages.ts'
+import { PROFILES, clientCapabilities, lspLanguage } from '../app/lsp/languages.ts'
+import { MAX_DECOMPILED, decompiledTabId, fileNameOf, isDecompiledTab, isMetadataUri, parseDecompiledTab, shortSymbol, toDecompiled } from '../app/utils/decompiledTabs.ts'
 import { FILE_METHODS, linkRoute, oneFileWorker, refusesFirst, untrusted, withWords, workerGuards } from '../app/lsp/builtins.ts'
 import { ModelUris } from '../app/lsp/modelUris.ts'
 import { CompletionText, UntouchedText } from '../app/lsp/editGuard.ts'
@@ -973,4 +974,47 @@ test('an import that arrives late lands only above what changed since', () => {
   assert.ok(!late.allows([{ range: editorRange(5, 9, 5, 9) }]))
   late.changed({ isFlush: false, changes: [{ range: editorRange(1, 1, 1, 2), text: '' }] })
   assert.ok(!late.allows([{ range: editorRange(1, 20, 1, 20) }]))
+})
+
+/* ---------- decompiled library source (C#) */
+
+const CONSOLE = 'csharp:/C:/work/game/Assembly-CSharp.csproj/decompiled/System.Console.cs'
+
+test('only the C# server is told Mango opens decompiled sources', () => {
+  assert.deepEqual((clientCapabilities(PROFILES.csharp) as any).experimental, { csharp: { metadataUris: true } })
+  for (const id of ['typescript', 'rust', 'python', 'go', 'clangd'] as const) {
+    assert.equal((clientCapabilities(PROFILES[id]) as any).experimental, undefined, id)
+  }
+  const csharp = new Session({ name: 'c', profile: PROFILES.csharp, connect: async () => { throw new Error('no') }, changed() {}, diagnostics() {} })
+  const rust = new Session({ name: 'r', profile: PROFILES.rust, connect: async () => { throw new Error('no') }, changed() {}, diagnostics() {} })
+  assert.equal(csharp.metadataUris, true)
+  assert.equal(rust.metadataUris, false)
+})
+
+test('a decompiled source\'s address is no file of the project, and its tab says where it came from', () => {
+  assert.equal(uriToFile('C:\work\game', CONSOLE), null)
+  assert.ok(isMetadataUri(CONSOLE))
+  assert.ok(!isMetadataUri('file:///c%3A/work/game/A.cs'))
+  const id = decompiledTabId('C:\work\game', CONSOLE)
+  assert.ok(isDecompiledTab(id))
+  assert.ok(!isDecompiledTab('file\u0001C:\work\game\u0001A.cs'))
+  assert.deepEqual(parseDecompiledTab(id), { projectPath: 'C:\work\game', uri: CONSOLE, name: 'System.Console.cs' })
+  assert.equal(parseDecompiledTab('decompiled\u0001nothing'), null)
+  assert.equal(fileNameOf('csharp:/x/decompiled/System.Collections.Generic.List%601.cs'), 'System.Collections.Generic.List`1.cs')
+  assert.equal(fileNameOf('csharp:/x/decompiled/bad%E0.cs'), 'bad%E0.cs')
+  assert.equal(shortSymbol('UnityEngine.MonoBehaviour'), 'MonoBehaviour')
+  assert.equal(shortSymbol('Global'), 'Global')
+})
+
+test('the server\'s decompiled source is checked before it is shown', () => {
+  assert.deepEqual(
+    toDecompiled({ projectName: 'game', assemblyName: 'UnityEngine.CoreModule', symbolName: 'UnityEngine.MonoBehaviour', source: 'class MonoBehaviour {}' }),
+    { assembly: 'UnityEngine.CoreModule', symbol: 'UnityEngine.MonoBehaviour', source: 'class MonoBehaviour {}' },
+  )
+  // Names are one line of text, whatever the server put in them.
+  assert.deepEqual(toDecompiled({ assemblyName: 'A\u0000\nB', symbolName: 42, source: 'x' }), { assembly: 'AB', symbol: '', source: 'x' })
+  assert.equal(toDecompiled(null), null)
+  assert.equal(toDecompiled('class A {}'), null)
+  assert.equal(toDecompiled({ assemblyName: 'A', symbolName: 'B', source: '' }), null)
+  assert.equal(toDecompiled({ assemblyName: 'A', symbolName: 'B', source: 'x'.repeat(MAX_DECOMPILED + 1) }), null)
 })

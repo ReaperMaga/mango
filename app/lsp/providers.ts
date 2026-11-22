@@ -10,6 +10,8 @@ import { call } from '~/composables/useBackend'
 import { otherFilesWords } from '~/composables/editorCompletion'
 import { PEEK_SCHEME, documentUri } from '~/composables/editorDocuments'
 import { languageFor, type MonacoApi } from '~/composables/monaco'
+import { decompile } from '~/lsp/decompiled'
+import { isMetadataUri } from '~/utils/decompiledTabs'
 
 /**
  * Monaco's side of the language servers: providers that ask the model's session, and Monaco's own
@@ -81,6 +83,8 @@ interface Suggestion extends Monaco.languages.CompletionItem {
 const PEEK_MAX = 12
 /** More targets than this are listed without their text. */
 const PREVIEWS = 6
+/** Library definitions decompiled for one jump (a server may list every overload's assembly). */
+const MAX_DECOMPILED_TARGETS = 3
 
 export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
   const { languages } = monaco
@@ -195,11 +199,18 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
       ))
       const root = at.session.root
       if (!root || !targets.length || token.isCancellationRequested) return null
-      // Go to definition stays in the project: a library's own sources are not opened.
+      // Go to definition stays in the project: a library's files on disk are not opened. What a
+      // server decompiled from a compiled library is asked of it and shown read-only.
       const inside = targets.flatMap((target) => {
         const file = uriToFile(root, target.uri)
         return file === null ? [] : [{ target, file }]
       })
+      const compiled = at.session.metadataUris ? targets.filter(t => isMetadataUri(t.uri)).slice(0, MAX_DECOMPILED_TARGETS) : []
+      const libraries = (await Promise.all(compiled.map(async (target) => {
+        const source = await decompile(monaco, at.session, at.project, target.uri, token)
+        return source ? [{ uri: source.model.uri, range: target.range, targetSelectionRange: target.selection, originSelectionRange: target.origin }] : []
+      }))).flat()
+      if (token.isCancellationRequested) return null
       const open = Object.entries(useFiles().open).filter(([, f]) => f.projectPath === at.project)
       const uris = new Map<string, Promise<Monaco.Uri>>()
       const uriOf = (file: string) => {
@@ -213,12 +224,13 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
         }
         return uri
       }
-      return Promise.all(inside.map(async ({ target, file }) => ({
+      const own = await Promise.all(inside.map(async ({ target, file }) => ({
         uri: await uriOf(file),
         range: target.range,
         targetSelectionRange: target.selection,
         originSelectionRange: target.origin,
       })))
+      return [...own, ...libraries]
     },
   }
 
