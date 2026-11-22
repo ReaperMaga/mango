@@ -8,6 +8,7 @@ import type { MenuItem } from '~/types/ui'
 import { useWorkspace } from '~/stores/workspace'
 import { gitFileKey, useGit, type GitAction } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
 import { useLinks } from '~/stores/links'
 import { call } from '~/composables/useBackend'
 import { linkFromItem } from '~/utils/githubLinks'
@@ -243,7 +244,8 @@ async function removeWorktree() {
     } else {
       const main = mainFolder.value
       if (!main) throw new Error("Couldn't find the project's main folder")
-      await call('git_worktree_remove', { path: main, worktree: folder, force: removeForce.value })
+      const force = removeForce.value
+      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: main, worktree: folder, force }))
       delete git.repos[folder]
       await git.loadWorktrees(main)
     }

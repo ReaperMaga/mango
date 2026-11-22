@@ -6,6 +6,7 @@ import type {
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
@@ -339,10 +340,13 @@ export const useEnvironments = defineStore('environments', {
       this.busy[key] = 'rename'
       // Its desktop tunnel points at the old name and dies with the stop anyway.
       await this.closeDesktop(hostId, instance)
+      const files = useFiles()
+      const release = await files.holdInstance(hostId, instance, name)
       let note: string | null
       try {
         note = await call('env_rename', { hostId, instance, newName: name })
       } catch (e) {
+        release()
         this.busy[key] = null
         await this.refreshInstances(hostId)
         throw e
@@ -352,8 +356,14 @@ export const useEnvironments = defineStore('environments', {
         if (key in map) { map[to] = map[key]; delete map[key] }
       }
       this.busy[key] = null
-      useWorkspace().moveEnvInstance(hostId, instance, name)
-      useThreads().moveEnvInstance(hostId, instance, name)
+      try {
+        // Before the tabs with nothing unsaved close.
+        files.moveUnsaved(hostId, instance, name)
+        useWorkspace().moveEnvInstance(hostId, instance, name)
+        useThreads().moveEnvInstance(hostId, instance, name)
+      } finally {
+        release()
+      }
       await this.refreshInstances(hostId)
       return note
     },

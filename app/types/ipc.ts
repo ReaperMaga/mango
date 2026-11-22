@@ -61,6 +61,36 @@ export interface AuthStatus {
   detail: string | null
 }
 
+/** A language server Mango knows how to run (`lsp_servers`). The backend owns each one's command line. */
+export type LspServerId = 'typescript' | 'rust' | 'python' | 'go' | 'clangd' | 'csharp'
+
+export interface LspServer {
+  id: LspServerId
+  /** The program's own name, e.g. "rust-analyzer". */
+  name: string
+  /** LSP language ids it serves, e.g. "typescript", "typescriptreact". */
+  languages: string[]
+  installed: boolean
+  /** The executable found; null when it is not installed. */
+  path: string | null
+  /** The installer Mango would run (`lsp_install`), as the user would type it; null when it has none here. */
+  install: string | null
+  helpUrl: string
+}
+
+export interface LspStarted {
+  /** The project folder the server runs in: absolute, no `\\?\` prefix. What file URIs are built from. */
+  root: string
+  /** Mango's own process id, for `initialize`'s processId. */
+  pid: number
+}
+
+/** One JSON-RPC message from a language server, its framing already removed. */
+export interface LspMessageEvent { id: string; message: string }
+
+/** A language server ended; sent once, also after `lsp_stop`. */
+export interface LspExitEvent { id: string; code: number | null; stderr: string }
+
 /** Something Mango needs, offered by the setup dialog (`setup_check`). */
 export type SetupToolId = 'git' | 'claude' | 'codex'
 
@@ -699,12 +729,16 @@ export interface FileContent {
   bom: boolean
   /** ms since the epoch: hand it back on save so a change on disk is noticed. */
   modifiedMs: number
+  /** SHA-256 of the file's bytes, when read whole: hand it back on save too (times can be as coarse as two seconds). */
+  hash?: string
 }
 
 export interface WriteResult {
-  /** False when the file changed on disk since `expectedModifiedMs`; nothing was written. */
+  /** False when the file changed on disk since `expectedHash` or `expectedModifiedMs`; nothing was written. */
   saved: boolean
   modifiedMs: number
+  /** SHA-256 of what was saved. */
+  hash?: string
 }
 
 /** An env file at a project's root (Project settings > Environment variables). */
@@ -1195,6 +1229,27 @@ export interface Commands {
   setup_install: [{ tool: SetupToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
+  /** The language servers Mango knows, and which are installed on this computer. */
+  lsp_servers: [{ roots?: string[] }, LspServer[]]
+  /**
+   * Which folder `project` is now, as an identity that changes when it is deleted and made again
+   * (null: no such folder here). `allowed` is the identity the user allowed language servers for:
+   * the backend starts one in `root` only while `project` still is that folder. Null also when `root`
+   * is neither `project` nor, right now, a linked git worktree of it, or is one that such a yes does
+   * not reach: `worktree` is the identity of the only folder it does.
+   */
+  lsp_folder: [{ root: string; project: string; allowed: string | null; worktree?: string | null }, string | null]
+  /**
+   * Start a server in a local project (remote projects are refused). The caller makes up `id` and
+   * listens for it first. Only after the user allowed language servers for the project.
+   */
+  lsp_start: [{ id: string; root: string; server: LspServerId }, LspStarted]
+  /** Send one JSON-RPC message; the backend adds the framing. Messages arrive in the order they were sent. */
+  lsp_send: [{ id: string; message: string }, void]
+  lsp_stop: [{ id: string }, void]
+  /** Run a server's installer in a PTY (the backend picks the command). Returns the pty id. */
+  lsp_install: [{ server: LspServerId; cols: number; rows: number; roots?: string[] }, string]
+
   /** `path` is any folder inside the repository (normally the project path). */
   git_status: [{ path: string }, GitStatus]
   /** Unified diff of one file. Untracked files come back as an all-added diff. */
@@ -1374,10 +1429,11 @@ export interface Commands {
   /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
   fs_read_bytes: [{ root: string; file: string }, FileBytes]
   /**
-   * Overwrite an existing file (never creates one). With `expectedModifiedMs`, a file that
-   * changed on disk since then is left alone and `saved` is false; null writes regardless.
+   * Overwrite an existing file (never creates one). With `expectedHash` (or, without one,
+   * `expectedModifiedMs`), a file that changed on disk since it was read is left alone and `saved`
+   * is false; null for both writes regardless.
    */
-  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
+  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null; expectedHash?: string | null }, WriteResult]
   /** Create a new file (never overwrites: an existing file is an error). `file` is project-relative. Returns its modifiedMs. */
   fs_create_file: [{ root: string; file: string; text: string }, WriteResult]
   /** Delete one file in the project (never a folder; a symlink is removed itself, not its target). */
@@ -1499,12 +1555,23 @@ export interface Commands {
   window_at: [{ x: number; y: number }, string | null]
   /** Whether no other Mango window is on screen (closing this one ends the app). */
   window_alone: [Record<string, never>, boolean]
+  /**
+   * The page heard `window://close`; unsaid within a few seconds, the backend decides without it (with
+   * unsaved text, the user does). False: that close is no longer the page's to answer.
+   */
+  window_close_heard: [{ id: number }, boolean]
+  /** Whether this window has unsaved text, said as it changes: what closing a silent page would lose. */
+  window_unsaved: [{ unsaved: boolean }, void]
+  /** The answer to `window://close`: the window may go (the main one hides while others are open), or stays and comes into view. */
+  window_close_answer: [{ id: number; close: boolean }, void]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
+  /** Downloads and verifies the update from the last check, without installing it. Emits `update://progress`. */
+  update_download: [Record<string, never>, void]
   /**
-   * Downloads, verifies and installs the update from the last check, then restarts Mango
-   * (terminals and agent runs are stopped). Emits `update://progress`. Never resolves on success.
+   * Installs what `update_download` fetched (an error when it has not; it never downloads by itself),
+   * then restarts Mango (terminals and agent runs are stopped). Never resolves on success.
    */
   update_install: [Record<string, never>, void]
 
@@ -1626,6 +1693,8 @@ export interface Events {
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
   'agent://connection': AgentConnectionEvent
+  'lsp://message': LspMessageEvent
+  'lsp://exit': LspExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
   /** A browser's page changed: URL, title, loading. */
@@ -1636,6 +1705,8 @@ export interface Events {
   'envs://join': { link: string }
   /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
   'window://closed': { label: string }
+  /** This window is asked to close (`composables/windowClose.ts`): answer with `window_close_heard`, then `window_close_answer`. */
+  'window://close': { label: string; id: number }
   /** The main window was closed while others are open: it is hidden and lets go of its projects. */
   'window://parked': Record<string, never>
   /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { Archive, Bell, Bot, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bell, Bot, FilePen, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
 import SettingsAppearance from './SettingsAppearance.vue'
 import SettingsBehavior from './SettingsBehavior.vue'
 import SettingsChangelog from './SettingsChangelog.vue'
+import SettingsEditor from './SettingsEditor.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
@@ -49,6 +50,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
       { id: 'general', label: 'Preferences', icon: SlidersHorizontal },
       { id: 'projects', label: 'Projects', icon: Folder },
       { id: 'appearance', label: 'Appearance', icon: SunMoon },
+      { id: 'editor', label: 'Editor', icon: FilePen },
       { id: 'notifications', label: 'Notifications', icon: Bell },
       { id: 'voice', label: 'Voice', icon: Mic },
       { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
@@ -303,6 +305,7 @@ onBeforeUnmount(() => {
               </Transition>
               <Transition name="page">
                 <SettingsTerminal v-if="section === 'terminal'" />
+                <SettingsEditor v-else-if="section === 'editor'" />
                 <SettingsMcp v-else-if="section === 'mcp'" />
                 <SettingsVoice v-else-if="section === 'voice'" />
                 <SettingsNotifications v-else-if="section === 'notifications'" />

@@ -18,6 +18,8 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 #[derive(Default)]
 pub struct UpdaterState {
     pending: Mutex<Option<Update>>,
+    /// Its installer, once `update_download` has it.
+    downloaded: Mutex<Option<Vec<u8>>>,
 }
 
 #[derive(Serialize)]
@@ -73,25 +75,21 @@ pub async fn update_check(app: AppHandle, state: State<'_, UpdaterState>) -> Res
         date_ms: u.date.map(|d| d.unix_timestamp() * 1000),
     });
     *state.pending.lock().map_err(|_| "Updater state is unavailable.")? = update;
+    *state.downloaded.lock().map_err(|_| "Updater state is unavailable.")? = None;
     Ok(info)
 }
 
-/// Downloads and installs the update found by the last check, then restarts Mango.
-/// Emits `update://progress` while downloading. On Windows the installer closes
-/// Mango itself and starts the new version.
-#[tauri::command]
-pub async fn update_install(app: AppHandle, state: State<'_, UpdaterState>) -> Result<(), String> {
-    let update = state
-        .pending
-        .lock()
-        .map_err(|_| "Updater state is unavailable.")?
-        .clone()
-        .ok_or("There is no update to install. Check for updates first.")?;
+fn pending(state: &UpdaterState) -> Result<Update, String> {
+    let update = state.pending.lock().map_err(|_| "Updater state is unavailable.")?.clone();
+    update.ok_or_else(|| "There is no update to install. Check for updates first.".to_string())
+}
 
+/// The installer, its signature checked. Emits `update://progress`.
+async fn download(app: &AppHandle, update: &Update) -> Result<Vec<u8>, String> {
     let mut downloaded: u64 = 0;
     let emitter = app.clone();
     update
-        .download_and_install(
+        .download(
             move |chunk, total| {
                 downloaded += chunk as u64;
                 let _ = emitter.emit("update://progress", UpdateProgress { downloaded, total });
@@ -99,14 +97,51 @@ pub async fn update_install(app: AppHandle, state: State<'_, UpdaterState>) -> R
             || {},
         )
         .await
-        .map_err(explain)?;
+        .map_err(explain)
+}
+
+/// Downloads the update found by the last check, without installing it: installing ends Mango, so
+/// what was typed during the download is saved between the two.
+#[tauri::command]
+pub async fn update_download(app: AppHandle, state: State<'_, UpdaterState>) -> Result<(), String> {
+    let bytes = download(&app, &pending(&state)?).await?;
+    *state.downloaded.lock().map_err(|_| "Updater state is unavailable.")? = Some(bytes);
+    Ok(())
+}
+
+/// Installs what `update_download` fetched, then restarts Mango. It never downloads: nothing typed
+/// meanwhile would be saved. On Windows the installer closes Mango itself and starts the new version.
+#[tauri::command]
+pub async fn update_install(app: AppHandle, state: State<'_, UpdaterState>) -> Result<(), String> {
+    let update = pending(&state)?;
+    let bytes = take_downloaded(&state)?;
+    update.install(bytes).map_err(explain)?;
 
     stop_children(&app);
     app.restart();
+}
+
+fn take_downloaded(state: &UpdaterState) -> Result<Vec<u8>, String> {
+    let kept = state.downloaded.lock().map_err(|_| "Updater state is unavailable.")?.take();
+    kept.ok_or_else(|| "The update has not finished downloading. Check for updates, then install it again.".to_string())
 }
 
 /// Kills every terminal and agent process Mango started.
 fn stop_children(app: &AppHandle) {
     app.state::<crate::pty::PtyState>().kill_all();
     app.state::<crate::agent_proc::AgentProcState>().kill_all();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installing_takes_only_what_was_downloaded() {
+        let state = UpdaterState::default();
+        assert!(take_downloaded(&state).unwrap_err().contains("install it again"));
+        *state.downloaded.lock().unwrap() = Some(vec![1, 2]);
+        assert_eq!(take_downloaded(&state).unwrap(), [1, 2]);
+        assert!(take_downloaded(&state).is_err(), "only once");
+    }
 }

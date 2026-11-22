@@ -12,13 +12,13 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Os {
+pub(crate) enum Os {
     Windows,
     Mac,
     Linux,
 }
 
-fn this_os() -> Os {
+pub(crate) fn this_os() -> Os {
     if cfg!(windows) {
         Os::Windows
     } else if cfg!(target_os = "macos") {
@@ -30,18 +30,18 @@ fn this_os() -> Os {
 
 /// One way to install a tool: the program to run and what to show for it.
 #[derive(Debug, Clone, PartialEq)]
-struct Plan {
-    argv: Vec<String>,
+pub(crate) struct Plan {
+    pub(crate) argv: Vec<String>,
     /// The command as the user would type it.
-    display: String,
+    pub(crate) display: String,
     /// Who does the installing, e.g. "WinGet", "Anthropic's installer".
     via: &'static str,
-    env: &'static [(&'static str, &'static str)],
+    pub(crate) env: &'static [(&'static str, &'static str)],
 }
 
 impl Plan {
     /// Run a program directly; the display is its argv.
-    fn direct(argv: &[&str], via: &'static str) -> Plan {
+    pub(crate) fn direct(argv: &[&str], via: &'static str) -> Plan {
         Plan {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             display: argv.join(" "),

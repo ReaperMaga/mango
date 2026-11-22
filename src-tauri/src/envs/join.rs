@@ -332,11 +332,7 @@ fn join_link<I: IntoIterator<Item = String>>(urls: I) -> Option<String> {
 }
 
 pub fn focus_main(app: &AppHandle) {
-    if let Some(w) = app.get_webview_window("main") {
-        let _ = w.unminimize();
-        let _ = w.show();
-        let _ = w.set_focus();
-    }
+    let _ = crate::windows::focus(app, "main");
 }
 
 /// A link arrived (at start-up, from a second instance, or from the OS on macOS).

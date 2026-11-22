@@ -15,6 +15,7 @@ mod files;
 mod git;
 mod github;
 mod images;
+mod lsp;
 mod mcp;
 mod notify;
 mod plastic;
@@ -35,7 +36,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = windows::with_quit_item(builder);
+    builder
         // First: a second Mango (started by a mango:// link on Windows and Linux) hands its
         // arguments to this one (through the deep-link plugin, see `envs::join`) and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| envs::join::focus_main(app)))
@@ -62,6 +66,8 @@ pub fn run() {
         .manage(envs::join::JoinLinkState::default())
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
+        .manage(lsp::LspState::default())
+        .manage(windows::CloseState::default())
         .manage(mcp::McpState::default())
         .manage(plugins::PluginsState::default())
         .manage(browser_remote::RemoteBrowserState::default())
@@ -69,8 +75,15 @@ pub fn run() {
             envs::join::setup_deep_link(app.handle());
             Ok(())
         })
-        .on_window_event(windows::on_event)
+        .on_window_event(|window, event| {
+            lsp::on_window_event(window, event);
+            windows::on_event(window, event);
+        })
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                lsp::on_page_started(webview);
+                windows::on_page_started(webview);
+            }
             if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
                 envs::join::page_loaded(webview.app_handle());
             }
@@ -121,6 +134,12 @@ pub fn run() {
             auth::agent_logout,
             setup::setup_check,
             setup::setup_install,
+            lsp::lsp_servers,
+            lsp::lsp_folder,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
+            lsp::lsp_install,
             vcs::git_status,
             vcs::git_diff,
             vcs::git_base,
@@ -183,6 +202,7 @@ pub fn run() {
             env_files::env_files,
             env_files::env_gitignore_add,
             updater::update_check,
+            updater::update_download,
             updater::update_install,
             voice::voice_models,
             voice::voice_download,
@@ -230,6 +250,9 @@ pub fn run() {
             windows::window_list,
             windows::window_at,
             windows::window_alone,
+            windows::window_close_heard,
+            windows::window_close_answer,
+            windows::window_unsaved,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
@@ -237,6 +260,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
+                app.state::<lsp::LspState>().kill_all();
                 app.state::<envs::remote::DesktopState>().kill_all();
                 app.state::<browser_remote::RemoteBrowserState>().kill_all();
             }

@@ -109,8 +109,10 @@ export const useGitLog = defineStore('gitLog', {
         run: async () => {
           try {
             let now = name
-            if (remote) now = await call('git_checkout_remote', { path, branch: name }) || name
-            else await call('git_checkout', { path, branch: name, create: false })
+            await useFiles().aroundChange([path], async () => {
+              if (remote) now = await call('git_checkout_remote', { path, branch: name }) || name
+              else await call('git_checkout', { path, branch: name, create: false })
+            })
             toast({ title: `Switched to ${now}`, kind: 'success' })
           } catch (e) {
             toast({ title: `Could not check out ${name}`, body: gitLogError(e), kind: 'error', timeout: 0 })
@@ -129,7 +131,7 @@ export const useGitLog = defineStore('gitLog', {
         label: 'Check out',
         run: async () => {
           try {
-            await call('git_checkout_commit', { path, hash: c.hash })
+            await useFiles().aroundChange([path], () => call('git_checkout_commit', { path, hash: c.hash }))
             toast({
               title: `Checked out ${c.shortHash}`,
               body: 'HEAD is detached.',
@@ -153,7 +155,8 @@ export const useGitLog = defineStore('gitLog', {
       )
       if (!name) return
       try {
-        await call('git_branch_create', { path, name, from: c.hash, checkout })
+        const create = () => call('git_branch_create', { path, name, from: c.hash, checkout })
+        await (checkout ? useFiles().aroundChange([path], create) : create())
         toast(checkout
           ? { title: `Switched to ${name}`, kind: 'success' }
           : { title: `Created ${name}`, kind: 'success', action: { label: 'Check out', run: () => this.checkoutBranch(path, name, false) } })

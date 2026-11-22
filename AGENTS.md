@@ -66,12 +66,13 @@ app/
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
     plugins/         Settings > Plugins: PluginsBrowse (the official catalog: search, filters), PluginsInstalled, PluginDetail (+ PluginSettingsForm), PluginAddDialog (from a git link or a local folder), PluginViewHost (renders any plugin-provided view)
-    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
+    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme), useShortcuts.ts
+  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), windowClose.ts (saves before a window goes), useShortcuts.ts
+  lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
@@ -79,7 +80,7 @@ app/
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
                      registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
-  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
+  utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, autoSave.ts (when open files save themselves; plain-Node testable), reloadEdits.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
@@ -91,6 +92,7 @@ src-tauri/src/
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
+  lsp/               language servers (`lsp_*`): servers.rs (the only command lines and installers), resolve.rs (which program runs), session.rs + framing.rs (pipes), tree.rs (the whole process tree ends with it), folder.rs (which folder the user's consent is bound to, and whether a worktree follows its project's)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   file_ops.rs        the Files view's new folder, rename, duplicate, delete and show in file manager: the entry itself (never a link's target), never replacing
   trash_bin.rs       moving to the system's trash, and never deleting for good instead (Windows: its own shell sink, the trash crate does delete for good there)
@@ -124,6 +126,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - `app/types/ipc.ts` is the single contract. A new backend command needs four things: the Rust command
   (registered in `src-tauri/src/lib.rs`), its entry in `Commands`/`Events` in `ipc.ts`, a mock in
   `useBackend.ts` (or `mockGit.ts`) so `pnpm dev` keeps working, and the caller.
+- `window_close_heard`, `window_close_answer` and `window_unsaved` are synchronous on purpose: closes are decided on the main
+  thread, in order.
 - Rust commands are `async`, do blocking work off the UI thread, and return `Result<T, String>` with a
   message a person can act on. Structs use `#[serde(rename_all = "camelCase")]`.
 - Never call `invoke` directly from components: go through `call()` / `on()` in `useBackend.ts`.
@@ -133,6 +137,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - Paths may use `\`: use `utils/paths.ts` (`baseName`, `withTrailingSep`), never `split('/')`.
 - Do not use HTML5 drag and drop: the desktop webview takes it over on Windows. Use pointer events
   (see the reordering code in `AppSidebar.vue`).
+- Look windows up with `get_window` / `windows()`, never as webview windows (a browser tab hides those). Never add
+  `onCloseRequested`: closing is asked of the page through `composables/windowClose.ts` (`src-tauri/src/windows.rs`).
 - Menus and popups are teleported to `<body>` with fixed positioning (`UiMenu`, `GitBranchPopup`) so no
   ancestor can clip or cover them. Keep it that way.
 
@@ -155,6 +161,19 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   (and about:blank) and never get Mango's IPC. The MCP server that hands agents the browser tools binds 127.0.0.1 only, and
   each chat's URL carries its own secret token. Each webview is a native view drawn over all HTML: every floating layer
   (menu, dialog, popup, a resize drag) registers with `useOverlay`/`holdOverlay` so the browsers hide while it is up.
+- Language servers (`src-tauri/src/lsp/`, `app/lsp/`): they can run a project's code, so they start only through `lsp/service.ts`, in
+  local projects the user allowed (`allowed` in `lsp/store.ts`), never for `env://`. The frontend names an id; the backend resolves
+  the program outside the project (never `node_modules/.bin`, the current folder or a rustup proxy). `lsp_send` and `lsp_stop` are
+  synchronous commands on purpose (message order) and must not block. What servers say is untrusted: keep `lsp/convert.ts` strict
+  and Monaco's markdown text-only (`monaco.ts`; check that deep import when upgrading Monaco). Prove backend changes with the
+  ignored `lsp::tests::real_*` tests. A chat's worktree takes its project's answer only while `lsp/folder.rs` proves it a
+  linked git worktree of it, and a yes only while it is also the folder bound to that yes (`languageServersWorktree`: where
+  Mango adds a worktree, it calls `worktreeMade`); any other folder, Unity VCS workspaces included, answers for itself. A
+  folder's own no always wins. `lsp/folder.rs` follows a path it read only past `near`: looking asks no other computer.
+- Monaco's workers answer about one file and edit only its current text (`lsp/builtins.ts`): never share a program between
+  models, reuse a model URI, trust markdown or let a link run a command. When upgrading Monaco check its deep imports
+  (`monaco.ts`, `lsp/tsWorker.ts`), the suggest-controller internals in `editorFeel.ts`, and the TypeScript and
+  tokenization internals in `lsp/builtins.ts`.
 - Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
   call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
   `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
@@ -202,6 +221,9 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   into its environment (`utils/remoteChats.ts`, fed by what `chatHistory.ts` saves), stored with `env://@` in place of
   this computer's server id; a chat read from there must stay inside that environment (`parseShared`). Prefs persist to localStorage
   (`workspace.ts`). Loading must tolerate data written by older builds (`normalizeLoaded`).
+- Files save themselves (`utils/autoSave.ts`, `stores/files.ts`): whatever changes project files from outside the editor runs in
+  `files.aroundChange`, and whatever only reads them in `aroundRead` or after `saveAll`, so a save can neither be missed nor undo
+  it. Saves keep `expectedHash`, and `expectedModifiedMs` for where there is no hash. An open model is reloaded with `reloadDocument`, never `setValue`.
 - Git is slow and external: all git state goes through `stores/git.ts`, which refreshes after every action.
 - A chat may work in its own linked git worktree (`Thread.worktree`, `utils/worktrees.ts`). "New chat in a worktree"
   makes a chat with `awaitingWorktree` set: it runs nowhere until its first send, which adds the worktree on a branch

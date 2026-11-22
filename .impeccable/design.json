@@ -1195,7 +1195,7 @@
       {
         "name": "shadow-pop",
         "value": "0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35)",
-        "purpose": "Dark theme. Menus, dialogs, the command palette. Always with a line border on the raised ground."
+        "purpose": "Dark theme. Menus, dialogs, the command palette, the editor's floating widgets. Always with a line border on the raised ground."
       },
       {
         "name": "shadow-pop-light",
@@ -1525,7 +1525,7 @@
       },
       {
         "name": "The Floating Shadow Rule",
-        "body": "Shadows belong to layers that float: menus, dialogs, the palette, and the composer. Rows, cards in the flow, tabs and rails are flat.",
+        "body": "Shadows belong to layers that float: menus, dialogs, the palette, and the composer. Rows, cards in the flow, tabs and rails are flat. The editor's completion, hover and parameter widgets float too: raised ground, `line` border, 8px corners, Pop shadow.",
         "section": "elevation"
       },
       {
@@ -1543,19 +1543,20 @@
       "Do keep `text-rendering: geometricPrecision` on the root.",
       "Do mark readable or copyable content with `.selectable`; leave chrome unselectable.",
       "Do truncate with an ellipsis and keep a `title` on the element; the frame must hold at 960 by 600px.",
-      "Do keep state transitions at 120ms and panel or dialog movement at 220ms on `--ease-out`, and honour `prefers-reduced-motion` (the base stylesheet already collapses durations).",
+      "Do keep state transitions at 120ms and panel or dialog movement at 220ms on `--ease-out`, and honour `prefers-reduced-motion` (the base stylesheet already collapses durations; \"Full\" overrides it for the editor caret).",
+      "Do let the editor caret glide over `--dur-med` on `--ease-out` whenever the user moves it, typing included, and never on a file switch or a reload. The Smooth caret setting turns it off, and so does Mango's Animations setting when reduced (\"Full\" overrides the OS).",
       "Do write labels in sentence case and show shortcuts as keycaps."
     ],
     "donts": [
       "Don't set text in `accent` or fill with `accent-ink`.",
       "Don't signal status with colour alone, and don't draw status as a plain round dot where the ripeness dot belongs.",
-      "Don't introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette.",
+      "Don't introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette, which the Actions job log and the editor's syntax and completion-kind icons also use.",
       "Don't let a scheme touch `ripe-*` or `diff-*` (The Scheme Rule).",
-      "Don't put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette and the composer.",
+      "Don't put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette, the editor's floating widgets and the composer.",
       "Don't separate surfaces with a border alone when they are at different depths; change the ground.",
       "Don't use monospace for anything that is not code, a path, a branch or terminal output.",
       "Don't write a raw colour, pixel font size or duration in a component when a token exists.",
-      "Don't animate anything that is not a state change or work in progress."
+      "Don't animate anything that is not a state change, work in progress or the editor caret's glide."
     ]
   }
 }

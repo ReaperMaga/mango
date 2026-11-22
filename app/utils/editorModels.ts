@@ -7,19 +7,39 @@ import type * as Monaco from 'monaco-editor'
  */
 export interface EditorModel {
   model: Monaco.editor.ITextModel
-  /** Alternative version id at the last load or save: dirty when the model's differs. */
+  /** Alternative version id at the last load or save: dirty when the model's differs. None while the disk may differ (`NOT_SAVED`). */
   savedVersion: number
   /** The store's `version` the model was last filled from. */
   loadedVersion: number
   viewState: Monaco.editor.ICodeEditorViewState | null
 }
 
+/** A save failed that may have changed the disk: no version of the model is the saved one, whatever is undone. */
+export const NOT_SAVED = -1
+
 const models = new Map<string, EditorModel>()
+let onEdit: ((tabId: string) => void) | null = null
+
+/**
+ * Hear of every edit in any tab's model (shown in a pane or not), by the tab id it has then. A model
+ * refilled from disk is no edit. One listener (`composables/useAutoSave.ts`).
+ */
+export function onEditorModelEdit(listener: (tabId: string) => void): () => void {
+  onEdit = listener
+  return () => { if (onEdit === listener) onEdit = null }
+}
 
 export const editorModel = (tabId: string) => models.get(tabId) ?? null
 
 export function setEditorModel(tabId: string, entry: EditorModel) {
   models.set(tabId, entry)
+  entry.model.onDidChangeContent((e) => {
+    if (e.isFlush || !onEdit) return
+    // Looked up each time: a rename gives the model another tab.
+    for (const [id, held] of models) {
+      if (held === entry) return onEdit(id)
+    }
+  })
 }
 
 /** The tab's file was renamed: its edits, undo history and scroll position go to the new tab id. */

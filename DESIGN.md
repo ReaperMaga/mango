@@ -331,7 +331,7 @@ The ripening scale. Each status has a mark grade (the fruit, small dots, tinted 
 - **Hover Wash** and **Active Wash** (`bg-hover`, `bg-active`): translucent, so they work on any ground. Hover and "shown" use the first; pressed, current and selected use the second.
 - **Lines** (`line-soft`, `line`, `line-strong`): hairlines. Soft for dividers between regions, regular for the outline of a panel or control, strong for hover outlines and scrollbar thumbs.
 - **Ink** (`fg`, `fg-muted`, `fg-subtle`, `fg-faint`): four steps. Primary text; secondary text and resting row titles; meta, hints and resting icons; timestamps and placeholders. The faintest step still clears 4.5:1 on every ground in both themes.
-- **Terminal palette** (`--term-*` in tokens.css): a 16-colour ANSI set per theme, read by xterm at runtime. It is not used anywhere else. Its background and foreground follow the scheme; the ANSI colours do not.
+- **Terminal palette** (`--term-*` in tokens.css): a 16-colour ANSI set per theme, read by xterm at runtime. Also the Actions job log's ANSI colours and the editor's syntax and completion-kind icon colours; nowhere else in the chrome. Its background and foreground follow the scheme; the ANSI colours do not.
 
 ### Color Schemes
 Three root variables drive every neutral: `--hue-ground` (grounds, lines, shadows, scrim, idle stem; 160 in Mango), `--hue-ink` (text; 150 in Mango) and `--ground-tint` (a chroma multiplier; 1 in Mango, 0 is pure grey). The light theme swaps the two hues between grounds and ink. A scheme sets those three and, unless it keeps the mango accent, its own accent family (`accent`, `accent-strong`, `accent-fg`, `accent-ink`, `accent-soft`, `accent-line`, `selection`, `focus-ring`) for each theme. The per-scheme values are in the sidecar under `extensions.schemes`.
@@ -400,7 +400,7 @@ In the light theme panel and raised are both white, so the top two rungs are tol
 Stacking is fixed: resize handles 5, titlebar 20, menus 50, dialogs 60, command palette 70. Dialogs and the palette sit over a scrim (`scrim`; the palette's is thinner, at 70%).
 
 ### Shadow Vocabulary
-- **Pop** (`--shadow-pop`; dark: `0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35)`): menus, dialogs, the command palette. Always paired with a `line` border and the raised ground.
+- **Pop** (`--shadow-pop`; dark: `0 12px 32px -8px oklch(0.05 0.01 160 / 0.6), 0 2px 6px oklch(0.05 0.01 160 / 0.35)`): menus, dialogs, the command palette, the editor's floating widgets. Always paired with a `line` border and the raised ground.
 - **Soft** (`--shadow-soft`; dark: `0 4px 14px -6px oklch(0.05 0.01 160 / 0.5)`): the composer, which is docked but lifted above the transcript.
 - **Focus halo** (`0 0 0 3px` in `accent-soft`): around a focused text input and around the composer when focus is inside it. Not elevation; it is the field-level focus treatment.
 
@@ -409,7 +409,7 @@ Both shadows are tinted with the ground hue and are much lighter in the light th
 ### Named Rules
 **The Lightness Ladder Rule.** A surface that is closer to the user is lighter: app, then canvas, then panel, then raised. Never lift a surface with a border alone, and never put a darker surface above a lighter one, except the inset well, which reads as a cut into its parent.
 
-**The Floating Shadow Rule.** Shadows belong to layers that float: menus, dialogs, the palette, and the composer. Rows, cards in the flow, tabs and rails are flat.
+**The Floating Shadow Rule.** Shadows belong to layers that float: menus, dialogs, the palette, and the composer. Rows, cards in the flow, tabs and rails are flat. The editor's completion, hover and parameter widgets float too: raised ground, `line` border, 8px corners, Pop shadow.
 
 ## Shapes
 
@@ -498,16 +498,17 @@ Colour changes over 220ms and the fill level over 420ms, so a status change is s
 - **Do** keep `text-rendering: geometricPrecision` on the root.
 - **Do** mark readable or copyable content with `.selectable`; leave chrome unselectable.
 - **Do** truncate with an ellipsis and keep a `title` on the element; the frame must hold at 960 by 600px.
-- **Do** keep state transitions at 120ms and panel or dialog movement at 220ms on `--ease-out`, and honour `prefers-reduced-motion` (the base stylesheet already collapses durations).
+- **Do** keep state transitions at 120ms and panel or dialog movement at 220ms on `--ease-out`, and honour `prefers-reduced-motion` (the base stylesheet already collapses durations; "Full" overrides it for the editor caret).
+- **Do** let the editor caret glide over `--dur-med` on `--ease-out` whenever the user moves it, typing included, and never on a file switch or a reload. The Smooth caret setting turns it off, and so does Mango's Animations setting when reduced ("Full" overrides the OS).
 - **Do** write labels in sentence case and show shortcuts as keycaps.
 
 ### Don't:
 - **Don't** set text in `accent` or fill with `accent-ink`.
 - **Don't** signal status with colour alone, and don't draw status as a plain round dot where the ripeness dot belongs.
-- **Don't** introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette.
+- **Don't** introduce a second accent hue within a scheme. Colour outside the scheme's accent family and the ripening scale is reserved for the terminal's ANSI palette, which the Actions job log and the editor's syntax and completion-kind icons also use.
 - **Don't** let a scheme touch `ripe-*` or `diff-*` (The Scheme Rule).
-- **Don't** put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette and the composer.
+- **Don't** put shadows on rows, tabs, rails or cards in the flow; shadows are for menus, dialogs, the palette, the editor's floating widgets and the composer.
 - **Don't** separate surfaces with a border alone when they are at different depths; change the ground.
 - **Don't** use monospace for anything that is not code, a path, a branch or terminal output.
 - **Don't** write a raw colour, pixel font size or duration in a component when a token exists.
-- **Don't** animate anything that is not a state change or work in progress.
+- **Don't** animate anything that is not a state change, work in progress or the editor caret's glide.

@@ -10,6 +10,7 @@ import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
+import { useLanguageServers } from '~/lsp/store'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
@@ -101,6 +102,19 @@ export interface ProjectPrefs {
   archived?: boolean
   /** Files and folders excluded in the Files view, relative to the project (forward slashes); its worktrees share them. */
   excluded?: string[]
+  /**
+   * Language servers may run in this project (they can run its code: build scripts, plugins).
+   * Missing: not answered yet, so none starts. Its linked git worktrees share a no, and those bound
+   * to it (`languageServersWorktree`) a yes.
+   */
+  languageServers?: boolean
+  /** The folder that answer was given for (`lsp_folder`): one made again at the same path asks again. */
+  languageServersFolder?: string
+  /**
+   * A worktree's folder as Mango made it, or as it was when the user said yes there: only that folder
+   * takes its project's yes, not another put at its path.
+   */
+  languageServersWorktree?: string
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
@@ -112,7 +126,7 @@ export interface ConfirmAsk { title: string; body: string; label: string; danger
 export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 /** Built-in sections, plus `plugin:<pluginId>.<pageId>` for a settings page a plugin registered (Settings > Plugins when it is gone). */
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'editor' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -231,7 +245,7 @@ let tabSeq = 0
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
-  'openProjectIn', 'gitLogWidth'] as const
+  'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
 /** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
 const KNOWN_TABS_KEY = 'builtInTabs'
 
@@ -301,6 +315,12 @@ const initialState = () => {
       terminalFontSize: (prefs.terminalFontSize ?? 12.5) as number,
       terminalCursorStyle: (prefs.terminalCursorStyle ?? 'bar') as CursorStyle,
       terminalCursorBlink: (prefs.terminalCursorBlink ?? true) as boolean,
+      /** Settings > Editor: files save themselves. On unless turned off. */
+      editorAutoSave: prefs.editorAutoSave !== false,
+      /** Settings > Editor: the caret glides between positions. On unless turned off. */
+      editorSmoothCaret: prefs.editorSmoothCaret !== false,
+      /** Settings > Editor: offer language servers at all; each project still has to allow them (`ProjectPrefs.languageServers`). */
+      editorLanguageServers: prefs.editorLanguageServers !== false,
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
@@ -444,6 +464,9 @@ export const useWorkspace = defineStore('workspace', {
           terminalFontSize: this.terminalFontSize,
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
+          editorAutoSave: this.editorAutoSave,
+          editorSmoothCaret: this.editorSmoothCaret,
+          editorLanguageServers: this.editorLanguageServers,
           defaultMode: this.defaultMode,
           envEditMode: this.envEditMode,
           envExtraFiles: this.envExtraFiles,
@@ -462,7 +485,9 @@ export const useWorkspace = defineStore('workspace', {
           activeProjectPath: this.activeProjectPath,
         }
         // Another window writes the shared prefs only; the main window's layout and projects stay.
-        if (!useWindows().isMain) {
+        // Nor does a parked main one: what is stored is the session of the windows on screen.
+        const win = useWindows()
+        if (!win.isMain || win.parked) {
           const stored = loadPrefs()
           for (const k of [...WINDOW_KEYS, KNOWN_TABS_KEY]) {
             if (k in stored) all[k] = stored[k]
@@ -485,6 +510,7 @@ export const useWorkspace = defineStore('workspace', {
 
     async init() {
       this.applyTheme()
+      useLanguageServers().follow()
       // "System" follows the OS while the app is open.
       window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
       window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => this.applyTheme())
@@ -572,6 +598,20 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
+    /**
+     * The main window is being parked: what it had open is not next time's session. Left alone when
+     * the last window on screen already handed its own over.
+     */
+    forgetSession() {
+      try {
+        const stored = loadPrefs()
+        const own = [...this.openProjects, ...this.lent].map(p => p.path)
+        if (JSON.stringify(stored.openProjects ?? []) !== JSON.stringify(own)) return
+        stored.openProjects = []
+        stored.activeProjectPath = null
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to forget */ }
+    },
     /**
      * The last window on screen is closing while the main window is parked: its projects become
      * the ones the main window reopens next time Mango starts.
@@ -687,6 +727,7 @@ export const useWorkspace = defineStore('workspace', {
     /** A project just created or cloned (`info` from the backend): open it where the user says. */
     async placeProject(info: ProjectInfo): Promise<'this' | 'new' | null> {
       this.dialog = null
+      this.forgetConsent(info.path)
       const where = await this.chooseWhere(info.path, info.name)
       if (where === 'this') this.adopt(info)
       else if (where === 'new') await this.openInWindow(info.path)
@@ -814,6 +855,15 @@ export const useWorkspace = defineStore('workspace', {
       if (isEnvPath(path)) saveEnvProjects(loadEnvProjects().filter(r => r.path !== path))
       else await call('forget_project', { path }).catch(() => {})
       this.recent = this.recent.filter(r => r.path !== path)
+      this.forgetConsent(path)
+    },
+
+    /** What ends with a project (removed, or another created or cloned at its path): its answer about language servers. */
+    forgetConsent(path: string) {
+      const prefs = this.projectPrefs[path]
+      if (prefs?.languageServers !== undefined || prefs?.languageServersFolder) {
+        this.setProjectPref(path, { languageServers: null, languageServersFolder: null })
+      }
     },
 
     setActiveProject(path: string) {
@@ -871,6 +921,12 @@ export const useWorkspace = defineStore('workspace', {
       root.motion = this.motion === 'system'
         ? (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full')
         : this.motion
+    },
+
+    /** Settings > Editor. */
+    setEditor(patch: Partial<Record<'editorAutoSave' | 'editorSmoothCaret' | 'editorLanguageServers', boolean>>) {
+      Object.assign(this, patch)
+      this.persist()
     },
 
     /* ---------- layout ---------- */
@@ -947,7 +1003,11 @@ export const useWorkspace = defineStore('workspace', {
      */
     setProjectPref(path: string, patch: Partial<Record<keyof ProjectPrefs, ProjectPrefs[keyof ProjectPrefs] | null>>) {
       const next: Record<string, unknown> = { ...this.projectPrefs[path], ...patch }
-      for (const k of Object.keys(next)) if (next[k] === null || next[k] === undefined || next[k] === '' || next[k] === false) delete next[k]
+      for (const k of Object.keys(next)) {
+        const v = next[k]
+        // False means "no override", except for language servers, where a no is an answer to remember.
+        if (v === null || v === undefined || v === '' || (v === false && k !== 'languageServers')) delete next[k]
+      }
       if (Object.keys(next).length) this.projectPrefs[path] = next as ProjectPrefs
       else delete this.projectPrefs[path]
       this.persist()

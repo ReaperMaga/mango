@@ -1,4 +1,4 @@
-import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServer, LspServerId, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
@@ -10,6 +10,7 @@ import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { mockPlugins } from '~/composables/mockPlugins'
 import { isEnvPath } from '~/utils/envPath'
+import { invoke } from '@tauri-apps/api/core'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -99,7 +100,7 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
   const refused = refuseRemote(cmd, args)
   if (refused) throw refused
   if (isTauri()) {
-    const { invoke } = await import('@tauri-apps/api/core')
+    // Sent before the caller's task ends, so no dynamic import: the page may hang right after (`tellUnsaved`).
     return invoke<Result<K>>(cmd, (args ?? {}) as Record<string, unknown>)
   }
   return mock.call(cmd, args ?? ({} as Args<K>))
@@ -108,7 +109,10 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
 export async function on<E extends keyof Events>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
   if (isTauri()) {
     const { listen } = await import('@tauri-apps/api/event')
-    return listen<Events[E]>(event, e => handler(e.payload))
+    // Language servers and a window's close talk only to their own window, and Tauri gives a listener
+    // without a target every event.
+    const target = event.startsWith('lsp://') || event === 'window://close' ? tauriLabel() : undefined
+    return listen<Events[E]>(event, e => handler(e.payload), target ? { target } : undefined)
   }
   return mock.on(event, handler)
 }
@@ -180,21 +184,6 @@ export const appWindow = {
     }
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().close()
-  },
-  /**
-   * Run `before` when the window is asked to close (titlebar, the OS, the main window closing),
-   * then close it. In the browser preview, when the tab goes (best effort: the page may be gone first).
-   */
-  async onClose(before: () => Promise<void>) {
-    if (!isTauri()) {
-      window.addEventListener('pagehide', () => { void before() })
-      return
-    }
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().onCloseRequested(async () => {
-      // Never keep a window open because saving failed: it closes either way.
-      await Promise.race([before().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
-    })
   },
 }
 
@@ -289,6 +278,25 @@ const mock = (() => {
     }, 250 + lines.length * 420)
   }
 
+  /* Language servers: none runs or installs here, so the editor shows what it shows without one. */
+  const lspServers: LspServer[] = ([
+    ['typescript', 'typescript-language-server', ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'], 'npm install -g typescript-language-server typescript@6', 'https://github.com/typescript-language-server/typescript-language-server#installing'],
+    ['rust', 'rust-analyzer', ['rust'], 'rustup component add rust-analyzer', 'https://rust-analyzer.github.io/book/installation.html'],
+    ['python', 'pyright', ['python'], 'npm install -g pyright', 'https://microsoft.github.io/pyright/#/installation'],
+    ['go', 'gopls', ['go'], 'go install golang.org/x/tools/gopls@latest', 'https://go.dev/gopls/#installation'],
+    ['clangd', 'clangd', ['c', 'cpp'], null, 'https://clangd.llvm.org/installation'],
+    ['csharp', 'csharp-ls', ['csharp'], 'dotnet tool install --global csharp-ls', 'https://github.com/razzmatazz/csharp-language-server'],
+  ] satisfies [LspServerId, string, string[], string | null, string][])
+    .map(([id, name, languages, install, helpUrl]) => ({ id, name, languages, installed: false, path: null, install, helpUrl }))
+  function fakeLspInstall(id: string, server: LspServerId) {
+    const lines = [
+      `\x1b[2m$ ${lspServers.find(s => s.id === server)?.install}\x1b[0m`,
+      'Simulated: the browser preview installs nothing. In the Mango app this runs the installer.',
+    ]
+    lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
+    setTimeout(() => emit('pty://exit', { id, code: 1 }), 250 + lines.length * 420)
+  }
+
   /* Voice: models "download" in a few seconds; transcription answers with a labelled stand-in. */
   const voiceModels: VoiceModel[] = [
     { id: 'tiny', name: 'Tiny', sizeBytes: 153_544_121, downloaded: false, downloading: false },
@@ -373,6 +381,9 @@ const mock = (() => {
       // Browser windows cannot see each other's place on the screen.
       case 'window_at': return null
       case 'window_alone': return true
+      // The browser asks nobody before a tab closes (composables/windowClose.ts).
+      case 'window_close_heard': return true
+      case 'window_close_answer': case 'window_unsaved': return
       case 'chats_remote_list':
         return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
       case 'chats_remote_fetch': {
@@ -450,6 +461,15 @@ const mock = (() => {
         fakeInstall(id, args.tool)
         return id
       }
+      case 'lsp_servers': return lspServers.map(s => ({ ...s }))
+      case 'lsp_folder': return isEnvPath(args.project) ? null : `preview:${args.project}`
+      case 'lsp_install': {
+        const id = newPtyId()
+        fakeLspInstall(id, args.server)
+        return id
+      }
+      case 'lsp_start': throw new Error('Language servers run only inside the Mango desktop app; the browser preview has none.')
+      case 'lsp_send': case 'lsp_stop': return
       // Local or in a remote environment (`remote`), the preview has no CLI: runAgentTurn simulates instead.
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': case 'agent_reconnect_now': return
@@ -459,12 +479,15 @@ const mock = (() => {
         notes: 'Simulated update: the browser preview has no releases to install.',
         dateMs: now - 1000 * 60 * 60 * 3,
       }
-      case 'update_install': {
+      case 'update_download': {
         const total = 18_400_000
         for (let downloaded = 0; downloaded < total; downloaded += 1_150_000) {
           await new Promise(r => setTimeout(r, 120))
           emit('update://progress', { downloaded, total })
         }
+        return
+      }
+      case 'update_install': {
         throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
       }
       case 'attachment_save': return fakeAttachment(args.name, args.data)
