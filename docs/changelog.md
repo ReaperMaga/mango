@@ -2,6 +2,22 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.40
+
+### New
+
+- Add view options and excluded files to the Files view.
+- Build the Git log into Mango, so it no longer needs a plugin: an installed Git log plugin stops running and can be removed.
+- Add create, rename, duplicate and delete to the Files view.
+- List a fork under the chat it was branched from.
+
+### Fixes
+
+- Show restore on the maximize button when maximized, keep new chat on one line.
+- Recognise ignored files in and next to submodules and linked folders.
+- Show an empty history in the Git log for a repository with no commits.
+- Keep what you type elsewhere out of a file that finishes opening.
+
 ## 0.1.39
 
 ### New
