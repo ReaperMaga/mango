@@ -174,7 +174,8 @@ export function pluginSystemPrompt(): string {
     .map(p => read(p.text, p.pluginId, '', 'appendSystemPrompt'))
     .filter(t => typeof t === 'string' && t.trim())
     .map(t => t.trim())
-    .join('\n\n')
+    // Not a line break: a CLI installed as a Windows batch file refuses arguments that have one.
+    .join(' ')
 }
 
 /* ---------- lookups */
