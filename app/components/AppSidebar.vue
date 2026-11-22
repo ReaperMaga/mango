@@ -247,7 +247,13 @@ function subsOpen(t: Thread) {
 function subsLabel(t: Thread) {
   const all = descendants(t.id)
   const working = all.filter(c => c.status === 'running' || c.status === 'queued').length
-  return { count: `${all.length} sub-agent${all.length === 1 ? '' : 's'}`, working }
+  const forks = all.filter(c => c.forkOf).length
+  const agents = all.length - forks
+  const count = [
+    forks ? `${forks} fork${forks === 1 ? '' : 's'}` : '',
+    agents ? `${agents} sub-agent${agents === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+  return { count, working }
 }
 
 /* inline rename */

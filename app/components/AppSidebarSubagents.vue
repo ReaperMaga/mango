@@ -49,7 +49,7 @@ function menu(t: Thread): MenuItem[] {
   const busy = t.status === 'running' || t.status === 'queued'
   return [
     { label: 'Open to the side', icon: Columns2, onSelect: () => threads.split(t.id) },
-    { label: 'Delete sub-agent chat', icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => ws.confirmThen('delete', { title: 'Delete sub-agent chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
+    { label: t.forkOf ? 'Delete chat' : 'Delete sub-agent chat', icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => ws.confirmThen('delete', { title: t.forkOf ? 'Delete chat?' : 'Delete sub-agent chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
   ]
 }
 </script>
@@ -62,7 +62,7 @@ function menu(t: Thread): MenuItem[] {
         :class="{ 'is-current': c.id === threads.activePane.threadId, 'is-visible': visibleIds.has(c.id) }"
         role="button"
         tabindex="0"
-        :title="`${c.agentType ?? 'Sub-agent'}: ${c.title}`"
+        :title="`${c.forkOf ? 'Fork' : (c.agentType ?? 'Sub-agent')}: ${c.title}`"
         @click="open(c)"
         @keydown.enter.prevent="open(c)"
         @contextmenu.prevent="menus[c.id]?.showAt($event.clientX, $event.clientY)"
