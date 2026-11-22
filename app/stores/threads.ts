@@ -37,6 +37,8 @@ const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toStr
 const isCommand = (text: string) => /^\/[\w.:-]+(\s|$)/.test(text.trim())
 /** Mango's own `/clear`: handled here, never sent to the agent. */
 const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
+/** A turn waits this long for open files to save; a slower save still lands, checked against the disk. */
+const AGENT_SAVE_MS = 10_000
 
 export interface Pane { id: string; threadId: string | null }
 
@@ -283,7 +285,9 @@ export const useThreads = defineStore('threads', {
       const projects = new Set(this.threads.filter(t => gone.has(t.id)).map(t => t.projectPath))
       this.threads = this.threads.filter(t => !gone.has(t.id))
       for (const p of projects) if (this.threads.some(t => t.projectPath === p)) projects.delete(p)
-      const leaving = (tab: string) => gone.has(tab) || (!this.byId(tab) && projects.has(this.projectOf(tab) ?? ''))
+      // With autosave, text that could not be saved stays in this window, which asks before it closes.
+      const kept = new Set(useWorkspace().editorAutoSave ? this.tabs.filter(tab => isFileTab(tab) && useFiles().isUnsaved(tab)) : [])
+      const leaving = (tab: string) => gone.has(tab) || (!this.byId(tab) && !kept.has(tab) && projects.has(this.projectOf(tab) ?? ''))
       for (const tab of this.tabs.filter(leaving)) {
         const browser = parseBrowserTab(tab)
         if (browser) useBrowser().forget(browser.browserId)
@@ -521,7 +525,7 @@ export const useThreads = defineStore('threads', {
       const users = this.threads.filter(x => x.worktree === folder)
       const term = vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
       if (users.some(isBusy)) throw new Error(`A chat is still working in this ${term}. Stop it first.`)
-      await call('git_worktree_remove', { path: t.projectPath, worktree: folder, force })
+      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: t.projectPath, worktree: folder, force }))
       this.forgetWorktree(t.projectPath, folder)
     },
 
@@ -586,13 +590,19 @@ export const useThreads = defineStore('threads', {
       else if (this.panes.length > 1) this.closePane(paneId)
     },
 
-    closeTab(id: string) {
+    closeTab(id: string, discard = false) {
       const i = this.tabs.indexOf(id)
       if (i === -1) return
-      // A file with unsaved edits asks first, in its own pane.
-      if (parseFileTab(id) && useFiles().isDirty(id)) {
+      const files = !discard && isFileTab(id) ? useFiles() : null
+      if (files?.isUnsaved(id)) {
+        // With autosave it closes once it has saved, and asks only when that fails.
+        if (useWorkspace().editorAutoSave) {
+          void files.closeWhenSaved(id)
+          return
+        }
+        // A file with unsaved edits asks first, in its own pane.
         this.show(id)
-        useFiles().askClose(id)
+        files.askClose(id)
         return
       }
       const diff = parseDiffTab(id)
@@ -962,7 +972,11 @@ export const useThreads = defineStore('threads', {
         return
       }
       // A command waits for the turn to end and then runs on its own; anything else steers.
-      if (!isCommand(q.text) && await steerRun(id, q.text, q.attachments)) return
+      if (!isCommand(q.text)) {
+        await this._saveFilesOf(id)
+        // Not when it was stopped while the files saved: then it waits with the rest.
+        if (!held.has(id) && await steerRun(id, q.text, q.attachments)) return
+      }
       const waiting = this.queue[id] ?? (this.queue[id] = [])
       waiting.unshift({ ...q, shown: true })
       // The turn may have ended while the steer was being tried: nothing else would send it then.
@@ -1130,6 +1144,7 @@ export const useThreads = defineStore('threads', {
         // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
         if (t.status !== 'queued') { stopFlags.delete(id); return }
       }
+      if (!await this._saveForAgent(id)) return
       // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
       const prompt = createPrPrompt(text) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
@@ -1137,6 +1152,23 @@ export const useThreads = defineStore('threads', {
       await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
       if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
       emitTurnEnd(id, this.byId(id)?.status !== 'error')
+    },
+
+    /** The agent reads the saved text: save what is open in the folders it works in. */
+    async _saveFilesOf(id: string) {
+      const t = this.byId(id)
+      if (!t) return
+      const files = useFiles()
+      await files.saveAll(AGENT_SAVE_MS, files.touching(t.projectPath, this.workdirFor(id) ?? t.projectPath))
+    },
+
+    /** A turn is about to start. False when it was stopped while the files saved. */
+    async _saveForAgent(id: string): Promise<boolean> {
+      if (!useWorkspace().editorAutoSave) return true
+      await this._saveFilesOf(id)
+      if (this.byId(id)?.status === 'queued') return true
+      stopFlags.delete(id)
+      return false
     },
 
     /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */

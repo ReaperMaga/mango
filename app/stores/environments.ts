@@ -6,6 +6,8 @@ import type {
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
+import { envPath } from '~/utils/envPath'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
@@ -339,6 +341,9 @@ export const useEnvironments = defineStore('environments', {
       this.busy[key] = 'rename'
       // Its desktop tunnel points at the old name and dies with the stop anyway.
       await this.closeDesktop(hostId, instance)
+      // Open files are saved while their paths are still right.
+      const files = useFiles()
+      await files.saveAll(10_000, files.touching(envPath({ hostId, instance, dir: '/' })))
       let note: string | null
       try {
         note = await call('env_rename', { hostId, instance, newName: name })

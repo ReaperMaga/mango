@@ -101,6 +101,11 @@ export interface ProjectPrefs {
   archived?: boolean
   /** Files and folders excluded in the Files view, relative to the project (forward slashes); its worktrees share them. */
   excluded?: string[]
+  /**
+   * Language servers may run in this project (they can run its code: build scripts, plugins).
+   * Missing: not answered yet, so none starts. Its worktrees share it.
+   */
+  languageServers?: boolean
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
@@ -112,7 +117,7 @@ export interface ConfirmAsk { title: string; body: string; label: string; danger
 export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 /** Built-in sections, plus `plugin:<pluginId>.<pageId>` for a settings page a plugin registered (Settings > Plugins when it is gone). */
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
+export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'editor' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -231,7 +236,7 @@ let tabSeq = 0
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
-  'openProjectIn', 'gitLogWidth'] as const
+  'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
 /** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
 const KNOWN_TABS_KEY = 'builtInTabs'
 
@@ -301,6 +306,12 @@ const initialState = () => {
       terminalFontSize: (prefs.terminalFontSize ?? 12.5) as number,
       terminalCursorStyle: (prefs.terminalCursorStyle ?? 'bar') as CursorStyle,
       terminalCursorBlink: (prefs.terminalCursorBlink ?? true) as boolean,
+      /** Settings > Editor: files save themselves. On unless turned off. */
+      editorAutoSave: prefs.editorAutoSave !== false,
+      /** Settings > Editor: the caret glides between positions. On unless turned off. */
+      editorSmoothCaret: prefs.editorSmoothCaret !== false,
+      /** Settings > Editor: offer language servers at all; each project still has to allow them (`ProjectPrefs.languageServers`). */
+      editorLanguageServers: prefs.editorLanguageServers !== false,
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
@@ -444,6 +455,9 @@ export const useWorkspace = defineStore('workspace', {
           terminalFontSize: this.terminalFontSize,
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
+          editorAutoSave: this.editorAutoSave,
+          editorSmoothCaret: this.editorSmoothCaret,
+          editorLanguageServers: this.editorLanguageServers,
           defaultMode: this.defaultMode,
           envEditMode: this.envEditMode,
           envExtraFiles: this.envExtraFiles,
@@ -873,6 +887,12 @@ export const useWorkspace = defineStore('workspace', {
         : this.motion
     },
 
+    /** Settings > Editor. */
+    setEditor(patch: Partial<Record<'editorAutoSave' | 'editorSmoothCaret' | 'editorLanguageServers', boolean>>) {
+      Object.assign(this, patch)
+      this.persist()
+    },
+
     /* ---------- layout ---------- */
     toggleSidebar() {
       this.sidebarOpen = !this.sidebarOpen
@@ -947,7 +967,11 @@ export const useWorkspace = defineStore('workspace', {
      */
     setProjectPref(path: string, patch: Partial<Record<keyof ProjectPrefs, ProjectPrefs[keyof ProjectPrefs] | null>>) {
       const next: Record<string, unknown> = { ...this.projectPrefs[path], ...patch }
-      for (const k of Object.keys(next)) if (next[k] === null || next[k] === undefined || next[k] === '' || next[k] === false) delete next[k]
+      for (const k of Object.keys(next)) {
+        const v = next[k]
+        // False means "no override", except for language servers, where a no is an answer to remember.
+        if (v === null || v === undefined || v === '' || (v === false && k !== 'languageServers')) delete next[k]
+      }
       if (Object.keys(next).length) this.projectPrefs[path] = next as ProjectPrefs
       else delete this.projectPrefs[path]
       this.persist()

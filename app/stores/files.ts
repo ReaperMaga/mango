@@ -1,7 +1,11 @@
 import { defineStore } from 'pinia'
 import type { FileContent, FsAhead, FsDeleted, FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { useGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
+import { useWorkspace } from '~/stores/workspace'
+import { compareDisk, createAutoSave, overlaps, saveTiming } from '~/utils/autoSave'
+import { envPath, parseEnvPath } from '~/utils/envPath'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
@@ -18,6 +22,10 @@ import { SplitError, companionsOf, removeTogether, renameTogether, type Folder, 
  * rests on is read ahead (`preload`), so clicking it opens it at once. An open file keeps what was last read from or
  * written to disk here; the text being edited lives in its Monaco model
  * (`utils/editorModels.ts`), which saving reads from.
+ *
+ * Files save themselves unless Settings > Editor says not to: `utils/autoSave.ts` decides when, this
+ * store writes. What changes project files from outside the editor goes through `aroundChange`, and
+ * what only reads them through `aroundRead` or `saveAll` first.
  */
 
 export interface DirState {
@@ -125,6 +133,34 @@ const textState = (c: FileContent) => ({
   disk: c.text, modifiedMs: c.modifiedMs, dirty: false, conflict: false, saveError: null,
 })
 
+/* ---------- saving ---------- */
+
+/** Picks open files: by their project, folder or path. */
+type Match = (f: OpenFile) => boolean
+const unsaved = (f: OpenFile) => f.dirty || f.saving
+const autoSaves = () => useWorkspace().editorAutoSave
+
+/** The text a write under way, or one that failed, sent: found on disk, it was written after all. */
+const attempted = new WeakMap<OpenFile, string>()
+/** Moves with every read and write of a file, so an answer that was overtaken is dropped. */
+const revs = new WeakMap<OpenFile, number>()
+function nextRev(f: OpenFile) {
+  const rev = (revs.get(f) ?? 0) + 1
+  revs.set(f, rev)
+  return rev
+}
+
+let saver: ReturnType<typeof createAutoSave<OpenFile>> | null = null
+function autoSave() {
+  return saver ??= createAutoSave<OpenFile>({
+    on: autoSaves,
+    open: () => Object.values(useFiles().open),
+    timing: f => saveTiming(!!parseEnvPath(f.projectPath), f.disk?.length ?? 0),
+    lane: f => (parseEnvPath(f.projectPath) ? f.projectPath : null),
+    write: (f, force) => useFiles()._write(f, force),
+  })
+}
+
 export const useFiles = defineStore('files', {
   state: () => ({
     trees: {} as Record<string, ProjectTree>,
@@ -148,6 +184,16 @@ export const useFiles = defineStore('files', {
     unsavedWithin: s => (projectPath: string, path: string) =>
       Object.values(s.open).filter(f => f.projectPath === projectPath && f.dirty && isWithin(f.file, path)).map(f => f.file),
     isDirty: s => (tabId: string | null | undefined) => !!(tabId && s.open[tabId]?.dirty),
+    /** Closing it now would lose text: edited, or still being written. */
+    isUnsaved: s => (tabId: string | null | undefined) => {
+      const f = tabId ? s.open[tabId] : null
+      return !!f && unsaved(f)
+    },
+    /** Unsaved edits to point out: all of them, or with autosave those it cannot save by itself. */
+    showsUnsaved: s => (tabId: string | null | undefined) => {
+      const f = tabId ? s.open[tabId] : null
+      return !!f?.dirty && (!autoSaves() || f.conflict || f.closing || !!f.saveError)
+    },
     isPreview: s => (tabId: string) => {
       const p = parseFileTab(tabId)
       return !!p && s.preview[p.projectPath] === tabId
@@ -300,6 +346,7 @@ export const useFiles = defineStore('files', {
     },
 
     async duplicateFile(projectPath: string, file: string, name: string) {
+      await autoSave().flush(f => f.projectPath === projectPath && f.file === file)
       await call('fs_duplicate', { root: projectPath, file, name })
       await this._changed(projectPath, parentOf(file))
     },
@@ -314,6 +361,8 @@ export const useFiles = defineStore('files', {
       const suffixes = requiredSuffixes(projectPath, from, isDir)
       const inProject = (moves: Move[]) => moves.map(m => ({ from: pathIn(dir, m.from), to: pathIn(dir, m.to) }))
       let moved: Move[]
+      // Nothing is written to the old path meanwhile; edits are saved to the new one afterwards.
+      const release = await this._keepStill(f => f.projectPath === projectPath)
       try {
         moved = inProject(await renameTogether(this._folder(projectPath, dir), nameOf(from), name, suffixes, (moves) => {
           for (const m of inProject(moves)) {
@@ -327,10 +376,12 @@ export const useFiles = defineStore('files', {
         }))
       } catch (e) {
         if (e instanceof SplitError) for (const m of inProject(e.moved)) this._moveTabs(projectPath, m.from, m.to)
+        release()
         if (suffixes.length) await this._changed(projectPath, dir)
         throw e
       }
       for (const m of moved) this._moveTabs(projectPath, m.from, m.to)
+      release()
 
       const tree = this.treeOf(projectPath)
       tree.expanded = tree.expanded.map(d => movedPath(d, from, to) ?? d)
@@ -354,11 +405,17 @@ export const useFiles = defineStore('files', {
      * cannot take it and nothing happened.
      */
     async deleteEntry(projectPath: string, path: string, isDir: boolean, permanent: boolean, along: string[] = []): Promise<EntryDeleted> {
-      for (const p of [path, ...along]) this._refuseWhileSaving(projectPath, p)
+      // With autosave a save is under way often: it is waited for below.
+      if (!autoSaves()) for (const p of [path, ...along]) this._refuseWhileSaving(projectPath, p)
       const key = dirKey(projectPath, path)
       if (this.deleting.includes(key)) throw new Error('It is already being deleted.')
       this.deleting.push(key)
+      const going: Match = f => f.projectPath === projectPath && [path, ...along].some(p => isWithin(f.file, p))
+      let release = () => {}
       try {
+        // The trash gets the text as edited; from then on nothing writes to what goes.
+        if (!permanent) await autoSave().flush(going)
+        release = await this._keepStill(going)
         const dir = parentOf(path)
         const entry = nameOf(path)
         const got = await removeTogether(this._folder(projectPath, dir), entry, along.map(nameOf), n =>
@@ -380,6 +437,7 @@ export const useFiles = defineStore('files', {
         await this._changed(projectPath, parentOf(path))
         throw e
       } finally {
+        release()
         this.deleting = this.deleting.filter(k => k !== key)
       }
     },
@@ -514,7 +572,7 @@ export const useFiles = defineStore('files', {
       }
       const wasOpen = threads.tabs.includes(id)
       const preview = this.preview[projectPath] ?? null
-      if (!wasOpen && !pin && preview && preview !== id && threads.tabs.includes(preview) && !this.open[preview]?.dirty) {
+      if (!wasOpen && !pin && preview && preview !== id && threads.tabs.includes(preview) && !this.isUnsaved(preview)) {
         threads.replaceTab(preview, id)
         this.forget(preview)
       }
@@ -538,6 +596,7 @@ export const useFiles = defineStore('files', {
       const f = this.open[tabId]
       if (!f) return
       f.loading = true
+      nextRev(f)
       try {
         if (imageKind(f.file) === 'raster') {
           const b = await call('fs_read_bytes', { root: f.projectPath, file: f.file })
@@ -573,20 +632,45 @@ export const useFiles = defineStore('files', {
         }
         return
       }
+      const { file } = f
+      const rev = nextRev(f)
+      // An answer from before a save (or a newer read, or a rename) would put old text back in the editor.
+      const overtaken = () => f.saving || f.loading || f.file !== file || revs.get(f) !== rev
       try {
-        const c = await call('fs_read_file', { root: f.projectPath, file: f.file })
-        if (c.modifiedMs === f.modifiedMs && !f.error) return
-        if (f.dirty) {
-          if (c.text !== f.disk) f.conflict = true
+        const c = await call('fs_read_file', { root: f.projectPath, file })
+        if (overtaken()) return
+        // Times can be as coarse as a second: the text decides too.
+        if (c.modifiedMs === f.modifiedMs && c.text === f.disk && !f.error && !f.conflict) {
+          // A read that works may mean a save that failed works now (the connection is back).
+          if (f.dirty && f.saveError) autoSave().edited(f)
           return
         }
-        Object.assign(f, { error: null, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom, modifiedMs: c.modifiedMs })
+        if (f.dirty) {
+          const entry = editorModel(fileTabId(f.projectPath, file))
+          const editing = () => (entry && !entry.model.isDisposed() ? entry.model.getValue() : null)
+          const found = compareDisk(c.text, f.disk, attempted.get(f), editing)
+          if (found === 'changed') {
+            f.conflict = true
+            return
+          }
+          // Touched, or written by us: nothing to ask about, and the next save expects this time.
+          Object.assign(f, { disk: c.text, bom: c.bom, modifiedMs: c.modifiedMs, conflict: false })
+          if (found === 'same' && entry) {
+            entry.savedVersion = entry.model.getAlternativeVersionId()
+            f.dirty = false
+            f.saveError = null
+          } else {
+            autoSave().edited(f)
+          }
+          return
+        }
+        Object.assign(f, { error: null, conflict: false, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom, modifiedMs: c.modifiedMs })
         if (c.text !== f.disk) {
           f.disk = c.text
           f.version++
         }
       } catch (e) {
-        if (!f.dirty) f.error = reason(e)
+        if (!f.dirty && !overtaken()) f.error = reason(e)
       }
     },
 
@@ -598,35 +682,81 @@ export const useFiles = defineStore('files', {
       if (dirty) this.pin(tabId)
     },
 
-    /** Write the editor's text. `force` overwrites a file that changed on disk. Resolves true when saved. */
-    async save(tabId: string, force = false): Promise<boolean> {
+    /** The editor's text changed, whether or not a pane shows it. */
+    edited(tabId: string) {
       const f = this.open[tabId]
       const entry = editorModel(tabId)
-      if (!f || !entry || entry.model.isDisposed() || f.saving) return false
+      // Not yet filled with what was last read: it is out of date, and never saves by itself.
+      if (!f || !entry || entry.loadedVersion !== f.version) return
+      this.setDirty(tabId, entry.model.getAlternativeVersionId() !== entry.savedVersion)
+      autoSave().edited(f)
+    },
+
+    /**
+     * Write the editor's text: the user's own save, which always goes (after the write under way).
+     * `force` overwrites a file that changed on disk. Resolves true when saved.
+     */
+    async save(tabId: string, force = false): Promise<boolean> {
+      const f = this.open[tabId]
+      if (!f) return false
+      f.saveError = null
+      return autoSave().save(f, force)
+    },
+
+    /** One write of `f`'s text as it is now. Only `utils/autoSave.ts` calls it, one at a time per file. */
+    async _write(f: OpenFile, force: boolean): Promise<boolean> {
+      const { projectPath: root, file } = f
+      const id = fileTabId(root, file)
+      const entry = editorModel(id)
+      if (this.open[id] !== f || f.loading || !entry || entry.model.isDisposed()) return false
+      if (!force && entry.loadedVersion !== f.version) {
+        // The editor still has the text from before the file was read again.
+        if (f.dirty) f.conflict = true
+        return false
+      }
       const text = entry.model.getValue()
       const version = entry.model.getAlternativeVersionId()
+      const before = attempted.get(f)
+      const put = (expectedModifiedMs: number | null) => call('fs_write_file', { root, file, text, bom: f.bom, expectedModifiedMs })
+      attempted.set(f, text)
+      nextRev(f)
       f.saving = true
-      f.saveError = null
-      preloads.delete(tabId)
+      preloads.delete(id)
       try {
-        const res = await call('fs_write_file', {
-          root: f.projectPath, file: f.file, text, bom: f.bom, expectedModifiedMs: force ? null : f.modifiedMs,
-        })
+        let res = await put(force ? null : f.modifiedMs)
         if (!res.saved) {
+          // A newer time need not mean other text: touched, written back the same, or our own write.
+          const now = await call('fs_read_file', { root, file })
+          const found = compareDisk(now.text, f.disk, before, () => text)
+          if (found !== 'changed') {
+            Object.assign(f, { disk: now.text, bom: now.bom, modifiedMs: now.modifiedMs })
+            res = found === 'same' ? { saved: true, modifiedMs: now.modifiedMs } : await put(now.modifiedMs)
+          }
+        }
+        if (!res.saved) {
+          attempted.delete(f)
           f.conflict = true
+          f.saveError = null
+          // The bar that lets the user pick takes the place of "save before closing?".
+          if (autoSaves()) f.closing = false
           return false
         }
+        attempted.delete(f)
         f.disk = text
         f.modifiedMs = res.modifiedMs
         entry.savedVersion = version
-        // Typing went on while it saved: still dirty.
+        entry.loadedVersion = f.version
+        // Typing went on while it saved (or was undone back to what was there before): still dirty.
         f.dirty = !entry.model.isDisposed() && entry.model.getAlternativeVersionId() !== version
         f.conflict = false
+        f.saveError = null
+        if (autoSaves()) f.closing = false
         return true
       } catch (e) {
         f.saveError = reason(e)
         return false
       } finally {
+        nextRev(f)
         f.saving = false
       }
     },
@@ -635,8 +765,96 @@ export const useFiles = defineStore('files', {
     async revert(tabId: string) {
       const f = this.open[tabId]
       if (!f) return
+      await autoSave().settle(x => x === f)
+      if (this.open[tabId] !== f) return
       f.dirty = false
       await this.read(tabId)
+    },
+
+    /* ---------- saving by itself ---------- */
+
+    /** Attention left the editor: save what can be saved, without waiting. */
+    saveSoon() {
+      autoSave().soon()
+    },
+
+    /** Autosave was turned on: what is dirty saves, also what a close was asking about. */
+    autoSaveTurnedOn() {
+      for (const f of Object.values(this.open)) f.closing = false
+      autoSave().soon()
+    },
+
+    /** Picks the open files of the working copies at `paths`, their repositories included. */
+    touching(...paths: string[]): Match {
+      const git = useGit()
+      const at = paths.flatMap((path) => {
+        const root = git.status(path)?.root
+        if (!root) return [path]
+        const loc = parseEnvPath(path)
+        return [path, loc ? envPath({ ...loc, dir: root }) : root]
+      })
+      return f => at.some(a => overlaps(f.projectPath, a))
+    },
+
+    /**
+     * Save now, waiting no longer than `ms`. Resolves with the files that still have unsaved text
+     * (conflicts, failures, too slow); none while autosave is off.
+     */
+    async saveAll(ms: number, match: Match = () => true): Promise<string[]> {
+      if (!autoSaves()) return []
+      let timer: ReturnType<typeof setTimeout> | undefined
+      await Promise.race([autoSave().flush(match), new Promise<void>(resolve => (timer = setTimeout(resolve, ms)))])
+      clearTimeout(timer)
+      return Object.values(this.open).filter(f => unsaved(f) && match(f)).map(f => f.file)
+    },
+
+    /** Run `work`, which reads the working copies at `paths`: it sees the saved text. */
+    aroundRead<T>(paths: string[], work: () => Promise<T>): Promise<T> {
+      return autoSave().around(this.touching(...paths), work)
+    },
+
+    /**
+     * Run `work`, which changes the working copies at `paths` (a checkout, a discard): it sees the
+     * saved text, and no save by itself undoes it.
+     */
+    aroundChange<T>(paths: string[], work: () => Promise<T>): Promise<T> {
+      const match = this.touching(...paths)
+      return autoSave().around(match, work, () =>
+        Promise.all(Object.keys(this.open).filter(id => match(this.open[id]!)).map(id => this.recheck(id))))
+    },
+
+    /** Until the returned function runs, nothing writes to these files; what was under way is over. */
+    async _keepStill(match: Match): Promise<() => void> {
+      if (!autoSaves()) return () => {}
+      const release = autoSave().hold(match, true)
+      await autoSave().settle(match)
+      return release
+    },
+
+    /** A tab with unsaved text is closing: it closes once saved. When it cannot save, `ask` first. */
+    async closeWhenSaved(tabId: string, ask = true) {
+      const f = this.open[tabId]
+      if (!f) return
+      await this.saveAll(10_000, x => x === f)
+      // Where it is now: it may have been renamed, or closed already.
+      const id = fileTabId(f.projectPath, f.file)
+      if (this.open[id] !== f) return
+      const threads = useThreads()
+      if (!unsaved(f)) {
+        threads.closeTab(id)
+      } else if (ask) {
+        threads.show(id)
+        f.closing = true
+      }
+    },
+
+    /** Close what could not be saved, edits and all (after the user said so). */
+    discardUnsaved() {
+      for (const id of Object.keys(this.open)) {
+        if (!unsaved(this.open[id]!)) continue
+        closeFileTab(id)
+        if (this.open[id]) this.forget(id)
+      }
     },
 
     /** A tab is closing: the editor model goes with it. */
@@ -671,5 +889,5 @@ export function closeFileTab(tabId: string) {
   const files = useFiles()
   const f = files.open[tabId]
   if (f) { f.dirty = false; f.closing = false }
-  useThreads().closeTab(tabId)
+  useThreads().closeTab(tabId, true)
 }

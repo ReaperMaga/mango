@@ -15,11 +15,28 @@ export interface EditorModel {
 }
 
 const models = new Map<string, EditorModel>()
+let onEdit: ((tabId: string) => void) | null = null
+
+/**
+ * Hear of every edit in any tab's model (shown in a pane or not), by the tab id it has then. A model
+ * refilled from disk is no edit. One listener (`composables/useAutoSave.ts`).
+ */
+export function onEditorModelEdit(listener: (tabId: string) => void): () => void {
+  onEdit = listener
+  return () => { if (onEdit === listener) onEdit = null }
+}
 
 export const editorModel = (tabId: string) => models.get(tabId) ?? null
 
 export function setEditorModel(tabId: string, entry: EditorModel) {
   models.set(tabId, entry)
+  entry.model.onDidChangeContent((e) => {
+    if (e.isFlush || !onEdit) return
+    // Looked up each time: a rename gives the model another tab.
+    for (const [id, held] of models) {
+      if (held === entry) return onEdit(id)
+    }
+  })
 }
 
 /** The tab's file was renamed: its edits, undo history and scroll position go to the new tab id. */

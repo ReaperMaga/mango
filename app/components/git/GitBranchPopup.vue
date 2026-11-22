@@ -9,6 +9,7 @@ import type { GitBranchList, GitLocalBranch, GitRemoteBranch, MergePreview } fro
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
+import { useFiles } from '~/stores/files'
 import { useThreads } from '~/stores/threads'
 import { shortAgo } from '~/utils/time'
 import { useOverlay } from '~/composables/useOverlay'
@@ -30,6 +31,7 @@ const props = defineProps<{ path: string | null }>()
 
 const ws = useWorkspace()
 const git = useGit()
+const fileStore = useFiles()
 const threads = useThreads()
 
 const WIDTH = 380
@@ -302,13 +304,24 @@ function onRowClick(key: string) {
 
 const reason = (e: unknown) => (e instanceof Error ? e.message : String(e)).trim()
 
-/** Run a git action, show what it said, and bring every view of the repository up to date. */
-async function run<T>(id: string, action: () => Promise<T>, done?: (result: T) => string | void): Promise<boolean> {
-  if (busy.value || !props.path) return false
+/** Actions that change the working copy's files, and ones that only read them. */
+const CHANGES_FILES = ['checkout', 'pull', 'merge', 'rebase', 'create']
+const READS_FILES = ['fetch', 'push']
+
+/**
+ * Run a git action, show what it said, and bring every view of the repository up to date. The
+ * action is given the folder it was asked for: saving open files first takes a moment.
+ */
+async function run<T>(id: string, action: (path: string) => Promise<T>, done?: (result: T) => string | void): Promise<boolean> {
+  const at = props.path
+  if (busy.value || !at) return false
   busy.value = id
   message.value = null
   try {
-    const result = await action()
+    const work = () => action(at)
+    const result = await (CHANGES_FILES.includes(id)
+      ? fileStore.aroundChange([at], work)
+      : READS_FILES.includes(id) ? fileStore.aroundRead([at], work) : work())
     const text = done?.(result)
     if (text) message.value = { error: false, text }
     return true
@@ -318,7 +331,7 @@ async function run<T>(id: string, action: () => Promise<T>, done?: (result: T) =
   } finally {
     busy.value = null
     // Status first: its read then reuses this list read instead of starting another.
-    const refreshed = git.refresh(p()).catch(() => {})
+    const refreshed = git.refresh(at).catch(() => {})
     await Promise.all([load(), refreshed])
   }
 }
@@ -329,13 +342,13 @@ async function checkout(row: Row) {
   if (row.kind === 'local' && row.b.isCurrent) return
   closeSub()
   const ok = row.kind === 'local'
-    ? await run('checkout', () => call('git_checkout', { path: p(), branch: row.b.name, create: false }))
-    : await run('checkout', () => call('git_checkout_remote', { path: p(), branch: row.b.name }))
+    ? await run('checkout', path => call('git_checkout', { path, branch: row.b.name, create: false }))
+    : await run('checkout', path => call('git_checkout_remote', { path, branch: row.b.name }))
   if (ok) close()
 }
-const update = () => run('pull', () => call('git_pull', { path: p() }), out => out || 'Already up to date.')
-const fetchAll = () => run('fetch', () => call('git_fetch', { path: p() }), out => out || 'Fetched. Nothing new.')
-const push = () => run('push', () => call('git_push', { path: p() }), out => out || 'Pushed.')
+const update = () => run('pull', path => call('git_pull', { path }), out => out || 'Already up to date.')
+const fetchAll = () => run('fetch', path => call('git_fetch', { path }), out => out || 'Fetched. Nothing new.')
+const push = () => run('push', path => call('git_push', { path }), out => out || 'Pushed.')
 /** Unity VCS: what the merge in the confirm would do; null while it is read. */
 const mergePlan = ref<MergePreview | null>(null)
 const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`
@@ -343,7 +356,7 @@ const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`
 async function merge(row: Row) {
   if (!terms.value.mergePreview) {
     closeSub(true)
-    return run('merge', () => call('git_merge', { path: p(), branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+    return run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
   }
   // Unity VCS: confirm first, with what the merge brings and anything that stops it.
   closeSub()
@@ -366,12 +379,12 @@ const mergeReady = computed(() => !!mergePlan.value && !mergePlan.value.blocker 
 async function confirmMerge() {
   const row = target.value
   if (!row || !mergeReady.value) return
-  const ok = await run('merge', () => call('git_merge', { path: p(), branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+  const ok = await run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
   if (ok) await backToList()
 }
 function rebase(row: Row) {
   closeSub(true)
-  return run('rebase', () => call('git_rebase', { path: p(), onto: row.b.name }), out => out || `Rebased onto ${row.b.name}.`)
+  return run('rebase', path => call('git_rebase', { path, onto: row.b.name }), out => out || `Rebased onto ${row.b.name}.`)
 }
 
 function commitView() {
@@ -426,11 +439,11 @@ async function submitName() {
   if (!name) return
   if (view.value === 'new') {
     const from = row ? row.b.name : null
-    const ok = await run('create', () => call('git_branch_create', { path: p(), name, from, checkout: true }))
+    const ok = await run('create', path => call('git_branch_create', { path, name, from, checkout: true }))
     if (ok) close()
   } else if (view.value === 'rename' && row) {
     const full = terms.value.pathBranches && !name.includes('/') ? `${parentOf(row.b.name)}/${name}` : name
-    const ok = await run('rename', () => call('git_branch_rename', { path: p(), from: row.b.name, to: name }), () => `Renamed to ${full}.`)
+    const ok = await run('rename', path => call('git_branch_rename', { path, from: row.b.name, to: name }), () => `Renamed to ${full}.`)
     if (ok) { await backToList(); active.value = `l:${full}` }
   }
 }
@@ -454,13 +467,16 @@ function readTrees() {
 }
 /** Delete a local branch and the worktree it is checked out in, if any. Resolves to whether a worktree went. */
 async function deleteBranch(name: string, force: boolean): Promise<boolean> {
+  const at = p()
   await treesRead
   const folder = trees.value.byBranch[name]
   if (folder && threads.threads.some(t => t.worktree === folder && threads.isBusyChat(t.id))) {
     throw new Error(`A chat is still working in its worktree ${folder}. Stop it first.`)
   }
-  const removed = await call('git_branch_delete', { path: p(), branch: name, force, withWorktree: true })
-  if (removed) threads.forgetWorktree(trees.value.main ?? p(), removed)
+  const main = trees.value.main ?? at
+  const remove = () => call('git_branch_delete', { path: at, branch: name, force, withWorktree: true })
+  const removed = await (folder ? fileStore.aroundChange([folder], remove) : remove())
+  if (removed) threads.forgetWorktree(main, removed)
   return !!removed
 }
 

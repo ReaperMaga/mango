@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import type { GhItem, GitAhead, GitBranches, GitBranchList, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
+import { useFiles } from '~/stores/files'
 import { vcsTerms } from '~/utils/vcs'
 
 /** The one action that can run at a time. */
@@ -73,6 +74,8 @@ const LOCKS_TTL_MS = 30_000
 const locksAt = new Map<string, number>()
 /** Lock, unlock, undo (releases a checkout's lock), checkin (releases or retains it), switch branch. */
 const LOCK_ACTIONS: GitAction[] = ['lock', 'discard', 'commit', 'checkout']
+/** Actions that leave the working copy's files as they are: open files save first, and go on saving meanwhile. */
+const READ_ACTIONS: GitAction[] = ['stage', 'unstage', 'fetch', 'push', 'pr', 'init']
 
 /* Refreshes are coalesced per project: one running, at most one queued behind it. */
 const running = new Map<string, Promise<void>>()
@@ -392,9 +395,10 @@ export const useGit = defineStore('git', {
 
     /**
      * Run one git action, then re-read the repository whether it worked or
-     * not. Failures land in `lastError`; resolves to whether it succeeded.
+     * not. Failures land in `lastError`; resolves to whether it succeeded. Open files are saved
+     * first (`files.aroundChange`); `also`: other working copies it changes.
      */
-    async run(path: string, action: GitAction, work: () => Promise<string | void>): Promise<boolean> {
+    async run(path: string, action: GitAction, work: () => Promise<string | void>, also: string[] = []): Promise<boolean> {
       if (this.busy) return false
       this.busy = action
       this.busyPath = path
@@ -403,7 +407,8 @@ export const useGit = defineStore('git', {
       this.noticePath = path
       let ok = true
       try {
-        const output = await work()
+        const files = useFiles()
+        const output = await (READ_ACTIONS.includes(action) ? files.aroundRead([path], work) : files.aroundChange([path, ...also], work))
         if (output) this.lastOutput = output
       } catch (e) {
         ok = false
@@ -532,7 +537,7 @@ export const useGit = defineStore('git', {
           const project = useWorkspace().activeProjectPath
           await Promise.all([...new Set([main, project])].filter((p): p is string => !!p && p !== path).map(p => this.refresh(p)))
         }
-      })
+      }, [main])
     },
 
     /**

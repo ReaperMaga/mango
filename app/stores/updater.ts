@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { UpdateInfo, UpdateProgress } from '~/types/ipc'
 import { call, on } from '~/composables/useBackend'
+import { useWindows } from '~/stores/windows'
 
 /**
  * Self-update from GitHub releases. Checks shortly after launch and then every
@@ -111,10 +112,21 @@ export const useUpdater = defineStore('updater', {
       this.phase = 'downloading'
       this.progress = { downloaded: 0, total: null }
       this.error = null
+      // Installing ends Mango without asking any window.
+      const unsaved = await useWindows().saveEverywhere()
+      if (unsaved.length) {
+        this.error = `Save or discard your changes to ${unsaved[0]} first, then install the update.`
+        this.installFailed = true
+        this.phase = 'error'
+        return
+      }
       unlisten?.()
       unlisten = await on('update://progress', p => {
         this.progress = p
-        if (p.total && p.downloaded >= p.total) this.phase = 'restarting'
+        if (!p.total || p.downloaded < p.total || this.phase === 'restarting') return
+        this.phase = 'restarting'
+        // What was typed while it downloaded.
+        void useWindows().saveEverywhere()
       })
       try {
         await call('update_install')

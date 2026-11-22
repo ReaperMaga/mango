@@ -230,9 +230,18 @@ async function onTabContext(e: MouseEvent, id: string) {
   tabMenu.value?.showAt(e.clientX, e.clientY)
 }
 
-/** Closing several at once leaves files with unsaved edits open: no stack of "save?" questions. */
+/**
+ * Closing several at once never stacks "save?" questions: with autosave each file closes once it has
+ * saved and one that cannot save stays open; without, files with unsaved edits stay open.
+ */
 function closeMany(ids: string[]) {
-  for (const id of ids) if (!(isFileTab(id) && files.isDirty(id))) threads.closeTab(id)
+  for (const id of ids) {
+    if (isFileTab(id) && files.isUnsaved(id)) {
+      if (ws.editorAutoSave) void files.closeWhenSaved(id, false)
+    } else {
+      threads.closeTab(id)
+    }
+  }
 }
 
 /** A file's path on disk, in the style of the project's own path. */
@@ -431,10 +440,10 @@ function lookOf(t: { id: string, kind: string, file: string }) {
               <button
                 type="button"
                 class="ca__tab-x"
-                :class="{ 'is-dirty': files.isDirty(t.id) }"
-                :aria-label="files.isDirty(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
+                :class="{ 'is-dirty': files.showsUnsaved(t.id) }"
+                :aria-label="files.showsUnsaved(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
                 @click.stop="threads.closeTab(t.id)"
-              ><X /><span v-if="files.isDirty(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
+              ><X /><span v-if="files.showsUnsaved(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
             </div>
             <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="ws.keyLabel('new-chat')" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
           </TransitionGroup>

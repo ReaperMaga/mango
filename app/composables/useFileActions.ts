@@ -160,6 +160,8 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
       ws.notify(`Could not delete ${name}`, reason(err))
       return
     }
+    // What is being edited goes to the trash as edited, so there is mostly nothing to lose.
+    await files.saveAll(3000, f => f.projectPath === project)
     if (path.value !== project) return
     const unsaved = [entry.path, ...along].flatMap(p => files.unsavedWithin(project, p))
     const losses = unsaved.length === 1

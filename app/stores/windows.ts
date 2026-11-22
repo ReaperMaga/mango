@@ -4,8 +4,10 @@ import {
   MAIN_WINDOW, claimsFor, holderOf, lostChats, onlyOpen, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
   type ChatRef, type Claim, type ClaimTable, type WindowPlace, type WindowSpec,
 } from '~/utils/windows'
+import { onWindowClose } from '~/composables/windowClose'
 import { flushHistory } from '~/utils/chatHistory'
 import { flushRemoteChats } from '~/utils/remoteChats'
+import { useFiles } from '~/stores/files'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
 
@@ -22,6 +24,8 @@ import { useWorkspace } from '~/stores/workspace'
  *   returns what it held: the window that owns it next reads those chats from the database.
  * - `openProjectWindow` / `openChatWindow` open another window (`window_open`); the new window
  *   makes its own claim when it starts.
+ * - With autosave on (Settings > Editor) a window closes, hides or lets a project go only once its
+ *   open files are saved; when one cannot be, it says so and waits for the user (`_savedToClose`).
  */
 
 type Body =
@@ -32,6 +36,8 @@ type Body =
   | { t: 'taken'; ok: boolean; reason?: string }
   | { t: 'bye'; id: string }
   | { t: 'focus'; id: string }
+  | { t: 'save' }
+  | { t: 'saved'; left: string[] }
 type Message = Body & { from: string; inst: string; req?: string; to?: string }
 
 /** This page's own id: two windows may briefly share a label (a reload), never this. */
@@ -39,6 +45,10 @@ const INST = Math.random().toString(36).slice(2, 10)
 const reqId = () => `${INST}-${Math.random().toString(36).slice(2, 8)}`
 /** Waiting on windows that were seen: after this long one that did not answer is taken as gone. */
 const ANSWER_MS = 4000
+/** Saving open files before answering another window: well inside `ANSWER_MS`. */
+const SAVE_FOR_PEER_MS = 2500
+/** A window being closed waits this long for its files to save, then asks. */
+const SAVE_TO_CLOSE_MS = 6000
 /** The browser preview cannot list its windows: whoever answers this quickly is there. */
 const PREVIEW_WHO_MS = 300
 
@@ -113,9 +123,10 @@ export const useWindows = defineStore('windows', {
       // Leaving: what this window held goes back. A window that is closed on purpose has saved
       // first (`_closing`); a reload just says goodbye, and takes its things again when it is back.
       window.addEventListener('pagehide', () => { void this._post({ t: 'bye', id: this.self }) })
-      if (!this.isMain) void appWindow.onClose(() => this._closing())
+      if (!this.isMain) void onWindowClose(() => this._mayClose())
       // The main window closed while others are open: the backend hid it; it lets go of its projects.
       else if (isTauri()) {
+        void onWindowClose(() => this._mayCloseMain())
         await on('window://parked', () => { void this._park() })
         window.addEventListener('focus', () => { this.parked = false })
       }
@@ -183,6 +194,7 @@ export const useWindows = defineStore('windows', {
           return this._sync()
         }
         if (lose.length) {
+          await useFiles().saveAll(SAVE_FOR_PEER_MS, f => lose.some(c => c.projectPath === threads.ownerOf(f.projectPath)))
           await flushHistory()
           threads.release(lose.map(c => c.id))
         }
@@ -219,6 +231,15 @@ export const useWindows = defineStore('windows', {
     /** Let go of the chats this window would lose under `next` (saved first). The reason when it cannot. */
     async _give(next: ClaimTable): Promise<string | null> {
       const threads = useThreads()
+      const moving = this.spec.kind === 'chat' ? [] : useWorkspace().openProjects.map(p => p.path).filter((path) => {
+        const h = holderOf(next, { kind: 'project', key: path })
+        return h && h !== this.self
+      })
+      // Saved before anything is decided below (it takes a moment): the other window reads these files.
+      if (moving.length) {
+        const [left] = await useFiles().saveAll(SAVE_FOR_PEER_MS, f => moving.includes(threads.ownerOf(f.projectPath)))
+        if (left) return `${left} has changes in another window that could not be saved. Save or discard them there first.`
+      }
       const lose = lostChats(threads.heldRefs(), next, this.self)
       const busy = lose.find(c => threads.isBusyChat(c.id))
       if (busy) {
@@ -307,6 +328,59 @@ export const useWindows = defineStore('windows', {
       this._reclaimSoon()
     },
 
+    /**
+     * Save the open files before this window goes. False when some cannot be saved: the user is
+     * asked, and "Close without saving" closes it again without them. Always true with autosave off.
+     */
+    async _savedToClose(): Promise<boolean> {
+      const files = useFiles()
+      const left = [...new Set(await files.saveAll(SAVE_TO_CLOSE_MS))]
+      if (!left.length) return true
+      const names = `${left.slice(0, 3).join(', ')}${left.length > 3 ? ` and ${left.length - 3} more` : ''}`
+      useWorkspace().confirm = {
+        title: 'Close without saving?',
+        body: `Mango could not save ${names}. Closing now loses your changes there.`,
+        label: 'Close without saving',
+        danger: true,
+        run: () => {
+          files.discardUnsaved()
+          void appWindow.close()
+        },
+      }
+      return false
+    },
+
+    /** This (not main) window was asked to close. */
+    async _mayClose(): Promise<boolean> {
+      if (!await this._savedToClose()) return false
+      // What else it saves on the way never keeps it open: that gets a few seconds.
+      await Promise.race([this._closing().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
+      return true
+    },
+
+    /**
+     * The main window was asked to close. With other windows open the backend hides it, so it must
+     * not be destroyed here: `_park` saves then. Otherwise closing it ends Mango.
+     */
+    async _mayCloseMain(): Promise<boolean> {
+      const open = await call('window_list', {}).catch(() => Object.keys(this.table))
+      if (open.some(label => label !== this.self)) return false
+      return this._savedToClose()
+    },
+
+    /**
+     * Every window saves its open files (an update restarts Mango). Resolves with the files that
+     * could not be saved.
+     */
+    async saveEverywhere(): Promise<string[]> {
+      const peers = Object.keys(this.table).filter(id => id !== this.self)
+      const [mine, answers] = await Promise.all([
+        useFiles().saveAll(SAVE_TO_CLOSE_MS),
+        peers.length ? this._ask({ t: 'save' }, peers, ANSWER_MS) : [],
+      ])
+      return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : []))]
+    },
+
     /** This (not main) window is closing: stop its runs, save, say goodbye. */
     async _closing() {
       // The last window on screen (the main one is parked): its projects are what Mango reopens next time.
@@ -321,6 +395,8 @@ export const useWindows = defineStore('windows', {
       for (const c of threads.heldRefs()) if (threads.isBusyChat(c.id)) threads.stop(c.id)
       const ws = useWorkspace()
       for (const t of ws.terminalTabs) if (t.ptyId && !t.exited) await call('pty_kill', { id: t.ptyId }).catch(() => {})
+      // What was typed while it got this far.
+      await useFiles().saveAll(1000)
       await flushHistory()
       await Promise.race([flushRemoteChats(), new Promise(r => setTimeout(r, 1500))])
     },
@@ -333,6 +409,12 @@ export const useWindows = defineStore('windows', {
      */
     async _park() {
       this.parked = true
+      if (!await this._savedToClose()) {
+        // Hidden, nobody would see the question, and Mango would end with the edits when the last window closes.
+        this.parked = false
+        await this.focus(this.self)
+        return
+      }
       // Hidden, it must let go whatever happens while saving: otherwise its projects stay
       // “open in another window” that nobody can see.
       try {
@@ -349,7 +431,7 @@ export const useWindows = defineStore('windows', {
     async _receive(m: Message) {
       if (!m || typeof m !== 'object' || m.inst === INST) return
       if (m.to && m.to !== this.self) return
-      if (m.req && waiting.has(m.req) && (m.t === 'here' || m.t === 'taken')) {
+      if (m.req && waiting.has(m.req) && (m.t === 'here' || m.t === 'taken' || m.t === 'saved')) {
         waiting.get(m.req)!(m)
         return
       }
@@ -377,6 +459,9 @@ export const useWindows = defineStore('windows', {
         }
         case 'bye':
           if (m.id !== this.self) this._gone(m.id)
+          break
+        case 'save':
+          await this._post({ t: 'saved', left: await useFiles().saveAll(SAVE_FOR_PEER_MS) }, m)
           break
         case 'focus':
           if (m.id === this.self) window.focus()
@@ -522,6 +607,11 @@ export const useWindows = defineStore('windows', {
       const root = threads.byId(this.spec.threadId)
       if (root && threads.isBusyChat(root.id)) {
         useWorkspace().notify('Not returned yet', `“${root.title}” is still working. Stop it first, or wait until it is done.`)
+        return
+      }
+      if (!await this._savedToClose()) {
+        // It stays for the answer, with its chat.
+        if (root) threads.show(root.id)
         return
       }
       await flushHistory()
