@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { eolOf, reloadEdits, splitLines, type LineEdit } from '../app/utils/reloadEdits.ts'
+import { eolOf, reloadEdits, reloadModel, splitLines, type LineEdit } from '../app/utils/reloadEdits.ts'
 
 /** As Monaco applies edits: all in the old text's coordinates, none overlapping. */
 function apply(old: string[], edits: LineEdit[], eol: string): string {
@@ -67,4 +67,83 @@ test('the end of line Monaco would pick', () => {
   assert.equal(eolOf('a\r\nb\r\nc\n'), '\r\n')
   assert.equal(eolOf('a\nb\r\n'), '\n')
   assert.equal(eolOf('one line'), null)
+})
+
+/* ---------- on Monaco's real TextModel */
+
+const monacoFile = (path: string) => import(new URL(`../node_modules/monaco-editor/esm/vs/${path}.js`, import.meta.url).href)
+const { TextModel } = await monacoFile('editor/common/model/textModel')
+const { InstantiationService } = await monacoFile('platform/instantiation/common/instantiationService')
+const { ServiceCollection } = await monacoFile('platform/instantiation/common/serviceCollection')
+const { LanguageService } = await monacoFile('editor/common/services/languageService')
+const { ILanguageService } = await monacoFile('editor/common/languages/language')
+const { ILanguageConfigurationService } = await monacoFile('editor/common/languages/languageConfigurationRegistry')
+const { ITreeSitterLibraryService } = await monacoFile('editor/common/services/treeSitter/treeSitterLibraryService')
+const { IUndoRedoService } = await monacoFile('platform/undoRedo/common/undoRedo')
+const { UndoRedoService } = await monacoFile('platform/undoRedo/common/undoRedoService')
+
+const services = new InstantiationService(new ServiceCollection(
+  [ILanguageService, new LanguageService()],
+  [IUndoRedoService, new UndoRedoService({}, {})],
+  [ILanguageConfigurationService, { onDidChange: () => ({ dispose() {} }), getLanguageConfiguration: () => ({}) }],
+  [ITreeSitterLibraryService, { supportsLanguage: () => false }],
+), false)
+const modelOf = (text: string) => services.createInstance(TextModel, text, 'plaintext', TextModel.DEFAULT_CREATION_OPTIONS, null)
+
+/** Enter at the end of `line` with the editor's auto-indent, which it offers to trim at the next edit. */
+function enter(model: any, line: number, indent: string) {
+  const column = model.getLineMaxColumn(line)
+  model.pushStackElement()
+  model.pushEditOperations(null, [{
+    range: { startLineNumber: line, startColumn: column, endLineNumber: line, endColumn: column },
+    text: model.getEOL() + indent,
+    isAutoWhitespaceEdit: true,
+  }], () => null)
+  model.pushStackElement()
+}
+
+for (const eol of ['\n', '\r\n']) {
+  test(`a reload after Enter's auto-indent keeps undo and the caret (${eol.length === 1 ? 'LF' : 'CRLF'})`, async () => {
+    const typed = ['def total():', '    first = 1', '    return first', '', 'line six = 6', ''].join(eol)
+    const model = modelOf(typed)
+    enter(model, 2, '    ')
+    const entered = model.getValue()
+    const [caret] = model.deltaDecorations([], [{ range: { startLineNumber: 3, startColumn: 5, endLineNumber: 3, endColumn: 5 }, options: { description: 'caret', stickiness: 1 } }])
+    let flushed = false
+    const sub = model.onDidChangeContent((e: any) => { flushed ||= e.isFlush })
+    const disk = entered.replace('six = 6', 'SIX = 6')
+    reloadModel(model, disk)
+    assert.equal(model.getValue(), disk, 'and nothing else, the indentation neither')
+    assert.equal(flushed, false)
+    const at = model.getDecorationRange(caret)
+    assert.deepEqual([at.startLineNumber, at.startColumn], [3, 5])
+    assert.equal(model.getOptions().trimAutoWhitespace, true)
+    await model.undo()
+    assert.equal(model.getValue(), entered)
+    await model.undo()
+    assert.equal(model.getValue(), typed)
+    sub.dispose()
+    model.dispose()
+  })
+}
+
+test('a reload is exact and can be undone, whatever was typed before it', async () => {
+  let seed = 11
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  const pick = (from: string[]) => from[Math.floor(random() * from.length)]!
+  const text = () => Array.from({ length: Math.ceil(random() * 8) }, () => pick(['', 'a', '  b', '    ', '}', '🥭x', '🥮x'])).join(pick(['\n', '\r\n']))
+  for (let i = 0; i < 1500; i++) {
+    const model = modelOf(text())
+    if (random() < 0.7) enter(model, Math.ceil(random() * model.getLineCount()), pick(['  ', '    ', '\t']))
+    const before = model.getValue()
+    const disk = `${random() < 0.1 ? '\uFEFF' : ''}${text()}`
+    reloadModel(model, disk)
+    const body = disk.replace('\uFEFF', '')
+    assert.equal(model.getValue(), splitLines(body).join(eolOf(body) ?? (before.includes('\r\n') ? '\r\n' : model.getEOL())), JSON.stringify([before, disk]))
+    if (model.getValue() !== before) {
+      await model.undo()
+      assert.equal(model.getValue(), before, JSON.stringify([before, disk]))
+    }
+    model.dispose()
+  }
 })

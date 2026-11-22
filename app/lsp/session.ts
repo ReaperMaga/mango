@@ -65,7 +65,7 @@ const INITIALIZE_TIMEOUT = 60_000
 /** A server slower than this to answer `shutdown` or to leave after `exit` is killed. */
 const SHUTDOWN_TIMEOUT = 1000
 /** Edits go out this long after the last one, or with the next request, whichever is first. */
-const CHANGE_DELAY = 150
+const CHANGE_DELAY = 250
 const BACKOFF = [1000, 5000, 15_000]
 /** Running this long, a crash is a new problem and gets all the retries again. */
 const STABLE = 180_000
@@ -101,6 +101,8 @@ export class Session {
   private readyAt = 0
   private restartTimer?: ReturnType<typeof setTimeout>
   private exited?: () => void
+  /** Each file's last version, so one opened again never repeats one. */
+  private versions = new Map<string, number>()
 
   constructor(options: SessionOptions) {
     this.options = options
@@ -264,7 +266,7 @@ export class Session {
 
   open(document: Document) {
     if (this.docs.has(document.file)) return
-    const doc: Doc = { ...document, uri: '', version: 0, opened: false, pending: new PendingChanges() }
+    const doc: Doc = { ...document, uri: '', version: this.versions.get(document.file) ?? 0, opened: false, pending: new PendingChanges() }
     this.docs.set(document.file, doc)
     if (!this.ready) return
     this.didOpen(doc)
@@ -319,6 +321,7 @@ export class Session {
     if (!doc) return
     this.flush(doc)
     this.docs.delete(file)
+    this.versions.set(file, doc.version)
     if (doc.opened && this.sync.openClose) this.rpc?.notify('textDocument/didClose', { textDocument: { uri: doc.uri } })
     this.options.diagnostics(file, [])
   }
@@ -339,6 +342,8 @@ export class Session {
    * on another's. Null when there is nothing to say (not ready, cancelled, out of time).
    */
   async request<T>(method: string, file: string, params: object = {}, options: RequestOptions = {}): Promise<T | null> {
+    // Monaco can ask from inside the very change it asks about, before that change was noted here.
+    await null
     const doc = this.docs.get(file)
     if (!this.ready || !doc?.opened) return null
     return this.send<T>(method, { textDocument: { uri: doc.uri }, ...params }, options)

@@ -15,6 +15,53 @@ const MAX_EDITS = 1000
 
 export const splitLines = (text: string) => text.split(/\r\n|\r|\n/)
 
+/** What a reload needs of a Monaco model. */
+export interface ReloadModel {
+  getLinesContent(): string[]
+  getEOL(): string
+  getValue(): string
+  getFullModelRange(): LineEdit['range']
+  getOptions(): { trimAutoWhitespace: boolean }
+  updateOptions(options: { trimAutoWhitespace: boolean }): void
+  pushStackElement(): void
+  pushEOL(eol: number): void
+  pushEditOperations(before: null, edits: LineEdit[], cursor: () => null): unknown
+}
+
+/** Monaco's `EndOfLineSequence`. */
+const LF = 0
+const CRLF = 1
+
+/**
+ * Make a model's text the one read from disk, as one undo step and nothing more: while it runs the
+ * model may not trim the indentation Enter left, which it otherwise adds to whatever edit comes next.
+ * The history and the carets live through it. `around` is handed the edit to wrap.
+ */
+export function reloadModel(model: ReloadModel, text: string, around: (change: () => void) => void = change => change()) {
+  // Monaco takes a byte order mark off the text it is given.
+  const body = text.replace(/^\uFEFF/, '')
+  const next = splitLines(body)
+  const eol = eolOf(body) ?? model.getEOL()
+  const edits = reloadEdits(model.getLinesContent(), next, eol)
+  const eolChanged = eol !== model.getEOL()
+  if (!edits.length && !eolChanged) return
+  const trims = model.getOptions().trimAutoWhitespace
+  if (trims) model.updateOptions({ trimAutoWhitespace: false })
+  try {
+    model.pushStackElement()
+    if (eolChanged) model.pushEOL(eol === '\n' ? LF : CRLF)
+    if (edits.length) {
+      around(() => void model.pushEditOperations(null, edits, () => null))
+      // Never clean with another text than the disk's: if need be as one edit, which undo survives.
+      const whole = next.join(eol)
+      if (model.getValue() !== whole) model.pushEditOperations(null, [{ range: model.getFullModelRange(), text: whole }], () => null)
+    }
+    model.pushStackElement()
+  } finally {
+    if (trims) model.updateOptions({ trimAutoWhitespace: true })
+  }
+}
+
 /** The end of line Monaco gives a text: the more common one. Null when it has none. */
 export function eolOf(text: string): '\n' | '\r\n' | null {
   let all = 0

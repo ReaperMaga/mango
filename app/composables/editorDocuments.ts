@@ -1,9 +1,11 @@
 import type * as Monaco from 'monaco-editor'
 import { useFiles, type OpenFile } from '~/stores/files'
 import { editorModel, setEditorModel, type EditorModel } from '~/utils/editorModels'
-import { eolOf, reloadEdits, splitLines } from '~/utils/reloadEdits'
+import { reloadModel } from '~/utils/reloadEdits'
 import { fileTabId, parseFileTab } from '~/utils/fileTabs'
 import { relativeTo } from '~/lsp/uri'
+import { linkRoute } from '~/lsp/builtins'
+import { ModelUris } from '~/lsp/modelUris'
 import { openExternal } from '~/composables/useBackend'
 import { languageFor, type MonacoApi } from '~/composables/monaco'
 
@@ -12,30 +14,27 @@ import { languageFor, type MonacoApi } from '~/composables/monaco'
  * and extension, kept in step with the disk; and where a jump to another file (a definition, a
  * link) goes, which is a tab.
  *
- * A model's URI is `file:///~<n>/<file>`, `n` standing for its project: two worktrees' files, a
- * Windows path and a remote project's are all alike to the workers, and imports between open files
- * of one project resolve. It is not the file's place on disk (`lsp/uri.ts` makes those).
+ * A model's URI is `file:///~<n>/<file>`, `n` the model's own and never used again (`lsp/modelUris.ts`).
+ * It is not the file's place on disk (`lsp/uri.ts` makes those).
  */
 
 /** A file shown only as the preview of a definition (no tab of its own). */
 export const PEEK_SCHEME = 'mango-peek'
 
-const projects: string[] = []
-function projectNumber(project: string) {
-  const at = projects.indexOf(project)
-  return at >= 0 ? at : projects.push(project) - 1
-}
+const uris = new ModelUris()
 
-export function documentUri(monaco: MonacoApi, project: string, file: string, scheme = 'file', copy = 0) {
-  return monaco.Uri.from({ scheme, path: `/~${projectNumber(project)}${copy ? `.${copy}` : ''}/${file}` })
-}
+/** A URI for a new model. */
+export const documentUri = (monaco: MonacoApi, project: string, file: string, scheme = 'file') =>
+  monaco.Uri.from({ scheme, path: uris.next(project, file) })
 
 /** The project and file behind a model's URI (as it was named when the model was made). */
-export function fileOfUri(uri: Monaco.Uri): { project: string; file: string } | null {
-  if (uri.scheme !== 'file' && uri.scheme !== PEEK_SCHEME) return null
-  const m = /^\/~(\d+)(?:\.\d+)?\/(.+)$/.exec(uri.path)
-  const project = m ? projects[Number(m[1])] : undefined
-  return project === undefined ? null : { project, file: m![2]! }
+export function fileOfUri(uri: { scheme: string; path: string }): { project: string; file: string } | null {
+  return uri.scheme === 'file' || uri.scheme === PEEK_SCHEME ? uris.locate(uri.path) : null
+}
+
+/** Monaco's label for a URI, in a peek's header and lists: a model's path inside its project. */
+export function uriLabel(uri: { scheme: string; path: string; fsPath: string }): string {
+  return fileOfUri(uri)?.file ?? (uri.scheme === 'file' ? uri.fsPath : uri.path)
 }
 
 /** The tab whose model this is, under the name it has now; null for any other model. */
@@ -50,11 +49,7 @@ export const needsNewModel = (entry: EditorModel, file: string) =>
   !entry.model.isDisposed() && scriptKind(entry.model.uri.path) !== scriptKind(file)
 
 export function createDocument(monaco: MonacoApi, project: string, file: string, text: string) {
-  let copy = 0
-  let uri = documentUri(monaco, project, file)
-  // A renamed file's model still holds the name a new file may have now.
-  while (monaco.editor.getModel(uri)) uri = documentUri(monaco, project, file, 'file', ++copy)
-  return monaco.editor.createModel(text, languageFor(monaco, file), uri)
+  return monaco.editor.createModel(text, languageFor(monaco, file), documentUri(monaco, project, file))
 }
 
 /**
@@ -114,19 +109,7 @@ export function reloadDocument(monaco: MonacoApi, entry: EditorModel, f: OpenFil
   const text = f.disk
   if (text === null || model.isDisposed()) return
   // `loadedVersion` moves last: until then what changes here is no edit (`files.edited`).
-  const next = splitLines(text)
-  const eol = eolOf(text) ?? model.getEOL()
-  const edits = reloadEdits(model.getLinesContent(), next, eol)
-  if (edits.length || eol !== model.getEOL()) {
-    model.pushStackElement()
-    if (eol !== model.getEOL()) {
-      model.pushEOL(eol === '\r\n' ? monaco.editor.EndOfLineSequence.CRLF : monaco.editor.EndOfLineSequence.LF)
-    }
-    if (edits.length) holdScroll(monaco, model, () => carryViewState(monaco, entry, () => void model.pushEditOperations(null, edits, () => null)))
-    model.pushStackElement()
-    // What is on disk matters more than the undo history.
-    if (model.getValue() !== next.join(eol)) model.setValue(text)
-  }
+  reloadModel(model, text, change => holdScroll(monaco, model, () => carryViewState(monaco, entry, change)))
   entry.savedVersion = model.getAlternativeVersionId()
   entry.loadedVersion = f.version
 }
@@ -185,8 +168,10 @@ export function routeEditorLinks(monaco: MonacoApi) {
   monaco.editor.registerEditorOpener({
     openCodeEditor(source, resource, where) {
       const model = source.getModel()
-      if (model?.uri.toString() === resource.toString()) return false
-      const from = model ? tabOfModel(model) : null
+      if (!model || model.uri.toString() === resource.toString()) return false
+      const from = tabOfModel(model)
+      const project = parseFileTab(from)?.projectPath ?? fileOfUri(model.uri)?.project
+      if (!project) return false
       const at = !where
         ? { lineNumber: 1, column: 1 }
         : 'startLineNumber' in where ? { lineNumber: where.startLineNumber, column: where.startColumn } : { lineNumber: where.lineNumber, column: where.column }
@@ -194,25 +179,21 @@ export function routeEditorLinks(monaco: MonacoApi) {
       const tab = parseFileTab(target ? tabOfModel(target) : null)
       let to = tab ? { project: tab.projectPath, file: tab.file } : fileOfUri(resource)
       if (!to && resource.scheme === 'file') {
-        const project = parseFileTab(from)?.projectPath
-        const file = project ? relativeTo(project, resource.fsPath) : null
-        if (project && file) to = { project, file }
+        const file = relativeTo(project, resource.fsPath)
+        if (file) to = { project, file }
       }
-      if (!to) return false
+      // Out of the project of the file it was asked from, nothing leads.
+      if (!to?.file || to.project !== project) return false
       openAt(to.project, to.file, at, from)
       return true
     },
   })
   monaco.editor.registerLinkOpener({
     open(uri) {
-      if (uri.scheme === 'http' || uri.scheme === 'https' || uri.scheme === 'mailto') {
-        void openExternal(uri.toString(true)).catch(() => {})
-        return true
-      }
-      // Monaco's own openers: the editor's for files, and commands only from its own trusted text.
-      if (uri.scheme === 'file' || uri.scheme === PEEK_SCHEME || uri.scheme === 'command') return false
-      // Anything else could start a program on this computer.
-      return true
+      const route = linkRoute(uri.scheme)
+      if (route === 'browser') void openExternal(uri.toString(true)).catch(() => {})
+      // Taken here, commands included, unless it is a file for the editor: Monaco's own openers would run them.
+      return route !== 'editor'
     },
   })
 }

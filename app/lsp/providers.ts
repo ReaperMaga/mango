@@ -3,15 +3,17 @@ import type { CompletionItem, CompletionList, Hover, Location, LocationLink, Ser
 import type { Session } from '~/lsp/session'
 import { toCompletions, toHover, toPosition, toResolved, toSignatureHelp, toTargets } from '~/lsp/convert'
 import { fileKey, uriToFile } from '~/lsp/uri'
+import { WORKER_LANGUAGES, withWords, workerGuards } from '~/lsp/builtins'
 import { editorModel } from '~/utils/editorModels'
 import { useFiles } from '~/stores/files'
 import { call } from '~/composables/useBackend'
+import { otherFilesWords } from '~/composables/editorCompletion'
 import { PEEK_SCHEME, documentUri } from '~/composables/editorDocuments'
 import { languageFor, type MonacoApi } from '~/composables/monaco'
 
 /**
  * Monaco's side of the language servers: providers that ask the model's session, and Monaco's own
- * TypeScript worker standing back where a server answers.
+ * workers held to their own file and standing back where a server answers.
  */
 
 export interface Served { session: Session; file: string; project: string }
@@ -27,29 +29,50 @@ export const PROVIDES: Record<Feature, (caps: ServerCapabilities) => boolean> = 
 }
 
 /**
- * Wrap the providers Monaco's TypeScript worker registers (for a bare 'typescript' or 'javascript'),
- * before it does: each stands back for a model a server answers for, and is back when it stops.
+ * Wrap what Monaco's workers register (for a bare language id) before they do: each is held to its
+ * own file and current text (`lsp/builtins.ts`), and stands back for a model a server answers for.
  */
 export function gateBuiltIns(monaco: MonacoApi, served: (model: Monaco.editor.ITextModel, feature: Feature) => boolean) {
   const languages = monaco.languages as unknown as Record<string, (selector: unknown, provider: any) => Monaco.IDisposable>
-  const gate = (register: string, method: string, feature: Feature) => {
+  const gate = (register: string, method: string, wrap: (run: any) => any) => {
     const original = languages[register]!
     languages[register] = (selector, provider) => {
-      if (selector !== 'typescript' && selector !== 'javascript') return original(selector, provider)
+      if (typeof selector !== 'string' || !WORKER_LANGUAGES.has(selector) || !provider[method]) return original(selector, provider)
       const gated = Object.create(provider)
-      gated[method] = (model: Monaco.editor.ITextModel, ...rest: unknown[]) => (served(model, feature) ? null : provider[method](model, ...rest))
+      gated[method] = wrap((...args: unknown[]) => provider[method](...args))
       return original(selector, gated)
     }
   }
-  gate('registerCompletionItemProvider', 'provideCompletionItems', 'completion')
-  gate('registerHoverProvider', 'provideHover', 'hover')
-  gate('registerSignatureHelpProvider', 'provideSignatureHelp', 'signature')
-  gate('registerDefinitionProvider', 'provideDefinition', 'definition')
+  const standBack = (feature: Feature) => (run: any) =>
+    (model: Monaco.editor.ITextModel, ...rest: unknown[]) => (served(model, feature) ? null : run(model, ...rest))
+  const features: Record<string, Feature> = {
+    registerCompletionItemProvider: 'completion',
+    registerDefinitionProvider: 'definition',
+  }
+  for (const [register, method, guard] of workerGuards(showRefusal)) {
+    const feature = features[register]
+    const answer = feature === 'completion'
+      ? (run: any) => guard(withWords(run, model => otherFilesWords(monaco, model), monaco.languages.CompletionItemKind.Text))
+      : guard
+    gate(register, method, run => (feature ? standBack(feature)(answer(run)) : answer(run)))
+  }
+  // A word is all there is to it: only the worker's own items say where to look up more.
+  gate('registerCompletionItemProvider', 'resolveCompletionItem', run =>
+    (item: any, ...rest: unknown[]) => (item.uri ? run(item, ...rest) : item))
+  gate('registerHoverProvider', 'provideHover', standBack('hover'))
+  gate('registerSignatureHelpProvider', 'provideSignatureHelp', standBack('signature'))
+
+  /** Monaco only logs why a rename was refused. */
+  function showRefusal(model: Monaco.editor.ITextModel, position: Monaco.IPosition, reason: string) {
+    const editor = monaco.editor.getEditors().find(e => e.getModel() === model)
+    const messages: any = editor?.getContribution('editor.contrib.messageController')
+    messages?.showMessage(reason, position)
+  }
 }
 
 /** Monaco's `CompletionItem`, remembering who can resolve it. */
 interface Suggestion extends Monaco.languages.CompletionItem {
-  from?: { session: Session; item: CompletionItem }
+  from?: { session: Session; item: CompletionItem; start: Monaco.IPosition }
 }
 
 /** The files definitions were previewed in: a few, and never one an editor shows. */
@@ -62,14 +85,13 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
   const registered = new Map<string, { suggest: Set<string>; sign: Set<string>; resign: Set<string>; subs: Monaco.IDisposable[] }>()
   const peeks = new Map<string, Monaco.editor.ITextModel>()
 
-  async function peek(project: string, file: string, read: boolean): Promise<Monaco.Uri> {
-    const uri = documentUri(monaco, project, file, PEEK_SCHEME)
-    if (!read) return uri
-    const text = (await call('fs_read_file', { root: project, file }).catch(() => null))?.text
-    if (typeof text !== 'string') return uri
-    const key = uri.toString()
-    let model = monaco.editor.getModel(uri)
-    if (!model) model = monaco.editor.createModel(text, languageFor(monaco, file), uri)
+  async function peek(project: string, root: string, file: string, read: boolean): Promise<Monaco.Uri> {
+    const key = `${project}\0${fileKey(root, file)}`
+    const text = read ? (await call('fs_read_file', { root: project, file }).catch(() => null))?.text : null
+    let model = peeks.get(key)
+    if (model?.isDisposed()) model = undefined
+    if (typeof text !== 'string') return model?.uri ?? documentUri(monaco, project, file, PEEK_SCHEME)
+    if (!model) model = monaco.editor.createModel(text, languageFor(monaco, file), documentUri(monaco, project, file, PEEK_SCHEME))
     else if (model.getValue() !== text) model.setValue(text)
     peeks.delete(key)
     peeks.set(key, model)
@@ -79,7 +101,7 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
       m.dispose()
       peeks.delete(k)
     }
-    return uri
+    return model.uri
   }
 
   const completion = (triggerCharacters: string[]): Monaco.languages.CompletionItemProvider => ({
@@ -119,15 +141,24 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
         documentation: c.documentation,
         additionalTextEdits: c.additionalTextEdits,
         command: c.command,
-        from: { session: at.session, item: c.item },
+        from: { session: at.session, item: c.item, start: { lineNumber: line, column: c.range.insert.startColumn } },
       }))
       return { suggestions, incomplete: more }
     },
-    async resolveCompletionItem(suggestion: Suggestion, token) {
+    async resolveCompletionItem(suggestion: Suggestion) {
       const from = suggestion.from
       if (!from?.session.caps.completionProvider?.resolveProvider) return suggestion
-      const result = await from.session.send<CompletionItem>('completionItem/resolve', from.item, { token, timeout: 5000 })
-      return result ? { ...suggestion, ...toResolved(result) } : suggestion
+      // Not cancelled with the row losing focus: Monaco hands this same promise to the accept, which
+      // closes the list, and an import cancelled then would be lost. It ends by its timeout.
+      const result = await from.session.send<CompletionItem>('completionItem/resolve', from.item, { timeout: 5000 })
+      if (!result) return suggestion
+      const resolved = toResolved(result)
+      // Resolved from the text as typed so far: on the caret's line only what is left of the word is where it was.
+      const { start } = from
+      if (resolved.additionalTextEdits?.some(({ range }) => range.endLineNumber === start.lineNumber && range.endColumn > start.column)) {
+        delete resolved.additionalTextEdits
+      }
+      return { ...suggestion, ...resolved }
     },
   })
 
@@ -175,7 +206,7 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
         if (!uri) {
           const tab = open.find(([, f]) => fileKey(root, f.file) === key)
           const shown = tab ? editorModel(tab[0])?.model : null
-          uri = shown && !shown.isDisposed() ? Promise.resolve(shown.uri) : peek(at.project, tab?.[1].file ?? file, uris.size < PREVIEWS)
+          uri = shown && !shown.isDisposed() ? Promise.resolve(shown.uri) : peek(at.project, root, tab?.[1].file ?? file, uris.size < PREVIEWS)
           uris.set(key, uri)
         }
         return uri

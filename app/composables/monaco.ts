@@ -1,7 +1,9 @@
 import type * as Monaco from 'monaco-editor'
 import { tokenHex } from '~/utils/cssColor'
 import { pluginLanguage } from '~/plugin-host/fileHooks'
-import { routeEditorLinks } from '~/composables/editorDocuments'
+import { fileOfUri, routeEditorLinks, uriLabel } from '~/composables/editorDocuments'
+import { guardEdits, previewReadOnly } from '~/composables/editorFeel'
+import { untrusted } from '~/lsp/builtins'
 import { registerBasicCompletion } from '~/composables/editorCompletion'
 import { gateBuiltIns } from '~/lsp/providers'
 import { languageService, startLanguageService } from '~/lsp/service'
@@ -25,7 +27,7 @@ export function loadMonaco(): Promise<MonacoApi> {
           case 'json': return new (await import('monaco-editor/language/json/json.worker?worker')).default()
           case 'css': case 'scss': case 'less': return new (await import('monaco-editor/language/css/css.worker?worker')).default()
           case 'html': case 'handlebars': case 'razor': return new (await import('monaco-editor/language/html/html.worker?worker')).default()
-          case 'typescript': case 'javascript': return new (await import('monaco-editor/language/typescript/ts.worker?worker')).default()
+          case 'typescript': case 'javascript': return new (await import('~/lsp/tsWorker?worker')).default()
           default: return new (await import('monaco-editor/editor/editor.worker?worker')).default()
         }
       },
@@ -49,13 +51,19 @@ export function loadMonaco(): Promise<MonacoApi> {
         resolveJsonModule: true,
         experimentalDecorators: true,
       })
-      // The worker knows the open files, so completion and jumps reach across them.
-      defaults.setEagerModelSync(true)
+      // Monaco's quick fixes write every file's change into the current one, and the worker knows no
+      // other file anyway. Formatting as you type and inlay hints are off in the editor.
+      defaults.setModeConfiguration({ ...defaults.modeConfiguration, codeActions: false, onTypeFormattingEdits: false, inlayHints: false })
     }
     const json = monaco.json.jsonDefaults
     // Comments and trailing commas are how tsconfig and editor settings are written.
     json.setDiagnosticsOptions({ ...json.diagnosticsOptions, allowComments: true, comments: 'ignore', trailingCommas: 'ignore' })
-    await textOnlyMarkdown()
+    await Promise.all([textOnlyMarkdown(), labelByProject(), wordsByProject()])
+    // After its constructor: an editor is announced from inside it.
+    monaco.editor.onDidCreateEditor(editor => queueMicrotask(() => {
+      guardEdits(editor)
+      previewReadOnly(editor)
+    }))
     routeEditorLinks(monaco)
     registerBasicCompletion(monaco, model => !!languageService()?.served(model, 'completion'))
     startLanguageService(monaco)
@@ -74,6 +82,8 @@ const MARKDOWN_TAGS = ['a', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'div',
  * Hovers, completion and parameter docs come from language servers and from the project's own
  * comments. A picture in them would be fetched from the web (it can carry code out) and Monaco has
  * no option against that, so its markdown service, through which all of them are drawn, is told here.
+ * Nothing is trusted either: Monaco builds trusted markdown around links found in the file itself,
+ * and their text can smuggle in a command.
  */
 async function textOnlyMarkdown() {
   // @ts-expect-error Monaco ships this module without types
@@ -82,7 +92,32 @@ async function textOnlyMarkdown() {
   const render = proto.render
   // On the class: the instance is made lazily, behind a proxy that keeps the method it first saw.
   proto.render = function (markdown: unknown, options?: { sanitizerConfig?: object }, target?: HTMLElement) {
-    return render.call(this, markdown, { ...options, sanitizerConfig: { ...options?.sanitizerConfig, allowedTags: { override: MARKDOWN_TAGS } } }, target)
+    return render.call(this, untrusted(markdown as object), { ...options, sanitizerConfig: { ...options?.sanitizerConfig, allowedTags: { override: MARKDOWN_TAGS } } }, target)
+  }
+}
+
+/** A peek's header and lists name files by their path in the project, not by their model's URI. */
+async function labelByProject() {
+  const [{ StandaloneServices }, { ILabelService }] = await Promise.all([
+    // @ts-expect-error Monaco ships this module without types
+    import('monaco-editor/editor/standalone/browser/standaloneServices'),
+    // @ts-expect-error Monaco ships this module without types
+    import('monaco-editor/platform/label/common/label'),
+  ])
+  StandaloneServices.get(ILabelService).getUriLabel = uriLabel
+}
+
+/** Words are suggested from the open files of the same project: the others' are none of this one's. */
+async function wordsByProject() {
+  // @ts-expect-error Monaco ships this module without types
+  const { EditorWorkerClient } = await import('monaco-editor/editor/browser/services/editorWorkerService')
+  const proto = EditorWorkerClient.prototype
+  const suggest = proto.textualSuggest
+  // The file being typed in is always first.
+  proto.textualSuggest = function ([own, ...others]: Monaco.Uri[], ...rest: unknown[]) {
+    const project = own && fileOfUri(own)?.project
+    const same = project ? others.filter(uri => fileOfUri(uri)?.project === project) : []
+    return suggest.call(this, own ? [own, ...same] : [], ...rest)
   }
 }
 

@@ -3,20 +3,23 @@ import type { FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { parseFileTab } from '~/utils/fileTabs'
 import { parentOf, pathIn } from '~/utils/fileOps'
-import { tabOfModel } from '~/composables/editorDocuments'
+import { fileOfUri, tabOfModel } from '~/composables/editorDocuments'
 import type { MonacoApi } from '~/composables/monaco'
 
 /**
  * Completion that needs no language server, so it works in every project, remote ones too: the
- * keywords of the languages Monaco only has a grammar for, beside its words from open files, and
- * relative paths inside quotes. Where a server completes, both stand back.
+ * keywords of the languages Monaco only has a grammar for, beside its words from open files, those
+ * words for scripts, and relative paths inside quotes. Where a server completes, all stand back.
  */
 
 /** Monaco's workers complete these. */
 const WITH_WORKER = new Set(['typescript', 'javascript', 'json', 'css', 'scss', 'less', 'html', 'plaintext'])
 const KEYWORD_LISTS = ['keywords', 'typeKeywords', 'phpKeywords', 'builtins', 'builtinFunctions', 'phpConstants', 'constants']
-/** Up to this size a document is looked through, so a keyword it already has is not listed twice. */
-const DEDUPE_MAX = 200_000
+/** Scripts offer each other's words: their worker sees one file (`withWords`). */
+const SCRIPTS = new Set(['typescript', 'javascript'])
+/** Up to this size a document is looked through for its words. */
+const WORDS_IN_MAX = 200_000
+const WORD = /(?<![\p{ID_Continue}$])[\p{ID_Start}_$][\p{ID_Continue}$]+/gu
 
 const keywordLists = new Map<string, Promise<string[]>>()
 
@@ -41,14 +44,25 @@ const wordsIn = new WeakMap<Monaco.editor.ITextModel, { version: number; words: 
 const NO_WORDS = new Set<string>()
 
 function documentWords(model: Monaco.editor.ITextModel): Set<string> {
-  if (model.getValueLength() > DEDUPE_MAX) return NO_WORDS
+  if (model.getValueLength() > WORDS_IN_MAX) return NO_WORDS
   const version = model.getVersionId()
   let known = wordsIn.get(model)
   if (known?.version !== version) {
-    known = { version, words: new Set(model.getValue().match(/[A-Za-z_]\w+/g)) }
+    known = { version, words: new Set(model.getValue().match(WORD)) }
     wordsIn.set(model, known)
   }
   return known.words
+}
+
+/** The words of the project's other open scripts, for a script. */
+export function* otherFilesWords(monaco: MonacoApi, model: Monaco.editor.ITextModel): Generator<string> {
+  const project = SCRIPTS.has(model.getLanguageId()) ? fileOfUri(model.uri)?.project : undefined
+  if (project === undefined) return
+  for (const other of monaco.editor.getModels()) {
+    // A peek's preview is not open.
+    if (other === model || other.uri.scheme !== 'file' || !SCRIPTS.has(other.getLanguageId())) continue
+    if (fileOfUri(other.uri)?.project === project) yield* documentWords(other)
+  }
 }
 
 /** A relative path being typed after a quote or bracket: its folder part, then the name so far. */

@@ -1,5 +1,7 @@
 import type * as Monaco from 'monaco-editor'
 import { holdOverlay } from '~/composables/useOverlay'
+import { CompletionText, UntouchedText } from '~/lsp/editGuard'
+import { tabOfModel } from '~/composables/editorDocuments'
 import type { MonacoApi } from '~/composables/monaco'
 
 /** How the editor behaves while typing: completion as an IDE has it, the caret, its floating widgets. */
@@ -25,6 +27,10 @@ export const COMPLETION_OPTIONS: Monaco.editor.IStandaloneEditorConstructionOpti
   parameterHints: { enabled: true, cycle: true },
   hover: { delay: 350, sticky: true },
   gotoLocation: { multipleDefinitions: 'peek' },
+  // These write what was computed a moment before, with nobody looking.
+  formatOnType: false,
+  formatOnPaste: false,
+  linkedEditing: false,
   definitionLinkOpensInPeek: false,
 }
 
@@ -32,10 +38,110 @@ export const COMPLETION_OPTIONS: Monaco.editor.IStandaloneEditorConstructionOpti
 export const quickSuggestions = (language: string): Monaco.editor.IQuickSuggestionsOptions | boolean =>
   language === 'plaintext' || language === 'markdown' ? false : { other: 'on', comments: 'off', strings: 'off' }
 
+/* ---------- edits computed earlier */
+
+/**
+ * No completion or picked colour lands in another file, or in text that changed after it was
+ * computed; every editor gets this, a peek's too. Reaches into Monaco's suggest controller, which
+ * has no hook for it (check when upgrading Monaco).
+ */
+export function guardEdits(editor: Monaco.editor.ICodeEditor) {
+  // The colour picker writes a moment after the click, at the range it was opened on.
+  let picked: { model: Monaco.editor.ITextModel; version: number } | null = null
+  const pick = (e: Event) => {
+    const inPicker = e.type === 'keydown' ? (e as KeyboardEvent).key === 'Enter' : !!(e.target as Element).closest?.('.colorpicker-widget')
+    const model = editor.getModel()
+    if (inPicker && model) picked = { model, version: model.getVersionId() }
+  }
+  const dom = editor.getContainerDomNode()
+  for (const type of ['pointerdown', 'pointerup', 'keydown']) dom.addEventListener(type, pick, true)
+  const execute = editor.executeEdits.bind(editor)
+  editor.executeEdits = (source, edits, cursor) => {
+    if (source === 'colorpicker') {
+      const model = editor.getModel()
+      if (!model || picked?.model !== model || picked.version !== model.getVersionId()) return false
+      const done = execute(source, edits, cursor)
+      picked.version = model.getVersionId()
+      return done
+    }
+    return execute(source, edits, cursor)
+  }
+
+  const suggest: any = editor.getContribution('editor.contrib.suggestController')
+  let text: CompletionText | null = null
+  const subs: Monaco.IDisposable[] = []
+  if (suggest) {
+    subs.push(
+      suggest.model.onDidTrigger(() => {
+        const model = editor.getModel()
+        // Asked again for more of the same list, it keeps what the first answers were computed from.
+        if (text || !model) return
+        text = new CompletionText((editor.getSelections() ?? []).map((selection) => {
+          const at = selection.getPosition()
+          return { lineNumber: at.lineNumber, column: model.getWordUntilPosition(at).startColumn }
+        }))
+      }),
+      suggest.model.onDidCancel((e: { retrigger: boolean }) => { if (!e.retrigger) text = null }),
+      editor.onDidChangeModel(() => { text = null }),
+      editor.onDidChangeModelContent((e) => {
+        const asked = text
+        if (!asked?.valid) return
+        asked.changed(e)
+        // After the change: Monaco is still in the middle of telling about it.
+        if (!asked.valid) queueMicrotask(() => { if (text === asked) suggest.cancelSuggestWidget() })
+      }),
+    )
+    const insert = suggest._insertSuggestion
+    suggest._insertSuggestion = function (event: any, flags: number) {
+      const model = editor.getModel()
+      const item = event?.item
+      if (!item || !model) return insert.call(this, event, flags)
+      const fits = !!text?.valid
+      text = null
+      if (!fits) return this.cancelSuggestWidget()
+      if (Array.isArray(item.completion.additionalTextEdits) || item.isResolved) return insert.call(this, event, flags)
+      // Its import is still to come, and is written into whatever the editor shows by then.
+      const untouched = new UntouchedText()
+      const watching = model.onDidChangeContent(e => untouched.changed(e))
+      const resolve = item.resolve
+      item.resolve = async (token: unknown) => {
+        try {
+          await resolve.call(item, token)
+        } finally {
+          watching.dispose()
+          const edits = item.completion.additionalTextEdits
+          if (edits && (editor.getModel() !== model || !untouched.allows(edits))) item.completion.additionalTextEdits = undefined
+        }
+      }
+      try {
+        return insert.call(this, event, flags)
+      } finally {
+        delete item.resolve
+      }
+    }
+  }
+
+  editor.onDidDispose(() => {
+    subs.forEach(sub => sub.dispose())
+    for (const type of ['pointerdown', 'pointerup', 'keydown']) dom.removeEventListener(type, pick, true)
+  })
+}
+
+/** A peek shows a file that may have no tab: nothing typed there would ever be saved. */
+export function previewReadOnly(editor: Monaco.editor.ICodeEditor) {
+  if (!('getParentEditor' in editor)) return
+  const apply = () => {
+    const model = editor.getModel()
+    if (model) editor.updateOptions({ readOnly: !tabOfModel(model) })
+  }
+  editor.onDidChangeModel(apply)
+  apply()
+}
+
 /* ---------- caret */
 
-/** A little longer than `--dur-fast`, the glide: taken off sooner, the caret would snap to its end. */
-const GLIDE_MS = 170
+/** A little longer than `--dur-med`, the glide: taken off sooner, the caret would snap to its end. */
+const GLIDE_MS = 280
 
 /**
  * The caret glides only where it is sent (typing, arrows, a click). What moves it along with the

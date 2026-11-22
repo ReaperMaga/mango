@@ -10,10 +10,13 @@ import { fileKey, joinRoot, pathToUri, relativeTo, uriToFile, uriToPath } from '
 import { Rpc, RpcError, isBenign, type CancelToken } from '../app/lsp/rpc.ts'
 import { PendingChanges, SYNC_FULL, SYNC_INCREMENTAL, syncOptions } from '../app/lsp/sync.ts'
 import { escapeMarkdown, inertSnippet, toCompletions, toHover, toMarkers, toResolved, toSignatureHelp, toTargets } from '../app/lsp/convert.ts'
-import { WatchedFiles, FILE_CHANGED, FILE_CREATED, FILE_DELETED, globToRegExp } from '../app/lsp/watched.ts'
+import { WatchedFiles, FILE_CHANGED, FILE_CREATED, FILE_DELETED, compileGlob } from '../app/lsp/watched.ts'
 import { Session, crashReason, type SessionView } from '../app/lsp/session.ts'
 import { Pool, type PoolKey } from '../app/lsp/pool.ts'
 import { lspLanguage } from '../app/lsp/languages.ts'
+import { FILE_METHODS, linkRoute, oneFileWorker, untrusted, withWords, workerGuards } from '../app/lsp/builtins.ts'
+import { ModelUris } from '../app/lsp/modelUris.ts'
+import { CompletionText, UntouchedText } from '../app/lsp/editGuard.ts'
 
 const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 const range = (a: number, b: number, c: number, d: number) => ({ start: { line: a, character: b }, end: { line: c, character: d } })
@@ -292,10 +295,16 @@ test('diagnostics become markers', () => {
 })
 
 test('watched files match globs, absolute and relative', () => {
-  assert.ok(globToRegExp('**/*.{rs,toml}')!.test('Cargo.toml'))
-  assert.ok(globToRegExp('**/*.{rs,toml}')!.test('a/b/c.rs'))
-  assert.ok(!globToRegExp('*.rs')!.test('a/c.rs'))
-  assert.equal(globToRegExp('{oops'), null)
+  assert.ok(compileGlob('**/*.{rs,toml}')!.test('Cargo.toml'))
+  assert.ok(compileGlob('**/*.{rs,toml}')!.test('a/b/c.rs'))
+  assert.ok(!compileGlob('*.rs')!.test('a/c.rs'))
+  assert.ok(compileGlob('src/**')!.test('src/a/b.rs'))
+  assert.ok(compileGlob('{go.{mod,sum},*.[!o]o}')!.test('go.sum'))
+  assert.ok(compileGlob('{go.{mod,sum},*.[!o]o}')!.test('main.go'))
+  assert.ok(!compileGlob('{go.{mod,sum},*.[!o]o}')!.test('main.oo'))
+  assert.ok(compileGlob('*.RS', true)!.test('Main.rs'))
+  assert.equal(compileGlob('{oops'), null)
+  assert.equal(compileGlob('[oops'), null)
   const watched = new WatchedFiles('C:\\work\\app')
   watched.register('1', [{ globPattern: 'C:\\work\\app/**/*.go' }, { globPattern: { baseUri: 'file:///c%3A/work/app/sub', pattern: '*.mod' }, kind: 4 }])
   watched.register('2', [{ globPattern: { baseUri: { uri: 'file:///C:/work/app' }, pattern: '*.sum' } }])
@@ -403,6 +412,8 @@ test('a cancelled request is an empty answer', async () => {
   session.open({ file: 'a.rs', language: 'rust', text: () => '' })
   const { token, cancel } = cancellable()
   const asked = session.request('textDocument/completion', 'a.rs', {}, { token })
+  // A request leaves a microtask later, with the change it was asked from inside.
+  await tick()
   cancel()
   assert.equal(await asked, null)
   assert.equal(sent.at(-1).method, '$/cancelRequest')
@@ -546,4 +557,311 @@ test('one session per server and folder, idle for a while, gone at once when dis
   pool.update([worktree])
   assert.equal(log.at(-1), 'stop rust /app-wt now')
   assert.equal(pool.get(worktree), null)
+})
+
+test('a request carries the change it was asked from inside', async () => {
+  const { session, sent } = pretend()
+  await session.start()
+  session.open({ file: 'a.rs', language: 'rust', text: () => 'ab' })
+  // Monaco asks first and tells of the change after, in the same turn.
+  const asked = session.request('textDocument/completion', 'a.rs', {})
+  session.change('a.rs', [{ range: editorRange(1, 2, 1, 2), text: 'b' }])
+  await asked
+  assert.deepEqual(sent.slice(-2).map(m => m.method), ['textDocument/didChange', 'textDocument/completion'])
+  await session.stop()
+})
+
+test('a document opened again never repeats a version', async () => {
+  const { session, sent, markers, runs } = pretend()
+  await session.start()
+  session.open({ file: 'a.rs', language: 'rust', text: () => 'old' })
+  session.change('a.rs', null)
+  session.save('a.rs')
+  session.close('a.rs')
+  session.open({ file: 'a.rs', language: 'rust', text: () => 'new' })
+  const versions = sent.filter(m => m.method === 'textDocument/didOpen').map(m => m.params.textDocument.version)
+  assert.ok(versions[1] > 2, String(versions))
+  const count = markers.length
+  runs[0]!.receive({ method: 'textDocument/publishDiagnostics', params: { uri: 'file:///c%3A/work/app/a.rs', version: 2, diagnostics: [] } })
+  assert.equal(markers.length, count, 'what was found in the old text is not shown on the new')
+  await session.stop()
+})
+
+test('a server\'s glob cannot hang a match', () => {
+  const started = Date.now()
+  assert.equal(compileGlob(`${'{a,aa}'.repeat(40)}b`)!.test('a'.repeat(60)), false)
+  assert.equal(compileGlob('**a**a**a**a**a**a**a**a**a**a**a**a**b')!.test('a'.repeat(300)), false)
+  const watched = new WatchedFiles('/app')
+  watched.register('many', Array.from({ length: 5000 }, () => ({ globPattern: `${'{a,aa}'.repeat(100)}b` })))
+  watched.wants('a'.repeat(120), FILE_CHANGED)
+  assert.ok(Date.now() - started < 3000, `${Date.now() - started} ms`)
+})
+
+/* ---------- Monaco's own workers, the real ones */
+
+const monacoFile = (path: string) => import(new URL(`../node_modules/monaco-editor/esm/vs/${path}.js`, import.meta.url).href)
+const { TypeScriptWorker } = await monacoFile('languages/features/typescript/tsWorker')
+const { URI } = await monacoFile('base/common/uri')
+
+const TS_OPTIONS = { allowNonTsExtensions: true, allowJs: true, target: 99, module: 99, moduleResolution: 2, jsx: 1, esModuleInterop: true }
+const FORMAT = {
+  ConvertTabsToSpaces: true, TabSize: 2, IndentSize: 2, IndentStyle: 2, NewLineCharacter: '\n',
+  InsertSpaceAfterCommaDelimiter: true, InsertSpaceBeforeAndAfterBinaryOperators: true,
+}
+
+/** Open files as Mango makes their models, and the worker that mirrors them. */
+function editorWith(files: Array<[project: string, file: string, text: string]>) {
+  const uris = new ModelUris()
+  const mirrored: any[] = []
+  const open = (project: string, file: string, text: string): string => {
+    const uri = URI.from({ scheme: 'file', path: uris.next(project, file) })
+    mirrored.push({ uri, version: 1, getValue: () => text })
+    return uri.toString()
+  }
+  const names = files.map(f => open(...f))
+  const Worker = oneFileWorker(TypeScriptWorker)
+  const worker = new Worker({ getMirrorModels: () => mirrored }, { compilerOptions: TS_OPTIONS, extraLibs: {} })
+  return { worker, names, open, close: () => { mirrored.length = 0 } }
+}
+
+test('every method of Monaco\'s TypeScript worker is one file\'s, or the host\'s', () => {
+  const host = [
+    'constructor', 'getCompilationSettings', 'getLanguageService', 'getExtraLibs', 'getScriptFileNames', '_getModel', 'getScriptVersion',
+    '_getScriptText', 'getScriptSnapshot', 'getScriptKind', 'getCurrentDirectory', 'getDefaultLibFileName', 'isDefaultLibFileName',
+    'readFile', 'fileExists', 'getLibFiles', 'updateExtraLibs',
+  ]
+  assert.deepEqual(Object.getOwnPropertyNames(TypeScriptWorker.prototype).sort(), [...host, ...FILE_METHODS].sort())
+})
+
+test('.mts and .cts are TypeScript', async () => {
+  const { worker, names } = editorWith([['/app', 'a.mts', 'const n: number = 1\n'], ['/app', 'b.cts', 'const n: number = 1\n']])
+  for (const name of names) assert.deepEqual(await worker.getSyntacticDiagnostics(name), [])
+})
+
+test('no quick fix holds another file\'s edit', async () => {
+  const main = 'import { Store } from \'./store\'\n\nconst store = new Store()\nstore.reset()\ndocument.madeUp()\nconst counter = 1\nconsole.log(countr)\n'
+  const { worker, names } = editorWith([['/app', 'src/store.ts', 'export class Store {\n  size = 0\n}\n'], ['/app', 'src/main.ts', main]])
+  for (const [word, code] of [['reset', 2339], ['madeUp', 2339], ['Store', 2304]] as const) {
+    const at = main.indexOf(word, word === 'Store' ? 20 : 0)
+    for (const fix of await worker.getCodeFixesAtPosition(names[1], at, at + word.length, [code], FORMAT)) {
+      for (const change of fix.changes) assert.equal(change.fileName, names[1], fix.description)
+    }
+  }
+  const at = main.indexOf('countr)')
+  const spelling = await worker.getCodeFixesAtPosition(names[1], at, at + 6, [2552], FORMAT)
+  assert.ok(spelling.length, 'a fix of the file itself is still there')
+})
+
+test('a file opened again is read afresh by every worker', async () => {
+  const old = 'const a = {x:1}\nfunction f(){return a}\n'
+  const now = '// changed by git checkout while the tab was closed\nconst a = {x:10000}\nfunction f(){return a}\n'
+  const { worker, names, open, close } = editorWith([['/app', 'fmt.ts', old]])
+  await worker.getFormattingEditsForRange(names[0], 0, old.length, FORMAT)
+  await worker.getSyntacticDiagnostics(names[0])
+  await worker.getNavigationTree(names[0])
+  await worker.findRenameLocations(names[0], old.indexOf('f()'))
+  close()
+  const again = open('/app', 'fmt.ts', now)
+  assert.notEqual(again, names[0], 'the same URI and version 1 would be taken for the old text')
+  const fresh = editorWith([['/app', 'fmt.ts', now]])
+  assert.deepEqual(
+    await worker.getFormattingEditsForRange(again, 0, now.length, FORMAT),
+    await fresh.worker.getFormattingEditsForRange(fresh.names[0], 0, now.length, FORMAT),
+  )
+  for (const loc of await worker.findRenameLocations(again, now.indexOf('f()'))) {
+    assert.equal(now.slice(loc.textSpan.start, loc.textSpan.start + loc.textSpan.length), 'f')
+  }
+})
+
+test('no URI is used twice: reopened, renamed, previewed', () => {
+  const uris = new ModelUris()
+  const paths = ['/app', '/app', '/app-wt', '/app'].map(project => uris.next(project, 'src/a.css'))
+  assert.equal(new Set(paths).size, 4)
+  assert.deepEqual(uris.locate(paths[2]!), { project: '/app-wt', file: 'src/a.css' })
+  assert.deepEqual(uris.locate('/~2'), { project: '/app-wt', file: '' })
+  for (const bad of ['/~2/../../secret', '/~2/..\\secret', '/~99/a.ts', '/src/a.ts']) assert.equal(uris.locate(bad), null, bad)
+})
+
+test('rename, references, highlights, jumps and completion stay in their file', async () => {
+  const text = 'var sharedCounter = 1\nsharedCounter = sharedCounter + 1\n'
+  const { worker, names } = editorWith([
+    ['/app', 'global.ts', text],
+    ['/app', 'sibling.ts', `${text}var siblingSecret = 1\n`],
+    ['/app-wt', 'global.ts', `${text}var worktreeSecret = 1\n`],
+    ['/app', 'uses.ts', '/// <reference path="../~2/global.ts" />\nsiblingSecret\nworktreeSecret\n'],
+  ])
+  const [own, , , uses] = names
+  const at = text.indexOf('sharedCounter')
+  const renamed = await worker.findRenameLocations(own, at)
+  assert.equal(renamed.length, 3)
+  for (const loc of renamed) assert.equal(loc.fileName, own)
+  for (const ref of await worker.getReferencesAtPosition(own, at)) assert.equal(ref.fileName, own)
+  for (const hit of await worker.getDocumentHighlights(own, at, [own])) assert.equal(hit.fileName, own)
+  for (const def of await worker.getDefinitionAtPosition(own, at) ?? []) assert.equal(def.fileName, own)
+  const line = '/// <reference path="../~2/global.ts" />\n'
+  assert.deepEqual(await worker.getDefinitionAtPosition(uses, line.length + 1) ?? [], [])
+  const offered = (await worker.getCompletionsAtPosition(own, text.length)).entries.map((e: any) => e.name)
+  assert.ok(offered.includes('Math'), 'the standard library is still known')
+  assert.ok(!offered.includes('siblingSecret') && !offered.includes('worktreeSecret'))
+  const through = (await worker.getCompletionsAtPosition(uses, line.length)).entries.map((e: any) => e.name)
+  assert.ok(!through.includes('worktreeSecret'), 'not by naming its path either')
+})
+
+test('a rename that would need more than plain edits of one file is refused', async () => {
+  const cases: Array<[text: string, word: string, ok: boolean]> = [
+    ['import { f } from \'./lib\'\nf()\n', 'f()', false],
+    ['export function shared() {}\n', 'shared', false],
+    ['const size = 1\nconst box = { size }\n', 'size', false],
+    ['function run() {\n  const step = 1\n  return step\n}\n', 'step', true],
+  ]
+  for (const [text, word, ok] of cases) {
+    const { worker, names } = editorWith([['/app', 'a.ts', text]])
+    assert.equal((await worker.getRenameInfo(names[0], text.indexOf(word), {})).canRename, ok, text)
+  }
+})
+
+test('members other files reach are not renamed; what stays in the file is', async () => {
+  const cases: Array<[file: string, text: string, word: string, ok: boolean]> = [
+    ['a.ts', 'export class S { run() {} }', 'run', false],
+    ['a.ts', 'class S { size = 1 }\nexport const s = new S()', 'size', false],
+    ['a.ts', 'export class S { protected run() {} }', 'run', false],
+    ['a.ts', 'export class S { static make() {} }', 'make', false],
+    ['a.ts', 'export class S { get total() { return 1 } }', 'total', false],
+    ['a.ts', 'export class S { constructor(readonly part: number) {} }', 'part', false],
+    ['a.ts', 'export class S { constructor(public part: number) {} }', 'part', false],
+    ['a.ts', 'export const api = { load() {} }', 'load', false],
+    ['a.ts', 'const api = { load: 1 }\nexport default api', 'load', false],
+    ['a.ts', 'export interface P { label: string }', 'label', false],
+    ['a.ts', 'export type P = { label: string }', 'label', false],
+    ['a.ts', 'export enum E { First }', 'First', false],
+    ['a.ts', 'declare global { var shared: number }\nexport {}', 'shared', false],
+    ['a.ts', 'function go() {}\nexport { go }', 'go', false],
+    ['a.js', 'exports.go = function () {}', 'go', false],
+    ['a.ts', 'export function f(count: number) { return count }', 'count', true],
+    ['a.ts', 'export class S { private run() { this.run() } }', 'run', true],
+    ['a.ts', 'export class S { constructor(private part: number) {} }', 'part', true],
+    ['a.ts', 'export class S { #size = 1; read() { return this.#size } }', '#size', true],
+    ['a.ts', 'const top = 1\nexport default top', 'top', true],
+    ['a.ts', 'import * as lib from \'./other\'\nlib.run()', 'lib', true],
+  ]
+  for (const [file, text, word, ok] of cases) {
+    const { worker, names } = editorWith([['/app', file, text]])
+    const info = await worker.getRenameInfo(names[0], text.indexOf(word), {})
+    assert.equal(info.canRename, ok, text)
+    if (!ok) assert.equal(info.localizedErrorMessage, 'Can\'t rename this safely: other files may use this name', text)
+  }
+})
+
+test('the TypeScript worker\'s suggestions come with other files\' words, once and as plain text', async () => {
+  const others = ['sharedPlainName', 'ownName', 'Math', '$scope', 'sharedPlainName']
+  const complete = async (text: string) => {
+    const { worker, names } = editorWith([['/app', 'b.ts', text]])
+    const lines = text.split('\n')
+    const word = /[\w$]*$/.exec(text)![0]
+    const column = lines.at(-1)!.length + 1
+    const model = {
+      getLineContent: (n: number) => lines[n - 1],
+      getWordUntilPosition: () => ({ word, startColumn: column - word.length }),
+      getWordAtPosition: () => null,
+      isDisposed: () => false,
+    }
+    const own = async () => {
+      const info = await worker.getCompletionsAtPosition(names[0], text.length)
+      return info && { suggestions: info.entries.map((e: any) => ({ label: e.name })) }
+    }
+    const result: any = await withWords(own, () => others, 18)(model, { lineNumber: lines.length, column })
+    return result?.suggestions ?? []
+  }
+  const found = await complete('const ownName = 1\nsharedPl')
+  const named = (name: string) => found.filter((s: any) => s.label === name)
+  assert.deepEqual(named('sharedPlainName'), [{
+    label: 'sharedPlainName', kind: 18, insertText: 'sharedPlainName', sortText: '~',
+    range: { insert: editorRange(2, 1, 2, 9), replace: editorRange(2, 1, 2, 9) },
+  }])
+  for (const name of ['ownName', 'Math']) {
+    assert.equal(named(name).length, 1, name)
+    assert.equal(named(name)[0].kind, undefined, `${name} is the worker's own`)
+  }
+  assert.ok(named('$scope').length)
+  const offered = async (text: string) => (await complete(text)).some((s: any) => s.label === 'sharedPlainName')
+  assert.ok(await offered('const list = [...sha'), 'a spread is no member')
+  for (const text of ['Math.sha', 'const o = { size: 1 }\no?.sha', 'Math\n  .sha', 'Math.\n  sha']) {
+    assert.ok(!await offered(text), text)
+  }
+  assert.ok(!await offered('sharedPlainName'), 'not what is typed')
+})
+
+test('the other workers\' answers are held to the asking file\'s current text', async () => {
+  let version = 4
+  const model = { uri: { toString: () => 'file:///~1/a.css' }, getVersionId: () => version, isDisposed: () => false, getWordAtPosition: () => null }
+  const refusals: string[] = []
+  const guards = new Map<string, any>(workerGuards((_, __, reason) => refusals.push(reason)).map(([register, , guard]) => [register, guard]))
+  const edit = (uri: string) => ({ resource: { toString: () => uri }, versionId: undefined, textEdit: { text: 'x' } })
+  const rename = (edits: unknown[], during = () => {}) =>
+    guards.get('registerRenameProvider')(async () => { during(); return { edits } })(model, { lineNumber: 1, column: 1 }, 'x')
+
+  assert.equal((await rename([edit('file:///~1/a.css')])).edits[0].versionId, 4, 'applies to that version only')
+  assert.equal(await rename([edit('file:///~1/a.css'), edit('file:///~2/a.css')]), null)
+  assert.equal(await rename([edit('file:///~1/a.css')], () => { version++ }), null)
+  await guards.get('registerRenameProvider')(async () => ({ edits: [], rejectReason: 'no' }))(model, {}, 'x')
+  assert.deepEqual(refusals, ['no'])
+
+  for (const register of ['registerDocumentFormattingEditProvider', 'registerDocumentRangeFormattingEditProvider', 'registerOnTypeFormattingEditProvider', 'registerColorProvider']) {
+    assert.deepEqual(await guards.get(register)(async () => ['edit'])(model), ['edit'])
+    assert.equal(await guards.get(register)(async () => { version++; return ['edit'] })(model), null, register)
+  }
+  for (const register of ['registerReferenceProvider', 'registerDefinitionProvider']) {
+    const found = await guards.get(register)(async () => [{ uri: 'file:///~1/a.css' }, { uri: 'file:///~2/a.css' }])(model)
+    assert.deepEqual(found, [{ uri: 'file:///~1/a.css' }])
+  }
+  const late = await guards.get('registerCompletionItemProvider')(async () => {
+    version++
+    return { suggestions: [{ range: editorRange(1, 1, 1, 9), additionalTextEdits: [{}] }] }
+  })(model, { lineNumber: 1, column: 4 })
+  assert.equal(late.suggestions[0].range.endColumn, 4)
+  assert.equal(late.suggestions[0].additionalTextEdits, undefined)
+})
+
+test('no command from a file\'s text runs', async () => {
+  const { computeLinks } = await monacoFile('editor/common/languages/linkComputer')
+  const { MarkdownString } = await monacoFile('base/common/htmlContent')
+  const bs = String.fromCharCode(92)
+  const line = `// docs: http://x.dev/${bs}(${bs}${bs})[Open-docs](command:editor.action.insertSnippet?%7B%7D#)`
+  const links = computeLinks({ getLineCount: () => 1, getLineContent: () => line })
+  assert.ok(links.length)
+  for (const link of links) {
+    const hover = new MarkdownString('', true).appendLink(String(link.url), 'Follow link')
+    assert.equal(hover.isTrusted, true, 'as Monaco builds it')
+    const shown = untrusted(hover as object) as { value: string; isTrusted: unknown; supportHtml: unknown }
+    assert.deepEqual([shown.value, shown.isTrusted, shown.supportHtml], [hover.value, false, false])
+  }
+  for (const scheme of ['command', 'COMMAND', 'javascript', 'data', 'vscode', 'ms-windows-store', '']) assert.equal(linkRoute(scheme), 'nowhere', scheme)
+  assert.equal(linkRoute('https'), 'browser')
+  assert.equal(linkRoute('file'), 'editor')
+})
+
+test('a completion fits only the text it was computed from, typed into', () => {
+  const asked = () => new CompletionText([{ lineNumber: 5, column: 3 }, { lineNumber: 9, column: 1 }])
+  const change = (a: number, b: number, c: number, d: number, text: string, isFlush = false) => ({ isFlush, changes: [{ range: editorRange(a, b, c, d), text }] })
+  const fits = (...events: any[]) => {
+    const text = asked()
+    for (const e of events) text.changed(e)
+    return text.valid
+  }
+  assert.ok(fits(change(5, 6, 5, 6, 'a'), change(5, 6, 5, 7, ''), change(9, 1, 9, 1, 'a')))
+  assert.ok(!fits(change(1, 20, 1, 30, '// taken out')), 'the import\'s line changed')
+  assert.ok(!fits(change(7, 1, 8, 1, '')), 'lines below')
+  assert.ok(!fits(change(5, 1, 5, 2, 'x')), 'left of the word')
+  assert.ok(!fits(change(5, 6, 5, 6, '\n')))
+  assert.ok(!fits(change(5, 6, 5, 6, 'a', true)))
+})
+
+test('an import that arrives late lands only above what changed since', () => {
+  const late = new UntouchedText()
+  late.changed({ isFlush: false, changes: [{ range: editorRange(5, 3, 5, 8), text: 'farawayValue' }] })
+  assert.ok(late.allows([{ range: editorRange(1, 20, 1, 20) }]))
+  assert.ok(late.allows([{ range: editorRange(5, 1, 5, 3) }]))
+  assert.ok(!late.allows([{ range: editorRange(5, 9, 5, 9) }]))
+  late.changed({ isFlush: false, changes: [{ range: editorRange(1, 1, 1, 2), text: '' }] })
+  assert.ok(!late.allows([{ range: editorRange(1, 20, 1, 20) }]))
 })
