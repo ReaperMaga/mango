@@ -126,7 +126,7 @@ function askRemove() {
       for (const t of threads.threads.filter(x => x.projectPath === p.path && !x.parentId)) threads.remove(t.id)
       ws.closeProject(p.path)
       await ws.forgetProject(p.path)
-      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null })
+      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null, excluded: null })
       ws.forgetEnvExtraFiles(p.path)
       await useMcp().forgetProject(p.path).catch(() => {})
       picked.value = null

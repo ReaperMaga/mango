@@ -29,6 +29,7 @@ const SEED: Record<string, string | null> = {
   'app/utils/paths.ts': "/** Last segment of a path, either separator. */\nexport const baseName = (p: string) => p.replace(/[\\\\/]+$/, '').split(/[\\\\/]/).pop() || p\n",
   'app/assets/css/tokens.css': ':root {\n  --font-ui: \'Inter Variable\', ui-sans-serif, system-ui, sans-serif;\n  --font-mono: \'JetBrains Mono Variable\', ui-monospace, monospace;\n  --radius-sm: 6px;\n}\n',
   'app/components/AppWorkspace.vue': '<template>\n  <div class="workspace">\n    <AppSidebar />\n    <ChatArea />\n  </div>\n</template>\n\n<style scoped>\n.workspace { display: flex; flex: 1; min-height: 0; }\n</style>\n',
+  'mobile/modules/mango-ssh/index.ts': "export { default } from './src/MangoSshModule'\n",
   'public/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n  <rect width="64" height="64" rx="14" fill="#f5a524"/>\n  <path d="M18 46V20l14 16 14-16v26" fill="none" stroke="#1d1a14" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>\n  <circle cx="48" cy="16" r="5" fill="#7fb24a"/>\n</svg>\n',
   'public/changes-panel.png': null,
   'scripts/try-agent.ts': "// Drive an agent adapter against the real CLI, outside the app.\nconst [agent, cwd, prompt] = process.argv.slice(2)\nconsole.log({ agent, cwd, prompt })\n",

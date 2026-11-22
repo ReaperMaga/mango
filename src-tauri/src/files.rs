@@ -162,8 +162,11 @@ fn read_entries(target: &std::path::Path, dir: &str, max: usize) -> Result<(Vec<
     Ok((entries, truncated))
 }
 
-/// Mark what the repository ignores, when the project is a git work tree.
-fn mark_ignored<'a>(root: &str, entries: impl Iterator<Item = &'a mut FsEntry>) -> Result<(), String> {
+/// Mark what the repository ignores among `entries`, which are all below the folder `dir`, when
+/// the project is a git work tree. Git is asked from inside that folder: from the project it
+/// refuses the whole question as soon as one path lies in a submodule or behind a link, and from
+/// inside, a submodule's own rules apply.
+fn mark_ignored<'a>(root: &str, dir: &str, entries: impl Iterator<Item = &'a mut FsEntry>) -> Result<(), String> {
     // Git runs in the folder as given: on Windows the canonical form is a
     // `\\?\` path, which git does not accept as a working directory.
     let project = existing_dir(root)?;
@@ -171,13 +174,29 @@ fn mark_ignored<'a>(root: &str, entries: impl Iterator<Item = &'a mut FsEntry>) 
         return Ok(());
     }
     let mut entries: Vec<&mut FsEntry> = entries.collect();
-    let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-    let ignored: std::collections::HashSet<String> =
-        git::ignored_paths(&project, &paths).into_iter().map(|p| p.trim_end_matches('/').to_string()).collect();
-    for e in &mut entries {
-        e.ignored = ignored.contains(&e.path);
+    let prefix = if dir.is_empty() { String::new() } else { join_rel(dir, "") };
+    // `./` keeps a name like `:x` from reading as pathspec magic; git echoes each path as asked.
+    let paths: Vec<String> = entries.iter().map(|e| format!("./{}", e.path.strip_prefix(&prefix).unwrap_or(&e.path))).collect();
+    let cwd = if dir.is_empty() { project.clone() } else { project.join(dir) };
+    let (asked, found) = match git::ignored_paths_known(&cwd, &paths) {
+        Some(found) => (paths, found),
+        // Windows starts no process in a folder with a path over 260 characters: ask from the project.
+        None => {
+            let full: Vec<String> = entries.iter().map(|e| format!("./{}", e.path)).collect();
+            let found = git::ignored_paths(&project, &full);
+            (full, found)
+        }
+    };
+    let ignored: std::collections::HashSet<String> = found.into_iter().collect();
+    for (e, path) in entries.iter_mut().zip(&asked) {
+        e.ignored = ignored.contains(path);
     }
     Ok(())
+}
+
+/// A subfolder git has to be asked from inside of ([`mark_ignored`]): a repository of its own, or a link.
+fn asks_for_itself(folder: &std::path::Path) -> bool {
+    folder.join(".git").exists() || fs::symlink_metadata(folder).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 #[cfg(test)]
@@ -194,7 +213,7 @@ pub(crate) fn list_dir_ahead(root: &str, dir: &str, dirs: usize, budget: usize) 
         return Err(format!("{dir} is not a folder"));
     }
     let (mut entries, truncated) = read_entries(&target, dir, MAX_ENTRIES)?;
-    mark_ignored(root, entries.iter_mut())?;
+    mark_ignored(root, dir, entries.iter_mut())?;
 
     let mut ahead = Vec::new();
     let mut left = budget;
@@ -216,7 +235,12 @@ pub(crate) fn list_dir_ahead(root: &str, dir: &str, dirs: usize, budget: usize) 
         ahead.push(FsAhead { dir: e.path.clone(), entries: sub_entries });
     }
     if !ahead.is_empty() {
-        mark_ignored(root, ahead.iter_mut().flat_map(|a| a.entries.iter_mut()))?;
+        let (apart, together): (Vec<&mut FsAhead>, Vec<&mut FsAhead>) =
+            ahead.iter_mut().partition(|a| asks_for_itself(&project.join(&a.dir)));
+        mark_ignored(root, dir, together.into_iter().flat_map(|a| a.entries.iter_mut()))?;
+        for a in apart {
+            mark_ignored(root, &a.dir, a.entries.iter_mut())?;
+        }
     }
     Ok(FsListing { entries, truncated, ahead })
 }
@@ -416,6 +440,7 @@ mtime() {
     /// Then an empty record, and per subfolder that fits whole `D<path>\0` and its `d`/`f`
     /// records; last `i\0` and what git ignores among all of those. Subfolders git ignores,
     /// `node_modules`, names with line breaks and links that lead out of the project are skipped.
+    /// Git is asked from inside the folders, as [`super::mark_ignored`] does.
     pub(super) const LIST: &str = concat!(
         prelude!(),
         r#"[ -d "$t" ] || exit 12
@@ -436,8 +461,14 @@ done
 printf 'i\000'
 git=
 command -v git >/dev/null 2>&1 && git=1
+pre=${rel:+$rel/}
+ignored() {
+  (cd "$root/$1" && GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null) | tr '\000' '\n' |
+    while IFS= read -r i; do printf '%s%s\000' "${1:+$1/}" "${i#./}"; done
+}
+apart() { [ -e "$root/$1/.git" ] || [ -L "$root/$1" ]; }
 if [ "$#" -gt 0 ] && [ -n "$git" ]; then
-  for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
+  for p in "$@"; do printf './%s\000' "${p#"$pre"}"; done | ignored "$rel"
 fi
 [ "$ahead" -gt 0 ] || exit 0
 printf '\000'
@@ -451,7 +482,9 @@ for p in "$@"; do
 done
 ign=
 if [ -n "$cand" ] && [ -n "$git" ]; then
-  ign=$(printf '%s' "$cand" | GIT_OPTIONAL_LOCKS=0 git -c core.quotePath=false check-ignore --stdin 2>/dev/null)
+  ign=$(for p in "$@"; do
+    case $nl$cand in *"$nl$p$nl"*) printf './%s\000' "${p#"$pre"}" ;; esac
+  done | ignored "$rel" | tr '\000' '\n')
 fi
 k=0
 set --
@@ -488,7 +521,15 @@ done
 set +f
 printf 'i\000'
 if [ "$#" -gt 0 ] && [ -n "$git" ]; then
-  for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
+  for p in "$@"; do apart "${p%/*}" || printf './%s\000' "${p#"$pre"}"; done | ignored "$rel"
+  last=
+  for p in "$@"; do
+    d=${p%/*}
+    [ "$d" = "$last" ] && continue
+    last=$d
+    apart "$d" || continue
+    for q in "$@"; do [ "${q%/*}" = "$d" ] && printf './%s\000' "${q##*/}"; done | ignored "$d"
+  done
 fi
 exit 0
 "#
@@ -1106,6 +1147,70 @@ mod tests {
         fs::remove_dir_all(&dir).ok();
     }
 
+    /// A repository with a submodule `sub`, each with its own ignore rules. None without git.
+    fn submodule_project() -> Option<(PathBuf, PathBuf)> {
+        let dir = scratch();
+        let root = dir.join("proj");
+        let sub = root.join("sub");
+        fs::create_dir_all(sub.join("deep")).unwrap();
+        fs::create_dir_all(root.join("a")).unwrap();
+        let git = |at: &Path, args: &[&str]| {
+            let status = std::process::Command::new("git").current_dir(at).args(args).stderr(std::process::Stdio::null()).status();
+            matches!(status, Ok(s) if s.success())
+        };
+        if !git(&root, &["init", "-q"]) || !git(&sub, &["init", "-q"]) {
+            return None;
+        }
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("a/x.log"), "").unwrap();
+        fs::write(root.join("z.log"), "").unwrap();
+        fs::write(sub.join(".gitignore"), "build/\n*.tmp\n").unwrap();
+        fs::write(sub.join("deep/y.tmp"), "").unwrap();
+        fs::create_dir_all(sub.join("build")).unwrap();
+        assert!(git(&sub, &["add", ".gitignore"]));
+        let commit = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "init"];
+        assert!(git(&sub, &commit));
+        assert!(git(&root, &["add", "sub"]));
+        Some((dir, root))
+    }
+
+    #[test]
+    fn marks_ignored_entries_around_and_inside_a_submodule() {
+        let Some((dir, root)) = submodule_project() else { return };
+        let r = path_of(&root);
+        let marked = |entries: &[FsEntry]| entries.iter().filter(|e| e.ignored).map(|e| e.path.clone()).collect::<Vec<_>>();
+
+        // Read ahead: the submodule must not cost its neighbours their marks.
+        let top = list_dir_ahead(&r, "", 10, 100).unwrap();
+        assert_eq!(marked(&top.entries), ["z.log"]);
+        let ahead: Vec<_> = top.ahead.iter().flat_map(|a| marked(&a.entries)).collect();
+        assert_eq!(ahead, ["a/x.log", "sub/build"]);
+
+        // Inside it, its own rules apply.
+        let sub = list_dir_ahead(&r, "sub", 10, 100).unwrap();
+        assert_eq!(marked(&sub.entries), ["sub/build"]);
+        assert_eq!(sub.ahead.iter().flat_map(|a| marked(&a.entries)).collect::<Vec<_>>(), ["sub/deep/y.tmp"]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Windows starts no process in a folder whose path is this long: git is still asked.
+    #[test]
+    fn marks_ignored_entries_in_a_very_deep_folder() {
+        let dir = scratch();
+        let ok = std::process::Command::new("git").current_dir(&dir).args(["init", "-q"]).status();
+        if !matches!(ok, Ok(s) if s.success()) {
+            return; // no git on this machine
+        }
+        fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+        let rel = vec!["a-folder-with-quite-a-long-name"; 10].join("/");
+        let deep = rel.split('/').fold(dir.clone(), |at, part| at.join(part));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("x.log"), "").unwrap();
+        let listing = list_dir(&path_of(&dir), &rel).unwrap();
+        assert!(listing.entries[0].ignored);
+        fs::remove_dir_all(&dir).ok();
+    }
+
     /// A project to read ahead in: `a` and `b` hold a few entries, `big` more than the
     /// budget left for it, `out` links out of the project, `node_modules` and `target` are skipped.
     fn ahead_project() -> (PathBuf, PathBuf) {
@@ -1328,6 +1433,21 @@ mod tests {
             let (_, out) = sh(&root, remote::LIST, &["a", "5000", "10", "100"], b"");
             let nested = remote::parse_listing(remote::body(&out).unwrap(), "a");
             assert_eq!(summary(&nested), [("a/inner".to_string(), vec![])]);
+            fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
+        fn marks_ignored_entries_like_a_local_folder_around_a_submodule() {
+            let Some((dir, root)) = submodule_project() else { return };
+            std::os::unix::fs::symlink(root.join("a"), root.join("linked")).unwrap();
+            for at in ["", "sub"] {
+                let (code, out) = sh(&root, remote::LIST, &[at, "5000", "10", "100"], b"");
+                assert_eq!(code, Some(0));
+                let listing = remote::parse_listing(remote::body(&out).unwrap(), at);
+                let local = list_dir_ahead(&path_of(&root), at, 10, 100).unwrap();
+                assert_eq!(listing.entries, local.entries);
+                assert_eq!(summary(&listing), summary(&local));
+            }
             fs::remove_dir_all(&dir).ok();
         }
 
