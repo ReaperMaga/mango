@@ -65,6 +65,12 @@ function place() {
   left = Math.max(MARGIN, Math.min(left, vw - width - MARGIN))
   const room = Math.max(120, top ? spaceAbove : spaceBelow)
   const maxHeight = props.maxHeight ? Math.min(props.maxHeight, room) : room
+  // A context menu too tall for either side of the pointer slides along the window instead of scrolling.
+  const tall = point ? Math.min(list.value?.scrollHeight ?? 0, cap) + 2 : 0
+  if (tall && tall > room && tall <= vh - MARGIN * 2) {
+    pos.value = { left, top: Math.max(MARGIN, Math.min(r.bottom, vh - MARGIN - tall)), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight: tall }
+    return
+  }
   pos.value = top
     ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight }
     : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight }

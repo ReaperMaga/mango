@@ -92,6 +92,8 @@ src-tauri/src/
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
+  file_ops.rs        the Files view's new folder, rename, duplicate, delete and show in file manager: the entry itself (never a link's target), never replacing
+  trash_bin.rs       moving to the system's trash, and never deleting for good instead (Windows: its own shell sink, the trash crate does delete for good there)
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   releases.rs        `gh_releases`, `gh_tag_run`, `gh_run`, `gh_run_action`: releases and their workflow runs (re-run, cancel), through `gh` too
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only

@@ -345,6 +345,7 @@ fn split_rel(rel: &str) -> Result<(&str, &str), String> {
 pub(crate) fn create_file(root: &str, file: &str, text: &str) -> Result<WriteResult, String> {
     use std::io::Write as _;
     let (dir, name) = split_rel(file)?;
+    crate::file_ops::new_name(name)?;
     let (_, parent) = resolve(root, dir)?;
     if !parent.is_dir() {
         return Err(format!("{dir} is not a folder"));

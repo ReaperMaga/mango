@@ -33,5 +33,6 @@ function accept() {
   font-size: var(--text-sm);
   color: var(--fg-muted);
   text-wrap: pretty;
+  overflow-wrap: anywhere;
 }
 </style>

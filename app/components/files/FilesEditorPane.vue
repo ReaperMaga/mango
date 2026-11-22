@@ -5,7 +5,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { closeFileTab, useFiles } from '~/stores/files'
 import { parseFileTab } from '~/utils/fileTabs'
-import { editorModel, setEditorModel } from '~/utils/editorModels'
+import { editorModel, setEditorModel, type EditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
 import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
@@ -61,6 +61,8 @@ let monaco: MonacoApi | null = null
 let editor: Monaco.editor.IStandaloneCodeEditor | null = null
 let fontObserver: MutationObserver | null = null
 let shownTab: string | null = null
+/** The model entry behind `shownTab`; held itself, as a rename gives it another tab id. */
+let shownEntry: EditorModel | null = null
 let contentSub: Monaco.IDisposable | null = null
 let markers: ChangeMarkers | null = null
 const failed = ref<string | null>(null)
@@ -86,6 +88,9 @@ function modelFor(tabId: string): Monaco.editor.ITextModel | null {
     entry.savedVersion = entry.model.getAlternativeVersionId()
     entry.loadedVersion = f.version
   }
+  // A renamed file may be in another language now.
+  const language = languageFor(monaco, f.file)
+  if (entry.model.getLanguageId() !== language) monaco.editor.setModelLanguage(entry.model, language)
   return entry.model
 }
 
@@ -95,16 +100,25 @@ function syncDirty() {
   files.setDirty(shownTab, entry.model.getAlternativeVersionId() !== entry.savedVersion)
 }
 
+/**
+ * A field has the keyboard (a name in the Files tree, the commit message). An editor can arrive seconds
+ * after it was asked for: what is being typed would end up in its file.
+ */
+function typingElsewhere() {
+  const el = document.activeElement
+  return !!el?.matches('input, textarea, [contenteditable="true"]') && !el.closest('.monaco-editor')
+}
+
 /** Put the current tab's model in the editor, keeping the previous one's scroll and cursor. */
 function show() {
   if (!editor || !monaco) return
   if (shownTab && shownTab !== props.tabId) {
-    const prev = editorModel(shownTab)
-    if (prev && !prev.model.isDisposed()) prev.viewState = editor.saveViewState()
+    if (shownEntry && !shownEntry.model.isDisposed()) shownEntry.viewState = editor.saveViewState()
   }
   const model = editable.value ? modelFor(props.tabId) : null
   if (editor.getModel() !== model) editor.setModel(model)
   shownTab = model ? props.tabId : null
+  shownEntry = model ? editorModel(props.tabId) : null
   if (model) {
     const entry = editorModel(props.tabId)
     if (entry?.viewState) editor.restoreViewState(entry.viewState)
@@ -113,7 +127,7 @@ function show() {
     void loadBase()
     revealAsked()
     // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
-    if (props.active && !svgPreview.value) editor.focus()
+    if (props.active && !svgPreview.value && !files.deleting.length && !typingElsewhere()) editor.focus()
   }
 }
 
@@ -186,14 +200,15 @@ onMounted(() => {
 // Opened before the read finished, switched to another file tab in this pane, or reloaded from disk.
 watch(() => [props.tabId, editable.value, file.value?.version] as const, () => {
   if (!editable.value) {
-    if (editor) { editor.setModel(null); shownTab = null }
+    if (editor) { editor.setModel(null); shownTab = null; shownEntry = null }
     return
   }
   if (!editor) void setUp()
   else show()
 })
 
-watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value) editor.focus() })
+// Not for a pane that comes forward because a file was deleted: the next Delete would edit this one.
+watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value && !files.deleting.length) editor.focus() })
 
 /* ---------- change markers ---------- */
 
@@ -226,10 +241,7 @@ function setView(view: 'preview' | 'code') {
 }
 
 onBeforeUnmount(() => {
-  if (editor && shownTab) {
-    const entry = editorModel(shownTab)
-    if (entry && !entry.model.isDisposed()) entry.viewState = editor.saveViewState()
-  }
+  if (editor && shownEntry && !shownEntry.model.isDisposed()) shownEntry.viewState = editor.saveViewState()
   contentSub?.dispose()
   markers?.dispose()
   markers = null
