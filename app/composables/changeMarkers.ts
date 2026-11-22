@@ -37,6 +37,7 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
 
   function compute() {
     clearTimeout(timer)
+    timer = undefined
     const model = editor.getModel()
     if (!model || !base) {
       changes = []
@@ -153,6 +154,9 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
       const line = e.target.position?.lineNumber
       const model = editor.getModel()
       if (!line || !model) return
+      // The markers can be 150 ms behind the text, and Revert would replace other lines. Only then:
+      // computing again makes new changes, which the open peek is told apart by.
+      if (timer !== undefined) compute()
       const last = model.getLineCount()
       const hit = changes.find(c => c.kind === 'del'
         ? Math.min(c.start, last) === line
