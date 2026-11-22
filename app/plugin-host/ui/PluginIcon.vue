@@ -23,7 +23,20 @@ watch(() => props.icon, async (icon) => {
   if (props.icon === icon) named.value = c ? markRaw(c as Component) : null
 }, { immediate: true })
 
-const svg = computed(() => (typeof props.icon === 'string' && props.icon.trim().startsWith('<svg') ? props.icon : null))
+/**
+ * Markup becomes an `<svg>` of its own, like lucide's: the styles a place gives its icons (size,
+ * stroke, colour) then reach it. The template element is inert while it is read.
+ */
+const svg = computed(() => {
+  if (typeof props.icon !== 'string' || !props.icon.trim().startsWith('<svg')) return null
+  const box = document.createElement('template')
+  box.innerHTML = props.icon.trim()
+  const root = box.content.firstElementChild
+  if (!root) return null
+  const attrs: Record<string, string> = { width: '24', height: '24' }
+  for (const { name, value } of root.attributes) if (/^[A-Za-z][\w:.-]*$/.test(name) && !name.startsWith('xmlns')) attrs[name] = value
+  return { attrs, body: root.innerHTML }
+})
 const component = computed<Component>(() =>
   // A component is an object, or a function (lucide's are).
   props.icon && typeof props.icon !== 'string' ? markRaw(props.icon as Component) : named.value ?? Puzzle)
@@ -31,18 +44,6 @@ const component = computed<Component>(() =>
 
 <template>
   <!-- eslint-disable-next-line vue/no-v-html -- a plugin's own icon markup (plugins are trusted code) -->
-  <span v-if="svg" class="picon" aria-hidden="true" v-html="svg" />
+  <svg v-if="svg" v-bind="svg.attrs" aria-hidden="true" v-html="svg.body" />
   <component :is="component" v-else aria-hidden="true" />
 </template>
-
-<style scoped>
-.picon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.picon :deep(svg) {
-  width: 100%;
-  height: 100%;
-}
-</style>
