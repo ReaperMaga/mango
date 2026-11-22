@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -34,6 +34,12 @@ onMounted(() => {
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
 onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
+
+/* The maximize button shows Restore while the window is maximized. */
+const maximized = ref(false)
+let stopWatch: (() => void) | undefined
+onMounted(async () => { stopWatch = await appWindow.watchMaximized(m => { maximized.value = m }) })
+onBeforeUnmount(() => stopWatch?.())
 
 /** A window on one chat (stores/windows.ts): no project menu, a way back to the main window instead. */
 const chatWindow = computed(() => win.spec.kind === 'chat')
@@ -262,7 +268,7 @@ const branchTitle = computed(() => {
 
       <div v-if="native && !mac" class="tb__win">
         <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
-        <button type="button" class="tb__win-btn" aria-label="Maximize" @click="appWindow.toggleMaximize()"><Square class="tb__sq" /></button>
+        <button type="button" class="tb__win-btn" :aria-label="maximized ? 'Restore' : 'Maximize'" @click="appWindow.toggleMaximize()"><Copy v-if="maximized" class="tb__sq" /><Square v-else class="tb__sq" /></button>
         <button type="button" class="tb__win-btn tb__win-btn--close" aria-label="Close" @click="appWindow.close()"><X /></button>
       </div>
     </div>
