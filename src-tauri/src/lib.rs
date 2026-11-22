@@ -15,6 +15,7 @@ mod files;
 mod git;
 mod github;
 mod images;
+mod lsp;
 mod mcp;
 mod notify;
 mod plastic;
@@ -62,6 +63,7 @@ pub fn run() {
         .manage(envs::join::JoinLinkState::default())
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
+        .manage(lsp::LspState::default())
         .manage(mcp::McpState::default())
         .manage(plugins::PluginsState::default())
         .manage(browser_remote::RemoteBrowserState::default())
@@ -69,8 +71,14 @@ pub fn run() {
             envs::join::setup_deep_link(app.handle());
             Ok(())
         })
-        .on_window_event(windows::on_event)
+        .on_window_event(|window, event| {
+            lsp::on_window_event(window, event);
+            windows::on_event(window, event);
+        })
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                lsp::on_page_started(webview);
+            }
             if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
                 envs::join::page_loaded(webview.app_handle());
             }
@@ -121,6 +129,11 @@ pub fn run() {
             auth::agent_logout,
             setup::setup_check,
             setup::setup_install,
+            lsp::lsp_servers,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
+            lsp::lsp_install,
             vcs::git_status,
             vcs::git_diff,
             vcs::git_base,
@@ -237,6 +250,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
+                app.state::<lsp::LspState>().kill_all();
                 app.state::<envs::remote::DesktopState>().kill_all();
                 app.state::<browser_remote::RemoteBrowserState>().kill_all();
             }

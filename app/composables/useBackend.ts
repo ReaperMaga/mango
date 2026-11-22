@@ -1,4 +1,4 @@
-import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServer, LspServerId, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
@@ -108,7 +108,9 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
 export async function on<E extends keyof Events>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
   if (isTauri()) {
     const { listen } = await import('@tauri-apps/api/event')
-    return listen<Events[E]>(event, e => handler(e.payload))
+    // Language servers talk only to their own window, and Tauri gives a listener without a target every event.
+    const target = event.startsWith('lsp://') ? tauriLabel() : undefined
+    return listen<Events[E]>(event, e => handler(e.payload), target ? { target } : undefined)
   }
   return mock.on(event, handler)
 }
@@ -289,6 +291,25 @@ const mock = (() => {
     }, 250 + lines.length * 420)
   }
 
+  /* Language servers: none runs or installs here, so the editor shows what it shows without one. */
+  const lspServers: LspServer[] = ([
+    ['typescript', 'typescript-language-server', ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'], 'npm install -g typescript-language-server typescript@6', 'https://github.com/typescript-language-server/typescript-language-server#installing'],
+    ['rust', 'rust-analyzer', ['rust'], 'rustup component add rust-analyzer', 'https://rust-analyzer.github.io/book/installation.html'],
+    ['python', 'pyright', ['python'], 'npm install -g pyright', 'https://microsoft.github.io/pyright/#/installation'],
+    ['go', 'gopls', ['go'], 'go install golang.org/x/tools/gopls@latest', 'https://go.dev/gopls/#installation'],
+    ['clangd', 'clangd', ['c', 'cpp'], null, 'https://clangd.llvm.org/installation'],
+    ['csharp', 'csharp-ls', ['csharp'], 'dotnet tool install --global csharp-ls', 'https://github.com/razzmatazz/csharp-language-server'],
+  ] satisfies [LspServerId, string, string[], string | null, string][])
+    .map(([id, name, languages, install, helpUrl]) => ({ id, name, languages, installed: false, path: null, install, helpUrl }))
+  function fakeLspInstall(id: string, server: LspServerId) {
+    const lines = [
+      `\x1b[2m$ ${lspServers.find(s => s.id === server)?.install}\x1b[0m`,
+      'Simulated: the browser preview installs nothing. In the Mango app this runs the installer.',
+    ]
+    lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
+    setTimeout(() => emit('pty://exit', { id, code: 1 }), 250 + lines.length * 420)
+  }
+
   /* Voice: models "download" in a few seconds; transcription answers with a labelled stand-in. */
   const voiceModels: VoiceModel[] = [
     { id: 'tiny', name: 'Tiny', sizeBytes: 153_544_121, downloaded: false, downloading: false },
@@ -450,6 +471,14 @@ const mock = (() => {
         fakeInstall(id, args.tool)
         return id
       }
+      case 'lsp_servers': return lspServers.map(s => ({ ...s }))
+      case 'lsp_install': {
+        const id = newPtyId()
+        fakeLspInstall(id, args.server)
+        return id
+      }
+      case 'lsp_start': throw new Error('Language servers run only inside the Mango desktop app; the browser preview has none.')
+      case 'lsp_send': case 'lsp_stop': return
       // Local or in a remote environment (`remote`), the preview has no CLI: runAgentTurn simulates instead.
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': case 'agent_reconnect_now': return

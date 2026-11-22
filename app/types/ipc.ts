@@ -61,6 +61,36 @@ export interface AuthStatus {
   detail: string | null
 }
 
+/** A language server Mango knows how to run (`lsp_servers`). The backend owns each one's command line. */
+export type LspServerId = 'typescript' | 'rust' | 'python' | 'go' | 'clangd' | 'csharp'
+
+export interface LspServer {
+  id: LspServerId
+  /** The program's own name, e.g. "rust-analyzer". */
+  name: string
+  /** LSP language ids it serves, e.g. "typescript", "typescriptreact". */
+  languages: string[]
+  installed: boolean
+  /** The executable found; null when it is not installed. */
+  path: string | null
+  /** The installer Mango would run (`lsp_install`), as the user would type it; null when it has none here. */
+  install: string | null
+  helpUrl: string
+}
+
+export interface LspStarted {
+  /** The project folder the server runs in: absolute, no `\\?\` prefix. What file URIs are built from. */
+  root: string
+  /** Mango's own process id, for `initialize`'s processId. */
+  pid: number
+}
+
+/** One JSON-RPC message from a language server, its framing already removed. */
+export interface LspMessageEvent { id: string; message: string }
+
+/** A language server ended; sent once, also after `lsp_stop`. */
+export interface LspExitEvent { id: string; code: number | null; stderr: string }
+
 /** Something Mango needs, offered by the setup dialog (`setup_check`). */
 export type SetupToolId = 'git' | 'claude' | 'codex'
 
@@ -1195,6 +1225,19 @@ export interface Commands {
   setup_install: [{ tool: SetupToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
+  /** The language servers Mango knows, and which are installed on this computer. */
+  lsp_servers: [Record<string, never>, LspServer[]]
+  /**
+   * Start a server in a local project (remote projects are refused). The caller makes up `id` and
+   * listens for it first. Only after the user allowed language servers for the project.
+   */
+  lsp_start: [{ id: string; root: string; server: LspServerId }, LspStarted]
+  /** Send one JSON-RPC message; the backend adds the framing. Messages arrive in the order they were sent. */
+  lsp_send: [{ id: string; message: string }, void]
+  lsp_stop: [{ id: string }, void]
+  /** Run a server's installer in a PTY (the backend picks the command). Returns the pty id. */
+  lsp_install: [{ server: LspServerId; cols: number; rows: number }, string]
+
   /** `path` is any folder inside the repository (normally the project path). */
   git_status: [{ path: string }, GitStatus]
   /** Unified diff of one file. Untracked files come back as an all-added diff. */
@@ -1626,6 +1669,8 @@ export interface Events {
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
   'agent://connection': AgentConnectionEvent
+  'lsp://message': LspMessageEvent
+  'lsp://exit': LspExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
   /** A browser's page changed: URL, title, loading. */

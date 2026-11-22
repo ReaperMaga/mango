@@ -2789,6 +2789,7 @@ dependencies = [
  "candle-transformers",
  "dirs 6.0.0",
  "gtk",
+ "libc",
  "portable-pty",
  "reqwest",
  "ring",
