@@ -210,7 +210,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
                 <component :is="it.icon" v-if="it.icon" />
               </span>
               <span class="menu__text">
-                <span class="menu__label">{{ it.label }}</span>
+                <span class="menu__label" :class="{ 'is-mono': it.labelMono }">{{ it.label }}</span>
                 <span v-if="it.hint" class="menu__hint" :class="{ 'is-mono': it.hintMono }">
                   <component :is="it.hintIcon" v-if="it.hintIcon" class="menu__hint-icon" aria-hidden="true" />
                   <span class="menu__hint-text">{{ it.hint }}</span>
@@ -307,6 +307,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
 .menu__hint-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .menu__hint-icon { width: 11px; height: 11px; flex: none; stroke-width: 2; color: var(--fg-faint); }
 .menu__aside { flex: 0 1 auto; text-align: right; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
+.menu__label.is-mono { font-family: var(--font-mono); font-size: var(--text-xs); }
 .menu__aside.is-mono, .menu__hint.is-mono .menu__hint-text { font-family: var(--font-mono); }
 /* A menu that fits its rows gives the label its full length; the aside gives way first when the cap is reached. */
 .is-fit .menu__text { flex: 1 1 auto; }

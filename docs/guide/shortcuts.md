@@ -14,6 +14,7 @@ Mango is built to be driven from the keyboard. On macOS, <kbd>⌘</kbd> replaces
 | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>T</kbd> | New terminal |
 | <kbd>Ctrl</kbd> <kbd>B</kbd> | Show or hide the sidebar |
 | <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>G</kbd> | Switch the sidebar between chats and changes |
+| <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>9</kbd> | Show the Git log |
 | <kbd>Ctrl</kbd> <kbd>,</kbd> | Open or close Settings |
 | <kbd>Ctrl</kbd> <kbd>\\</kbd> | Split the chat area, or close the split |
 | <kbd>Ctrl</kbd> <kbd>W</kbd> | Close the current tab |
@@ -58,6 +59,17 @@ The palette (<kbd>Ctrl</kbd> <kbd>K</kbd>, or the search field in the titlebar) 
 | <kbd>↑</kbd> <kbd>↓</kbd> <kbd>Enter</kbd> in the branch popup | Pick a branch or action |
 | <kbd>→</kbd> / <kbd>←</kbd> in the branch popup | Open / close a branch's actions, or a folder of branches |
 | <kbd>Esc</kbd> | Close the branch popup |
+
+## Git log
+
+| Keys | Action |
+| --- | --- |
+| <kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Page Up</kbd> <kbd>Page Down</kbd>, <kbd>Home</kbd> <kbd>End</kbd> | Move between commits |
+| <kbd>Enter</kbd> | Move to the commit's files; on a file, open its diff |
+| <kbd>Ctrl</kbd> <kbd>F</kbd> | Search |
+| <kbd>Ctrl</kbd> <kbd>C</kbd> on a commit | Copy its hash |
+| <kbd>Shift</kbd> <kbd>F10</kbd> on a commit | Its menu |
+| <kbd>Esc</kbd> | Clear the search |
 
 ## Terminal panel
 

@@ -9,6 +9,7 @@ import { createApi } from './api'
 import { emitStatusChange, hooks, pluginNames, pluginTabs, setReporter } from './registry'
 import { dropPluginLayers } from './uiState'
 import { parsePluginTab } from './ids'
+import { builtInPluginNote } from '~/utils/builtIns'
 import { usePlugins } from '~/stores/plugins'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
@@ -157,6 +158,12 @@ export const usePluginRuntime = defineStore('pluginRuntime', {
         const id = p.manifest.id
         pluginNames[id] = p.manifest.name || id
         const running = instances.get(id)
+        const builtIn = builtInPluginNote(id)
+        if (builtIn) {
+          if (running) work.push(queue(id, () => this._deactivate(id, true)))
+          this._setStatus(id, 'builtIn', builtIn)
+          continue
+        }
         if (!p.enabled) {
           if (running) work.push(queue(id, () => this._deactivate(id, true)))
           this._setStatus(id, 'disabled')
@@ -197,6 +204,8 @@ export const usePluginRuntime = defineStore('pluginRuntime', {
     async _activate(info: InstalledPlugin) {
       const id = info.manifest.id
       const latest = usePlugins().byId(id) ?? info
+      const builtIn = builtInPluginNote(id)
+      if (builtIn) return this._setStatus(id, 'builtIn', builtIn)
       if (!latest.enabled || this.safeMode) return
       failedWith.delete(id)
       const why = incompatibility(versionRef, latest.manifest.minAppVersion)

@@ -2205,6 +2205,8 @@ pub(crate) fn graph(at: &At, q: &GraphQuery) -> Result<GitGraph, String> {
             }
             out
         }
+        // The current branch alone, with no commit on it yet: an empty history, not a bad revision.
+        (None, false) if refs == ["HEAD"] => return Ok(GitGraph { head, branch, ..Default::default() }),
         _ => out,
     };
     if !out.ok() {
@@ -4127,6 +4129,10 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         // Unborn: nothing yet, but the branch is known.
         let g = query(&|_| {}).unwrap();
         assert!(g.head.is_none() && g.commits.is_empty() && !g.more && g.branch.is_some());
+        // The Git log asks for the current branch alone: empty, not a bad revision.
+        let current = query(&|q| q.refs = Some(vec!["HEAD".into()])).unwrap();
+        assert!(current.head.is_none() && current.commits.is_empty() && !current.more);
+        assert_eq!(current.branch, g.branch);
         let main = g.branch.unwrap();
 
         s.write("a.txt", "one\n");
@@ -4234,5 +4240,7 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         s.git(&["checkout", "-q", "--orphan", "fresh"]);
         let g = query(&|_| {}).unwrap();
         assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 4));
+        let g = query(&|q| q.refs = Some(vec!["HEAD".into()])).unwrap();
+        assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 0));
     }
 }

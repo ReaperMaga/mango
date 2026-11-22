@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitFork, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitCommitHorizontal, GitFork, GitGraph, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
   Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Puzzle, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -9,6 +9,7 @@ import { useThreads } from '~/stores/threads'
 import { useUpdater } from '~/stores/updater'
 import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
+import { useGitLog } from '~/stores/gitLog'
 import { useWindows } from '~/stores/windows'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
@@ -157,6 +158,8 @@ const actions = computed<Item[]>(() => {
       { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: ws.keyParts('env'), detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
       { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: ws.keyParts('files'), keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
+      { id: 'git-log.show', group: 'Actions', label: 'Show Git log', icon: GitGraph, keys: ws.keyParts('git-log'), keywords: 'git log history commits graph branches', run: () => useGitLog().open() },
+      { id: 'git-log.go-to-commit', group: 'Actions', label: 'Go to commit…', detail: 'Git log', icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
       { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
       ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? 'Hide releases' : 'Show releases', icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github tags versions builds actions workflow runs assets download', run: () => ws.toggleReleases() }]),
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },

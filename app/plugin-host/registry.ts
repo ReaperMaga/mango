@@ -181,11 +181,6 @@ export function pluginSystemPrompt(): string {
 
 export const isPluginSchemeRegistered = (id: string) => reg.schemes.some(s => s.fullId === id)
 export const pluginToolWindow = (ref: string | null | undefined) => (ref ? reg.toolWindows.find(w => w.fullId === ref) ?? null : null)
-/** A panel tab by its ref, while registered and its `when()` holds; else null (the panel shows the terminals). */
-export const shownPanelTab = (ref: string | null | undefined) => {
-  const t = ref ? reg.panelTabs.find(p => p.fullId === ref) ?? null : null
-  return t && shown(t) ? t : null
-}
 export const pluginTabView =(pluginId: string, viewId: string) => reg.tabViews.find(v => v.pluginId === pluginId && v.id === viewId) ?? null
 export const pluginMenus = <L extends MenuLocation>(location: L) =>
   reg.menus.filter(m => m.location === location) as unknown as Array<Owned<PluginMenuItem<L>>>

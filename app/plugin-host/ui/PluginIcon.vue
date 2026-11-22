@@ -25,7 +25,8 @@ watch(() => props.icon, async (icon) => {
 
 const svg = computed(() => (typeof props.icon === 'string' && props.icon.trim().startsWith('<svg') ? props.icon : null))
 const component = computed<Component>(() =>
-  props.icon && typeof props.icon === 'object' ? markRaw(props.icon as Component) : named.value ?? Puzzle)
+  // A component is an object, or a function (lucide's are).
+  props.icon && typeof props.icon !== 'string' ? markRaw(props.icon as Component) : named.value ?? Puzzle)
 </script>
 
 <template>

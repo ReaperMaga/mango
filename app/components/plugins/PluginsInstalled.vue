@@ -7,6 +7,7 @@ import { usePlugins } from '~/stores/plugins'
 import { usePluginRuntime } from '~/plugin-host/runtime'
 import { call, isTauri } from '~/composables/useBackend'
 import { addLocalFolder, copyText, dismissJob, jobLabel, openPlugins, updatePlugin, usePluginsView } from '~/composables/pluginsView'
+import { builtInPluginNote } from '~/utils/builtIns'
 import { repoLabel } from '~/utils/pluginSource'
 import SettingsSwitch from '~/components/settings/SettingsSwitch.vue'
 import PluginStatus from './PluginStatus.vue'
@@ -32,12 +33,15 @@ const listEl = ref<HTMLElement | null>(null)
 const list = computed(() => [...plugins.installed].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name)))
 
 function statusOf(p: InstalledPlugin): PluginRunStatus {
+  if (builtInPluginNote(p.manifest.id)) return 'builtIn'
   const s = runtime.states[p.manifest.id]?.status
   if (s) return s
   if (!p.enabled) return 'disabled'
   return runtime.safeMode ? 'paused' : 'loading'
 }
 const errorOf = (p: InstalledPlugin) => {
+  const builtIn = builtInPluginNote(p.manifest.id)
+  if (builtIn) return builtIn
   const st = runtime.states[p.manifest.id]
   return st && (st.status === 'error' || st.status === 'incompatible') ? st.error : null
 }
@@ -117,12 +121,14 @@ async function copyPluginsDir() {
 
 function menu(p: InstalledPlugin): MenuItem[] {
   const id = p.manifest.id
+  const builtIn = !!builtInPluginNote(id)
   return [
     { label: 'Details', icon: Info, onSelect: () => openPlugins({ detail: id }) },
-    { label: 'Reload', icon: RotateCw, disabled: !p.enabled || runtime.safeMode, onSelect: () => void run(id, () => runtime.reload(id)) },
+    { label: 'Reload', icon: RotateCw, disabled: builtIn || !p.enabled || runtime.safeMode, onSelect: () => void run(id, () => runtime.reload(id)) },
     {
       label: p.source.kind === 'local' ? 'Read again from its folder' : 'Check for update',
       icon: RefreshCw,
+      disabled: builtIn,
       onSelect: () => void (p.source.kind === 'local' ? updatePlugin(id) : checkOne(p)),
     },
     { label: 'Open folder', icon: FolderOpen, onSelect: () => void reveal(id) },
@@ -180,10 +186,10 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
         <li v-for="p in list" :key="p.manifest.id" class="pi__item">
           <div class="pi__row" :class="{ 'is-off': !p.enabled }">
             <SettingsSwitch
-              :model-value="p.enabled"
+              :model-value="p.enabled && !builtInPluginNote(p.manifest.id)"
               :labelledby="nameId(p)"
               :title="p.enabled ? `Turn ${p.manifest.name} off` : `Turn ${p.manifest.name} on`"
-              :disabled="busy === p.manifest.id"
+              :disabled="busy === p.manifest.id || !!builtInPluginNote(p.manifest.id)"
               @update:model-value="v => toggle(p, v)"
             />
             <div class="pi__text">
@@ -197,7 +203,7 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
               <div class="pi__source selectable" :title="sourceText(p)">
                 <span v-if="p.source.kind === 'local'" class="pi__kind">Local folder</span>{{ sourceText(p) }}
               </div>
-              <p v-if="errorOf(p)" class="pi__why selectable" :class="{ 'is-warn': statusOf(p) === 'incompatible' }" :title="errorOf(p) ?? ''">{{ errorOf(p) }}</p>
+              <p v-if="errorOf(p)" class="pi__why selectable" :class="{ 'is-warn': statusOf(p) === 'incompatible', 'is-note': statusOf(p) === 'builtIn' }" :title="errorOf(p) ?? ''">{{ errorOf(p) }}</p>
               <p v-if="view.jobs[p.manifest.id]?.error" class="pi__why selectable" role="alert">
                 {{ view.jobs[p.manifest.id]!.error }}
                 <button type="button" class="pi__dismiss" @click="dismissJob(p.manifest.id)">Dismiss</button>
@@ -381,4 +387,5 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
   border-radius: var(--radius-xs);
 }
 .pi__link:hover { color: var(--fg); }
+.pi__why.is-note { color: var(--fg-subtle); }
 </style>

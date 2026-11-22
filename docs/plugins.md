@@ -315,7 +315,7 @@ mango.ui.toolWindows.open('scratchpad')   // this plugin's tool window, by its o
 mango.ui.toolWindows.close()
 ```
 
-**Panel tabs** sit in the bottom panel among the terminals (like a tool window docked at the bottom of an IDE), and
+**Panel tabs** sit in the bottom panel among the terminals and Mango's own Git log (like tool windows docked at the bottom of an IDE), and
 each gets a button at the foot of the tool strip, above the terminal's. There is one of each, and the user handles it
 like a terminal's tab: drags it along the strip, into the main area (a tab of its own, a split) and back, or closes it.
 Mango remembers where it is. A closed tab comes back into the panel from its button, `panelTabs.open` or a command of

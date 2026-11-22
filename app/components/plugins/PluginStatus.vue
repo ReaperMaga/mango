@@ -12,6 +12,7 @@ const LOOK: Record<PluginRunStatus, { word: string; tone: string; fill: 'none' |
   loading: { word: 'Starting…', tone: 'running', fill: 'half' },
   error: { word: 'Failed', tone: 'error', fill: 'full' },
   incompatible: { word: 'Needs a newer Mango', tone: 'waiting', fill: 'full' },
+  builtIn: { word: 'Built into Mango', tone: 'idle', fill: 'none' },
   paused: { word: 'Paused', tone: 'queued', fill: 'none' },
   disabled: { word: 'Off', tone: 'idle', fill: 'none' },
 }

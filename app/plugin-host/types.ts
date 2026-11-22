@@ -468,7 +468,8 @@ export interface MangoPluginModule {
 
 /* ---------------------------------------------------------------- runtime state (Settings > Plugins reads it) */
 
-export type PluginRunStatus = 'disabled' | 'loading' | 'active' | 'error' | 'incompatible' | 'paused'
+/** `builtIn`: what the plugin did is part of Mango now, so it does not run. */
+export type PluginRunStatus = 'disabled' | 'loading' | 'active' | 'error' | 'incompatible' | 'paused' | 'builtIn'
 
 export interface PluginLogLine {
   at: number

@@ -11,15 +11,17 @@ import { useThreads } from '~/stores/threads'
 import { terminalSlot } from '~/composables/useTerminalDrag'
 import { dragJustEnded, draggedPanelItem, pressPanelTab, pressTerminalTab } from '~/composables/useTabDrag'
 import { parseTerminalTab } from '~/utils/terminalTabs'
-import { read, reg, shown, type Owned } from '~/plugin-host/registry'
-import type { PanelTabContext, PluginPanelTab } from '~/plugin-host/types'
+import { allPanelTabs, findPanelTab, panelTabBadge, type PanelTab } from '~/composables/panelTabs'
+import type { PanelTabContext } from '~/plugin-host/types'
 import { usePluginRuntime } from '~/plugin-host/runtime'
 import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
+import GitLogPanel from '~/components/git/GitLogPanel.vue'
+import { GIT_LOG_TAB } from '~/utils/builtIns'
 import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
 
 /**
- * Docked panel at the bottom of the main column: the terminals, and among them the plugins' panel tabs
- * (`ui.panelTabs`), which move, dock and close like terminals. Height is a fraction of `container` (the column), stored in the workspace.
+ * Docked panel at the bottom of the main column: the terminals, and among them the panel tabs (the Git log,
+ * and plugins' `ui.panelTabs`), which move, dock and close like terminals. Height is a fraction of `container` (the column), stored in the workspace.
  */
 const props = defineProps<{ container: HTMLElement | null }>()
 
@@ -114,52 +116,47 @@ function endDrag(e: PointerEvent) {
   ws.persist()
 }
 
-/* ---------- plugin panel tabs ---------- */
+/* ---------- panel tabs ---------- */
 const runtime = usePluginRuntime()
-const byRef = (ref: string) => reg.panelTabs.find(t => t.fullId === ref) ?? null
-/** The plugin panel tab showing instead of a terminal, or null. */
-const showingPlugin = computed(() => ws.activePanelTab)
-function badgeOf(t: Owned<PluginPanelTab>) {
-  const b = read(t.badge, t.pluginId, null, 'badge')
-  return typeof b === 'number' && b > 0 ? Math.floor(b) : 0
-}
+/** The panel tab showing instead of a terminal, or null. */
+const showingTab = computed(() => ws.activePanelTab)
 
-/** The strip, in its order: terminals and plugin panel tabs side by side. */
-type StripItem = { kind: 'terminal'; key: string; term: TerminalTab } | { kind: 'plugin'; key: string; tab: Owned<PluginPanelTab> }
+/** The strip, in its order: terminals and panel tabs side by side. */
+type StripItem = { kind: 'terminal'; key: string; term: TerminalTab } | { kind: 'tab'; key: string; tab: PanelTab }
 const stripItems = computed<StripItem[]>(() => ws.panelStrip.flatMap((key): StripItem[] => {
   const term = ws.panelTerminals.find(t => t.id === key)
   if (term) return [{ kind: 'terminal', key, term }]
-  const tab = byRef(key)
-  return tab ? [{ kind: 'plugin', key, tab }] : []
+  const tab = findPanelTab(key)
+  return tab ? [{ kind: 'tab', key, tab }] : []
 }))
-const hasPluginTabs = computed(() => stripItems.value.some(i => i.kind === 'plugin'))
+const hasPanelTabs = computed(() => stripItems.value.some(i => i.kind === 'tab'))
 
-// The main area holds a tab for each panel tab placed there whose plugin runs (after a reload, a plugin coming back...).
+// The main area holds a tab for each panel tab placed there that is Mango's own or whose plugin runs (after a reload, a plugin coming back...).
 watch(
-  () => [reg.panelTabs.map(t => t.fullId).join(' '), JSON.stringify(ws.panelTabPlaces), threads.tabs.length],
+  () => [allPanelTabs().map(t => t.fullId).join(' '), JSON.stringify(ws.panelTabPlaces), threads.tabs.length],
   () => ws.syncPanelEditorTabs(),
   { immediate: true },
 )
 
 /*
- * A plugin's view lives here, like the terminals: it mounts the first time it shows (in the panel or in a
+ * A panel tab's view lives here, like the terminals: it mounts the first time it shows (in the panel or in a
  * pane, which it is teleported into) and stays mounted until it is closed or its plugin stops, so moving
  * it or switching tabs keeps its state. `ctx.visible` says when it is in view.
  */
 const editorTabOf = (ref: string) => (ws.panelTabPlaces[ref]?.at === 'editor' ? ws.panelEditorTab(ref) : null)
-const pluginSlot = (ref: string) => (editorTabOf(ref) ? terminalSlot(ref) : null)
-const pluginInView = (ref: string) => {
+const tabSlot = (ref: string) => (editorTabOf(ref) ? terminalSlot(ref) : null)
+const tabInView = (ref: string) => {
   const tabId = editorTabOf(ref)
-  return tabId ? threads.panes.some(p => p.threadId === tabId) : ws.terminalOpen && showingPlugin.value?.fullId === ref
+  return tabId ? threads.panes.some(p => p.threadId === tabId) : ws.terminalOpen && showingTab.value?.fullId === ref
 }
 const seen = ref<string[]>([])
 watchEffect(() => {
-  const live = reg.panelTabs.filter(t => ws.panelTabPlaces[t.fullId]?.at !== 'closed').map(t => t.fullId)
+  const live = allPanelTabs().filter(t => ws.panelTabPlaces[t.fullId]?.at !== 'closed').map(t => t.fullId)
   const keep = seen.value.filter(r => live.includes(r))
-  for (const r of live) if (!keep.includes(r) && (pluginSlot(r) || showingPlugin.value?.fullId === r)) keep.push(r)
+  for (const r of live) if (!keep.includes(r) && (tabSlot(r) || showingTab.value?.fullId === r)) keep.push(r)
   if (keep.join(' ') !== seen.value.join(' ')) seen.value = keep
 })
-const mountedTabs = computed(() => reg.panelTabs.filter(t => seen.value.includes(t.fullId)))
+const mountedTabs = computed(() => allPanelTabs().filter(t => seen.value.includes(t.fullId)))
 const ctxs = computed<Record<string, PanelTabContext>>(() => {
   const projectPath = threads.workdir ?? ws.activeProjectPath
   const out: Record<string, PanelTabContext> = {}
@@ -167,7 +164,7 @@ const ctxs = computed<Record<string, PanelTabContext>>(() => {
     const ref = t.fullId
     out[ref] = {
       projectPath,
-      visible: pluginInView(ref),
+      visible: tabInView(ref),
       // In the main area: close its tab. In the panel: hide the panel.
       close: () => (editorTabOf(ref) ? ws.closePanelTab(ref) : ws.toggleTerminal(false)),
     }
@@ -177,11 +174,11 @@ const ctxs = computed<Record<string, PanelTabContext>>(() => {
 
 /* ---------- tabs ---------- */
 /*
- * Open with no shell and no plugin tab showing (restored as open on launch, a plugin tab that went
+ * Open with no shell and no panel tab showing (restored as open on launch, a plugin tab that went
  * away): start a shell. A saved plugin tab waits for the plugins to load before giving up on it.
  */
 watch(
-  () => ws.terminalOpen && !showingPlugin.value && ws.panelTerminals.length === 0 && (runtime.ready || !ws.panelPluginTab),
+  () => ws.terminalOpen && !showingTab.value && ws.panelTerminals.length === 0 && (runtime.ready || !ws.panelPluginTab),
   (need) => {
     if (!need) return
     // The chosen plugin tab stays chosen: it shows again once its plugin (or its `when()`) is back.
@@ -199,13 +196,13 @@ function activate(id: string) {
   // Clicking a tab means "I want to type there", also when it was already the active one.
   nextTick(() => views.value[id]?.focus())
 }
-function activatePlugin(ref: string) {
+function activateTab(ref: string) {
   if (dragJustEnded()) return
   if (ws.panelPluginTab !== ref || !ws.terminalOpen) ws.openPanelTab(ref)
 }
 
 const strip = ref<HTMLElement | null>(null)
-watch(() => showingPlugin.value?.fullId ?? ws.activeTerminalId, async (id) => {
+watch(() => showingTab.value?.fullId ?? ws.activeTerminalId, async (id) => {
   await nextTick()
   if (id) strip.value?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 })
@@ -230,7 +227,7 @@ function onTabKey(e: KeyboardEvent, index: number) {
   e.preventDefault()
   const tab = tabs[next]
   if (!tab) return
-  if (tab.kind === 'plugin') activatePlugin(tab.key)
+  if (tab.kind === 'tab') activateTab(tab.key)
   else activate(tab.key)
   nextTick(() => strip.value?.querySelector<HTMLElement>(`[data-tab-id="${tab.key}"]`)?.focus())
 }
@@ -260,7 +257,7 @@ const paneTerminal = computed(() => parseTerminalTab(threads.activePane.threadId
 const canMoveToEditor = computed(() => !!ws.activeProjectPath)
 const moveLabel = 'Move to editor area'
 
-/* Right-click on a tab of the strip: a terminal's, or a plugin panel tab's (no shell actions). */
+/* Right-click on a tab of the strip: a terminal's, or a panel tab's (no shell actions). */
 const tabMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
 const menuTermId = ref<string | null>(null)
 async function onTabContext(e: MouseEvent, id: string) {
@@ -271,7 +268,7 @@ async function onTabContext(e: MouseEvent, id: string) {
 const tabMenuItems = computed<MenuItem[]>(() => {
   const id = menuTermId.value
   if (!id) return []
-  if (byRef(id)) {
+  if (findPanelTab(id)) {
     return [
       { label: moveLabel, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.movePanelTabToEditor(id) },
       { label: 'Close', icon: X, divider: true, onSelect: () => ws.closePanelTab(id) },
@@ -337,7 +334,7 @@ const profileItems = computed<MenuItem[]>(() => {
     class="terminal-panel"
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
-    :aria-label="hasPluginTabs ? 'Bottom panel' : 'Terminal'"
+    :aria-label="hasPanelTabs ? 'Bottom panel' : 'Terminal'"
     data-tab-drop="panel"
     @transitionend="onPanelTransitionEnd"
   >
@@ -361,35 +358,35 @@ const profileItems = computed<MenuItem[]>(() => {
         ref="strip"
         class="terminal-panel__tabs"
         role="tablist"
-        :aria-label="hasPluginTabs ? 'Panel tabs' : 'Terminals'"
+        :aria-label="hasPanelTabs ? 'Panel tabs' : 'Terminals'"
         data-term-strip
         @wheel="onStripWheel"
       >
         <template v-for="(item, i) in stripItems" :key="item.key">
-          <!-- A plugin's panel tab: moves and closes like a terminal's tab; no shell. -->
+          <!-- A panel tab: moves and closes like a terminal's tab; no shell. -->
           <div
-            v-if="item.kind === 'plugin'"
+            v-if="item.kind === 'tab'"
             class="term-tab"
-            :class="{ 'is-active': showingPlugin?.fullId === item.key, 'is-dragged': draggedPanelItem()?.id === item.key }"
+            :class="{ 'is-active': showingTab?.fullId === item.key, 'is-dragged': draggedPanelItem()?.id === item.key }"
             role="tab"
             :data-tab-id="item.key"
             :data-term-id="item.key"
-            :aria-selected="showingPlugin?.fullId === item.key"
-            :aria-label="badgeOf(item.tab) ? `${item.tab.title}, ${badgeOf(item.tab)}` : item.tab.title"
-            :tabindex="showingPlugin?.fullId === item.key ? 0 : -1"
+            :aria-selected="showingTab?.fullId === item.key"
+            :aria-label="panelTabBadge(item.tab) ? `${item.tab.title}, ${panelTabBadge(item.tab)}` : item.tab.title"
+            :tabindex="showingTab?.fullId === item.key ? 0 : -1"
             :title="item.tab.title"
-            @click="activatePlugin(item.key)"
+            @click="activateTab(item.key)"
             @pointerdown="pressPanelTab($event, item.key, 'panel')"
             @contextmenu.prevent="onTabContext($event, item.key)"
             @mousedown.middle.prevent
             @auxclick.middle.prevent="ws.closePanelTab(item.key)"
-            @keydown.enter.prevent="activatePlugin(item.key)"
-            @keydown.space.prevent="activatePlugin(item.key)"
+            @keydown.enter.prevent="activateTab(item.key)"
+            @keydown.space.prevent="activateTab(item.key)"
             @keydown="onTabKey($event, i)"
           >
             <PluginIcon :icon="item.tab.icon" class="term-tab__icon" />
             <span class="term-tab__title">{{ item.tab.title }}</span>
-            <span v-if="badgeOf(item.tab)" class="term-tab__badge tabular" aria-hidden="true">{{ badgeOf(item.tab) > 99 ? '99+' : badgeOf(item.tab) }}</span>
+            <span v-if="panelTabBadge(item.tab)" class="term-tab__badge tabular" aria-hidden="true">{{ panelTabBadge(item.tab) > 99 ? '99+' : panelTabBadge(item.tab) }}</span>
             <button
               type="button"
               class="term-tab__close"
@@ -404,12 +401,12 @@ const profileItems = computed<MenuItem[]>(() => {
           <div
             v-else
             class="term-tab"
-            :class="{ 'is-active': !showingPlugin && item.key === ws.activeTerminalId, 'is-exited': item.term.exited, 'is-dragged': draggedPanelItem()?.id === item.key }"
+            :class="{ 'is-active': !showingTab && item.key === ws.activeTerminalId, 'is-exited': item.term.exited, 'is-dragged': draggedPanelItem()?.id === item.key }"
             role="tab"
             :data-tab-id="item.key"
             :data-term-id="item.key"
-            :aria-selected="!showingPlugin && item.key === ws.activeTerminalId"
-            :tabindex="!showingPlugin && item.key === ws.activeTerminalId ? 0 : -1"
+            :aria-selected="!showingTab && item.key === ws.activeTerminalId"
+            :tabindex="!showingTab && item.key === ws.activeTerminalId ? 0 : -1"
             :title="tabTitle(item.term)"
             @click="activate(item.key)"
             @pointerdown="pressTerminalTab($event, item.key, 'panel')"
@@ -462,8 +459,8 @@ const profileItems = computed<MenuItem[]>(() => {
         <UiIconButton
           :label="moveLabel"
           size="sm"
-          :disabled="!canMoveToEditor || (!showingPlugin && !ws.activeTerminalId)"
-          @click="showingPlugin ? ws.movePanelTabToEditor(showingPlugin.fullId) : ws.activeTerminalId && ws.moveTerminalToEditor(ws.activeTerminalId)"
+          :disabled="!canMoveToEditor || (!showingTab && !ws.activeTerminalId)"
+          @click="showingTab ? ws.movePanelTabToEditor(showingTab.fullId) : ws.activeTerminalId && ws.moveTerminalToEditor(ws.activeTerminalId)"
         >
           <ArrowUpToLine />
         </UiIconButton>
@@ -471,7 +468,7 @@ const profileItems = computed<MenuItem[]>(() => {
           <Minimize2 v-if="isMaximized" />
           <Maximize2 v-else />
         </UiIconButton>
-        <UiIconButton :label="hasPluginTabs ? 'Hide panel' : 'Hide terminal'" size="sm" @click="ws.toggleTerminal(false)">
+        <UiIconButton :label="hasPanelTabs ? 'Hide panel' : 'Hide terminal'" size="sm" @click="ws.toggleTerminal(false)">
           <ChevronDown />
         </UiIconButton>
       </div>
@@ -480,23 +477,24 @@ const profileItems = computed<MenuItem[]>(() => {
     <div class="terminal-panel__body" data-term-body>
       <Teleport v-for="tab in ws.terminalTabs" :key="tab.id" :to="slotOf(tab) ?? 'body'" :disabled="!slotOf(tab)">
         <TerminalView
-          v-show="slotOf(tab) || (!tab.inEditor && !showingPlugin && tab.id === ws.activeTerminalId)"
+          v-show="slotOf(tab) || (!tab.inEditor && !showingTab && tab.id === ws.activeTerminalId)"
           :ref="(el: any) => { views[tab.id] = el }"
           :tab="tab"
-          :active="slotOf(tab) ? paneTerminal === tab.id : !showingPlugin && tab.id === ws.activeTerminalId"
-          :visible="slotOf(tab) ? true : ws.terminalOpen && !tab.inEditor && !showingPlugin"
+          :active="slotOf(tab) ? paneTerminal === tab.id : !showingTab && tab.id === ws.activeTerminalId"
+          :visible="slotOf(tab) ? true : ws.terminalOpen && !tab.inEditor && !showingTab"
           :place="placeOf(tab)"
         />
       </Teleport>
-      <!-- Plugin panel tabs' views, teleported into their pane while one shows them in the main area. -->
-      <Teleport v-for="pt in mountedTabs" :key="pt.fullId" :to="pluginSlot(pt.fullId) ?? 'body'" :disabled="!pluginSlot(pt.fullId)">
+      <!-- The panel tabs' views, teleported into their pane while one shows them in the main area. -->
+      <Teleport v-for="pt in mountedTabs" :key="pt.fullId" :to="tabSlot(pt.fullId) ?? 'body'" :disabled="!tabSlot(pt.fullId)">
         <div
-          v-show="pluginSlot(pt.fullId) || (!editorTabOf(pt.fullId) && showingPlugin?.fullId === pt.fullId)"
-          class="terminal-panel__plugin"
+          v-show="tabSlot(pt.fullId) || (!editorTabOf(pt.fullId) && showingTab?.fullId === pt.fullId)"
+          class="terminal-panel__view"
           role="tabpanel"
           :aria-label="pt.title"
         >
-          <PluginViewHost :view="pt.view" :ctx="ctxs[pt.fullId]" :plugin-id="pt.pluginId" />
+          <GitLogPanel v-if="pt.fullId === GIT_LOG_TAB" :path="ctxs[pt.fullId]!.projectPath" :visible="ctxs[pt.fullId]!.visible" />
+          <PluginViewHost v-else-if="pt.pluginId !== null" :view="pt.view" :ctx="ctxs[pt.fullId]" :plugin-id="pt.pluginId" />
         </div>
       </Teleport>
     </div>
@@ -704,7 +702,7 @@ const profileItems = computed<MenuItem[]>(() => {
   min-height: 0;
   position: relative;
 }
-.terminal-panel__plugin {
+.terminal-panel__view {
   position: absolute;
   inset: 0;
   display: flex;

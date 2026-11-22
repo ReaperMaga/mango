@@ -1,17 +1,23 @@
 /**
- * The Git log plugin's pure helpers (plugins/git-log/main.js): the lane layout of the commit graph, and the
- * search, diff and path helpers around it.
+ * The built-in Git log's pure parts: the lane layout of the commit graph, the search, path and time helpers,
+ * its tab ids, and what carries over from when it was a plugin (the tab's place, the shortcut).
  *
- *   node --test tests/gitLogLanes.test.ts     (or: pnpm test)
+ *   node --test tests/gitLog.test.ts     (or: pnpm test)
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import {
-  createLaneLayout, layoutLanes, looksLikeHash, parseQuery, parseDiff, joinRepoPath, relativeTime, sortRefs, needsNewerMango,
-} from '../plugins/git-log/main.js'
+import { LANE_COLORS, createLaneLayout, fileInFolder, looksLikeHash, parseLogQuery, sortGitRefs } from '../app/utils/gitLog.ts'
+import { GIT_LOG_TAB, builtInPluginNote, seedBuiltInTabs } from '../app/utils/builtIns.ts'
+import { commitDiffTabId, isCommitDiffTab, parseCommitDiffTab } from '../app/utils/commitDiffTabs.ts'
+import { isDiffTab } from '../app/utils/diffTabs.ts'
+import { isPanelTabRef, normalizePanelPlaces } from '../app/plugin-host/ids.ts'
+import { SHORTCUTS, cleanOverrides, refuse, resolveBindings } from '../app/utils/shortcuts.ts'
+import { longAgo } from '../app/utils/time.ts'
 
 type Commit = { hash: string; parents: string[] }
 const c = (hash: string, ...parents: string[]): Commit => ({ hash, parents })
+/** The rows for a whole list at once. */
+const layoutLanes = (commits: Commit[], colors = LANE_COLORS) => commits.map(createLaneLayout(colors).place)
 /** The rows without colours, for comparing shapes. */
 const shape = (rows: ReturnType<typeof layoutLanes>) => rows.map((r: any) => ({
   lane: r.lane,
@@ -115,52 +121,95 @@ test('search: hashes, and author: in the query', () => {
   assert.equal(looksLikeHash('A1B2C3D4E5'), true)
   assert.equal(looksLikeHash('abc'), false)
   assert.equal(looksLikeHash('fix bug'), false)
-  assert.deepEqual(parseQuery('  composer height '), { text: 'composer height', author: '' })
-  assert.deepEqual(parseQuery('author:priya terminal'), { text: 'terminal', author: 'priya' })
-  assert.deepEqual(parseQuery('resize author:"Jonas Weber"'), { text: 'resize', author: 'Jonas Weber' })
+  assert.deepEqual(parseLogQuery('  composer height '), { text: 'composer height', author: '' })
+  assert.deepEqual(parseLogQuery('author:priya terminal'), { text: 'terminal', author: 'priya' })
+  assert.deepEqual(parseLogQuery('resize author:"Jonas Weber"'), { text: 'resize', author: 'Jonas Weber' })
 })
 
-test('parseDiff numbers lines and drops the file headers', () => {
-  const lines = parseDiff([
-    'diff --git a/x.ts b/x.ts', 'index 1..2 100644', '--- a/x.ts', '+++ b/x.ts',
-    '@@ -10,3 +10,3 @@ fn', ' keep', '-old', '+new', ' keep', '\\ No newline at end of file', '',
-  ].join('\n'))
-  assert.deepEqual(lines.map((l: any) => [l.kind, l.old, l.new]), [
-    ['hunk', null, null], ['ctx', 10, 10], ['del', 11, null], ['add', null, 11], ['ctx', 12, 12], ['meta', null, null],
-  ])
-  assert.deepEqual(parseDiff('diff --git a/i.png b/i.png\nBinary files a/i.png and b/i.png differ\n').map((l: any) => l.kind), ['meta'])
-  assert.deepEqual(parseDiff('diff --git a/a b/b\nsimilarity index 90%\nrename from a\nrename to b\n').map((l: any) => l.text), ['similarity index 90%', 'rename from a', 'rename to b'])
-})
-
-test('joinRepoPath keeps the root\'s separator', () => {
-  assert.equal(joinRepoPath('C:\\code\\mango\\', 'app/stores/git.ts'), 'C:\\code\\mango\\app\\stores\\git.ts')
-  assert.equal(joinRepoPath('/home/me/mango', 'app/x.ts'), '/home/me/mango/app/x.ts')
-  assert.equal(joinRepoPath('env://h/box/srv/app', 'src/main.rs'), 'env://h/box/srv/app/src/main.rs')
+test('a commit\'s file, relative to the folder that is open', () => {
+  // The folder is the repository.
+  assert.equal(fileInFolder('/home/me/mango', '/home/me/mango', 'app/x.ts'), 'app/x.ts')
+  assert.equal(fileInFolder('C:\\code\\mango\\', 'C:/code/mango', 'app/x.ts'), 'app/x.ts')
+  // The folder sits below it.
+  assert.equal(fileInFolder('/srv/repo/app', '/srv/repo', 'app/x.ts'), 'x.ts')
+  assert.equal(fileInFolder('c:\\Code\\Repo\\Web', 'C:/code/repo', 'web/src/x.ts'), 'src/x.ts')
+  assert.equal(fileInFolder('/srv/repo/app', '/srv/repo', 'docs/x.md'), null)
+  assert.equal(fileInFolder('/srv/repo/app', '/srv/repo', 'apple/x.md'), null)
+  // Case counts everywhere but on Windows.
+  assert.equal(fileInFolder('/srv/repo/App', '/srv/repo', 'app/x.ts'), null)
 })
 
 test('relative times', () => {
   const now = new Date(2026, 10, 21, 12).getTime()
-  assert.equal(relativeTime(now - 10_000, now), 'just now')
-  assert.equal(relativeTime(now - 5 * 60_000, now), '5 min ago')
-  assert.equal(relativeTime(now - 3 * 3_600_000, now), '3 h ago')
-  assert.equal(relativeTime(now - 26 * 3_600_000, now), 'yesterday')
-  assert.equal(relativeTime(now - 4 * 86_400_000, now), '4 days ago')
-  assert.doesNotMatch(relativeTime(now - 40 * 86_400_000, now), /ago/)
+  assert.equal(longAgo(now - 10_000, now), 'just now')
+  assert.equal(longAgo(now - 5 * 60_000, now), '5 min ago')
+  assert.equal(longAgo(now - 3 * 3_600_000, now), '3 h ago')
+  assert.equal(longAgo(now - 26 * 3_600_000, now), 'yesterday')
+  assert.equal(longAgo(now - 4 * 86_400_000, now), '4 days ago')
+  assert.doesNotMatch(longAgo(now - 40 * 86_400_000, now), /ago/)
 })
 
 test('refs: the checked-out branch first, then branches, remotes, tags', () => {
-  const refs = [
+  const refs: Parameters<typeof sortGitRefs>[0] = [
     { name: 'v1', kind: 'tag', current: false },
     { name: 'origin/main', kind: 'remote', current: false },
     { name: 'dev', kind: 'branch', current: false },
     { name: 'main', kind: 'branch', current: true },
   ]
-  assert.deepEqual(sortRefs(refs).map((r: any) => r.name), ['main', 'dev', 'origin/main', 'v1'])
+  assert.deepEqual(sortGitRefs(refs).map((r: any) => r.name), ['main', 'dev', 'origin/main', 'v1'])
 })
 
-test('an older Mango is told apart from other errors', () => {
-  assert.equal(needsNewerMango(new Error('Command git_graph not found')), true)
-  assert.equal(needsNewerMango('mock: git_commit_show is not implemented'), true)
-  assert.equal(needsNewerMango(new Error('/x is not inside a git repository')), false)
-  assert.equal(needsNewerMango(new Error('fatal: bad revision \'nope\'')), false)
+/* ---------------------------------------------------------------- tabs, and the move from a plugin */
+
+test('a commit diff tab round-trips and is no working-copy diff', () => {
+  for (const path of ['C:\\code\\mango', '/home/me/mango', 'env://h/box/srv/app']) {
+    const id = commitDiffTabId(path, '99de30b95c426aa0', 'docs/changelog.md')
+    assert.ok(isCommitDiffTab(id))
+    assert.ok(!isDiffTab(id))
+    assert.deepEqual(parseCommitDiffTab(id), {
+      projectPath: path, hash: '99de30b95c426aa0', short: '99de30b', file: 'docs/changelog.md', name: 'changelog.md',
+    })
+  }
+  assert.equal(parseCommitDiffTab('chat-1'), null)
+})
+
+test('the tab keeps the ref it had as a plugin', () => {
+  assert.equal(GIT_LOG_TAB, 'git-log.log')
+  assert.ok(isPanelTabRef(GIT_LOG_TAB))
+  assert.ok(builtInPluginNote('git-log'))
+  assert.equal(builtInPluginNote('scratchpad'), null)
+})
+
+test('the tab starts closed, and stays where a saved layout has it', () => {
+  const none = { known: undefined, chosen: undefined, order: [] as string[] }
+  assert.deepEqual(seedBuiltInTabs({}, none), { [GIT_LOG_TAB]: { at: 'closed' } })
+  // The plugin's tab was showing, or had been placed in the strip.
+  assert.deepEqual(seedBuiltInTabs({}, { ...none, chosen: GIT_LOG_TAB }), {})
+  assert.deepEqual(seedBuiltInTabs({}, { ...none, order: ['term-1', GIT_LOG_TAB] }), {})
+  // It had been moved to the main area.
+  const editor = normalizePanelPlaces({ [GIT_LOG_TAB]: { at: 'editor', projectPath: '/p', paneId: 'pane-b' } })
+  assert.deepEqual(seedBuiltInTabs(editor, none), editor)
+  // Opened since: no place means the panel, also after a restart with a terminal in front.
+  assert.deepEqual(seedBuiltInTabs({}, { ...none, known: [GIT_LOG_TAB] }), {})
+})
+
+test('a key given to the plugin\'s shortcut carries over', () => {
+  assert.deepEqual(cleanOverrides({ 'plugin:git-log.show': 'Mod+Alt+L' }), { 'git-log': 'Mod+Alt+L' })
+  assert.deepEqual(cleanOverrides({ 'plugin:git-log.show': '' }), { 'git-log': '' })
+  assert.deepEqual(cleanOverrides({ 'plugin:git-log.show': 'Mod+Alt+9' }), {})
+  assert.deepEqual(cleanOverrides({ 'plugin:git-log.show': 'Mod+Alt+L', 'git-log': 'Mod+Alt+G' }), { 'git-log': 'Mod+Alt+G' })
+})
+
+test('the new default never takes a key the user gave to something else', () => {
+  assert.equal(resolveBindings({})['git-log'], 'Mod+Alt+9')
+  const taken = resolveBindings({ files: 'Mod+Alt+9' })
+  assert.equal(taken.files, 'Mod+Alt+9')
+  assert.equal(taken['git-log'], '')
+  const plugin = { id: 'plugin:x.go', label: 'Go', group: 'X', scope: 'workspace', key: 'Mod+Alt+7' } as const
+  const byPlugin = resolveBindings({ 'plugin:x.go': 'Mod+Alt+9' }, [plugin])
+  assert.equal(byPlugin['plugin:x.go'], 'Mod+Alt+9')
+  assert.equal(byPlugin['git-log'], '')
+  // Every other default is as it was, and no two actions share one.
+  const defaults = resolveBindings({})
+  for (const s of SHORTCUTS) assert.equal(refuse(defaults[s.id]!, s.id, defaults), null, s.id)
 })

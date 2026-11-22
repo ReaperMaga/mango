@@ -33,7 +33,7 @@ export function effectiveScheme(wanted: string, registered: (id: string) => bool
 /*
  * ---------- panel tabs (`ui.panelTabs`): `<pluginId>.<id>`
  *
- * One instance each. It lives in the bottom panel's strip (among the terminals, in `workspace.panelOrder`),
+ * One instance each (Mango's own, the Git log, uses the same form: utils/builtIns). It lives in the bottom panel's strip (among the terminals, in `workspace.panelOrder`),
  * as a tab in the main area, or nowhere (closed): `workspace.panelTabPlaces`, by ref (no entry: the panel).
  * Terminal ids (`term-N`) never hold a dot, so a ref and a terminal id never collide in one list.
  */

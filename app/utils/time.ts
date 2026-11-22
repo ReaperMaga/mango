@@ -46,3 +46,22 @@ export function dayLabel(ts: number, now = Date.now()): string {
     ? { weekday: 'short', day: 'numeric', month: 'short' }
     : { day: 'numeric', month: 'short', year: 'numeric' })
 }
+
+/** "just now", "5 min ago", "3 h ago", "yesterday", "4 days ago", then a date: for columns with room for words. */
+export function longAgo(ts: number, now = Date.now()): string {
+  const s = Math.max(0, Math.round((now - ts) / 1000))
+  if (s < 45) return 'just now'
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} min ago`
+  const h = Math.round(m / 60)
+  if (h < 24) return `${h} h ago`
+  const d = Math.round(h / 24)
+  if (d === 1) return 'yesterday'
+  if (d < 7) return `${d} days ago`
+  const date = new Date(ts)
+  const thisYear = date.getFullYear() === new Date(now).getFullYear()
+  return date.toLocaleDateString(undefined, thisYear ? { day: 'numeric', month: 'short' } : { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** A full date and time, for tooltips and facts. */
+export const fullDateTime = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
