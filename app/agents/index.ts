@@ -26,6 +26,8 @@ interface LiveRun { run: AgentRun; steer(text: string, attachments: Attachment[]
 
 /** Live runs by thread id (not persisted: a run dies with the app). */
 const runs = new Map<string, LiveRun>()
+/** Turns still getting ready to start their CLI, by thread id: stopping one, or a newer one, takes it out. */
+const starting = new Map<string, symbol>()
 
 export const isRunning = (threadId: string) => runs.has(threadId)
 
@@ -39,6 +41,7 @@ export function answerQuestion(threadId: string, questionId: string, answers: Qu
 
 export function interruptRun(threadId: string): boolean {
   const live = runs.get(threadId)
+  if (!live) starting.delete(threadId)
   live?.run.interrupt()
   return !!live
 }
@@ -292,23 +295,37 @@ async function userMcpFor(agent: AgentId, projectPath: string) {
   }
 }
 
-/** `attachments`: files sent with `text`, already in the attachment store. */
-export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
+/**
+ * Run one turn to its end. `attachments`: files sent with `text`, already in the attachment store.
+ * False when it was stopped before its agent started: that one never saw the prompt.
+ */
+export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
   const thread = store.byId(threadId)
-  if (!thread) return
+  if (!thread) return false
   /** Where the agent works: the chat's own worktree, or the project folder. */
   const workdir = store.workdirFor(threadId) ?? thread.projectPath
 
   // The browser preview has no backend to run CLIs: simulate, and say so.
   if (!isTauri()) {
     thread.simulated = true
-    return runMockAgent(store, threadId, text.trim() || attachments.map(a => a.name).join(', '))
+    await runMockAgent(store, threadId, text.trim() || attachments.map(a => a.name).join(', '))
+    return true
   }
   thread.simulated = false
 
   const first = store._pushAgentMessage(threadId)
-  if (!first) return
+  if (!first) return false
   store._setStatus(threadId, 'running')
+  const turn = Symbol(threadId)
+  starting.set(threadId, turn)
+  /** Stopped (and maybe sent again) while this got ready: the chat is not this turn's any more. */
+  const standDown = () => {
+    const t = store.byId(threadId)
+    const at = t?.messages.findIndex(m => m.id === first.id && !m.parts.length) ?? -1
+    if (at >= 0) t!.messages.splice(at, 1)
+    store.persist(threadId)
+    return false
+  }
 
   const main: Target = { threadId, msgs: [first], msg: first }
   let runUsage: TurnUsage | null = null
@@ -554,6 +571,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     const appendSystemPrompt = pluginSystemPrompt({
       threadId, agent: thread.agent, projectPath: (store.rootOf(threadId) ?? thread).projectPath, workdir,
     })
+    if (starting.get(threadId) !== turn) return standDown()
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
@@ -588,12 +606,15 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       },
     })
   } catch (err) {
+    if (starting.get(threadId) !== turn) return standDown()
     emit({ type: 'turn-end', status: 'error', error: err instanceof Error ? err.message : String(err) })
   }
 
+  starting.delete(threadId)
   await finished
   // The agent probably changed files: let whoever shows them (the changes panel) catch up.
   for (const path of new Set([workdir, ...moved])) window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path } }))
+  return true
 }
 
 export type { Thread }

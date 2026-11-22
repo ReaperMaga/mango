@@ -477,6 +477,16 @@ export const useThreads = defineStore('threads', {
      * which downloads the branch's files first, so this can take minutes on a big project.
      */
     async _addWorktreeFor(id: string) {
+      // A turn sent after the one that began this was stopped waits for the same worktree.
+      let added = addingWorktree.get(id)
+      if (!added) {
+        added = this._makeWorktreeFor(id).finally(() => addingWorktree.delete(id))
+        addingWorktree.set(id, added)
+      }
+      return added
+    },
+
+    async _makeWorktreeFor(id: string) {
       const t = this.byId(id)
       if (!t?.awaitingWorktree) return
       const path = t.projectPath
@@ -973,9 +983,10 @@ export const useThreads = defineStore('threads', {
       }
       // A command waits for the turn to end and then runs on its own; anything else steers.
       if (!isCommand(q.text)) {
+        const turn = turns.get(id)
         await this._saveFilesOf(id)
-        // Not when it was stopped while the files saved: then it waits with the rest.
-        if (!held.has(id) && await steerRun(id, q.text, q.attachments)) return
+        // Not when that turn was stopped while the files saved, nor into one started since: it waits with the rest.
+        if (!held.has(id) && turns.get(id) === turn && await steerRun(id, q.text, q.attachments)) return
       }
       const waiting = this.queue[id] ?? (this.queue[id] = [])
       waiting.unshift({ ...q, shown: true })
@@ -1119,6 +1130,10 @@ export const useThreads = defineStore('threads', {
         return
       }
       t.status = 'queued'
+      const turn = ++lastTurn
+      turns.set(id, turn)
+      // The status alone can't say: stopped and sent again, the chat is queued once more.
+      const current = () => turns.get(id) === turn && this.byId(id)?.status === 'queued'
       this.persist(id)
       if (t.awaitingWorktree) {
         // Nothing has run in this chat yet: a message kept from a failed try goes along with this one.
@@ -1130,6 +1145,8 @@ export const useThreads = defineStore('threads', {
         try {
           await this._addWorktreeFor(id)
         } catch (e) {
+          // The turn sent since says so.
+          if (turns.has(id) && turns.get(id) !== turn) return
           const m = this._pushAgentMessage(id)
           if (m) {
             this._pushPart(id, m, {
@@ -1142,14 +1159,17 @@ export const useThreads = defineStore('threads', {
           return
         }
         // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
-        if (t.status !== 'queued') { stopFlags.delete(id); return }
+        if (!current()) return this._standDown(id)
       }
-      if (!await this._saveForAgent(id)) return
+      if (useWorkspace().editorAutoSave) await this._saveFilesOf(id)
+      if (!current()) return this._standDown(id)
       // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
       const prompt = createPrPrompt(text) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
       const handOver = t.history && !t.sessionId
-      await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+      const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+      // Never started: the history still has to go along next time, and no turn finished.
+      if (!started) return this._standDown(id)
       if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
       emitTurnEnd(id, this.byId(id)?.status !== 'error')
     },
@@ -1162,13 +1182,10 @@ export const useThreads = defineStore('threads', {
       await files.saveAll(AGENT_SAVE_MS, files.touching(t.projectPath, this.workdirFor(id) ?? t.projectPath))
     },
 
-    /** A turn is about to start. False when it was stopped while the files saved. */
-    async _saveForAgent(id: string): Promise<boolean> {
-      if (!useWorkspace().editorAutoSave) return true
-      await this._saveFilesOf(id)
-      if (this.byId(id)?.status === 'queued') return true
-      stopFlags.delete(id)
-      return false
+    /** A turn was stopped before its agent started, and does not start. */
+    _standDown(id: string) {
+      // With a turn sent since, the flag is that one's.
+      if (!turns.has(id)) stopFlags.delete(id)
     },
 
     /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -1224,6 +1241,7 @@ export const useThreads = defineStore('threads', {
       }
       // Stop means stop: messages waiting for the next turn stay in the queue but are not sent.
       held.add(id)
+      turns.delete(id)
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
@@ -1421,6 +1439,11 @@ export const approvalWaiters = new Map<string, (allow: boolean) => void>()
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
 export const stopFlags = new Set<string>()
+/** Each chat's latest turn, until it is stopped: one that waited (files saving, a worktree) starts only as that. */
+const turns = new Map<string, number>()
+let lastTurn = 0
+/** Worktrees being made for chats. */
+const addingWorktree = new Map<string, Promise<void>>()
 /** Chats whose context window was already read from the CLI while the app runs (`readContext`). */
 const contextTried = new Set<string>()
 
