@@ -22,6 +22,14 @@ export function setEditorModel(tabId: string, entry: EditorModel) {
   models.set(tabId, entry)
 }
 
+/** The tab's file was renamed: its edits, undo history and scroll position go to the new tab id. */
+export function moveEditorModel(from: string, to: string) {
+  const entry = models.get(from)
+  if (!entry) return
+  models.delete(from)
+  models.set(to, entry)
+}
+
 export function disposeEditorModel(tabId: string) {
   models.get(tabId)?.model.dispose()
   models.delete(tabId)

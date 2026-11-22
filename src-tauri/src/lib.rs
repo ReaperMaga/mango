@@ -10,6 +10,7 @@ mod chats;
 mod chats_remote;
 mod env_files;
 mod envs;
+mod file_ops;
 mod files;
 mod git;
 mod github;
@@ -23,6 +24,7 @@ mod releases;
 mod pty;
 mod setup;
 mod shells;
+mod trash_bin;
 mod updater;
 mod vcs;
 mod voice;
@@ -173,6 +175,11 @@ pub fn run() {
             files::fs_write_file,
             files::fs_create_file,
             files::fs_delete_file,
+            file_ops::fs_create_dir,
+            file_ops::fs_rename,
+            file_ops::fs_duplicate,
+            file_ops::fs_delete,
+            file_ops::fs_reveal,
             env_files::env_files,
             env_files::env_gitignore_add,
             updater::update_check,

@@ -1,10 +1,11 @@
 import { defineStore } from 'pinia'
-import type { FileContent, FsAhead, FsEntry } from '~/types/ipc'
+import type { FileContent, FsAhead, FsDeleted, FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
-import { disposeEditorModel, editorModel } from '~/utils/editorModels'
+import { disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
+import { isWithin, movedPath, parentOf, pathIn } from '~/utils/fileOps'
 
 /**
  * The Files view and the editor tabs it opens. The tree is read as it is
@@ -126,6 +127,8 @@ export const useFiles = defineStore('files', {
      * replaces it instead of piling up tabs; editing it or double-clicking keeps it.
      */
     preview: {} as Record<string, string | null>,
+    /** Entries being deleted, as `dirKey`: a big folder takes a while. */
+    deleting: [] as string[],
     /** A line to bring into view in a file tab once its editor shows it (1-based), by tab id. */
     lines: {} as Record<string, number>,
   }),
@@ -133,6 +136,10 @@ export const useFiles = defineStore('files', {
   getters: {
     tree: s => (path: string | null | undefined): ProjectTree | null => (path ? s.trees[path] ?? null : null),
     file: s => (tabId: string | null | undefined): OpenFile | null => (tabId ? s.open[tabId] ?? null : null),
+    isDeleting: s => (projectPath: string, path: string) => s.deleting.includes(dirKey(projectPath, path)),
+    /** Open files at or inside `path` with unsaved edits. */
+    unsavedWithin: s => (projectPath: string, path: string) =>
+      Object.values(s.open).filter(f => f.projectPath === projectPath && f.dirty && isWithin(f.file, path)).map(f => f.file),
     isDirty: s => (tabId: string | null | undefined) => !!(tabId && s.open[tabId]?.dirty),
     isPreview: s => (tabId: string) => {
       const p = parseFileTab(tabId)
@@ -275,6 +282,118 @@ export const useFiles = defineStore('files', {
       if (!tree) return
       const dirs = [...new Set(['', ...tree.expanded, ...tree.chained])].filter(d => tree.dirs[d]?.entries)
       await Promise.all(dirs.map(d => this.loadDir(projectPath, d, true, false)))
+    },
+
+    /* ---------- file operations ---------- */
+
+    async createEntry(projectPath: string, path: string, folder: boolean) {
+      if (folder) await call('fs_create_dir', { root: projectPath, dir: path })
+      else await call('fs_create_file', { root: projectPath, file: path, text: '' })
+      await this._changed(projectPath, parentOf(path))
+    },
+
+    async duplicateFile(projectPath: string, file: string, name: string) {
+      await call('fs_duplicate', { root: projectPath, file, name })
+      await this._changed(projectPath, parentOf(file))
+    },
+
+    /** Rename in place. Open tabs follow, with their edits, undo history and scroll position. */
+    async renameEntry(projectPath: string, from: string, name: string) {
+      const to = pathIn(parentOf(from), name)
+      this._refuseWhileSaving(projectPath, from)
+      // A tab left over from a file that had the new name: it would be replaced, edits and all.
+      for (const id of this._tabsWithin(projectPath, from)) {
+        const next = fileTabId(projectPath, movedPath(this.open[id]!.file, from, to)!)
+        if (next !== id && this.open[next]?.dirty) throw new Error(`A tab with unsaved changes is open as ${this.open[next]!.file}. Close it first.`)
+      }
+      await call('fs_rename', { root: projectPath, path: from, name })
+      this._moveTabs(projectPath, from, to)
+
+      const tree = this.treeOf(projectPath)
+      tree.expanded = tree.expanded.map(d => movedPath(d, from, to) ?? d)
+      if (tree.selected) tree.selected = movedPath(tree.selected, from, to) ?? tree.selected
+      for (const dir of Object.keys(tree.dirs)) if (dir && isWithin(dir, from)) delete tree.dirs[dir]
+      await this._changed(projectPath, parentOf(from))
+      await Promise.all(tree.expanded.filter(d => isWithin(d, to)).map(d => this.loadDir(projectPath, d)))
+    },
+
+    /** Delete; a result that is not `deleted` means the trash cannot take it and nothing happened. */
+    async deleteEntry(projectPath: string, path: string, isDir: boolean, permanent: boolean): Promise<FsDeleted> {
+      this._refuseWhileSaving(projectPath, path)
+      const key = dirKey(projectPath, path)
+      if (this.deleting.includes(key)) throw new Error('It is already being deleted.')
+      this.deleting.push(key)
+      try {
+        const got = await call('fs_delete', { root: projectPath, path, isDir, permanent })
+        if (!got.deleted) return got
+        for (const id of this._tabsWithin(projectPath, path)) {
+          closeFileTab(id)
+          if (this.open[id]) this.forget(id)
+        }
+        const tree = this.treeOf(projectPath)
+        tree.expanded = tree.expanded.filter(d => !isWithin(d, path))
+        for (const dir of Object.keys(tree.dirs)) if (dir && isWithin(dir, path)) delete tree.dirs[dir]
+        if (tree.revealed && isWithin(tree.revealed.file, path)) tree.revealed = null
+        await this._changed(projectPath, parentOf(path))
+        return got
+      } catch (e) {
+        // A folder can be partly gone when deleting it fails.
+        await this._changed(projectPath, parentOf(path))
+        throw e
+      } finally {
+        this.deleting = this.deleting.filter(k => k !== key)
+      }
+    },
+
+    _tabsWithin(projectPath: string, path: string) {
+      return Object.keys(this.open).filter(id => this.open[id]!.projectPath === projectPath && isWithin(this.open[id]!.file, path))
+    },
+
+    _refuseWhileSaving(projectPath: string, path: string) {
+      const saving = this._tabsWithin(projectPath, path).find(id => this.open[id]!.saving)
+      if (saving) throw new Error(`${this.open[saving]!.file} is being saved. Try again in a moment.`)
+    },
+
+    _moveTabs(projectPath: string, from: string, to: string) {
+      const threads = useThreads()
+      for (const id of this._tabsWithin(projectPath, from)) {
+        const f = this.open[id]!
+        const was = f.file
+        const file = movedPath(was, from, to)!
+        const next = fileTabId(projectPath, file)
+        if (next === id) continue
+        if (this.open[next]) closeFileTab(next)
+        // The same object, so a read under way still lands in it.
+        delete this.open[id]
+        f.file = file
+        this.open[next] = f
+        moveEditorModel(id, next)
+        if (this.lines[id]) {
+          this.lines[next] = this.lines[id]!
+          delete this.lines[id]
+        }
+        if (this.preview[projectPath] === id) this.preview[projectPath] = next
+        if (threads.tabs.includes(id)) threads.replaceTab(id, next)
+        const asPicture = imageKind(file) === 'raster'
+        // A read still under way asked for the old path; a picture and text are read differently.
+        if (!f.dirty && (f.loading || asPicture !== (imageKind(was) === 'raster'))) {
+          f.image = null
+          f.disk = null
+          disposeEditorModel(next)
+          void this.read(next)
+        } else {
+          void this.recheck(next)
+        }
+      }
+      threads.persistLayout()
+    },
+
+    /** The disk changed under `dir`: read it again (not joining a read that began before) and let git catch up. */
+    async _changed(projectPath: string, dir: string) {
+      preloads.clear()
+      await listing.get(dirKey(projectPath, dir))
+      await this.loadDir(projectPath, dir, true)
+      window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path: projectPath } }))
     },
 
     /* ---------- open files ---------- */

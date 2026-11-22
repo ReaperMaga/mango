@@ -590,6 +590,11 @@ export interface FsListing {
   ahead?: FsAhead[]
 }
 
+export interface FsDeleted {
+  deleted: boolean
+  reason: string | null
+}
+
 /** A subfolder's listing read ahead with its parent; never cut short. */
 export interface FsAhead {
   dir: string
@@ -1377,6 +1382,23 @@ export interface Commands {
   fs_create_file: [{ root: string; file: string; text: string }, WriteResult]
   /** Delete one file in the project (never a folder; a symlink is removed itself, not its target). */
   fs_delete_file: [{ root: string; file: string }, void]
+  /*
+   * The Files view's operations (src-tauri/src/file_ops.rs). Each acts on the entry named (a link,
+   * not its target), never replaces anything, and refuses the project itself, .git and .plastic.
+   */
+  fs_create_dir: [{ root: string; dir: string }, void]
+  /** Rename in place: `name` is a name, not a path. A change of case alone works. */
+  fs_rename: [{ root: string; path: string; name: string }, void]
+  /** Copy a file next to itself as `name`. */
+  fs_duplicate: [{ root: string; file: string; name: string }, void]
+  /**
+   * Move to the trash, or delete for good with `permanent`. When the trash cannot take it, nothing is
+   * deleted and `reason` says why; a remote project has no trash. `isDir` is what the user was asked
+   * about (links followed): something else by that name now is refused.
+   */
+  fs_delete: [{ root: string; path: string; isDir: boolean; permanent: boolean }, FsDeleted]
+  /** Show an entry in the system's file manager ("" is the project folder). Not for remote projects. */
+  fs_reveal: [{ root: string; path: string }, void]
   /**
    * Env files at the project root: names that are `.env`, start with `.env.`, or end in `.env`, except
    * example/template files (`.env.example`, `.env.sample`, `.env.template`, `example.env`, `sample.env`,

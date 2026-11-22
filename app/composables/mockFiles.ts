@@ -1,4 +1,4 @@
-import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsDeleted, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
@@ -42,6 +42,14 @@ const SEED: Record<string, string | null> = {
 }
 
 const projects = new Map<string, Map<string, MockFile>>()
+/** Folders that exist without a file in them: made here, or emptied here. */
+const folders = new Map<string, Set<string>>()
+
+function foldersOf(root: string) {
+  let dirs = folders.get(root)
+  if (!dirs) folders.set(root, (dirs = new Set()))
+  return dirs
+}
 
 function filesOf(root: string) {
   let files = projects.get(root)
@@ -85,7 +93,12 @@ function listDir(root: string, dir: string): FsListing {
     const full = prefix + name
     if (!seen.has(name)) seen.set(name, { name, path: full, isDir: rest.includes('/'), ignored: isIgnored(root, full) })
   }
-  if (dir && !seen.size) throw new Error(`${dir} no longer exists`)
+  for (const path of foldersOf(root)) {
+    if (!path.startsWith(prefix) || path === prefix) continue
+    const name = path.slice(prefix.length).split('/')[0]!
+    if (name) seen.set(name, { name, path: prefix + name, isDir: true, ignored: isIgnored(root, prefix + name) })
+  }
+  if (dir && !seen.size && !foldersOf(root).has(dir)) throw new Error(`${dir} no longer exists`)
   const entries = [...seen.values()].sort((a, b) =>
     a.isDir === b.isDir ? a.name.toLowerCase().localeCompare(b.name.toLowerCase()) : a.isDir ? -1 : 1)
   return { entries, truncated: false }
@@ -160,7 +173,8 @@ function writeFile(root: string, file: string, text: string, expected: number | 
   return { saved: true, modifiedMs: f.modifiedMs }
 }
 
-const isFolder = (files: Map<string, MockFile>, rel: string) => [...files.keys()].some(p => p.startsWith(`${rel}/`))
+const isFolder = (root: string, rel: string) =>
+  foldersOf(root).has(rel) || [...filesOf(root).keys(), ...foldersOf(root)].some(p => p.startsWith(`${rel}/`))
 
 /** The file part of a project-relative path, refused when it is not a file name. */
 function fileRel(file: string) {
@@ -175,10 +189,10 @@ function fileRel(file: string) {
 function createFile(root: string, file: string, text: string): WriteResult {
   const rel = fileRel(file)
   const files = filesOf(root)
-  if (files.has(rel) || isFolder(files, rel)) throw new Error(`${rel} already exists`)
+  if (files.has(rel) || isFolder(root, rel)) throw new Error(`${rel} already exists`)
   const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
   if (dir && files.has(dir)) throw new Error(`${dir} is not a folder`)
-  if (dir && !isFolder(files, dir)) throw new Error(`${dir} no longer exists`)
+  if (dir && !isFolder(root, dir)) throw new Error(`${dir} no longer exists`)
   const modifiedMs = Date.now()
   files.set(rel, { text, modifiedMs })
   return { saved: true, modifiedMs }
@@ -188,9 +202,58 @@ function deleteFile(root: string, file: string) {
   const rel = fileRel(file)
   const files = filesOf(root)
   if (!files.has(rel)) {
-    throw new Error(isFolder(files, rel) ? `${rel} is a folder; only files can be deleted here` : `${rel} no longer exists`)
+    throw new Error(isFolder(root, rel) ? `${rel} is a folder; only files can be deleted here` : `${rel} no longer exists`)
   }
   files.delete(rel)
+}
+
+const beside = (rel: string, name: string) => rel.slice(0, rel.lastIndexOf('/') + 1) + plainName(name)
+
+function createDir(root: string, dir: string) {
+  const rel = fileRel(dir)
+  if (filesOf(root).has(rel) || isFolder(root, rel)) throw new Error(`${rel} already exists`)
+  foldersOf(root).add(rel)
+}
+
+function rename(root: string, path: string, name: string) {
+  const from = fileRel(path)
+  const to = beside(from, name)
+  const files = filesOf(root)
+  if (!files.has(from) && !isFolder(root, from)) throw new Error(`${from} no longer exists`)
+  if (to === from) return
+  if (files.has(to) || isFolder(root, to)) throw new Error(`${to} already exists`)
+  const inside = (p: string) => p === from || p.startsWith(`${from}/`)
+  for (const [p, f] of [...files]) if (inside(p)) { files.delete(p); files.set(to + p.slice(from.length), f) }
+  const dirs = foldersOf(root)
+  for (const p of [...dirs]) if (inside(p)) { dirs.delete(p); dirs.add(to + p.slice(from.length)) }
+}
+
+function duplicate(root: string, file: string, name: string) {
+  const from = fileRel(file)
+  const files = filesOf(root)
+  const f = files.get(from)
+  if (!f) throw new Error(`${from} is not a file`)
+  const to = beside(from, name)
+  if (files.has(to) || isFolder(root, to)) throw new Error(`${to} already exists`)
+  files.set(to, { ...f, modifiedMs: Date.now() })
+}
+
+/** node_modules plays what a real Recycle Bin refuses: it is too deep. */
+function deleteEntry(root: string, path: string, isDir: boolean, permanent: boolean): FsDeleted {
+  const rel = fileRel(path)
+  const files = filesOf(root)
+  if (!files.has(rel) && !isFolder(root, rel)) throw new Error(`${rel} no longer exists`)
+  if (files.has(rel) === isDir) throw new Error(`${rel} has changed since you were asked. Refresh and try again.`)
+  if (!permanent && (root.startsWith('env://') || rel === 'node_modules')) {
+    return { deleted: false, reason: 'The Recycle Bin cannot take it: the drive has none, or it is too large or its path too long.' }
+  }
+  const inside = (p: string) => p === rel || p.startsWith(`${rel}/`)
+  for (const p of [...files.keys()]) if (inside(p)) files.delete(p)
+  const dirs = foldersOf(root)
+  for (const p of [...dirs]) if (inside(p)) dirs.delete(p)
+  // The folder it was in stays, empty or not.
+  if (rel.includes('/')) dirs.add(rel.slice(0, rel.lastIndexOf('/')))
+  return { deleted: true, reason: null }
 }
 
 function plainName(name: string) {
@@ -246,6 +309,11 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
     case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
     case 'fs_create_file': return createFile(args.root, args.file, args.text)
     case 'fs_delete_file': return deleteFile(args.root, args.file)
+    case 'fs_create_dir': return createDir(args.root, args.dir)
+    case 'fs_rename': return rename(args.root, args.path, args.name)
+    case 'fs_duplicate': return duplicate(args.root, args.file, args.name)
+    case 'fs_delete': return deleteEntry(args.root, args.path, args.isDir, args.permanent)
+    case 'fs_reveal': throw new Error('The browser preview has no file manager to open.')
     case 'env_files': return envFiles(args.root, args.extra ?? [])
     case 'env_gitignore_add': return gitignoreAdd(args.root, args.name)
   }
