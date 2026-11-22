@@ -2,6 +2,18 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.41
+
+### New
+
+- Add the Unity plugin: file icons, `.meta` files that stay hidden and follow their assets, project details and reference search.
+- Let plugins shape the Files view, file icons and editor languages.
+
+### Fixes
+
+- Size SVG plugin icons like the other icons.
+- Keep agents starting on Windows when several plugins add to the system prompt.
+
 ## 0.1.40
 
 ### New
