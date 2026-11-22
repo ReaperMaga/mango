@@ -6,6 +6,7 @@ import { usePluginRuntime } from '~/plugin-host/runtime'
 import { useWorkspace } from '~/stores/workspace'
 import { call, isTauri, openExternal } from '~/composables/useBackend'
 import { copyText, jobLabel, updatePlugin, usePluginsView } from '~/composables/pluginsView'
+import { builtInPluginNote } from '~/utils/builtIns'
 import { repoLabel } from '~/utils/pluginSource'
 import SettingsSwitch from '~/components/settings/SettingsSwitch.vue'
 import PluginGlyph from './PluginGlyph.vue'
@@ -28,7 +29,9 @@ const p = computed(() => plugins.byId(props.id))
 const m = computed(() => p.value?.manifest)
 const entry = computed(() => plugins.catalog?.catalog.plugins.find(e => e.id === props.id) ?? null)
 const state = computed(() => runtime.states[props.id] ?? null)
+const builtIn = computed(() => builtInPluginNote(props.id))
 const status = computed<PluginRunStatus>(() => {
+  if (builtIn.value) return 'builtIn'
   if (state.value) return state.value.status
   if (!p.value?.enabled) return 'disabled'
   return runtime.safeMode ? 'paused' : 'loading'
@@ -133,14 +136,15 @@ const nameId = useId()
         </div>
       </div>
       <label class="pd__switch">
-        <span class="pd__switch-label">{{ p.enabled ? 'On' : 'Off' }}</span>
-        <SettingsSwitch :model-value="p.enabled" :labelledby="nameId" :title="p.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`" @update:model-value="setEnabled" />
+        <span class="pd__switch-label">{{ p.enabled && !builtIn ? 'On' : 'Off' }}</span>
+        <SettingsSwitch :model-value="p.enabled && !builtIn" :disabled="!!builtIn" :labelledby="nameId" :title="p.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`" @update:model-value="setEnabled" />
       </label>
     </header>
 
     <p v-if="m.description" class="pd__desc">{{ m.description }}</p>
 
-    <div v-if="state?.error && (status === 'error' || status === 'incompatible')" class="pd__banner" :class="{ 'is-warn': status === 'incompatible' }" role="alert">
+    <p v-if="builtIn" class="pd__notice" role="status">{{ builtIn }}</p>
+    <div v-else-if="state?.error && (status === 'error' || status === 'incompatible')" class="pd__banner" :class="{ 'is-warn': status === 'incompatible' }" role="alert">
       <CircleAlert aria-hidden="true" />
       <div class="pd__banner-text">
         <strong>{{ status === 'incompatible' ? 'This plugin needs a newer Mango.' : 'This plugin stopped with an error.' }}</strong>
@@ -149,13 +153,15 @@ const nameId = useId()
     </div>
 
     <div class="pd__actions">
-      <UiButton v-if="job && !job.error" size="sm" loading>{{ jobLabel(job) }}</UiButton>
-      <UiButton v-else-if="update?.hasUpdate" size="sm" variant="primary" @click="updatePlugin(id)">
-        Update<template v-if="update.latestVersion && update.latestVersion !== m.version"> to {{ update.latestVersion }}</template>
-      </UiButton>
-      <UiButton v-else-if="p.source.kind === 'git'" size="sm" :loading="busy === 'check'" @click="check"><RefreshCw v-if="busy !== 'check'" />Check for update</UiButton>
-      <UiButton v-else size="sm" @click="updatePlugin(id)"><RefreshCw />Read again</UiButton>
-      <UiButton size="sm" variant="ghost" :disabled="!p.enabled || runtime.safeMode" :loading="busy === 'reload'" @click="reload"><RotateCw v-if="busy !== 'reload'" />Reload</UiButton>
+      <template v-if="!builtIn">
+        <UiButton v-if="job && !job.error" size="sm" loading>{{ jobLabel(job) }}</UiButton>
+        <UiButton v-else-if="update?.hasUpdate" size="sm" variant="primary" @click="updatePlugin(id)">
+          Update<template v-if="update.latestVersion && update.latestVersion !== m.version"> to {{ update.latestVersion }}</template>
+        </UiButton>
+        <UiButton v-else-if="p.source.kind === 'git'" size="sm" :loading="busy === 'check'" @click="check"><RefreshCw v-if="busy !== 'check'" />Check for update</UiButton>
+        <UiButton v-else size="sm" @click="updatePlugin(id)"><RefreshCw />Read again</UiButton>
+        <UiButton size="sm" variant="ghost" :disabled="!p.enabled || runtime.safeMode" :loading="busy === 'reload'" @click="reload"><RotateCw v-if="busy !== 'reload'" />Reload</UiButton>
+      </template>
       <UiButton size="sm" variant="ghost" @click="openDir"><FolderOpen />Open folder</UiButton>
       <UiButton size="sm" variant="ghost" @click="copyDir"><Copy />Copy folder path</UiButton>
       <UiButton v-if="homepage" size="sm" variant="ghost" :title="homepage" @click="openExternal(homepage)"><ExternalLink />Homepage</UiButton>

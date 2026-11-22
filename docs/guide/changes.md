@@ -60,6 +60,20 @@ A branch that does not track a remote branch yet gets **Publish branch** instead
 
 The **History** group at the bottom lists recent commits: subject, short hash and age. An up arrow marks commits that are not pushed yet. Hover a commit for its author and date.
 
+## Git log
+
+For more than the recent commits, open the **Git log**: the button at the foot of the tool stripe, <kbd>Ctrl</kbd> <kbd>Alt</kbd> <kbd>9</kbd>, or **Show Git log** in the command palette. It is a tab in the bottom panel and shows the history of the folder in view (the active chat's worktree when it has one) as a commit graph, with branches and merges as coloured lanes and branch, remote and tag chips on their commits.
+
+- **Details**: the selected commit's message, author, parents (click one to go to it) and changed files sit beside the log. Drag the edge between them to resize. Click a file, or press <kbd>Enter</kbd> on it, for its diff in a tab, with **Open file** for the file in your working copy.
+- **Search**: <kbd>Ctrl</kbd> <kbd>F</kbd> in the tab. Text finds commits whose message contains it and `author:name` finds an author. Four or more hex digits jump to that commit. <kbd>Esc</kbd> clears the search.
+- **Branches and authors**: the log opens on the current branch and follows it when you switch. Pick all branches or any other one from the branch filter; the locate button on a branch's row scrolls to its tip. The author filter shows one person's commits.
+- **A commit's menu** (right-click, or **…**): copy the hash or subject, start a branch there, check out a branch on it, or **Check out revision** for the commit itself (a detached HEAD). Checkouts ask first, and git stops if uncommitted changes would be overwritten.
+- **Go to commit…** in the command palette takes a hash, branch or tag.
+
+The tab can be dragged along the panel or into the main area like a terminal's, and closed; its button brings it back. The log refreshes after an agent's turn, when the window regains focus and when HEAD moves. It is for git only.
+
+If you had installed the Git log plugin, Mango no longer runs it: the tab's place and your shortcut carry over, and you can remove the plugin in **Settings > Plugins**.
+
 ## Branches
 
 Click the branch name, in the titlebar or at the top of the Changes view, to open the branch popup. Type to search branches and actions; use <kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Enter</kbd>, <kbd>→</kbd> to open a branch's actions and <kbd>←</kbd> or <kbd>Esc</kbd> to go back.

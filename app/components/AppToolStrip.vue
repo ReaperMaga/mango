@@ -4,13 +4,14 @@ import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { read, reg, shown } from '~/plugin-host/registry'
+import { allPanelTabs, panelTabBadge, panelTabOffered } from '~/composables/panelTabs'
 import { iconComponent } from '~/plugin-host/icons'
 import { parsePanelEditorTab } from '~/plugin-host/ids'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
  * docks its tool windows: one button per tool, a click opens it beside the
- * chats and a second click puts it away. At the foot sit the terminal's toggle and a button that
+ * chats and a second click puts it away. At the foot sit the bottom panel's tabs, the terminal's toggle and a button that
  * says where the project runs (this computer or an environment), marking an environment that is
  * stopped or can't be reached.
  */
@@ -50,11 +51,14 @@ const releaseWatch = useReleaseWatch()
 const releaseMark = releaseWatch.mark
 const RELEASE_MARK = { running: 'a release is building', failed: 'a release build failed' } as const
 
-/** Plugins' bottom panel tabs: a button each at the foot, above the terminal's (bottom-docked tools sit low, as in an IDE). */
-const panelTabs = computed(() => reg.panelTabs.filter(t => shown(t)).map((t) => {
-  const badge = read(t.badge, t.pluginId, null, 'badge')
-  return { ref: t.fullId, label: t.title, icon: iconComponent(t.icon)!, count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0 }
-}))
+/** The bottom panel's tabs (the Git log, then plugins'): a button each at the foot, above the terminal's (bottom-docked tools sit low, as in an IDE). */
+const panelTabs = computed(() => allPanelTabs().filter(panelTabOffered).map(t => ({
+  ref: t.fullId,
+  label: t.title,
+  title: t.pluginId === null ? ws.withKey(t.title, t.shortcut) : t.title,
+  icon: iconComponent(t.icon)!,
+  count: panelTabBadge(t),
+})))
 /** In view: showing in the open panel, or the tab of the active pane when it sits in the main area. */
 function panelShowing(ref: string) {
   if (ws.panelTabPlaces[ref]?.at === 'editor') return parsePanelEditorTab(threads.activePane.threadId)?.ref === ref
@@ -136,7 +140,7 @@ watch(() => ws.toolPanel, async (id) => {
       :class="{ 'is-active': panelShowing(p.ref) }"
       :aria-pressed="panelShowing(p.ref)"
       :aria-label="p.count ? `${p.label}, ${p.count} item${p.count === 1 ? '' : 's'}` : p.label"
-      :title="p.label"
+      :title="p.title"
       @click="togglePanelTab(p.ref)"
     >
       <component :is="p.icon" />
@@ -178,7 +182,7 @@ watch(() => ws.toolPanel, async (id) => {
   width: 40px;
   background: var(--bg-app);
 }
-/* Plugins' panel tabs, the terminal and the environment sit apart at the foot of the stripe. */
+/* The panel tabs, the terminal and the environment sit apart at the foot of the stripe. */
 .ts__foot {
   flex: none;
   display: flex;

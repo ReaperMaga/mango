@@ -19,7 +19,9 @@ import {
   effectiveScheme, isPanelTabRef, isPluginRef, normalizePanelOrder, normalizePanelPlaces, panelEditorTabId, panelStrip,
   parsePanelEditorTab, type PanelTabPlace, type PluginRef,
 } from '~/plugin-host/ids'
-import { isPluginSchemeRegistered, pluginShortcutDefs, reg as pluginReg, shown as pluginShown, shownPanelTab } from '~/plugin-host/registry'
+import { isPluginSchemeRegistered, pluginShortcutDefs } from '~/plugin-host/registry'
+import { allPanelTabs, findPanelTab, panelTabOffered, type PanelTab } from '~/composables/panelTabs'
+import { BUILT_IN_TABS, seedBuiltInTabs } from '~/utils/builtIns'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
@@ -228,7 +230,18 @@ let tabSeq = 0
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
-  'openProjectIn'] as const
+  'openProjectIn', 'gitLogWidth'] as const
+/** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
+const KNOWN_TABS_KEY = 'builtInTabs'
+
+/** The Git log's details width. Until one is saved here, the one the Git log plugin had kept. */
+function gitLogWidthOf(v: unknown): number {
+  let width = v
+  if (width === undefined) {
+    try { width = JSON.parse(localStorage.getItem('mango.plugin.git-log.split-width') ?? 'null') } catch { /* none kept */ }
+  }
+  return typeof width === 'number' && width > 0 ? width : 380
+}
 
 const initialState = () => {
     const prefs = loadPrefs()
@@ -258,10 +271,12 @@ const initialState = () => {
       terminalOpen: prefs.terminalOpen ?? false,
       /** fraction of the main column height */
       terminalHeight: (prefs.terminalHeight ?? 0.34) as number,
+      /** Width of the commit details beside the Git log's list. */
+      gitLogWidth: gitLogWidthOf(prefs.gitLogWidth),
       terminalTabs: [] as TerminalTab[],
       activeTerminalId: null as string | null,
       /**
-       * The plugin panel tab (`<pluginId>.<id>`) chosen in the bottom panel instead of a terminal, or null.
+       * The panel tab (a plugin's `<pluginId>.<id>`, or one of Mango's own) chosen in the bottom panel instead of a terminal, or null.
        * Kept while its plugin is not loaded yet or its `when()` is false: the panel shows the terminals then
        * (`activePanelTab`), and the tab again once it is back. A plugin that stops clears it (`plugin-host/api.ts`).
        */
@@ -271,8 +286,12 @@ const initialState = () => {
        * Empty until something is moved: then the terminals keep their own order. Only the refs are saved.
        */
       panelOrder: normalizePanelOrder(prefs.panelOrder) as string[],
-      /** Where each plugin panel tab is when not in the panel (the main area, or closed), by ref; kept while its plugin is away. */
-      panelTabPlaces: normalizePanelPlaces(prefs.panelTabPlaces) as Record<string, PanelTabPlace>,
+      /** Where each panel tab is when not in the panel (the main area, or closed), by ref; kept while its plugin is away. */
+      panelTabPlaces: seedBuiltInTabs(normalizePanelPlaces(prefs.panelTabPlaces), {
+        known: prefs[KNOWN_TABS_KEY],
+        chosen: prefs.panelPluginTab,
+        order: normalizePanelOrder(prefs.panelOrder),
+      }) as Record<string, PanelTabPlace>,
       /** Shells found on this machine. */
       terminalProfiles: [] as TerminalProfile[],
       terminalProfilesLoading: false,
@@ -366,16 +385,16 @@ export const useWorkspace = defineStore('workspace', {
       ?? null,
     /** The terminals in the docked panel, in order (the rest are tabs in the main area). */
     panelTerminals: s => s.terminalTabs.filter(t => !t.inEditor),
-    /** The plugin tab the bottom panel shows (registered, `when()` holding), or null: it shows a terminal. */
-    activePanelTab: (s): ReturnType<typeof shownPanelTab> => {
-      const t = shownPanelTab(s.panelPluginTab)
-      return t && !s.panelTabPlaces[t.fullId] ? t : null
+    /** The panel tab the bottom panel shows (one that is offered), or null: it shows a terminal. */
+    activePanelTab: (s): PanelTab | null => {
+      const t = findPanelTab(s.panelPluginTab)
+      return t && panelTabOffered(t) && !s.panelTabPlaces[t.fullId] ? t : null
     },
-    /** The plugin panel tabs in the panel's strip now (registered, `when()` holding, not moved out or closed). */
-    panelPluginTabs: (s): string[] => pluginReg.panelTabs.filter(t => !s.panelTabPlaces[t.fullId] && pluginShown(t)).map(t => t.fullId),
+    /** The panel tabs in the panel's strip now (offered, not moved out or closed). */
+    dockedPanelTabs: (s): string[] => allPanelTabs().filter(t => !s.panelTabPlaces[t.fullId] && panelTabOffered(t)).map(t => t.fullId),
     /** The panel's strip, in order: terminal ids and panel tab refs. */
     panelStrip(): string[] {
-      return panelStrip(this.panelOrder, this.panelTerminals.map(t => t.id), this.panelPluginTabs)
+      return panelStrip(this.panelOrder, this.panelTerminals.map(t => t.id), this.dockedPanelTabs)
     },
   },
 
@@ -413,6 +432,8 @@ export const useWorkspace = defineStore('workspace', {
           panelPluginTab: this.panelPluginTab,
           panelOrder: normalizePanelOrder(this.panelOrder),
           panelTabPlaces: this.panelTabPlaces,
+          [KNOWN_TABS_KEY]: BUILT_IN_TABS,
+          gitLogWidth: this.gitLogWidth,
           toolPanel: this.toolPanel,
           toolWidth: this.toolWidth,
           lastToolPanel: this.lastToolPanel,
@@ -442,7 +463,7 @@ export const useWorkspace = defineStore('workspace', {
         // Another window writes the shared prefs only; the main window's layout and projects stay.
         if (!useWindows().isMain) {
           const stored = loadPrefs()
-          for (const k of WINDOW_KEYS) {
+          for (const k of [...WINDOW_KEYS, KNOWN_TABS_KEY]) {
             if (k in stored) all[k] = stored[k]
             else delete all[k]
           }
@@ -995,7 +1016,7 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
     /**
-     * Bring a plugin's panel tab (`<pluginId>.<id>`) into view: its tab in the main area when it is there,
+     * Bring a panel tab (the Git log, or a plugin's) into view: its tab in the main area when it is there,
      * else the panel at it (a closed one comes back into the panel). No shell is started for it.
      */
     openPanelTab(ref: string) {
@@ -1030,7 +1051,7 @@ export const useWorkspace = defineStore('workspace', {
      */
     syncPanelEditorTabs() {
       const threads = useThreads()
-      const live = new Set(pluginReg.panelTabs.map(t => t.fullId))
+      const live = new Set(allPanelTabs().map(t => t.fullId))
       for (const id of [...threads.tabs]) {
         const p = parsePanelEditorTab(id)
         if (!p) continue
@@ -1169,7 +1190,7 @@ export const useWorkspace = defineStore('workspace', {
       }
       // A plugin tab showing keeps the panel up without terminals.
       if (panel.length === 0 && !this.activePanelTab) {
-        const tab = this.panelPluginTabs[0]
+        const tab = this.dockedPanelTabs[0]
         if (tab && this.terminalOpen) this.panelPluginTab = tab
         else this.terminalOpen = false
       }

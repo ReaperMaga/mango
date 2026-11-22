@@ -5,10 +5,10 @@ import { holdOverlay } from '~/composables/useOverlay'
 import { insertionIndex, isTerminalTab, paneZone, parseTerminalTab } from '~/utils/terminalTabs'
 import { dragPlace, tearOffPlace } from '~/utils/windows'
 import { parsePanelEditorTab } from '~/plugin-host/ids'
-import { reg } from '~/plugin-host/registry'
+import { findPanelTab } from '~/composables/panelTabs'
 
 /*
- * Dragging a tab: a terminal or a plugin's panel tab (between the docked panel and the main area) or a chat (within the tab
+ * Dragging a tab: a terminal or a panel tab (between the docked panel and the main area) or a chat (within the tab
  * strip, into a pane, or out of the window into a window of its own). Pointer events only, never
  * HTML5 drag and drop, which the desktop webview takes over on Windows. The pointer is captured once
  * a drag starts, so moves and the release outside the window still arrive.
@@ -27,7 +27,7 @@ export interface Box { left: number; top: number; width: number; height: number 
 export type DragItem =
   /** A terminal (a TerminalTab id), from the panel or its tab in the main area. */
   | { kind: 'terminal'; id: string; from: 'panel' | 'editor' }
-  /** A plugin's panel tab (its ref), from the panel or its tab in the main area. */
+  /** A panel tab (its ref), from the panel or its tab in the main area. */
   | { kind: 'panelTab'; id: string; from: 'panel' | 'editor' }
   /** A chat (a thread id), from its tab or its row in the sidebar. */
   | { kind: 'chat'; id: string; from: 'tab' | 'sidebar' }
@@ -81,7 +81,7 @@ export function pressTab(e: PointerEvent, item: DragItem) {
 export const pressTerminalTab = (e: PointerEvent, terminalId: string, from: 'panel' | 'editor') =>
   pressTab(e, { kind: 'terminal', id: terminalId, from })
 
-/** Press on a plugin's panel tab (in the panel, or its tab in the main area). */
+/** Press on a panel tab (in the panel, or its tab in the main area). */
 export const pressPanelTab = (e: PointerEvent, ref: string, from: 'panel' | 'editor') =>
   pressTab(e, { kind: 'panelTab', id: ref, from })
 
@@ -95,7 +95,7 @@ function begin(item: DragItem): boolean {
     tabDrag.title = tab.title
     tabDrag.remote = !!tab.cwd?.startsWith('env://')
   } else if (item.kind === 'panelTab') {
-    const tab = reg.panelTabs.find(t => t.fullId === item.id)
+    const tab = findPanelTab(item.id)
     if (!tab) return false
     tabDrag.title = tab.title
     tabDrag.remote = false

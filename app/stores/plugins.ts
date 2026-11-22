@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { InstalledPlugin, PluginCatalogResult, PluginProbe, PluginSource, PluginUpdateInfo } from '~/types/ipc'
+import { builtInPluginNote } from '~/utils/builtIns'
 import { call, onWindows, postWindows } from '~/composables/useBackend'
 
 /**
@@ -145,7 +146,8 @@ export const usePlugins = defineStore('plugins', {
     },
 
     async checkUpdates(ids: string[] | null = null, jobId = pluginJobId()): Promise<PluginUpdateInfo[]> {
-      const infos = await call('plugins_check_updates', { ids, jobId })
+      // A plugin that is part of Mango now left the repository: it has nothing to update to.
+      const infos = (await call('plugins_check_updates', { ids, jobId })).filter(u => !builtInPluginNote(u.id))
       for (const u of infos) this.updates[u.id] = u
       return infos
     },
@@ -162,7 +164,10 @@ export const usePlugins = defineStore('plugins', {
       if (this.catalog && !force) return
       this.catalogLoading = true
       try {
-        this.catalog = await call('plugins_catalog', { force })
+        const result = await call('plugins_catalog', { force })
+        // A saved copy may still list one that is built in now.
+        const plugins = result.catalog.plugins.filter(p => !builtInPluginNote(p.id))
+        this.catalog = { ...result, catalog: { ...result.catalog, plugins } }
         this.catalogError = null
       } catch (e) {
         this.catalogError = e instanceof Error ? e.message : String(e)

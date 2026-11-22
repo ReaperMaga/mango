@@ -5,6 +5,7 @@ import { answerQuestion, interruptRun, isRunning, readAgentContext, respondAppro
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
@@ -139,7 +140,7 @@ export const useThreads = defineStore('threads', {
       const project = useWorkspace().activeProjectPath
       if (!project) return null
       const id = this.activePane.threadId
-      const tabPath = parseDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath
+      const tabPath = folderOfTab(id)
       if (tabPath && this.ownerOf(tabPath) === project) return tabPath
       const t = this.byId(id)
       if (t && t.projectPath === project) return this.workdirFor(t.id)
@@ -533,7 +534,7 @@ export const useThreads = defineStore('threads', {
       for (const x of users) x.worktree = null
       // Diff and file tabs opened from the folder show nothing now.
       for (const tab of [...this.tabs]) {
-        if ((parseDiffTab(tab)?.projectPath ?? parseFileTab(tab)?.projectPath) === folder) this.closeTab(tab)
+        if (folderOfTab(tab) === folder) this.closeTab(tab)
       }
       const git = useGit()
       delete git.repos[folder]
@@ -600,7 +601,7 @@ export const useThreads = defineStore('threads', {
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
       if (isPluginTab(id)) delete pluginTabs[id]
-      // A plugin's panel tab is closed wherever it is (it can be opened again, into the panel).
+      // A panel tab is closed wherever it is (it can be opened again, into the panel).
       const panelTab = parsePanelEditorTab(id)
       if (panelTab) return useWorkspace().closePanelTab(panelTab.ref)
       this.removeTab(id)
@@ -1391,8 +1392,12 @@ export const stopFlags = new Set<string>()
 const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
+/** The folder a diff or file tab was opened from: the project, or a worktree of it. */
+const folderOfTab = (id: string | null | undefined) =>
+  parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath
+
 /** A tab that shows something other than a chat; none of them is saved with the layout. */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'

@@ -2,14 +2,14 @@
 import { ArrowDownToLine, X } from 'lucide-vue-next'
 import PluginIcon from './PluginIcon.vue'
 import { parsePanelEditorTab } from '~/plugin-host/ids'
-import { pluginNames, reg } from '~/plugin-host/registry'
+import { findPanelTab, panelTabPlugin } from '~/composables/panelTabs'
 import { registerTerminalSlot } from '~/composables/useTerminalDrag'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 
 /**
- * A plugin's panel tab (`ui.panelTabs`) moved into the main area. Like a terminal's pane, it only gives
- * the view a place: TerminalPanel keeps the plugin's view and teleports it into `host` while this pane
+ * A panel tab (the Git log, or a plugin's from `ui.panelTabs`) moved into the main area. Like a terminal's pane, it only gives
+ * the view a place: TerminalPanel keeps the view and teleports it into `host` while this pane
  * shows it, so moving the tab between the panel and the main area keeps its state.
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
@@ -17,8 +17,8 @@ const ws = useWorkspace()
 const threads = useThreads()
 
 const ref_ = computed(() => parsePanelEditorTab(props.tabId)?.ref ?? '')
-const tab = computed(() => reg.panelTabs.find(t => t.fullId === ref_.value) ?? null)
-const plugin = computed(() => (tab.value ? pluginNames[tab.value.pluginId] ?? tab.value.pluginId : ''))
+const tab = computed(() => findPanelTab(ref_.value))
+const plugin = computed(() => panelTabPlugin(tab.value))
 
 const host = ref<HTMLElement | null>(null)
 watch([ref_, host], ([id, el], _old, onCleanup) => {
@@ -31,7 +31,7 @@ watch([ref_, host], ([id, el], _old, onCleanup) => {
     <header class="pnp__head">
       <PluginIcon :icon="tab?.icon" class="pnp__icon" />
       <h2 class="pnp__name" :title="tab?.title">{{ tab?.title ?? 'Panel tab' }}</h2>
-      <span class="pnp__from">{{ plugin }}</span>
+      <span v-if="plugin" class="pnp__from">{{ plugin }}</span>
       <span class="pnp__spacer" />
       <UiIconButton size="sm" label="Move to panel" :disabled="!tab" @click="ws.movePanelTabToPanel(ref_)"><ArrowDownToLine /></UiIconButton>
       <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>

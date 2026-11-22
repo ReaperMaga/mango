@@ -44,6 +44,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'files', label: 'Files', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+E' },
   { id: 'links', label: 'Pull requests', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+P' },
   { id: 'releases', label: 'Releases', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+R' },
+  { id: 'git-log', label: 'Show Git log', group: 'Layout', scope: 'workspace', key: 'Mod+Alt+9' },
   { id: 'env', label: 'Environment', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
 
   { id: 'find-chat', label: 'Find in chat', group: 'Tabs', scope: 'workspace', key: 'Mod+F' },
@@ -120,6 +121,9 @@ export function comboLabel(combo: string): string {
   return comboParts(combo).join(isMac() ? '' : '+')
 }
 
+/** Keys of plugins that became part of Mango: the action a rebinding of theirs now belongs to. */
+const MOVED_SHORTCUTS = new Map([['plugin:git-log.show', 'git-log']])
+
 /** Plugins' shortcuts are kept under `plugin:<pluginId>.<id>` (see `plugin-host/`). */
 export const isPluginShortcut = (id: string) => id.startsWith('plugin:')
 
@@ -134,12 +138,14 @@ export function refuse(combo: string, forId: string, bindings: Record<string, st
 }
 
 /**
- * The bindings in force: each action's default, unless the user chose another key (or cleared it).
+ * The bindings in force: each action's default, unless the user chose another key (or cleared it). A key
+ * the user gave to one action is no other's default: a default added later never takes it over.
  * `extra`: plugins' shortcuts; a plugin's default that a built-in key already has is left unbound.
  */
 export function resolveBindings(overrides: Record<string, string>, extra: readonly ShortcutDef[] = []): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const s of SHORTCUTS) out[s.id] = overrides[s.id] ?? s.key
+  const chosen = new Set([...SHORTCUTS, ...extra].map(s => overrides[s.id]))
+  for (const s of SHORTCUTS) out[s.id] = overrides[s.id] ?? (chosen.has(s.key) ? '' : s.key)
   const taken = new Set(Object.values(out).filter(Boolean))
   for (const s of extra) {
     const own = overrides[s.id]
@@ -158,9 +164,14 @@ export function cleanOverrides(raw: unknown): Record<string, string> {
     const v = (raw as Record<string, unknown>)[s.id]
     if (typeof v === 'string' && v !== s.key) out[s.id] = v
   }
+  for (const [old, id] of MOVED_SHORTCUTS) {
+    if (id in raw) continue
+    const v = (raw as Record<string, unknown>)[old]
+    if (typeof v === 'string' && v !== SHORTCUTS.find(s => s.id === id)?.key) out[id] = v
+  }
   // A plugin's keys are kept even while it is not loaded (plugins start after the prefs are read).
   for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (isPluginShortcut(id) && id.length < 200 && typeof v === 'string') out[id] = v
+    if (isPluginShortcut(id) && !MOVED_SHORTCUTS.has(id) && id.length < 200 && typeof v === 'string') out[id] = v
   }
   return out
 }

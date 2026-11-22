@@ -4,7 +4,7 @@ import type { PluginView, ToastOptions } from './types'
 /**
  * What plugins put on screen outside the regular surfaces: toasts (bottom-right) and dialogs
  * (confirm, prompt, a plugin view). `ui/PluginLayers.vue` shows both, mounted once in app.vue.
- * Mango's own code may use the toasts too (`toast()`).
+ * Mango's own code may use the toasts and the prompt too (`toast()`, `openDialog()`).
  */
 
 export interface Toast extends Required<Pick<ToastOptions, 'title' | 'kind' | 'timeout'>> {
@@ -16,7 +16,8 @@ export interface Toast extends Required<Pick<ToastOptions, 'title' | 'kind' | 't
 
 export type PluginDialog =
   | { id: number; pluginId: string; kind: 'confirm'; title: string; body?: string; confirmLabel?: string; danger?: boolean; resolve(v: boolean): void }
-  | { id: number; pluginId: string; kind: 'prompt'; title: string; body?: string; placeholder?: string; value?: string; resolve(v: string | null): void }
+  /** `pluginId` null: Mango's own question. */
+  | { id: number; pluginId: string | null; kind: 'prompt'; title: string; body?: string; placeholder?: string; value?: string; resolve(v: string | null): void }
   | { id: number; pluginId: string; kind: 'view'; title: string; view: PluginView<{ close(): void }>; width?: number; resolve(): void }
 
 export const layers = reactive({

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileDiff, FolderGit2, GitCommitHorizontal, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { fileIcon } from '~/utils/fileIcons'
 import { useFiles } from '~/stores/files'
@@ -23,7 +24,8 @@ import { copyToClipboard } from '~/utils/agentCli'
 import { sepOf, withTrailingSep } from '~/utils/paths'
 import type { MenuItem } from '~/types/ui'
 import { isPanelEditorTab, isPluginTab, parsePanelEditorTab, parsePluginTab } from '~/plugin-host/ids'
-import { pluginNames, pluginTabView, pluginTabs, reg as pluginReg } from '~/plugin-host/registry'
+import { pluginNames, pluginTabView, pluginTabs } from '~/plugin-host/registry'
+import { findPanelTab, panelTabPlugin } from '~/composables/panelTabs'
 import type { PluginIcon as PluginIconValue } from '~/plugin-host/types'
 import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import PluginTabPane from '~/plugin-host/ui/PluginTabPane.vue'
@@ -40,12 +42,13 @@ onMounted(() => (mod.value = modLabel()))
 type Tab =
   | { id: string; kind: 'chat'; title: string; thread: Thread }
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
+  | { id: string; kind: 'commit'; title: string; file: string; short: string }
   | { id: string; kind: 'file'; title: string; file: string }
   | { id: string; kind: 'browser'; title: string; browser: Browser }
   | { id: string; kind: 'terminal'; title: string; term: TerminalTab }
   | { id: string; kind: 'plugin'; title: string; icon: PluginIconValue | null; plugin: string }
-  /** A plugin's panel tab moved out of the bottom panel (`ref`: its `<pluginId>.<id>`). */
-  | { id: string; kind: 'panel'; title: string; icon: PluginIconValue | null; plugin: string; ref: string }
+  /** A panel tab moved out of the bottom panel (`plugin`: whose it is, null for Mango's own). */
+  | { id: string; kind: 'panel'; title: string; icon: PluginIconValue | null; plugin: string | null; ref: string }
 
 /** Tabs belonging to the active project (chats, diffs, files); other projects' tabs stay open but hidden. */
 const tabs = computed<Tab[]>(() => {
@@ -53,6 +56,8 @@ const tabs = computed<Tab[]>(() => {
   for (const id of threads.visibleTabs) {
     const diff = parseDiffTab(id)
     if (diff) { out.push({ id, kind: 'diff', title: diff.name, file: diff.file, staged: diff.staged }); continue }
+    const commit = parseCommitDiffTab(id)
+    if (commit) { out.push({ id, kind: 'commit', title: `${commit.name} @ ${commit.short}`, file: commit.file, short: commit.short }); continue }
     const file = parseFileTab(id)
     if (file) { out.push({ id, kind: 'file', title: file.name, file: file.file }); continue }
     if (isBrowserTab(id)) {
@@ -62,8 +67,8 @@ const tabs = computed<Tab[]>(() => {
     }
     const panel = parsePanelEditorTab(id)
     if (panel) {
-      const pt = pluginReg.panelTabs.find(x => x.fullId === panel.ref)
-      if (pt) out.push({ id, kind: 'panel', title: pt.title, icon: pt.icon, plugin: pluginNames[pt.pluginId] ?? pt.pluginId, ref: panel.ref })
+      const pt = findPanelTab(panel.ref)
+      if (pt) out.push({ id, kind: 'panel', title: pt.title, icon: pt.icon, plugin: panelTabPlugin(pt), ref: panel.ref })
       continue
     }
     const plugin = parsePluginTab(id)
@@ -114,8 +119,8 @@ function tabTitle(t: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
   if (t.kind === 'file') return `${t.file}${keys}`
-  if (t.kind === 'plugin' || t.kind === 'panel') return `${t.title}
-From ${t.plugin}${keys}`
+  if (t.kind === 'commit') return `Changes in ${t.file} at ${t.short}${keys}`
+  if (t.kind === 'plugin' || t.kind === 'panel') return `${t.title}${t.plugin ? `\nFrom ${t.plugin}` : ''}${keys}`
   if (t.kind === 'terminal') {
     const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
     return `Terminal${where ? ` — ${where}` : ''}${t.term.exited ? ' (exited)' : ''}${keys}`
@@ -282,6 +287,14 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     return items
   }
 
+  if (tab.kind === 'commit') {
+    items.push(
+      splitItem,
+      { label: 'Copy relative path', icon: Route, divider: true, onSelect: () => void copyToClipboard(tab.file) },
+    )
+    return items
+  }
+
   if (tab.kind === 'panel') {
     items.push(
       splitItem,
@@ -372,6 +385,10 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 <span class="ca__tab-title">{{ t.title }}</span>
                 <span v-if="t.staged" class="ca__tab-note">staged</span>
               </template>
+              <template v-else-if="t.kind === 'commit'">
+                <GitCommitHorizontal class="ca__tab-icon" aria-hidden="true" />
+                <span class="ca__tab-title">{{ t.title }}</span>
+              </template>
               <template v-else-if="t.kind === 'terminal'">
                 <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
                 <span class="ca__tab-title">{{ t.title }}</span>
@@ -435,6 +452,18 @@ const tabMenuItems = computed<MenuItem[]>(() => {
         />
         <GitDiffPane
           v-if="isDiffTab(pane.threadId)"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="paneBasis(i)"
+          data-tab-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
+        <GitCommitDiffPane
+          v-else-if="isCommitDiffTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"

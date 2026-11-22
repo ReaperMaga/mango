@@ -3,6 +3,7 @@ import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
 import { useBrowser } from '~/stores/browser'
+import { useGitLog } from '~/stores/gitLog'
 import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
@@ -69,6 +70,7 @@ export function useShortcuts() {
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject) ws.toggleLinks() },
     releases: () => { if (ws.hasProject && ws.activeProject?.vcs !== 'plastic') ws.toggleReleases() },
+    'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.
     'save-file': () => {
@@ -120,8 +122,8 @@ export function useShortcuts() {
     if (id) {
       // Close tab only claims the key when there is a tab to close.
       if (id === 'close-tab' && !threads.activePane.threadId) return
-      // Find in chat only claims the key in front of a chat: an editor keeps its own find.
-      if (id === 'find-chat' && !threads.byId(threads.activePane.threadId)) return
+      // Find in chat only claims the key in front of a chat: an editor, or a view with a search of its own, keeps its find.
+      if (id === 'find-chat' && (!threads.byId(threads.activePane.threadId) || (e.target as HTMLElement | null)?.closest?.('[data-own-find]'))) return
       e.preventDefault()
       actions[id]?.()
       return
