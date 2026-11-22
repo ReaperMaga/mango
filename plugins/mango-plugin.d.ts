@@ -237,7 +237,8 @@ export interface PluginTabView {
 
 export interface PluginStatusItem {
   id: string
-  location: 'titlebar' | 'sidebar'
+  /** `project` (since 0.1.41): after the project and its branch. */
+  location: 'project' | 'titlebar' | 'sidebar'
   text?: Reactive<string>
   icon?: Reactive<PluginIcon | undefined>
   tooltip?: Reactive<string>
@@ -277,7 +278,58 @@ export interface ToastOptions {
   action?: { label: string; run(): void }
 }
 
+/* since 0.1.41: project files (the Files view, file tabs, the editor) */
+
+export interface FileEntryContext {
+  projectPath: string
+  /** Relative to `projectPath`, forward slashes. */
+  path: string
+  name: string
+  isDir: boolean
+}
+export interface FileFilterContext extends FileEntryContext {
+  hasSibling(name: string, ignoreCase?: boolean): boolean
+}
+/** Hidden until the user ticks it under View options > Show. */
+export interface PluginFileFilter {
+  id: string
+  label: string
+  hint?: string
+  when?: (ctx: { projectPath: string }) => boolean
+  hide(ctx: FileFilterContext): boolean
+}
+/** A file named like the entry plus `suffix`: renamed and deleted with it, not duplicated. */
+export interface PluginFileCompanion {
+  id: string
+  suffix: string
+  /** Null (or a throw) refuses rename and delete until it can be told. */
+  when(ctx: FileEntryContext): boolean | null
+}
+export type FileTint = 'blue' | 'yellow' | 'orange' | 'green' | 'purple' | 'red' | 'neutral'
+export interface FileIconContext extends FileEntryContext {
+  open: boolean
+  /** Only in the Files view, where the whole folder was read. */
+  hasSibling?: (name: string, ignoreCase?: boolean) => boolean
+}
+export interface PluginFileIconProvider {
+  id: string
+  icon(ctx: FileIconContext): { icon: PluginIcon; tint?: FileTint; note?: string } | null | undefined
+}
+export interface PluginFileLanguage {
+  id: string
+  extensions: string[]
+  language: string
+}
+export interface PluginFilesUiApi {
+  filters: { register(filter: PluginFileFilter): Disposable; isShown(id: string): boolean; setShown(id: string, shown: boolean): void }
+  companions: { register(companion: PluginFileCompanion): Disposable }
+  icons: { register(provider: PluginFileIconProvider): Disposable }
+  languages: { register(language: PluginFileLanguage): Disposable }
+  reveal(path: string): Promise<void>
+}
+
 export interface PluginUiApi {
+  files: PluginFilesUiApi
   toolWindows: { register(win: PluginToolWindow): Disposable; open(id: string): void; close(): void }
   panelTabs: { register(tab: PluginPanelTab): Disposable; open(id: string): void }
   tabs: {
@@ -329,7 +381,17 @@ export interface PluginWorkspaceApi {
 export interface PluginFilesApi {
   read(path: string): Promise<string>
   write(path: string, content: string): Promise<void>
-  list(dir: string): Promise<Array<{ name: string; path: string; isDir: boolean }>>
+  /** Since 0.1.41: a folder's files may have changed (Files view, agent turn, branch or commit). */
+  onChange(handler: (projectPath: string) => void): Disposable
+  /** `children` (since 0.1.41): some subfolders come along in the same call. */
+  list(dir: string, opts?: { children?: boolean }): Promise<PluginDirEntry[]>
+}
+
+export interface PluginDirEntry {
+  name: string
+  path: string
+  isDir: boolean
+  children?: PluginDirEntry[]
 }
 
 export interface PluginGitApi {
@@ -350,7 +412,15 @@ export interface PluginMcpServer {
 
 export interface PluginAgentsApi {
   registerMcpServer(server: PluginMcpServer): Disposable
-  appendSystemPrompt(text: Reactive<string>): Disposable
+  /** One line. A function gets the run (since 0.1.41); '' adds nothing to it. */
+  appendSystemPrompt(text: string | ((run: AgentRunContext) => string)): Disposable
+}
+
+export interface AgentRunContext {
+  threadId: string
+  agent: AgentId
+  projectPath: string
+  workdir: string
 }
 
 /* ---------------------------------------------------------------- data */

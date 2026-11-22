@@ -5,7 +5,9 @@ import { useThreads } from '~/stores/threads'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
-import { isWithin, movedPath, parentOf, pathIn } from '~/utils/fileOps'
+import { isWithin, movedPath, nameOf, parentOf, pathIn } from '~/utils/fileOps'
+import { requiredSuffixes } from '~/plugin-host/fileHooks'
+import { SplitError, companionsOf, removeTogether, renameTogether, type Folder, type Move } from '~/utils/companions'
 
 /**
  * The Files view and the editor tabs it opens. The tree is read as it is
@@ -75,6 +77,11 @@ export interface OpenFile {
 }
 
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
+
+/** What became of a delete, with the companions that stayed behind (`ui.files.companions`) and why. */
+export interface EntryDeleted extends FsDeleted {
+  left: { path: string, why: string }[]
+}
 
 /** The backend's words for a folder that is not there (any more): unlike a failed connection, not passing. */
 const gone = (why: string) => /no longer exists|is not a folder|links to a place outside/.test(why)
@@ -297,17 +304,33 @@ export const useFiles = defineStore('files', {
       await this._changed(projectPath, parentOf(file))
     },
 
-    /** Rename in place. Open tabs follow, with their edits, undo history and scroll position. */
-    async renameEntry(projectPath: string, from: string, name: string) {
-      const to = pathIn(parentOf(from), name)
-      this._refuseWhileSaving(projectPath, from)
-      // A tab left over from a file that had the new name: it would be replaced, edits and all.
-      for (const id of this._tabsWithin(projectPath, from)) {
-        const next = fileTabId(projectPath, movedPath(this.open[id]!.file, from, to)!)
-        if (next !== id && this.open[next]?.dirty) throw new Error(`A tab with unsaved changes is open as ${this.open[next]!.file}. Close it first.`)
+    /**
+     * Rename in place, with the files that go with it (`ui.files.companions`): all of them or none.
+     * Open tabs follow, with their edits, undo history and scroll position. Resolves with every path moved.
+     */
+    async renameEntry(projectPath: string, from: string, name: string, isDir: boolean): Promise<Move[]> {
+      const dir = parentOf(from)
+      const to = pathIn(dir, name)
+      const suffixes = requiredSuffixes(projectPath, from, isDir)
+      const inProject = (moves: Move[]) => moves.map(m => ({ from: pathIn(dir, m.from), to: pathIn(dir, m.to) }))
+      let moved: Move[]
+      try {
+        moved = inProject(await renameTogether(this._folder(projectPath, dir), nameOf(from), name, suffixes, (moves) => {
+          for (const m of inProject(moves)) {
+            this._refuseWhileSaving(projectPath, m.from)
+            // A tab left over from a file that had the new name: it would be replaced, edits and all.
+            for (const id of this._tabsWithin(projectPath, m.from)) {
+              const next = fileTabId(projectPath, movedPath(this.open[id]!.file, m.from, m.to)!)
+              if (next !== id && this.open[next]?.dirty) throw new Error(`A tab with unsaved changes is open as ${this.open[next]!.file}. Close it first.`)
+            }
+          }
+        }))
+      } catch (e) {
+        if (e instanceof SplitError) for (const m of inProject(e.moved)) this._moveTabs(projectPath, m.from, m.to)
+        if (suffixes.length) await this._changed(projectPath, dir)
+        throw e
       }
-      await call('fs_rename', { root: projectPath, path: from, name })
-      this._moveTabs(projectPath, from, to)
+      for (const m of moved) this._moveTabs(projectPath, m.from, m.to)
 
       const tree = this.treeOf(projectPath)
       tree.expanded = tree.expanded.map(d => movedPath(d, from, to) ?? d)
@@ -315,18 +338,34 @@ export const useFiles = defineStore('files', {
       for (const dir of Object.keys(tree.dirs)) if (dir && isWithin(dir, from)) delete tree.dirs[dir]
       await this._changed(projectPath, parentOf(from))
       await Promise.all(tree.expanded.filter(d => isWithin(d, to)).map(d => this.loadDir(projectPath, d)))
+      return moved
     },
 
-    /** Delete; a result that is not `deleted` means the trash cannot take it and nothing happened. */
-    async deleteEntry(projectPath: string, path: string, isDir: boolean, permanent: boolean): Promise<FsDeleted> {
-      this._refuseWhileSaving(projectPath, path)
+    /** The files that go with an entry and are there, read from the disk: what a delete has to name. */
+    async companionPaths(projectPath: string, path: string, isDir: boolean): Promise<string[]> {
+      const dir = parentOf(path)
+      const { found } = await companionsOf(this._folder(projectPath, dir), nameOf(path), requiredSuffixes(projectPath, path, isDir))
+      return found.map(c => pathIn(dir, c.name))
+    },
+
+    /**
+     * Delete, and then `along` (its companions, as `companionPaths` named them and the user was asked
+     * about; those that would not go are in `left`). A result that is not `deleted` means the trash
+     * cannot take it and nothing happened.
+     */
+    async deleteEntry(projectPath: string, path: string, isDir: boolean, permanent: boolean, along: string[] = []): Promise<EntryDeleted> {
+      for (const p of [path, ...along]) this._refuseWhileSaving(projectPath, p)
       const key = dirKey(projectPath, path)
       if (this.deleting.includes(key)) throw new Error('It is already being deleted.')
       this.deleting.push(key)
       try {
-        const got = await call('fs_delete', { root: projectPath, path, isDir, permanent })
-        if (!got.deleted) return got
-        for (const id of this._tabsWithin(projectPath, path)) {
+        const dir = parentOf(path)
+        const entry = nameOf(path)
+        const got = await removeTogether(this._folder(projectPath, dir), entry, along.map(nameOf), n =>
+          call('fs_delete', { root: projectPath, path: pathIn(dir, n), isDir: n === entry && isDir, permanent }))
+        const left = got.left.map(l => ({ path: pathIn(dir, l.name), why: l.why }))
+        if (!got.deleted) return { deleted: false, reason: got.reason, left }
+        for (const id of got.gone.flatMap(n => this._tabsWithin(projectPath, pathIn(dir, n)))) {
           closeFileTab(id)
           if (this.open[id]) this.forget(id)
         }
@@ -335,13 +374,33 @@ export const useFiles = defineStore('files', {
         for (const dir of Object.keys(tree.dirs)) if (dir && isWithin(dir, path)) delete tree.dirs[dir]
         if (tree.revealed && isWithin(tree.revealed.file, path)) tree.revealed = null
         await this._changed(projectPath, parentOf(path))
-        return got
+        return { deleted: true, reason: got.reason, left }
       } catch (e) {
         // A folder can be partly gone when deleting it fails.
         await this._changed(projectPath, parentOf(path))
         throw e
       } finally {
         this.deleting = this.deleting.filter(k => k !== key)
+      }
+    },
+
+    /** A folder as utils/companions.ts works on it. */
+    _folder(projectPath: string, dir: string): Folder {
+      return {
+        list: async () => {
+          const got = await call('fs_list_dir', { root: projectPath, dir })
+          return got.truncated ? null : new Set(got.entries.map(e => e.name))
+        },
+        has: async (name) => {
+          try {
+            await call('fs_read_file', { root: projectPath, file: pathIn(dir, name), limit: 1 })
+            return true
+          } catch (e) {
+            if (/no longer exists|is not a file/.test(reason(e))) return false
+            throw e
+          }
+        },
+        rename: async (from, to) => { await call('fs_rename', { root: projectPath, path: pathIn(dir, from), name: to }) },
       }
     },
 

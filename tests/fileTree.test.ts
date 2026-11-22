@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { excludedPathsOf, filesViewOf, layoutTree, sortEntries, type FilesView, type TreeEntry, type TreeInput } from '../app/utils/fileTree.ts'
+import { companionChange, excludedPathsOf, filesViewOf, layoutTree, siblingLookup, sortEntries, type FilesView, type TreeEntry, type TreeInput } from '../app/utils/fileTree.ts'
 import type { FsEntry } from '../app/types/ipc.ts'
 
 /** `name/` is a folder, `!name` is ignored by git. */
@@ -35,7 +35,7 @@ test('without options everything shows, in the order it was read', () => {
 })
 
 test('stored options from any build are tolerated', () => {
-  const defaults = { excluded: true, dotfiles: true, compact: false, sort: 'name', foldersFirst: true, follow: false }
+  const defaults = { excluded: true, dotfiles: true, compact: false, sort: 'name', foldersFirst: true, follow: false, shown: [] }
   for (const junk of [undefined, null, 'x', 4, [], { sort: 'size', excluded: 'no', compact: 1 }]) assert.deepEqual(filesViewOf(junk), defaults)
   assert.equal(filesViewOf({ excluded: false }).excluded, false)
   assert.deepEqual(excludedPathsOf(['dist', 3, '', null]), ['dist'])
@@ -45,6 +45,39 @@ test('stored options from any build are tolerated', () => {
 test('hiding excluded files hides what git ignores and what the user excluded', () => {
   const out = layout(PROJECT, { excluded: false }, { marks: ['src/gen'], expanded: ['src'] })
   assert.deepEqual(shown(out), ['.github', 'src', 'main.ts', '.gitignore', 'README.md'])
+})
+
+const ASSETS = {
+  '': listing('', 'Assets/'),
+  'Assets': listing('Assets', 'Art/', 'A.cs', 'A.cs.meta', 'Art.meta', 'Gone.cs.meta'),
+  'Assets/Art': listing('Assets/Art'),
+}
+const hideMetas: TreeInput['hidden'] = (e, has) => e.name.endsWith('.meta') && has(e.name.slice(0, -5))
+
+test('a plugin filter hides by siblings, and what was asked for by name still shows', () => {
+  assert.deepEqual(shown(layout(ASSETS, {}, { expanded: ['Assets'], hidden: hideMetas })), ['Assets', 'Art', 'A.cs', 'Gone.cs.meta'])
+  assert.ok(shown(layout(ASSETS, {}, { expanded: ['Assets'], hidden: hideMetas, keep: 'Assets/A.cs.meta' })).includes('A.cs.meta'))
+  assert.deepEqual(filesViewOf({ shown: ['unity.meta', 3, ''] }).shown, ['unity.meta'])
+})
+
+test('a folder not read whole has no siblings to go by, so its files show', () => {
+  const cut = { ...ASSETS, Assets: { ...ASSETS.Assets, truncated: true } }
+  assert.equal(siblingLookup(cut)('Assets'), undefined)
+  assert.ok(shown(layout(cut, {}, { expanded: ['Assets'], hidden: hideMetas })).includes('A.cs.meta'))
+})
+
+test('a hidden folder companion does not stop compact folders', () => {
+  const one = { '': listing('', 'Assets/'), 'Assets': listing('Assets', 'Art/', 'Art.meta'), 'Assets/Art': listing('Assets/Art') }
+  assert.deepEqual(shown(layout(one, { compact: true }, { hidden: hideMetas })), ['Assets/Art'])
+})
+
+test('a hidden companion lends its change, only where the row has none or it is a conflict', () => {
+  const kinds = new Map([['A.cs.meta', 'modified'], ['B.cs.meta', 'conflict']])
+  const none = new Set<string>()
+  assert.deepEqual(companionChange(null, 'A.cs', ['.meta'], kinds, none), { kind: 'modified', suffix: '.meta' })
+  assert.equal(companionChange('added', 'A.cs', ['.meta'], kinds, none), null)
+  assert.deepEqual(companionChange('modified', 'B.cs', ['.meta'], kinds, none), { kind: 'conflict', suffix: '.meta' })
+  assert.equal(companionChange(null, 'A.cs', ['.meta'], kinds, new Set(['A.cs.meta'])), null)
 })
 
 test('what is inside an excluded folder is excluded with it', () => {

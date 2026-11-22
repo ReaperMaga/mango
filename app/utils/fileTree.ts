@@ -15,7 +15,12 @@ export interface FilesView {
   foldersFirst: boolean
   /** The tree follows the file in the active pane. */
   follow: boolean
+  /** Plugins' file filters whose files show (`<pluginId>.<id>`); the others hide theirs. */
+  shown: string[]
 }
+
+/** What plugins' file filters hide. */
+export type HiddenRule = (entry: FsEntry, hasSibling: (name: string, ignoreCase?: boolean) => boolean) => boolean
 
 /** Stored options, whatever build wrote them. The defaults are the tree without any options. */
 export function filesViewOf(stored: unknown): FilesView {
@@ -27,6 +32,7 @@ export function filesViewOf(stored: unknown): FilesView {
     sort: v.sort === 'type' ? 'type' : 'name',
     foldersFirst: v.foldersFirst !== false,
     follow: v.follow === true,
+    shown: Array.isArray(v.shown) ? v.shown.filter((id): id is string => typeof id === 'string' && !!id) : [],
   }
 }
 
@@ -76,6 +82,7 @@ export interface TreeInput {
   marks: string[]
   /** A file asked for by name ("Show in Files"): shown, with the folders to it, whatever is hidden. */
   keep: string | null
+  hidden?: HiddenRule | null
 }
 
 export interface TreeLayout {
@@ -84,6 +91,46 @@ export interface TreeLayout {
   chained: string[]
   /** Of those, the ones not read yet. */
   unread: string[]
+}
+
+/**
+ * Whether a folder has an entry of a name, by folder. A folder that was not read whole has no answer:
+ * what is missing from it cannot be told.
+ */
+export function siblingLookup(dirs: Record<string, Listing>) {
+  const known = new Map<string, ((name: string, ignoreCase?: boolean) => boolean) | undefined>()
+  return (dir: string) => {
+    if (known.has(dir)) return known.get(dir)
+    const listing = dirs[dir]
+    let has: ((name: string, ignoreCase?: boolean) => boolean) | undefined
+    if (listing?.entries && !listing.truncated) {
+      const entries = listing.entries
+      const names = new Set(entries.map(e => e.name))
+      let lower: Set<string> | undefined
+      has = (name, ignoreCase) => names.has(name)
+        || (!!ignoreCase && (lower ??= new Set(entries.map(e => e.name.toLowerCase()))).has(name.toLowerCase()))
+    }
+    known.set(dir, has)
+    return has
+  }
+}
+
+/**
+ * The change a row stands in for: a hidden companion's (`Player.cs.meta`), when the row has none of
+ * its own or the companion's is a conflict.
+ */
+export function companionChange<K extends string>(
+  own: K | null,
+  path: string,
+  suffixes: readonly string[],
+  kinds: ReadonlyMap<string, K>,
+  visible: ReadonlySet<string>,
+): { kind: K, suffix: string } | null {
+  for (const suffix of suffixes) {
+    const kind = kinds.get(path + suffix)
+    if (kind && !visible.has(path + suffix) && (!own || kind === 'conflict')) return { kind, suffix }
+  }
+  return null
 }
 
 /** A link back to a folder above would make a row grow for ever. */
@@ -105,7 +152,7 @@ export function sortEntries(entries: FsEntry[], view: Pick<FilesView, 'sort' | '
     .map(s => s.entry)
 }
 
-export function layoutTree({ dirs, expanded, view, marks, keep }: TreeInput): TreeLayout {
+export function layoutTree({ dirs, expanded, view, marks, keep, hidden }: TreeInput): TreeLayout {
   const open = new Set(expanded)
   const marked = new Set(marks)
   const rows: TreeLayout['rows'] = []
@@ -113,9 +160,12 @@ export function layoutTree({ dirs, expanded, view, marks, keep }: TreeInput): Tr
   const unread: string[] = []
 
   const isExcluded = (e: FsEntry, above: boolean) => above || e.ignored || marked.has(e.path)
+  const siblings = siblingLookup(dirs)
+  const none = () => false
   const isShown = (e: FsEntry, above: boolean) =>
     keep === e.path || !!keep?.startsWith(`${e.path}/`)
-    || ((view.excluded || !isExcluded(e, above)) && (view.dotfiles || !e.name.startsWith('.')))
+    || ((view.excluded || !isExcluded(e, above)) && (view.dotfiles || !e.name.startsWith('.'))
+      && !hidden?.(e, siblings(e.path.slice(0, Math.max(0, e.path.lastIndexOf('/')))) ?? none))
 
   const walk = (dir: string, depth: number, above: boolean, parent: string) => {
     const listing = dirs[dir]

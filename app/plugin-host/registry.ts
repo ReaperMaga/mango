@@ -4,7 +4,8 @@ import type { AgentCommand } from '~/types/chat'
 import type { AgentEvent, AgentMcpServer } from '~/agents/types'
 import type { ShortcutDef } from '~/utils/shortcuts'
 import type {
-  BeforeSendContext, BeforeSendHook, MenuLocation, PluginColorScheme, PluginCodeBlockRenderer, PluginCommand,
+  AgentRunContext, BeforeSendContext, BeforeSendHook, MenuLocation, PluginColorScheme, PluginCodeBlockRenderer, PluginCommand,
+  PluginFileCompanion, PluginFileFilter, PluginFileIconProvider, PluginFileLanguage,
   PluginMcpServer, PluginMenuItem, PluginMessageAction, PluginPanelTab, PluginShortcut, PluginSlashCommand, PluginStatusItem,
   PluginTabView, PluginToolWindow, Reactive,
 } from './types'
@@ -39,7 +40,12 @@ export const reg = {
   /** `fullId` is `plugin:<pluginId>.<id>`, the `scheme` value. */
   schemes: shallowReactive<Owned<PluginColorScheme>[]>([]),
   mcpServers: shallowReactive<Owned<PluginMcpServer>[]>([]),
-  systemPrompts: shallowReactive<Array<{ pluginId: string; fullId: string; text: Reactive<string> }>>([]),
+  systemPrompts: shallowReactive<Array<{ pluginId: string; fullId: string; text: string | ((run: AgentRunContext) => string) }>>([]),
+  /** `fullId` is `<pluginId>.<id>`: what `filesView.shown` keeps. */
+  fileFilters: shallowReactive<Owned<PluginFileFilter>[]>([]),
+  fileCompanions: shallowReactive<Owned<PluginFileCompanion>[]>([]),
+  fileIcons: shallowReactive<Owned<PluginFileIconProvider>[]>([]),
+  fileLanguages: shallowReactive<Owned<PluginFileLanguage>[]>([]),
 }
 
 /** Open plugin tabs: title and the state `tabs.open` was given, by tab id (see `ids.ts`). Not saved. */
@@ -169,9 +175,12 @@ export function pluginMcpFor(agent: AgentId, taken: string[] = []): AgentMcpServ
 }
 
 /** What plugins append to the system prompt of a run, joined; '' when nothing. */
-export function pluginSystemPrompt(): string {
+export function pluginSystemPrompt(run: AgentRunContext): string {
   return reg.systemPrompts
-    .map(p => read(p.text, p.pluginId, '', 'appendSystemPrompt'))
+    .map((p) => {
+      if (typeof p.text !== 'function') return p.text
+      try { return p.text({ ...run }) } catch (e) { report(p.pluginId, e, 'appendSystemPrompt'); return '' }
+    })
     .filter(t => typeof t === 'string' && t.trim())
     .map(t => t.trim())
     // Not a line break: a CLI installed as a Windows batch file refuses arguments that have one.

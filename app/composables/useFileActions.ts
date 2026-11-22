@@ -5,6 +5,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useFiles } from '~/stores/files'
 import { excludedPathsOf } from '~/utils/fileTree'
 import { copyName, movedPath, nameOf, nameProblem, parentOf, pathIn } from '~/utils/fileOps'
+import { SplitError } from '~/utils/companions'
 import { envPath, isEnvPath, parseEnvPath } from '~/utils/envPath'
 import { sepOf, withTrailingSep } from '~/utils/paths'
 
@@ -99,12 +100,17 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
     e.busy = true
     try {
       if (e.mode === 'rename') {
-        await files.renameEntry(project, e.path, name)
-        moveExclusions(project, e.path, target)
+        for (const m of await files.renameEntry(project, e.path, name, e.isDir)) moveExclusions(project, m.from, m.to)
       } else {
         await files.createEntry(project, target, e.mode === 'folder')
       }
     } catch (err) {
+      // A pair that is apart is said out loud: its row, and the field with it, may be gone.
+      if (err instanceof SplitError || (e.mode === 'rename' && edit.value?.id !== e.id)) {
+        if (edit.value?.id === e.id) edit.value = null
+        ws.notify('Could not rename', reason(err))
+        return
+      }
       if (edit.value?.id !== e.id) return
       e.busy = false
       if (!left) e.error = reason(err)
@@ -142,20 +148,34 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
   }
 
   /** Ask, then delete. What the trash cannot take is asked about again, as a delete for good. `asked` runs with each question. */
-  function askDelete(entry: FsEntry, then: () => void, asked: () => void) {
+  async function askDelete(entry: FsEntry, then: () => void, asked: () => void) {
     const project = path.value
     if (!project) return
     const name = nameOf(entry.path)
-    const unsaved = files.unsavedWithin(project, entry.path)
+    // Read from the disk before asking: the question names everything that goes, and only that goes.
+    let along: string[]
+    try {
+      along = await files.companionPaths(project, entry.path, entry.isDir)
+    } catch (err) {
+      ws.notify(`Could not delete ${name}`, reason(err))
+      return
+    }
+    if (path.value !== project) return
+    const unsaved = [entry.path, ...along].flatMap(p => files.unsavedWithin(project, p))
     const losses = unsaved.length === 1
       ? ` Your unsaved changes to ${unsaved[0]} will be lost.`
       : unsaved.length ? ` Your unsaved changes to ${unsaved.length} files will be lost.` : ''
-    const what = entry.isDir ? `${entry.path} and everything in it` : entry.path
+    const itself = entry.isDir ? `${entry.path} and everything in it` : entry.path
+    const what = along.length ? `${itself}${entry.isDir ? ', and' : ' and'} ${along.map(nameOf).join(', ')}` : itself
 
     const run = async (permanent: boolean) => {
       try {
-        const got = await files.deleteEntry(project, entry.path, entry.isDir, permanent)
+        const got = await files.deleteEntry(project, entry.path, entry.isDir, permanent, along)
         if (got.deleted) {
+          if (got.left.length) {
+            const why = got.left[0]!.why.trim().replace(/[.!]+$/, '')
+            ws.notify(`Deleted ${name}, but not ${got.left.map(l => nameOf(l.path)).join(', ')}`, `${why ? `${why}. ` : ''}Delete what is left yourself.`)
+          }
           if (path.value === project) await nextTick(then)
         } else {
           forGood(`${got.reason ?? ''} `)

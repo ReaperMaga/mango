@@ -551,7 +551,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     // A remote project gets none: like the user's global servers, they would start in the wrong place.
     const pluginMcp = place.remote ? [] : pluginMcpFor(thread.agent, [...userMcp.map(s => s.name), ...(browserMcp ? [browserMcp.name] : [])])
     const mcpServers = [...userMcp, ...pluginMcp]
-    const appendSystemPrompt = pluginSystemPrompt()
+    const appendSystemPrompt = pluginSystemPrompt({
+      threadId, agent: thread.agent, projectPath: (store.rootOf(threadId) ?? thread).projectPath, workdir,
+    })
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
