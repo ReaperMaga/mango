@@ -37,6 +37,9 @@ const CHAT_W: f64 = 880.0;
 const CHAT_H: f64 = 820.0;
 /// A page that did not say it heard a close within this long has stopped answering ([`Silent`]).
 const HEARD_WITHIN: Duration = Duration::from_secs(5);
+/// Whether the system's dialog belongs to its window and so stays above it. GTK's (Linux) has no
+/// parent: raised, its window would cover it.
+const DIALOG_ABOVE_WINDOW: bool = cfg!(any(windows, target_os = "macos"));
 /// A hidden window that heard and still has not answered after this much more comes into view:
 /// nobody could press Close on it again.
 const SHOWN_AFTER: Duration = Duration::from_secs(12);
@@ -150,6 +153,17 @@ impl Closing {
             self.quitting = false;
         }
         true
+    }
+
+    /// Another page began loading: true when the one before had heard a close, which nobody answers
+    /// now (that window stays). One not heard yet keeps its deadline.
+    fn reloaded(&mut self, label: &str) -> bool {
+        let left = self.asked.get(label).is_some_and(|a| a.heard);
+        if left {
+            self.asked.remove(label);
+            self.quitting = false;
+        }
+        left
     }
 
     fn gone(&mut self, label: &str) {
@@ -427,7 +441,10 @@ fn is_hidden(window: &tauri::Window) -> bool {
 fn ask(app: &AppHandle, label: &str) {
     let confirming = app.state::<CloseState>().lock().confirming.contains(label);
     if confirming {
-        let _ = focus(app, label); // The dialog that is up decides.
+        // The dialog that is up decides.
+        if DIALOG_ABOVE_WINDOW {
+            let _ = focus(app, label);
+        }
         return;
     }
     let (id, new) = app.state::<CloseState>().lock().press(label);
@@ -483,6 +500,19 @@ fn confirm_close(app: &AppHandle, label: &str) {
                 }
             });
         });
+}
+
+/// A page began loading (from `lib.rs`).
+pub fn on_page_started(webview: &tauri::Webview) {
+    let label = webview.label();
+    if !is_mango_window(label) || !webview.state::<CloseState>().lock().reloaded(label) {
+        return;
+    }
+    let app = webview.app_handle();
+    // Nobody could press Close again on a hidden one.
+    if app.get_window(label).is_some_and(|w| is_hidden(&w)) {
+        let _ = focus(app, label);
+    }
 }
 
 /// The window may go. The main one only hides while others are open ("parks").
@@ -688,6 +718,21 @@ mod tests {
         c.set_unsaved("w-1", false);
         let (id, _) = c.press("w-1");
         assert_eq!(c.overdue("w-1", id), Some(Silent::Go));
+    }
+
+    #[test]
+    fn a_reload_ends_the_close_its_page_heard() {
+        let mut c = Closing::default();
+        c.quitting = true;
+        let (id, _) = c.press("main");
+        assert!(!c.reloaded("main"), "not heard: it keeps its deadline");
+        assert!(c.waiting("main", id));
+        assert!(c.heard("main", id));
+        assert!(!c.reloaded("w-1"), "another window's page");
+        assert!(c.reloaded("main"));
+        assert!(!c.asked.contains_key("main"), "it is no longer taken to be leaving");
+        assert!(!c.answered("main", id) && !c.quitting);
+        assert!(c.press("main").1, "asked afresh");
     }
 
     #[test]

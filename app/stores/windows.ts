@@ -63,6 +63,9 @@ const SAVE_TO_CLOSE_MS = 6000
 /** The browser preview cannot list its windows: whoever answers this quickly is there. */
 const PREVIEW_WHO_MS = 300
 
+/** Typed while a closing window did what else it had to: saved, or asked about, before it goes. */
+const typedMeanwhile = () => useWorkspace().editorAutoSave && useFiles().hasUnsaved
+
 const sameClaims = (a: Claim[] = [], b: Claim[] = []) =>
   a.length === b.length && a.every(c => b.some(d => d.kind === c.kind && d.key === c.key))
 
@@ -145,7 +148,7 @@ export const useWindows = defineStore('windows', {
       // Coming back to a window: forget windows that went without a word.
       window.addEventListener('focus', () => { void this.prune() })
       // Leaving: what this window held goes back. A window that is closed on purpose has saved
-      // first (`_closing`); a reload just says goodbye, and takes its things again when it is back.
+      // first (`_mayClose`); a reload just says goodbye, and takes its things again when it is back.
       window.addEventListener('pagehide', () => { void this._post({ t: 'bye', id: this.self }) })
     },
 
@@ -389,9 +392,17 @@ export const useWindows = defineStore('windows', {
 
     /** This (not main) window was asked to close. */
     async _mayClose(): Promise<boolean> {
-      if (!await this._savedToClose()) return false
-      // What else it saves on the way never keeps it open: that gets a few seconds.
-      await Promise.race([this._closing().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
+      let alone = false
+      do {
+        if (!await this._savedToClose()) return false
+        // What else it saves on the way never keeps it open: that gets a few seconds.
+        const chores = async () => {
+          alone = loaded && isTauri() && await call('window_alone', {}).catch(() => false)
+          await this._shutDown()
+        }
+        await Promise.race([chores().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
+      } while (typedMeanwhile())
+      await Promise.race([this._closing(alone).catch(() => {}), new Promise(r => setTimeout(r, 1000))])
       return true
     },
 
@@ -402,13 +413,15 @@ export const useWindows = defineStore('windows', {
      */
     async _mayCloseMain(): Promise<boolean> {
       await Promise.race([parking, new Promise(r => setTimeout(r, 3000))])
-      if (!await this._savedToClose()) {
-        // A window that closed while this asked took it to be leaving, and handed over its session.
-        const ws = useWorkspace()
-        if (ws.openProjects.length) ws.persist()
-        return false
-      }
-      await Promise.race([flushHistory(), new Promise(r => setTimeout(r, 2000))])
+      do {
+        if (!await this._savedToClose()) {
+          // A window that closed while this asked took it to be leaving, and handed over its session.
+          const ws = useWorkspace()
+          if (ws.openProjects.length) ws.persist()
+          return false
+        }
+        await Promise.race([flushHistory(), new Promise(r => setTimeout(r, 2000))])
+      } while (typedMeanwhile())
       return true
     },
 
@@ -428,12 +441,14 @@ export const useWindows = defineStore('windows', {
       return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : [])), ...(silent ? ['files in a window that is not answering'] : [])]
     },
 
-    /** This (not main) window is closing: stop its runs, save, say goodbye. */
-    async _closing() {
+    /**
+     * This (not main) window has stopped its runs and saved (`_shutDown`): it says goodbye. Not before:
+     * until then it may still stay, for text that cannot be saved. `alone`: it is the last on screen.
+     */
+    async _closing(alone: boolean) {
       // The last window on screen (the main one is parked): its projects are what Mango reopens next time.
       // (One closed before it loaded has nothing to hand over.)
-      if (loaded && isTauri() && await call('window_alone', {}).catch(() => false)) useWorkspace().handOverSession()
-      await this._shutDown()
+      if (alone) useWorkspace().handOverSession()
       await this._post({ t: 'bye', id: this.self })
     },
 

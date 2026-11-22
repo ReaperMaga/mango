@@ -4,11 +4,11 @@ import { call } from '~/composables/useBackend'
 import { useGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
-import { canAutoSave, compareDisk, createAutoSave, keepsBackup, overlaps, saveFailure, saveTiming } from '~/utils/autoSave'
+import { canAutoSave, compareDisk, createAutoSave, keepsBackup, nothingWritten, overlaps, saveFailure, saveTiming } from '~/utils/autoSave'
 import { envPath, movedEnvPath, parseEnvPath } from '~/utils/envPath'
 import { useLanguageServers } from '~/lsp/store'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
-import { disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
+import { NOT_SAVED, disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
 import { isWithin, movedPath, nameOf, parentOf, pathIn } from '~/utils/fileOps'
 import { requiredSuffixes } from '~/plugin-host/fileHooks'
@@ -151,6 +151,18 @@ function nextRev(f: OpenFile) {
   const rev = (revs.get(f) ?? 0) + 1
   revs.set(f, rev)
   return rev
+}
+
+/** Whether the write of `file` that failed with `why` may have left other text on disk than `f.disk`. */
+async function mayDiffer(f: OpenFile, file: string, why: string): Promise<boolean> {
+  if (nothingWritten(why, file)) return false
+  // A remote write can still land after its answer was lost. One on this computer is over: reading tells.
+  if (keepsBackup(why) || parseEnvPath(f.projectPath)) return true
+  try {
+    return (await call('fs_read_file', { root: f.projectPath, file })).text !== f.disk
+  } catch {
+    return true
+  }
 }
 
 /** Projects whose open files are being rechecked (`recheckOpen`), and whether to once more. */
@@ -686,11 +698,10 @@ export const useFiles = defineStore('files', {
         const c = await call('fs_read_file', { root: f.projectPath, file })
         if (overtaken()) return
         // Times can be as coarse as a second: the text decides too.
-        if (c.modifiedMs === f.modifiedMs && c.text === f.disk && (c.hash ?? null) === f.hash && !f.error && !f.conflict) {
-          // A read that works may mean a save that failed works now (the connection is back).
-          if (f.dirty && f.saveError) autoSave().edited(f)
-          return
-        }
+        const unchanged = c.modifiedMs === f.modifiedMs && c.text === f.disk && (c.hash ?? null) === f.hash && !f.error && !f.conflict
+        // After a failed save it is looked at all the same: the editor may hold just that text again, and a
+        // read that works may mean saving works now (the connection is back).
+        if (unchanged && !(f.dirty && f.saveError)) return
         if (f.dirty) {
           const entry = editorModel(fileTabId(f.projectPath, file))
           const editing = () => (entry && !entry.model.isDisposed() ? entry.model.getValue() : null)
@@ -814,9 +825,14 @@ export const useFiles = defineStore('files', {
         if (autoSaves()) f.closing = false
         return true
       } catch (e) {
-        f.saveError = saveFailure(f.saveError, reason(e))
+        const why = reason(e)
+        f.saveError = saveFailure(f.saveError, why)
         // Also where the user chose to write over a conflict: its bar would hide where the backup is.
         if (keepsBackup(f.saveError)) f.conflict = false
+        if (await mayDiffer(f, file, why)) {
+          entry.savedVersion = NOT_SAVED
+          f.dirty = true
+        }
         return false
       } finally {
         nextRev(f)

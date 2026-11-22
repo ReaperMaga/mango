@@ -31,6 +31,20 @@ export interface SaveFile {
  */
 export const keepsBackup = (why: string | null | undefined): boolean => !!why?.includes('Its text from before is kept')
 
+/**
+ * Whether a save that failed with `why` was refused before it wrote (src-tauri/src/files.rs). Of any
+ * other failure only the disk can tell what it left.
+ */
+export function nothingWritten(why: string, file: string): boolean {
+  return [
+    `${file} is read-only`,
+    `${file} is not a file`,
+    `${file} no longer exists`,
+    `${file} links to a place outside the project`,
+    `Could not save ${file}: the connection dropped before all of it arrived. Try again.`,
+  ].includes(why)
+}
+
 const AGAIN = ' Trying again: '
 
 /** What to show for a save that failed with `why`, while `before` was showing. */

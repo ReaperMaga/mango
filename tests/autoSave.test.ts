@@ -6,7 +6,8 @@
  */
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { RETRY_MS, canAutoSave, compareDisk, createAutoSave, keepsBackup, overlaps, sameFolder, saveFailure, saveTiming } from '../app/utils/autoSave.ts'
+import { readFileSync } from 'node:fs'
+import { RETRY_MS, canAutoSave, compareDisk, createAutoSave, keepsBackup, nothingWritten, overlaps, sameFolder, saveFailure, saveTiming } from '../app/utils/autoSave.ts'
 
 interface Doc {
   path: string
@@ -737,6 +738,24 @@ test('the same folder, however it is spelled', () => {
   assert.ok(sameFolder('C:\\work\\App.worktrees\\fix\\', 'c:/work/app.worktrees/fix'))
   assert.ok(!sameFolder('/w/App', '/w/app'))
   assert.ok(!sameFolder('C:/work/app', 'C:/work/app/sub'))
+})
+
+test('only a refusal says that nothing was written', () => {
+  const rust = readFileSync(new URL('../src-tauri/src/files.rs', import.meta.url), 'utf8')
+  for (const said of ['is read-only', 'is not a file', 'no longer exists', 'links to a place outside the project']) {
+    assert.ok(nothingWritten(`src/a.ts ${said}`, 'src/a.ts'), said)
+    assert.ok(rust.includes(said), `files.rs no longer says: ${said}`)
+  }
+  assert.ok(nothingWritten('Could not save a.ts: the connection dropped before all of it arrived. Try again.', 'a.ts'))
+  assert.ok(rust.includes(': the connection dropped before all of it arrived. Try again.'))
+  for (const why of [
+    'connection dropped',
+    'Could not save a.ts: ssh exited with 255: the file system is read-only',
+    'Could not save a.ts: No space left on device',
+    'Could not save a.ts, and it may be incomplete now. Its text from before is kept in the environment at /tmp/x/old.',
+    'Saved a.ts, but the environment\'s answer was not understood. Reopen the file to check it.',
+    'b.ts is read-only',
+  ]) assert.ok(!nothingWritten(why, 'a.ts'), why)
 })
 
 test('a save that left the file broken waits for the user and keeps saying where the backup is', async (t) => {

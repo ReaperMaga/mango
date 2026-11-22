@@ -82,6 +82,7 @@ pub fn run() {
         .on_page_load(|webview, payload| {
             if payload.event() == PageLoadEvent::Started {
                 lsp::on_page_started(webview);
+                windows::on_page_started(webview);
             }
             if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
                 envs::join::page_loaded(webview.app_handle());

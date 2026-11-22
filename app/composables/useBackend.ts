@@ -10,6 +10,7 @@ import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { mockPlugins } from '~/composables/mockPlugins'
 import { isEnvPath } from '~/utils/envPath'
+import { invoke } from '@tauri-apps/api/core'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -99,7 +100,7 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
   const refused = refuseRemote(cmd, args)
   if (refused) throw refused
   if (isTauri()) {
-    const { invoke } = await import('@tauri-apps/api/core')
+    // Sent before the caller's task ends, so no dynamic import: the page may hang right after (`tellUnsaved`).
     return invoke<Result<K>>(cmd, (args ?? {}) as Record<string, unknown>)
   }
   return mock.call(cmd, args ?? ({} as Args<K>))

@@ -7,12 +7,15 @@ import type * as Monaco from 'monaco-editor'
  */
 export interface EditorModel {
   model: Monaco.editor.ITextModel
-  /** Alternative version id at the last load or save: dirty when the model's differs. */
+  /** Alternative version id at the last load or save: dirty when the model's differs. None while the disk may differ (`NOT_SAVED`). */
   savedVersion: number
   /** The store's `version` the model was last filled from. */
   loadedVersion: number
   viewState: Monaco.editor.ICodeEditorViewState | null
 }
+
+/** A save failed that may have changed the disk: no version of the model is the saved one, whatever is undone. */
+export const NOT_SAVED = -1
 
 const models = new Map<string, EditorModel>()
 let onEdit: ((tabId: string) => void) | null = null
