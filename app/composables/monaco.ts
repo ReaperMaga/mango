@@ -186,6 +186,7 @@ function applyTheme(monaco: MonacoApi) {
       'editor.inactiveSelectionBackground': c('--bg-active', '#ffffff1a'),
       'editor.selectionHighlightBackground': c('--accent-soft', '#f5a52424'),
       'editor.wordHighlightBackground': c('--bg-active', '#ffffff1a'),
+      'editor.wordHighlightStrongBackground': c('--accent-soft', '#f5a52424'),
       'editor.findMatchBackground': c('--accent-line', '#f5a52473'),
       'editor.findMatchHighlightBackground': c('--accent-soft', '#f5a52424'),
       'editorIndentGuide.background1': c('--line-soft', '#ffffff14'),
@@ -202,6 +203,10 @@ function applyTheme(monaco: MonacoApi) {
       'editorHoverWidget.border': line,
       'input.background': inset,
       'input.border': line,
+      // Monaco's message at the caret (a rename refused) takes these.
+      'inputValidation.infoBackground': raised,
+      'inputValidation.infoForeground': fg,
+      'inputValidation.infoBorder': line,
       'focusBorder': c('--accent-line', '#f5a52473'),
       'scrollbarSlider.background': line,
       'scrollbarSlider.hoverBackground': c('--line-strong', '#ffffff33'),

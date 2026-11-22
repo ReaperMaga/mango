@@ -21,6 +21,29 @@ const BINDINGS = new Set([
   'interface', 'type', 'enum', 'module', 'alias', 'parameter', 'type parameter', 'label',
 ])
 
+/**
+ * What declares a file's own name. An export's name, CommonJS' `exports.x` and a JSDoc @typedef are none
+ * of these: other files use them. Told by the declarations, as an import's alias and an export's are one kind.
+ */
+const OWN_DECLARATIONS = [
+  'isVariableDeclaration', 'isBindingElement', 'isParameter', 'isFunctionDeclaration', 'isFunctionExpression',
+  'isClassDeclaration', 'isClassExpression', 'isInterfaceDeclaration', 'isTypeAliasDeclaration', 'isEnumDeclaration', 'isModuleDeclaration',
+  'isTypeParameterDeclaration', 'isJSDocParameterTag', 'isJSDocEnumTag',
+  'isImportClause', 'isNamespaceImport', 'isImportSpecifier', 'isImportEqualsDeclaration',
+  'isPropertyDeclaration', 'isMethodDeclaration', 'isGetAccessorDeclaration', 'isSetAccessorDeclaration',
+]
+
+/** Whether everything that declares the name at `at` is of the file's own (`OWN_DECLARATIONS`). */
+function ownName(ts: any, service: any, file: string, at: number): boolean {
+  const program = service.getProgram()
+  const symbol = program.getTypeChecker().getSymbolAtLocation(ts.getTouchingPropertyName(program.getSourceFile(file), at))
+  return !!symbol?.declarations?.every((d: any) => {
+    // JavaScript counts `name.part = …` as declaring `name` too. The namespace out of a typedef's dotted name is the typedef's.
+    if (ts.isIdentifier(d)) return d.parent.expression === d
+    return OWN_DECLARATIONS.some(is => ts[is](d)) && !(ts.isModuleDeclaration(d) && d.flags & ts.NodeFlags.JSDoc)
+  })
+}
+
 /** No importer can name it: a binding that is neither exported nor declared for others, or a private member. */
 function unreachable(info: { kind: string; kindModifiers?: string; displayName: string }) {
   const modifiers = info.kindModifiers ?? ''
@@ -41,9 +64,9 @@ const OWN: Record<string, (answer: any, file: string) => unknown> = {
 /**
  * Monaco's TypeScript worker with each request seeing only its own file and the standard library:
  * imports do not resolve, scripts share no globals, and no fix, rename or jump has another file to
- * name. One language service still, so the library is parsed once.
+ * name. One language service still, so the library is parsed once. `ts`: that service's TypeScript.
  */
-export function oneFileWorker(Base: new (...args: any[]) => any): any {
+export function oneFileWorker(Base: new (...args: any[]) => any, ts: any): any {
   class OneFile extends Base {
     current?: string
 
@@ -71,7 +94,9 @@ export function oneFileWorker(Base: new (...args: any[]) => any): any {
       this.current = file
       const info = this._languageService.getRenameInfo(file, position, options)
       if (!info.canRename) return info
-      return unreachable(info) && this.renamable(file, position) ? info : { canRename: false, localizedErrorMessage: RENAME_REFUSED }
+      // Where the name starts: the position can be on a keyword that stands for it (`as`). A label has no symbol.
+      const own = () => info.kind === 'label' || ownName(ts, this._languageService, file, info.triggerSpan.start)
+      return unreachable(info) && own() && this.renamable(file, position) ? info : { canRename: false, localizedErrorMessage: RENAME_REFUSED }
     }
 
     async findRenameLocations(file: string, position: number) {
@@ -147,6 +172,24 @@ function ownRename(method: (model: Document, ...args: any[]) => unknown, refused
   }
 }
 
+/**
+ * The TypeScript worker's rename, refusing before the name box opens: Monaco asks for the place
+ * first, and shows why there is none. Any other provider is left as it is.
+ */
+export function refusesFirst(selector: unknown, provider: any) {
+  if (selector !== 'typescript' && selector !== 'javascript') return provider
+  // Asked the rename itself, with the name that is there: whatever Enter would refuse is refused here.
+  const refusal = current(async (model: any, position: any, token: unknown) =>
+    (await provider.provideRenameEdits(model, position, model.getWordAtPosition(position)?.word ?? '', token))?.rejectReason)
+  const first = Object.create(provider)
+  first.resolveRenameLocation = async (model: Document, position: any, token: unknown) => {
+    const rejectReason = await refusal(model, position, token).catch(() => null)
+    // Null: Monaco takes the word at the caret, as without this.
+    return rejectReason ? { rejectReason } : null
+  }
+  return first
+}
+
 /** Suggestions that replace no more than was there when they were asked for, if more was typed meanwhile. */
 function boundedCompletion(method: (model: Document, ...args: any[]) => unknown) {
   return async (model: Document, position: any, ...args: any[]) => {
@@ -172,12 +215,20 @@ function boundedCompletion(method: (model: Document, ...args: any[]) => unknown)
 /* ---------- words beside the TypeScript worker's */
 
 const WORDS_MAX = 10_000
+/** Monaco's `StandardTokenType.Comment`. */
+const COMMENT = 1
 
-/** After a dot only members go. A spread's dots are none. */
-function afterDot(model: any, line: number, column: number) {
+/** After a dot only members go. A spread's dots are none, nor is the period that ends a comment. */
+function afterDot(model: any, typedOn: number, column: number) {
+  let line = typedOn
   let before: string = model.getLineContent(line).slice(0, column - 1).trimEnd()
   while (!before && line > 1) before = model.getLineContent(--line).trimEnd()
-  return before.endsWith('.') && !before.endsWith('...')
+  if (!before.endsWith('.') || before.endsWith('...')) return false
+  // On the line being typed it is one, also in a comment (`@type {NS.`). Above, it can end a sentence.
+  if (line === typedOn) return true
+  model.tokenization.forceTokenization(line)
+  const tokens = model.tokenization.getLineTokens(line)
+  return tokens.getStandardTokenType(tokens.findTokenIndexAtOffset(before.length - 1)) !== COMMENT
 }
 
 /**

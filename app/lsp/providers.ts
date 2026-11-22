@@ -3,7 +3,7 @@ import type { CompletionItem, CompletionList, Hover, Location, LocationLink, Ser
 import type { Session } from '~/lsp/session'
 import { toCompletions, toHover, toPosition, toResolved, toSignatureHelp, toTargets } from '~/lsp/convert'
 import { fileKey, uriToFile } from '~/lsp/uri'
-import { WORKER_LANGUAGES, withWords, workerGuards } from '~/lsp/builtins'
+import { WORKER_LANGUAGES, refusesFirst, withWords, workerGuards } from '~/lsp/builtins'
 import { editorModel } from '~/utils/editorModels'
 import { useFiles } from '~/stores/files'
 import { call } from '~/composables/useBackend'
@@ -56,6 +56,8 @@ export function gateBuiltIns(monaco: MonacoApi, served: (model: Monaco.editor.IT
       : guard
     gate(register, method, run => (feature ? standBack(feature)(answer(run)) : answer(run)))
   }
+  const rename = languages.registerRenameProvider!
+  languages.registerRenameProvider = (selector, provider) => rename(selector, refusesFirst(selector, provider))
   // A word is all there is to it: only the worker's own items say where to look up more.
   gate('registerCompletionItemProvider', 'resolveCompletionItem', run =>
     (item: any, ...rest: unknown[]) => (item.uri ? run(item, ...rest) : item))

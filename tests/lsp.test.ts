@@ -14,7 +14,7 @@ import { WatchedFiles, FILE_CHANGED, FILE_CREATED, FILE_DELETED, compileGlob } f
 import { Session, crashReason, type SessionView } from '../app/lsp/session.ts'
 import { Pool, type PoolKey } from '../app/lsp/pool.ts'
 import { lspLanguage } from '../app/lsp/languages.ts'
-import { FILE_METHODS, linkRoute, oneFileWorker, untrusted, withWords, workerGuards } from '../app/lsp/builtins.ts'
+import { FILE_METHODS, linkRoute, oneFileWorker, refusesFirst, untrusted, withWords, workerGuards } from '../app/lsp/builtins.ts'
 import { ModelUris } from '../app/lsp/modelUris.ts'
 import { CompletionText, UntouchedText } from '../app/lsp/editGuard.ts'
 
@@ -602,6 +602,7 @@ test('a server\'s glob cannot hang a match', () => {
 const monacoFile = (path: string) => import(new URL(`../node_modules/monaco-editor/esm/vs/${path}.js`, import.meta.url).href)
 const { TypeScriptWorker } = await monacoFile('languages/features/typescript/tsWorker')
 const { URI } = await monacoFile('base/common/uri')
+const { typescript } = await monacoFile('languages/features/typescript/lib/typescriptServices')
 
 const TS_OPTIONS = { allowNonTsExtensions: true, allowJs: true, target: 99, module: 99, moduleResolution: 2, jsx: 1, esModuleInterop: true }
 const FORMAT = {
@@ -619,7 +620,7 @@ function editorWith(files: Array<[project: string, file: string, text: string]>)
     return uri.toString()
   }
   const names = files.map(f => open(...f))
-  const Worker = oneFileWorker(TypeScriptWorker)
+  const Worker = oneFileWorker(TypeScriptWorker, typescript)
   const worker = new Worker({ getMirrorModels: () => mirrored }, { compilerOptions: TS_OPTIONS, extraLibs: {} })
   return { worker, names, open, close: () => { mirrored.length = 0 } }
 }
@@ -752,6 +753,103 @@ test('members other files reach are not renamed; what stays in the file is', asy
   }
 })
 
+test('a name a file exports is not renamed, whatever form exports it; its own names still are', async () => {
+  // ^ is the caret. One case per place a caret can be in each form.
+  const refused: Record<string, string[]> = {
+    'a.ts': [
+      // declarations
+      'export const ^a = 1', 'export let a = 1, ^b = 2', 'export var ^a = 1', 'export function ^f() {}', 'export function* ^g() {}', 'export async function ^f() {}',
+      'export class ^K {}', 'export abstract class ^K {}', 'export interface ^I {}', 'export type ^T = 1', 'export enum ^E { A }', 'export const enum ^E { A }',
+      'export declare const ^d: 1', 'export namespace ^N {}', 'export namespace P.^Q {}', "export import ^fs = require('fs')",
+      'export const { ^v } = { v: 1 }', 'export const { v: ^w } = { v: 1 }', 'export const [^first] = [1]', 'export const { v, ...^rest } = { v: 1 }',
+      // default exports whose declaration is the export
+      'export default function ^main() {}', 'export default class ^Main {}', 'export default interface ^Main {}',
+      // lists, before and after what they export
+      'const ^a = 1\nexport { a }', 'const a = 1\nexport { ^a }', 'export { ^a }\nconst a = 1', 'export { a }\nconst ^a = 1', 'type T = 1\nexport type { ^T }',
+      'const a = 1\nexport { a as ^b }', 'const a = 1\nexport { a ^as b }', "const a = 1\nexport { a as '^q' }", 'const a = 1\nexport { a as ^a }',
+      'const a = 1\nexport { a as ^default }', 'const a = 1\nexport { a, a as ^b }', 'type T = 1\nexport { type T as ^U }', 'const C = 1\nexport type { C as ^D }',
+      'namespace N { const a = 1\n export { a as ^b } }', "declare module 'p' {\n const a: 1\n export { a as ^b }\n}",
+      // from another module
+      "export { ^x } from './m'", "export { x as ^y } from './m'", "export { ^x as y } from './m'", "export { default as ^X } from './m'", "export { ^default } from './m'",
+      "export { X as ^default } from './m'", "export * as ^ns from './m'", "export * ^as ns from './m'", "export type * as ^ns from './m'", "export type { A as ^B } from './m'",
+      // what was imported
+      "import { ^a } from './m'\nexport { a }", "import { a as ^b } from './m'\nexport { b }", "import { a as b } from './m'\nexport { b as ^c }",
+      "import ^D from './m'\nexport { D }", "import * as ^ns from './m'\nexport { ns }",
+      // not this file's to rename
+      "import { ^a as b } from './m'", "import { ^a } from './m'\na()",
+    ],
+    'a.d.ts': ['export function f(): void\nexport as namespace ^MyLib', 'declare class ^Lib {}\nexport = Lib', 'type ^Id = string\nexport declare function f(): Id'],
+    'c.js': [
+      'function f() {}\nexports.^f = f', 'function f() {}\n^exports.f = f', 'exports.^run = 1', 'exports.^K = class {}', 'module.exports.^q = 1', 'module.^exports = 1',
+      'function f() {}\nmodule.exports.^f = f', 'function ^f() {}\nmodule.exports = { f }', 'exports.^deep.er = 1', 'export const ^a = 1', 'const a = 1\nexport { a as ^b }',
+      '/** @typedef {{ a: number }} ^Options */\nexport const o = 1', '/** @typedef {number} T */\n/** @type {^T} */\nexport const o = 1',
+      '/**\n * @typedef ^Opts\n * @property {number} size\n */\nexport {}', '/** @callback ^Done\n * @param {number} n\n */\nexport {}',
+      '/** @typedef {number} ^NS.Num */\nexport {}', '/** @typedef {number} ^Loose */\nconst z = 1',
+    ],
+  }
+  const renamed: Record<string, string[]> = {
+    'a.ts': [
+      "import { a as ^b } from './m'\nb()", "import { a as b } from './m'\n^b()", "import ^D from './m'\nD()", "import * as ^ns from './m'\nns.f()",
+      "import type { A as ^B } from './m'", "import { default as ^D } from './m'", "import ^fs = require('fs')\nfs", "import type ^X = require('x')",
+      "import { a as ^b } from './m'\nexport { b as c }", "import ^D from './m'\nexport default D",
+      'const ^a = 1\nexport { a as b }', 'const a = 1\nexport { ^a as b }', 'function ^main() {}\nexport default main', 'export default ^main\nfunction main() {}',
+      'function ^main() {}\nexport = main', 'class ^M {}\nexport default M', '^label: for (;;) break label', 'export class C<^T> { v?: T }',
+      'export const f = function ^named() { return named }', 'const ^Comp = 1\nexport { Comp as View }', 'type ^T = 1\nexport { type T as U }',
+      'export class C { private ^run() {} }', 'class ^C {}\ninterface C {}\nexport {}',
+    ],
+    'c.js': [
+      'function ^f() {}\nexports.f = f', 'function ^f() {}\nmodule.exports = f', "const ^m = require('./m')\nm", "const { a: ^b } = require('./m')\nb()",
+      'class ^M {}\nM.sub = 1\nmodule.exports = M', 'const ^x = {}\nx.part = 1', 'function ^g() {}\ng.part = 1', '/** @param {number} ^v */\nexport function id(v) { return v }',
+      "/** @import { A as ^Z } from './m' */\nexport {}", '/** @enum {number} */\nconst ^E = { A: 1 }\nexport {}',
+    ],
+  }
+  const wrong: string[] = []
+  for (const [table, want] of [[refused, false], [renamed, true]] as const) {
+    for (const [file, texts] of Object.entries(table)) {
+      for (const marked of texts) {
+        const { worker, names } = editorWith([['/app', file, marked.replace('^', '')]])
+        const info = await worker.getRenameInfo(names[0], marked.indexOf('^'), {})
+        if (!!info.canRename !== want) wrong.push(`${want ? 'refused' : 'renamed'} ${file}: ${JSON.stringify(marked)}`)
+      }
+    }
+  }
+  assert.deepEqual(wrong, [])
+})
+
+test('F2 says a refusal before the name box opens, for the script worker alone', async () => {
+  let version = 1
+  const askedAt = async (marked: string, during = () => {}) => {
+    const text = marked.replace('^', '')
+    const { worker, names } = editorWith([['/app', 'a.ts', text]])
+    const at = marked.indexOf('^')
+    const provider = {
+      // As Monaco's adapter asks the worker.
+      async provideRenameEdits() {
+        const info = await worker.getRenameInfo(names[0], at, {})
+        during()
+        return info.canRename ? { edits: await worker.findRenameLocations(names[0], at) } : { edits: [], rejectReason: info.localizedErrorMessage }
+      },
+    }
+    const model = { uri: { toString: () => names[0]! }, getVersionId: () => version, isDisposed: () => false, getWordAtPosition: () => ({ word: 'name' }) }
+    const first = refusesFirst('typescript', provider)
+    assert.equal(first.provideRenameEdits, provider.provideRenameEdits, 'Enter is checked as before')
+    return first.resolveRenameLocation(model, { lineNumber: 1, column: 1 })
+  }
+  const refused = { rejectReason: 'Can\'t rename this safely: other files may use this name' }
+  for (const marked of ['export const ^a = 1', 'export class K { ^run() {} }', "export { default as ^X } from './m'"]) {
+    assert.deepEqual(await askedAt(marked), refused, marked)
+  }
+  for (const marked of ['const ^a = 1\nexport {}', "import { a as ^b } from './m'\nb()"]) assert.equal(await askedAt(marked), null, `${marked}: the box opens`)
+  assert.equal(await askedAt('export const ^a = 1', () => { version++ }), null, 'not about a text that changed since')
+
+  const failing = { provideRenameEdits: async () => { throw new Error('the worker went') } }
+  const model = { getVersionId: () => 1, isDisposed: () => false, getWordAtPosition: () => null }
+  assert.equal(await refusesFirst('javascript', failing).resolveRenameLocation(model, {}), null, 'a failure is left to Enter')
+  for (const selector of ['css', 'html', 'handlebars', 'python', { language: 'typescript' }]) {
+    assert.equal(refusesFirst(selector, failing), failing, `${JSON.stringify(selector)} is left as it is`)
+  }
+})
+
 test('the TypeScript worker\'s suggestions come with other files\' words, once and as plain text', async () => {
   const others = ['sharedPlainName', 'ownName', 'Math', '$scope', 'sharedPlainName']
   const complete = async (text: string) => {
@@ -761,6 +859,14 @@ test('the TypeScript worker\'s suggestions come with other files\' words, once a
     const column = lines.at(-1)!.length + 1
     const model = {
       getLineContent: (n: number) => lines[n - 1],
+      // Monaco's tokens, as far as they matter here: what is comment.
+      tokenization: {
+        forceTokenization: () => {},
+        getLineTokens: (n: number) => ({
+          findTokenIndexAtOffset: (at: number) => at,
+          getStandardTokenType: (at: number) => (/\/\/|^\s*(\/\*|\*)/.test(lines[n - 1]!.slice(0, at + 1)) ? 1 : 0),
+        }),
+      },
       getWordUntilPosition: () => ({ word, startColumn: column - word.length }),
       getWordAtPosition: () => null,
       isDisposed: () => false,
@@ -785,6 +891,9 @@ test('the TypeScript worker\'s suggestions come with other files\' words, once a
   assert.ok(named('$scope').length)
   const offered = async (text: string) => (await complete(text)).some((s: any) => s.label === 'sharedPlainName')
   assert.ok(await offered('const list = [...sha'), 'a spread is no member')
+  for (const text of ['// Adds the numbers.\nsha', 'const a = 1 // Done.\n\n  sha', '/**\n * Adds them.\n */\nsha', '/* One.\n * Two.\n */ sha']) {
+    assert.ok(await offered(text), `a comment's period is no dot: ${text}`)
+  }
   for (const text of ['Math.sha', 'const o = { size: 1 }\no?.sha', 'Math\n  .sha', 'Math.\n  sha']) {
     assert.ok(!await offered(text), text)
   }
