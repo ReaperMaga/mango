@@ -14,6 +14,7 @@ import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/uti
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
+import { filesViewOf, type FilesView } from '~/utils/fileTree'
 import {
   effectiveScheme, isPanelTabRef, isPluginRef, normalizePanelOrder, normalizePanelPlaces, panelEditorTabId, panelStrip,
   parsePanelEditorTab, type PanelTabPlace, type PluginRef,
@@ -95,6 +96,8 @@ export interface ProjectPrefs {
   color?: number
   /** Hidden from the Recent list; its chats are kept. Opening the project again brings it back. */
   archived?: boolean
+  /** Files and folders excluded in the Files view, relative to the project (forward slashes); its worktrees share them. */
+  excluded?: string[]
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
@@ -223,7 +226,7 @@ let tabSeq = 0
  * alone. Every other pref is shared: a change in one window reaches the others (`syncShared`).
  */
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
-const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
+const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
   'openProjectIn'] as const
 
@@ -281,6 +284,8 @@ const initialState = () => {
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
+      /** What the Files tree shows and how (its View options menu). */
+      filesView: filesViewOf(prefs.filesView),
       /**
        * The tool window open on the right, or null. Older builds kept these views
        * in the left sidebar (`sidebarView`); one that was showing there opens here.
@@ -412,6 +417,7 @@ export const useWorkspace = defineStore('workspace', {
           toolWidth: this.toolWidth,
           lastToolPanel: this.lastToolPanel,
           diffView: this.diffView,
+          filesView: this.filesView,
           terminalProfileId: this.terminalProfileId,
           terminalFontSize: this.terminalFontSize,
           terminalCursorStyle: this.terminalCursorStyle,
@@ -896,6 +902,10 @@ export const useWorkspace = defineStore('workspace', {
     /** Show where the project runs (this computer or an environment) on the right; again to close it. */
     toggleEnv(force?: boolean) {
       this.toggleTool('env', force)
+    },
+    setFilesView(patch: Partial<FilesView>) {
+      this.filesView = { ...this.filesView, ...patch }
+      this.persist()
     },
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {

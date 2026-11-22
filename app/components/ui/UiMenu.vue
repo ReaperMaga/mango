@@ -34,6 +34,8 @@ const enabled = computed(() => props.items.map((it, i) => (it.disabled ? -1 : i)
 
 /** Set while the menu is open as a context menu: the pointer position to open at. */
 let point: { x: number; y: number } | null = null
+/** What had focus when it opened as a context menu: Escape gives it back. */
+let opener: HTMLElement | null = null
 
 const GAP = 6
 const MARGIN = 8
@@ -77,6 +79,7 @@ function showAt(x: number, y: number) {
 }
 async function show(at: { x: number; y: number } | null = null) {
   point = at
+  if (!open.value) opener = at ? document.activeElement as HTMLElement | null : null
   keyed.value = false
   place()
   open.value = true
@@ -95,7 +98,7 @@ function revealActive() {
 function close(refocus = false) {
   if (!open.value) return
   open.value = false
-  if (refocus) root.value?.querySelector<HTMLElement>('button, [tabindex]')?.focus()
+  if (refocus) (root.value?.querySelector<HTMLElement>('button, [tabindex]') ?? opener)?.focus()
 }
 function select(i: number) {
   const it = props.items[i]
@@ -197,7 +200,8 @@ defineExpose({ show: () => show(), showAt, close, toggle })
               type="button"
               class="menu__item"
               :class="{ 'is-active': i === active, 'is-danger': it.danger }"
-              role="menuitem"
+              :role="it.check ? `menuitem${it.check}` : 'menuitem'"
+              :aria-checked="it.check ? !!it.checked : undefined"
               :disabled="it.disabled"
               @mouseenter="!it.disabled && (active = i)"
               @click="select(i)"

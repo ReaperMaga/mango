@@ -35,6 +35,13 @@ export interface ProjectTree {
   expanded: string[]
   /** The row last opened or moved to with the keyboard. */
   selected: string | null
+  /**
+   * The file last asked for by name (`reveal`): the panel scrolls to it, and shows it even where
+   * the view hides it. A new object each time, so asking again scrolls again.
+   */
+  revealed: { file: string } | null
+  /** Folders a row's name depends on (compact folders): refreshed with the open ones. */
+  chained: string[]
 }
 
 export interface OpenFile {
@@ -71,7 +78,7 @@ const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ?
 /** The backend's words for a folder that is not there (any more): unlike a failed connection, not passing. */
 const gone = (why: string) => /no longer exists|is not a folder|links to a place outside/.test(why)
 
-const newTree = (): ProjectTree => ({ dirs: {}, expanded: [], selected: null })
+const newTree = (): ProjectTree => ({ dirs: {}, expanded: [], selected: null, revealed: null, chained: [] })
 const newDir = (): DirState => ({ entries: null, loading: false, error: null, truncated: false, ahead: false, readAt: 0 })
 
 /** A folder opened again after this long is re-read quietly (it shows what was read before meanwhile). */
@@ -231,7 +238,9 @@ export const useFiles = defineStore('files', {
     },
 
     collapseAll(projectPath: string) {
-      this.treeOf(projectPath).expanded = []
+      const tree = this.treeOf(projectPath)
+      tree.expanded = []
+      tree.revealed = null
     },
 
     /** Open every folder on the way to `file` and select it. */
@@ -244,6 +253,7 @@ export const useFiles = defineStore('files', {
         if (!this._freshen(projectPath, dir)) await this.loadDir(projectPath, dir)
       }
       tree.selected = file
+      tree.revealed = { file }
     },
 
     /** Re-read what is on screen: open folders and open files. After focus, an agent's turn, a git action. */
@@ -263,7 +273,7 @@ export const useFiles = defineStore('files', {
     async refreshTree(projectPath: string) {
       const tree = this.trees[projectPath]
       if (!tree) return
-      const dirs = ['', ...tree.expanded].filter(d => tree.dirs[d]?.entries)
+      const dirs = [...new Set(['', ...tree.expanded, ...tree.chained])].filter(d => tree.dirs[d]?.entries)
       await Promise.all(dirs.map(d => this.loadDir(projectPath, d, true, false)))
     },
 

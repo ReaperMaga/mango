@@ -11,6 +11,8 @@ export interface MenuItem {
   open?: boolean
   icon?: Component
   checked?: boolean
+  /** the row is a setting that is on or off ('checkbox') or one of a set ('radio'): screen readers hear its state */
+  check?: 'checkbox' | 'radio'
   disabled?: boolean
   danger?: boolean
   /** renders a divider before this item */

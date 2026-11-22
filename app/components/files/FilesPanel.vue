@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { ChevronRight, ChevronsDownUp, Folder, FolderOpen, RefreshCw } from 'lucide-vue-next'
+import { ChevronRight, ChevronsDownUp, Copy, EllipsisVertical, FileX, Folder, FolderOpen, FolderX, LocateFixed, RefreshCw, Undo2 } from 'lucide-vue-next'
 import { fileIcon } from '~/utils/fileIcons'
-import type { FsEntry } from '~/types/ipc'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
@@ -9,6 +8,8 @@ import { useGit } from '~/stores/git'
 import { parseFileTab } from '~/utils/fileTabs'
 import { parseEnvPath } from '~/utils/envPath'
 import { sepOf, withTrailingSep } from '~/utils/paths'
+import { copyText } from '~/utils/clipboard'
+import { excludedPathsOf, layoutTree, type FilesView, type TreeEntry, type TreeNote } from '~/utils/fileTree'
 import type { MenuItem } from '~/types/ui'
 import { pluginMenuItems } from '~/plugin-host/menus'
 
@@ -17,7 +18,8 @@ import { pluginMenuItems } from '~/plugin-host/menus'
  * read as it opens (each folder with the next level ahead, see stores/files.ts).
  * A file the pointer rests on, or the keyboard moves to, is read ahead so it opens at once. A click previews a file in the main
  * pane, a double-click (or Enter) keeps its tab. Names carry the same git
- * status colours and letters as the Changes view.
+ * status colours and letters as the Changes view. View options (what shows, in
+ * which order) are prefs; what a row is, is worked out in utils/fileTree.ts.
  */
 
 const ws = useWorkspace()
@@ -28,23 +30,6 @@ const git = useGit()
 /** The working copy in view: the active chat's worktree, or the project. */
 const path = computed(() => threads.workdir ?? ws.activeProjectPath)
 
-/* A right-click on a row: plugins' items for that file or folder (`ui.menus` 'file'); none, the system's own menu. */
-const rowMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
-const menuRow = ref<{ path: string; isDir: boolean } | null>(null)
-const rowMenuItems = computed<MenuItem[]>(() => {
-  const r = menuRow.value
-  const project = path.value
-  if (!r || !project) return []
-  const sep = sepOf(project)
-  const abs = withTrailingSep(project) + (sep === '\\' ? r.path.replace(/\//g, '\\') : r.path)
-  return pluginMenuItems('file', { path: abs, projectPath: project, isDir: r.isDir }).map((m, i) => (i === 0 ? { ...m, divider: false } : m))
-})
-function onRowMenu(row: { entry: { path: string; isDir: boolean } }, e: MouseEvent) {
-  menuRow.value = { path: row.entry.path, isDir: row.entry.isDir }
-  if (!rowMenuItems.value.length) return
-  e.preventDefault()
-  rowMenu.value?.showAt(e.clientX, e.clientY)
-}
 const tree = computed(() => files.tree(path.value))
 
 watch(path, (p) => { if (p) files.ensureTree(p) }, { immediate: true })
@@ -91,35 +76,28 @@ const decorations = computed(() => {
 
 /* ---------- visible rows ---------- */
 
-type Row =
-  | { type: 'entry'; key: string; entry: FsEntry; depth: number; ignored: boolean; open: boolean; kind: Kind | null; parent: string }
-  | { type: 'note'; key: string; depth: number; text: string; error?: boolean; dir: string }
+type EntryRow = TreeEntry & { kind: Kind | null }
+type Row = EntryRow | TreeNote
+
+/** The project's own exclusions; a worktree of it has the same ones. */
+const marks = computed(() => excludedPathsOf(ws.activeProjectPath ? ws.projectPrefs[ws.activeProjectPath]?.excluded : null))
+
+/* Apart from the git marks, so a status change does not sort the tree again. */
+const layout = computed(() => {
+  const t = tree.value
+  if (!t) return null
+  return layoutTree({ dirs: t.dirs, expanded: t.expanded, view: ws.filesView, marks: marks.value, keep: t.revealed?.file ?? null })
+})
+watch(layout, (l) => {
+  if (!l || !path.value) return
+  files.treeOf(path.value).chained = l.chained
+  for (const dir of l.unread) void files.loadDir(path.value, dir)
+}, { immediate: true })
 
 const rows = computed<Row[]>(() => {
-  const t = tree.value
-  if (!t) return []
-  const out: Row[] = []
   const { fileKinds, dirKinds } = decorations.value
-  const walk = (dir: string, depth: number, ignoredAbove: boolean) => {
-    const state = t.dirs[dir]
-    if (!state) return
-    if (state.entries === null) {
-      if (state.error) out.push({ type: 'note', key: `err:${dir}`, depth, text: state.error, error: true, dir })
-      else if (dir) out.push({ type: 'note', key: `load:${dir}`, depth, text: 'Loading…', dir })
-      return
-    }
-    if (dir && !state.entries.length) out.push({ type: 'note', key: `empty:${dir}`, depth, text: 'Empty folder', dir })
-    for (const entry of state.entries) {
-      const ignored = ignoredAbove || entry.ignored
-      const open = entry.isDir && t.expanded.includes(entry.path)
-      const kind = (entry.isDir ? dirKinds.get(entry.path) : fileKinds.get(entry.path)) ?? null
-      out.push({ type: 'entry', key: entry.path, entry, depth, ignored, open, kind, parent: dir })
-      if (open) walk(entry.path, depth + 1, ignored)
-    }
-    if (state.truncated) out.push({ type: 'note', key: `more:${dir}`, depth, text: 'Only the first 5000 entries are shown', dir })
-  }
-  walk('', 0, false)
-  return out
+  return (layout.value?.rows ?? []).map(r =>
+    r.type === 'note' ? r : { ...r, kind: (r.entry.isDir ? dirKinds.get(r.key) : fileKinds.get(r.key)) ?? null })
 })
 
 const top = computed(() => tree.value?.dirs[''] ?? null)
@@ -139,10 +117,10 @@ const currentFile = computed(() => {
  */
 const revealing = ref<string | null>(null)
 const isRevealed = (row: Row) => !!revealing.value && row.type === 'entry' && row.key.startsWith(`${revealing.value}/`)
-function expand(dir: string, open: boolean) {
+function expand(row: EntryRow, open: boolean) {
   if (!path.value) return
-  revealing.value = open ? dir : null
-  files.toggleDir(path.value, dir, open)
+  revealing.value = open ? row.key : null
+  for (const dir of row.chain) files.toggleDir(path.value, dir, open)
 }
 /** The reveal has played: rows that turn up later (a refresh) just appear. */
 function onAnimationEnd(e: AnimationEvent) {
@@ -152,8 +130,8 @@ watch(path, () => (revealing.value = null))
 
 function activate(row: Row, pin: boolean) {
   if (row.type !== 'entry' || !path.value) return
-  select(row.entry.path)
-  if (row.entry.isDir) expand(row.entry.path, !row.open)
+  select(row.key)
+  if (row.entry.isDir) expand(row, !row.open)
   else void files.openFile(path.value, row.entry.path, pin)
 }
 
@@ -189,7 +167,7 @@ async function manualRefresh() {
 /* ---------- keyboard: a tree with one tab stop ---------- */
 
 const list = ref<HTMLElement | null>(null)
-const entryRows = computed(() => rows.value.filter((r): r is Extract<Row, { type: 'entry' }> => r.type === 'entry'))
+const entryRows = computed(() => rows.value.filter((r): r is EntryRow => r.type === 'entry'))
 /** The row that takes Tab focus: the selected one, else the first. */
 const focusKey = computed(() => {
   const sel = tree.value?.selected
@@ -215,12 +193,12 @@ function onKey(e: KeyboardEvent) {
     case 'End': e.preventDefault(); if (all.length) focusRow(all[all.length - 1]!.key); break
     case 'ArrowRight':
       e.preventDefault()
-      if (row.entry.isDir && !row.open) expand(row.key, true)
+      if (row.entry.isDir && !row.open) expand(row, true)
       else if (row.entry.isDir && all[i + 1]?.parent === row.key) focusRow(all[i + 1]!.key)
       break
     case 'ArrowLeft':
       e.preventDefault()
-      if (row.entry.isDir && row.open) expand(row.key, false)
+      if (row.entry.isDir && row.open) expand(row, false)
       else if (row.parent) focusRow(row.parent)
       break
     case 'Enter': e.preventDefault(); activate(row, true); break
@@ -228,14 +206,119 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+/* ---------- showing the open file ---------- */
+
+function locate() {
+  if (path.value && currentFile.value) void files.reveal(path.value, currentFile.value)
+}
+watch([path, currentFile, () => ws.filesView.follow], () => {
+  if (ws.filesView.follow) locate()
+}, { immediate: true })
+
+/* A file asked for (here or with "Show in Files") is brought into view, also when the tree only now appears. */
+watch([() => tree.value?.revealed, list], ([revealed, el]) => {
+  if (revealed && el) el.querySelector(`[data-path="${CSS.escape(revealed.file)}"]`)?.scrollIntoView({ block: 'nearest' })
+}, { flush: 'post', immediate: true })
+
+/* ---------- view options ---------- */
+
+const optionsButton = ref<{ $el: HTMLElement } | null>(null)
+
+function setView(patch: Partial<FilesView>) {
+  revealing.value = null
+  // Hiding is meant: a file that was only showing because it was asked for goes too.
+  if (path.value && (patch.excluded === false || patch.dotfiles === false)) files.treeOf(path.value).revealed = null
+  ws.setFilesView(patch)
+  nextTick(() => optionsButton.value?.$el.focus())
+}
+
+const viewItems = computed<MenuItem[]>(() => {
+  const v = ws.filesView
+  return [
+    { group: 'Show', label: 'Excluded files', hint: 'Ignored by git or excluded by you', check: 'checkbox', checked: v.excluded, onSelect: () => setView({ excluded: !v.excluded }) },
+    { label: 'Dotfiles', check: 'checkbox', checked: v.dotfiles, onSelect: () => setView({ dotfiles: !v.dotfiles }) },
+    { label: 'Compact middle folders', check: 'checkbox', checked: v.compact, onSelect: () => setView({ compact: !v.compact }) },
+    { divider: true, group: 'Sort by', label: 'Name', check: 'radio', checked: v.sort === 'name', onSelect: () => setView({ sort: 'name' }) },
+    { label: 'File type', check: 'radio', checked: v.sort === 'type', onSelect: () => setView({ sort: 'type' }) },
+    { divider: true, label: 'Folders on top', check: 'checkbox', checked: v.foldersFirst, onSelect: () => setView({ foldersFirst: !v.foldersFirst }) },
+    { label: 'Always select open file', check: 'checkbox', checked: v.follow, onSelect: () => setView({ follow: !v.follow }) },
+  ]
+})
+const filtering = computed(() => !ws.filesView.excluded || !ws.filesView.dotfiles)
+
+/* ---------- a row's menu: Mango's items, then plugins' (`ui.menus` 'file') ---------- */
+
+const rowMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
+const menuRow = ref<EntryRow | null>(null)
+
+/** Focus goes back to the row, or to the one that took its place when it is gone. */
+function keepFocus(key: string, act: () => void) {
+  const at = entryRows.value.findIndex(r => r.key === key)
+  act()
+  nextTick(() => {
+    const all = entryRows.value
+    const next = all.find(r => r.key === key) ?? all[Math.min(Math.max(at, 0), all.length - 1)]
+    if (next) focusRow(next.key)
+  })
+}
+
+function setExcluded(rel: string, on: boolean) {
+  const project = ws.activeProjectPath
+  if (!project || !path.value) return
+  const next = marks.value.filter(p => p !== rel)
+  if (on) next.push(rel)
+  files.treeOf(path.value).revealed = null
+  ws.setProjectPref(project, { excluded: next.length ? next : null })
+}
+
+async function copyPath(text: string) {
+  if (!(await copyText(text))) ws.notify('Could not copy the path', text)
+}
+
+const rowMenuItems = computed<MenuItem[]>(() => {
+  const r = menuRow.value
+  const project = path.value
+  if (!r || !project) return []
+  const { path: rel, isDir } = r.entry
+  const sep = sepOf(project)
+  const local = sep === '\\' ? rel.replace(/\//g, '\\') : rel
+  const abs = withTrailingSep(project) + local
+  // A remote project's path is the one inside its environment.
+  const env = parseEnvPath(project)
+  const copied = env ? withTrailingSep(env.dir) + rel : abs
+  const items: MenuItem[] = [
+    { label: 'Copy path', icon: Copy, onSelect: () => keepFocus(r.key, () => void copyPath(copied)) },
+    { label: 'Copy relative path', icon: Copy, onSelect: () => keepFocus(r.key, () => void copyPath(rel)) },
+  ]
+  if (r.marked) items.push({ divider: true, label: 'Remove exclusion', icon: Undo2, onSelect: () => keepFocus(r.key, () => setExcluded(rel, false)) })
+  // What git ignores, or a folder above excludes, is excluded already.
+  else if (!r.excluded) items.push({ divider: true, label: 'Exclude', icon: isDir ? FolderX : FileX, onSelect: () => keepFocus(r.key, () => setExcluded(rel, true)) })
+  return [...items, ...pluginMenuItems('file', { path: abs, projectPath: project, isDir })]
+})
+
+function onRowMenu(row: EntryRow, e: MouseEvent) {
+  menuRow.value = row
+  e.preventDefault()
+  rowMenu.value?.showAt(e.clientX, e.clientY)
+}
+
 /* ---------- icons ---------- */
 
-function iconFor(entry: FsEntry, open: boolean) {
-  return entry.isDir ? open ? FolderOpen : Folder : fileIcon(entry.name).icon
+function iconFor({ entry, open, marked }: EntryRow) {
+  if (entry.isDir) return marked ? FolderX : open ? FolderOpen : Folder
+  return marked ? FileX : fileIcon(entry.name).icon
 }
-/** A file's language tint; folders and ignored files keep the plain ink. */
-function tintFor(entry: FsEntry, ignored: boolean) {
-  return entry.isDir || ignored ? undefined : { color: fileIcon(entry.name).tint }
+/** A file's language tint; folders and excluded files keep the plain ink. */
+function tintFor({ entry, excluded }: EntryRow) {
+  return entry.isDir || excluded ? undefined : { color: fileIcon(entry.name).tint }
+}
+function titleFor(row: EntryRow) {
+  const about = [
+    row.entry.path,
+    row.kind && (row.entry.isDir ? 'Contains changes' : KIND_WORD[row.kind]),
+    row.marked ? 'Excluded by you' : row.entry.ignored ? 'Ignored by git' : row.excluded && 'In an excluded folder',
+  ]
+  return about.filter(Boolean).join(' · ')
 }
 </script>
 
@@ -245,8 +328,19 @@ function tintFor(entry: FsEntry, ignored: boolean) {
     <header class="fp__head">
       <h2 class="fp__title" :title="path ?? undefined">{{ ws.activeProject?.name ?? 'Files' }}</h2>
       <div v-if="path" class="fp__tools">
+        <UiIconButton label="Select open file" :disabled="!currentFile" @click="locate"><LocateFixed /></UiIconButton>
         <UiIconButton label="Collapse folders" :disabled="!tree?.expanded.length" @click="files.collapseAll(path)"><ChevronsDownUp /></UiIconButton>
         <UiIconButton label="Refresh" :class="{ 'is-spun': spun }" @click="manualRefresh"><RefreshCw /></UiIconButton>
+        <UiMenu v-slot="{ open, toggle }" :items="viewItems" placement="bottom-end" :width="248" label="View options">
+          <UiIconButton
+            ref="optionsButton"
+            :label="filtering ? 'View options (some files are hidden)' : 'View options'"
+            :class="{ 'is-filtering': filtering }"
+            aria-haspopup="menu"
+            :aria-expanded="open"
+            @click="toggle"
+          ><EllipsisVertical /></UiIconButton>
+        </UiMenu>
       </div>
     </header>
 
@@ -270,7 +364,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
             row.kind ? `fp--${row.kind}` : '',
             {
               'is-dir': row.entry.isDir,
-              'is-ignored': row.ignored,
+              'is-excluded': row.excluded,
               'is-selected': tree?.selected === row.key,
               'is-shown': shownFiles.has(row.key),
               'is-current': currentFile === row.key,
@@ -284,7 +378,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
           :aria-selected="tree?.selected === row.key"
           :tabindex="focusKey === row.key ? 0 : -1"
           :data-path="row.key"
-          :title="row.kind ? `${row.entry.path} · ${row.entry.isDir ? 'Contains changes' : KIND_WORD[row.kind]}` : row.entry.path"
+          :title="titleFor(row)"
           @click="activate(row, false)"
           @pointerenter="preloadSoon(row)"
           @pointerleave="preloadCancel"
@@ -293,11 +387,12 @@ function tintFor(entry: FsEntry, ignored: boolean) {
         >
           <ChevronRight v-if="row.entry.isDir" class="fp__caret" :class="{ 'is-open': row.open }" aria-hidden="true" />
           <span v-else class="fp__caret" aria-hidden="true" />
-          <component :is="iconFor(row.entry, row.open)" class="fp__icon" :style="tintFor(row.entry, !!row.ignored)" aria-hidden="true" />
-          <span class="fp__name">{{ row.entry.name }}</span>
+          <component :is="iconFor(row)" class="fp__icon" :style="tintFor(row)" aria-hidden="true" />
+          <span class="fp__name">{{ row.label }}</span>
           <span v-if="row.kind && row.entry.isDir" class="fp__dot" aria-hidden="true" />
           <span v-else-if="row.kind" class="fp__letter" aria-hidden="true">{{ KIND_LETTER[row.kind] }}</span>
           <span v-if="row.kind" class="sr-only">, {{ row.entry.isDir ? 'contains changes' : KIND_WORD[row.kind] }}</span>
+          <span v-if="row.excluded" class="sr-only">, excluded</span>
         </div>
         <div v-else class="fp__note" :class="{ 'is-error': row.error }" :style="{ '--depth': row.depth }" role="none">{{ row.text }}</div>
       </template>
@@ -337,6 +432,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
   text-overflow: ellipsis;
 }
 .fp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
+.fp__tools .is-filtering { color: var(--accent-ink); }
 .is-spun :deep(svg) { animation: fp-spin 0.45s var(--ease-out); }
 @keyframes fp-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .is-spun :deep(svg) { animation: none; } }
@@ -374,7 +470,7 @@ function tintFor(entry: FsEntry, ignored: boolean) {
 .fp__caret.is-open { transform: rotate(90deg); }
 .fp__icon { flex: none; width: 14px; height: 14px; stroke-width: 1.75; color: var(--fg-subtle); }
 .fp__name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
-.fp__row.is-ignored .fp__name, .fp__row.is-ignored .fp__icon { color: var(--fg-faint); }
+.fp__row.is-excluded .fp__name, .fp__row.is-excluded .fp__icon { color: var(--fg-faint); }
 
 /* Git status: the Changes view's colours, with a letter so it is never colour alone. */
 .fp--modified { --chip: var(--accent-ink); }
