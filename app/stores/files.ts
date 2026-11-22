@@ -68,6 +68,8 @@ export interface OpenFile {
   /** The text on disk as of `modifiedMs`; null until read. */
   disk: string | null
   modifiedMs: number
+  /** The hash of those bytes (`FileContent.hash`): what a save expects to find. */
+  hash: string | null
   /** Bumped when `disk` is replaced from outside, so the editor reloads its model. */
   version: number
   /** The editor's text differs from `disk`. */
@@ -130,7 +132,7 @@ function takePreload(tabId: string): Preload | null {
 /** What a text read says about a file, for an open file's state. */
 const textState = (c: FileContent) => ({
   error: null, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom,
-  disk: c.text, modifiedMs: c.modifiedMs, dirty: false, conflict: false, saveError: null,
+  disk: c.text, modifiedMs: c.modifiedMs, hash: c.hash ?? null, dirty: false, conflict: false, saveError: null,
 })
 
 /* ---------- saving ---------- */
@@ -149,6 +151,11 @@ function nextRev(f: OpenFile) {
   revs.set(f, rev)
   return rev
 }
+
+/** Projects whose open files are being rechecked (`recheckOpen`), and whether to once more. */
+const rechecking = new Map<string, boolean>()
+/** Changes that come together are read once. */
+const RECHECK_GATHER_MS = 150
 
 let saver: ReturnType<typeof createAutoSave<OpenFile>> | null = null
 function autoSave() {
@@ -188,6 +195,17 @@ export const useFiles = defineStore('files', {
     isUnsaved: s => (tabId: string | null | undefined) => {
       const f = tabId ? s.open[tabId] : null
       return !!f && unsaved(f)
+    },
+    /** Some open file has text that is not saved. */
+    hasUnsaved: s => Object.values(s.open).some(unsaved),
+    /** Those files, by whether a save may still get them there (under way, waiting) or can't by itself. */
+    unsavedByCause: s => () => {
+      const failed: string[] = []
+      const saving: string[] = []
+      for (const f of Object.values(s.open)) {
+        if (unsaved(f)) (f.saving || (!f.saveError && canAutoSave(f)) ? saving : failed).push(f.file)
+      }
+      return { failed, saving }
     },
     /** Unsaved edits to point out: all of them, or with autosave those it cannot save by itself. */
     showsUnsaved: s => (tabId: string | null | undefined) => {
@@ -324,6 +342,31 @@ export const useFiles = defineStore('files', {
       await Promise.all(Object.keys(this.open)
         .filter(id => this.open[id]!.projectPath === projectPath)
         .map(id => this.recheck(id)))
+    },
+
+    /**
+     * Something says it changed files here (`mango:files-changed`): read the open files again, not
+     * the folders (whoever changes those reads them). One round at a time, and one after it for what
+     * changed meanwhile: each read in a remote project is an SSH round trip.
+     */
+    async recheckOpen(projectPath: string) {
+      for (const id of preloads.keys()) if (parseFileTab(id)?.projectPath === projectPath) preloads.delete(id)
+      if (rechecking.has(projectPath)) {
+        rechecking.set(projectPath, true)
+        return
+      }
+      try {
+        do {
+          rechecking.set(projectPath, false)
+          await new Promise(resolve => setTimeout(resolve, RECHECK_GATHER_MS))
+          rechecking.set(projectPath, false)
+          await Promise.all(Object.keys(this.open)
+            .filter(id => this.open[id]!.projectPath === projectPath)
+            .map(id => this.recheck(id)))
+        } while (rechecking.get(projectPath))
+      } finally {
+        rechecking.delete(projectPath)
+      }
     },
 
     /**
@@ -565,7 +608,7 @@ export const useFiles = defineStore('files', {
       if (!this.open[id]) {
         this.open[id] = {
           projectPath, file, loading: true, error: null, binary: false, tooLarge: false, size: 0, bom: false,
-          disk: null, modifiedMs: 0, version: 0, dirty: false, saving: false, saveError: null, conflict: false, closing: false,
+          disk: null, modifiedMs: 0, hash: null, version: 0, dirty: false, saving: false, saveError: null, conflict: false, closing: false,
           image: null, view: 'preview',
         }
         void this._firstRead(id)
@@ -640,7 +683,7 @@ export const useFiles = defineStore('files', {
         const c = await call('fs_read_file', { root: f.projectPath, file })
         if (overtaken()) return
         // Times can be as coarse as a second: the text decides too.
-        if (c.modifiedMs === f.modifiedMs && c.text === f.disk && !f.error && !f.conflict) {
+        if (c.modifiedMs === f.modifiedMs && c.text === f.disk && (c.hash ?? null) === f.hash && !f.error && !f.conflict) {
           // A read that works may mean a save that failed works now (the connection is back).
           if (f.dirty && f.saveError) autoSave().edited(f)
           return
@@ -650,11 +693,13 @@ export const useFiles = defineStore('files', {
           const editing = () => (entry && !entry.model.isDisposed() ? entry.model.getValue() : null)
           const found = compareDisk(c.text, f.disk, attempted.get(f), editing)
           if (found === 'changed') {
-            f.conflict = true
+            // What a failed save broke is nobody's edit: a conflict would hide where the backup is,
+            // and offer to load the broken text in place of the edits.
+            if (!keepsBackup(f.saveError)) f.conflict = true
             return
           }
           // Touched, or written by us: nothing to ask about, and the next save expects this time.
-          Object.assign(f, { disk: c.text, bom: c.bom, modifiedMs: c.modifiedMs, conflict: false })
+          Object.assign(f, { disk: c.text, bom: c.bom, modifiedMs: c.modifiedMs, hash: c.hash ?? null, conflict: false })
           if (found === 'same' && entry) {
             entry.savedVersion = entry.model.getAlternativeVersionId()
             f.dirty = false
@@ -664,7 +709,9 @@ export const useFiles = defineStore('files', {
           }
           return
         }
-        Object.assign(f, { error: null, conflict: false, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom, modifiedMs: c.modifiedMs })
+        Object.assign(f, {
+          error: null, conflict: false, binary: c.binary, tooLarge: c.tooLarge, size: c.size, bom: c.bom, modifiedMs: c.modifiedMs, hash: c.hash ?? null,
+        })
         if (c.text !== f.disk) {
           f.disk = c.text
           f.version++
@@ -699,7 +746,8 @@ export const useFiles = defineStore('files', {
     async save(tabId: string, force = false): Promise<boolean> {
       const f = this.open[tabId]
       if (!f) return false
-      f.saveError = null
+      // Where a backup is stays on show until the text is saved.
+      if (!keepsBackup(f.saveError)) f.saveError = null
       return autoSave().save(f, force)
     },
 
@@ -717,24 +765,33 @@ export const useFiles = defineStore('files', {
       const text = entry.model.getValue()
       const version = entry.model.getAlternativeVersionId()
       const before = attempted.get(f)
-      const put = (expectedModifiedMs: number | null) => call('fs_write_file', { root, file, text, bom: f.bom, expectedModifiedMs })
+      const put = () => call('fs_write_file', {
+        root, file, text, bom: f.bom, expectedModifiedMs: force ? null : f.modifiedMs, expectedHash: force ? null : f.hash,
+      })
       attempted.set(f, text)
       nextRev(f)
       f.saving = true
       preloads.delete(id)
       try {
-        let res = await put(force ? null : f.modifiedMs)
+        let res = await put()
         if (!res.saved) {
           // A newer time need not mean other text: touched, written back the same, or our own write.
           const now = await call('fs_read_file', { root, file })
           const found = compareDisk(now.text, f.disk, before, () => text)
           if (found !== 'changed') {
-            Object.assign(f, { disk: now.text, bom: now.bom, modifiedMs: now.modifiedMs })
-            res = found === 'same' ? { saved: true, modifiedMs: now.modifiedMs } : await put(now.modifiedMs)
+            Object.assign(f, { disk: now.text, bom: now.bom, modifiedMs: now.modifiedMs, hash: now.hash ?? null })
+            res = found === 'same' ? { saved: true, modifiedMs: now.modifiedMs, hash: now.hash } : await put()
           }
         }
         if (!res.saved) {
           attempted.delete(f)
+          if (keepsBackup(f.saveError)) {
+            // Likely what the failed save left. The next try writes over exactly this, nothing newer.
+            const now = await call('fs_read_file', { root, file })
+            Object.assign(f, { modifiedMs: now.modifiedMs, hash: now.hash ?? null })
+            f.saveError = saveFailure(f.saveError, 'the file holds other text now. Try again to write over it.')
+            return false
+          }
           f.conflict = true
           f.saveError = null
           // The bar that lets the user pick takes the place of "save before closing?".
@@ -744,6 +801,7 @@ export const useFiles = defineStore('files', {
         attempted.delete(f)
         f.disk = text
         f.modifiedMs = res.modifiedMs
+        f.hash = res.hash ?? null
         entry.savedVersion = version
         entry.loadedVersion = f.version
         // Typing went on while it saved (or was undone back to what was there before): still dirty.
@@ -753,7 +811,9 @@ export const useFiles = defineStore('files', {
         if (autoSaves()) f.closing = false
         return true
       } catch (e) {
-        f.saveError = reason(e)
+        f.saveError = saveFailure(f.saveError, reason(e))
+        // Also where the user chose to write over a conflict: its bar would hide where the backup is.
+        if (keepsBackup(f.saveError)) f.conflict = false
         return false
       } finally {
         nextRev(f)
@@ -821,6 +881,38 @@ export const useFiles = defineStore('files', {
       const match = this.touching(...paths)
       return autoSave().around(match, work, () =>
         Promise.all(Object.keys(this.open).filter(id => match(this.open[id]!)).map(id => this.recheck(id))))
+    },
+
+    /**
+     * An environment's instance is being renamed: save while the paths are right, then write nothing
+     * there (not the user's own saves either, autosave or not) until the returned function runs.
+     * The old name can be another instance's by then.
+     */
+    async holdInstance(hostId: string, from: string, to: string): Promise<() => void> {
+      const its: Match = (f) => {
+        const loc = parseEnvPath(f.projectPath)
+        return !!loc && loc.hostId === hostId && (loc.instance === from || loc.instance === to)
+      }
+      await this.saveAll(10_000, its)
+      const release = autoSave().hold(its, true)
+      await autoSave().settle(its)
+      return release
+    },
+
+    /** The instance was renamed: unsaved text follows it, in its tab, to be saved in that instance. */
+    moveUnsaved(hostId: string, from: string, to: string) {
+      const threads = useThreads()
+      for (const [id, f] of Object.entries(this.open)) {
+        const project = movedEnvPath(f.projectPath, hostId, from, to)
+        if (!project || !unsaved(f)) continue
+        const next = fileTabId(project, f.file)
+        if (this.open[next]) continue
+        delete this.open[id]
+        f.projectPath = project
+        this.open[next] = f
+        moveEditorModel(id, next)
+        if (threads.tabs.includes(id)) threads.replaceTab(id, next)
+      }
     },
 
     /** Until the returned function runs, nothing writes to these files; what was under way is over. */

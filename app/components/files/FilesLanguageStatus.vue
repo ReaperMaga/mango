@@ -41,7 +41,7 @@ const announced = computed(() => {
   if (state === 'ready') return `${props.server.name} is running`
   return label.value
 })
-const hint = computed(() => view.value?.error ?? (view.value?.busy ? label.value : `${props.server.name} is running for this project`))
+const hint = computed(() => view.value?.error ?? (view.value?.busy ? label.value : `${props.server.name} is running`))
 
 function retry() {
   languageService()?.retry({ server: props.server.id, root: props.root })

@@ -113,24 +113,18 @@ export const useUpdater = defineStore('updater', {
       this.progress = { downloaded: 0, total: null }
       this.error = null
       // Installing ends Mango without asking any window.
-      const unsaved = await useWindows().saveEverywhere()
-      if (unsaved.length) {
-        this.error = `Save or discard your changes to ${unsaved[0]} first, then install the update.`
-        this.installFailed = true
-        this.phase = 'error'
-        return
-      }
+      if (!await this._allSaved()) return
       unlisten?.()
       unlisten = await on('update://progress', p => {
         this.progress = p
-        if (!p.total || p.downloaded < p.total || this.phase === 'restarting') return
-        this.phase = 'restarting'
-        // What was typed while it downloaded.
-        void useWindows().saveEverywhere()
+        if (p.total && p.downloaded >= p.total) this.phase = 'restarting'
       })
       try {
-        await call('update_install')
+        await call('update_download')
         this.phase = 'restarting'
+        // What was typed while it downloaded.
+        if (!await this._allSaved()) return
+        await call('update_install')
       } catch (e) {
         this.error = message(e)
         this.installFailed = true
@@ -139,6 +133,16 @@ export const useUpdater = defineStore('updater', {
         unlisten?.()
         unlisten = undefined
       }
+    },
+
+    /** Every window's files are saved. Otherwise the update waits, saying which file isn't. */
+    async _allSaved(): Promise<boolean> {
+      const unsaved = await useWindows().saveEverywhere()
+      if (!unsaved.length) return true
+      this.error = `Save or discard your changes to ${unsaved[0]} first, then install the update.`
+      this.installFailed = true
+      this.phase = 'error'
+      return false
     },
   },
 })

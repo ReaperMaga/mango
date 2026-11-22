@@ -4,12 +4,23 @@ import {
   MAIN_WINDOW, claimsFor, holderOf, lostChats, onlyOpen, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
   type ChatRef, type Claim, type ClaimTable, type WindowPlace, type WindowSpec,
 } from '~/utils/windows'
-import { onWindowClose } from '~/composables/windowClose'
+import { onWindowClose, tellUnsaved } from '~/composables/windowClose'
 import { flushHistory } from '~/utils/chatHistory'
 import { flushRemoteChats } from '~/utils/remoteChats'
 import { useFiles } from '~/stores/files'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
+
+/** The question when files are not saved as the window closes, true to why they aren't. */
+function notSavedQuestion({ failed, saving }: { failed: string[], saving: string[] }): string {
+  const list = (all: string[]) => {
+    const names = [...new Set(all)]
+    return `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${names.length - 3} more` : ''}`
+  }
+  if (!failed.length) return `Mango is still saving ${list(saving)}. The window closes once that is done. Closing now can lose your changes there.`
+  if (!saving.length) return `Mango could not save ${list(failed)}. Closing now loses your changes there.`
+  return `Mango could not save ${list(failed)}, and is still saving ${list(saving)}. Closing now loses what is not saved.`
+}
 
 /**
  * Mango's windows, from inside one of them: what this window shows (`spec`, from its URL), which
@@ -67,6 +78,10 @@ let reclaimTimer: ReturnType<typeof setTimeout> | null = null
 /** Chats coming back from a chat window that closed: shown as tabs once they are read (`_reclaim`). */
 let returning: string[] = []
 let syncing: Promise<void> = Promise.resolve()
+/** The main window letting go after it was hidden (`_park`): quitting waits for it. */
+let parking: Promise<void> = Promise.resolve()
+/** The projects and chats this window opened with are loaded (`follow`). */
+let loaded = false
 
 export const useWindows = defineStore('windows', {
   state: () => ({
@@ -108,6 +123,15 @@ export const useWindows = defineStore('windows', {
       this.spec = spec as WindowSpec
       this.self = windowLabel() ?? (spec.kind === 'main' ? MAIN_WINDOW : id ?? `w-${INST}`)
       this.table = { [this.self]: [] }
+      if (isTauri()) tellUnsaved(() => useFiles().hasUnsaved)
+      // Before anything slow: a close nobody hears is decided without the page.
+      if (!this.isMain) await onWindowClose(() => this._mayClose())
+      else if (isTauri()) {
+        await onWindowClose(() => this._mayCloseMain())
+        // The main window closed while others are open: the backend hid it; it lets go of its projects.
+        await on('window://parked', () => { void this._park() })
+        window.addEventListener('focus', () => { this.parked = false })
+      }
       await onWindows(m => this._receive(m as Message))
       if (isTauri()) await on('window://closed', ({ label }) => { if (label !== this.self) this._gone(label) })
       const peers = isTauri() ? (await call('window_list', {}).catch(() => [] as string[])).filter(l => l !== this.self) : null
@@ -123,13 +147,6 @@ export const useWindows = defineStore('windows', {
       // Leaving: what this window held goes back. A window that is closed on purpose has saved
       // first (`_closing`); a reload just says goodbye, and takes its things again when it is back.
       window.addEventListener('pagehide', () => { void this._post({ t: 'bye', id: this.self }) })
-      if (!this.isMain) void onWindowClose(() => this._mayClose())
-      // The main window closed while others are open: the backend hid it; it lets go of its projects.
-      else if (isTauri()) {
-        void onWindowClose(() => this._mayCloseMain())
-        await on('window://parked', () => { void this._park() })
-        window.addEventListener('focus', () => { this.parked = false })
-      }
     },
 
     /**
@@ -137,6 +154,7 @@ export const useWindows = defineStore('windows', {
      * have loaded; it then follows the open projects by itself.
      */
     follow() {
+      loaded = true
       const ws = useWorkspace()
       watch(() => ws.openProjects.map(p => p.path).join('\n'), () => { void this.sync() }, { immediate: true })
       if (this.spec.kind === 'chat') this._followOwnTab(this.spec.threadId)
@@ -329,25 +347,44 @@ export const useWindows = defineStore('windows', {
     },
 
     /**
-     * Save the open files before this window goes. False when some cannot be saved: the user is
-     * asked, and "Close without saving" closes it again without them. Always true with autosave off.
+     * Save the open files before this window goes. What is not saved in time is asked about until
+     * the user answers, or until it is saved after all: then the question goes and closing goes on (a
+     * Quit with it). False when the user keeps the window. Always true with autosave off.
      */
     async _savedToClose(): Promise<boolean> {
       const files = useFiles()
-      const left = [...new Set(await files.saveAll(SAVE_TO_CLOSE_MS))]
-      if (!left.length) return true
-      const names = `${left.slice(0, 3).join(', ')}${left.length > 3 ? ` and ${left.length - 3} more` : ''}`
-      useWorkspace().confirm = {
+      if (!(await files.saveAll(SAVE_TO_CLOSE_MS)).length) return true
+      const ws = useWorkspace()
+      const question = () => notSavedQuestion(files.unsavedByCause())
+      let answer!: (close: boolean) => void
+      const answered = new Promise<boolean>(resolve => (answer = resolve))
+      ws.confirm = {
         title: 'Close without saving?',
-        body: `Mango could not save ${names}. Closing now loses your changes there.`,
+        body: question(),
         label: 'Close without saving',
         danger: true,
         run: () => {
+          // First: the dialog took the question away, which alone would mean Cancel.
+          answer(true)
           files.discardUnsaved()
-          void appWindow.close()
         },
       }
-      return false
+      const asked = ws.confirm
+      const stop = watch(() => [ws.confirm === asked, files.hasUnsaved, question()] as const, ([up, unsaved, body]) => {
+        if (!up) {
+          answer(false)
+        } else if (unsaved) {
+          asked.body = body
+        } else {
+          answer(true)
+          ws.confirm = null
+        }
+      }, { immediate: true })
+      // A hidden window is shown only with the answer, which waits for the user.
+      if (isTauri()) void call('window_focus', { label: this.self }).catch(() => {})
+      const close = await answered
+      stop()
+      return close
     },
 
     /** This (not main) window was asked to close. */
@@ -359,32 +396,43 @@ export const useWindows = defineStore('windows', {
     },
 
     /**
-     * The main window was asked to close. With other windows open the backend hides it, so it must
-     * not be destroyed here: `_park` saves then. Otherwise closing it ends Mango.
+     * The main window was asked to close: itself, or hidden, as the last window on screen closed.
+     * It saves while it is still there to ask. With other windows open the backend then hides it
+     * (`_park`); otherwise it ends Mango, so what it was saving gets a moment.
      */
     async _mayCloseMain(): Promise<boolean> {
-      const open = await call('window_list', {}).catch(() => Object.keys(this.table))
-      if (open.some(label => label !== this.self)) return false
-      return this._savedToClose()
+      await Promise.race([parking, new Promise(r => setTimeout(r, 3000))])
+      if (!await this._savedToClose()) {
+        // A window that closed while this asked took it to be leaving, and handed over its session.
+        const ws = useWorkspace()
+        if (ws.openProjects.length) ws.persist()
+        return false
+      }
+      await Promise.race([flushHistory(), new Promise(r => setTimeout(r, 2000))])
+      return true
     },
 
     /**
-     * Every window saves its open files (an update restarts Mango). Resolves with the files that
-     * could not be saved.
+     * Every window saves its open files (an update restarts Mango). Resolves with what could not be
+     * saved: files, or a window that is there (hidden too) and did not answer.
      */
     async saveEverywhere(): Promise<string[]> {
+      await this.prune()
       const peers = Object.keys(this.table).filter(id => id !== this.self)
       const [mine, answers] = await Promise.all([
         useFiles().saveAll(SAVE_TO_CLOSE_MS),
         peers.length ? this._ask({ t: 'save' }, peers, ANSWER_MS) : [],
       ])
-      return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : []))]
+      // With autosave off no window has anything to say.
+      const silent = useWorkspace().editorAutoSave && peers.some(id => !answers.some(m => m.from === id))
+      return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : [])), ...(silent ? ['files in a window that is not answering'] : [])]
     },
 
     /** This (not main) window is closing: stop its runs, save, say goodbye. */
     async _closing() {
       // The last window on screen (the main one is parked): its projects are what Mango reopens next time.
-      if (isTauri() && await call('window_alone', {}).catch(() => false)) useWorkspace().handOverSession()
+      // (One closed before it loaded has nothing to hand over.)
+      if (loaded && isTauri() && await call('window_alone', {}).catch(() => false)) useWorkspace().handOverSession()
       await this._shutDown()
       await this._post({ t: 'bye', id: this.self })
     },
@@ -409,12 +457,13 @@ export const useWindows = defineStore('windows', {
      */
     async _park() {
       this.parked = true
-      if (!await this._savedToClose()) {
-        // Hidden, nobody would see the question, and Mango would end with the edits when the last window closes.
-        this.parked = false
-        await this.focus(this.self)
-        return
-      }
+      // At once: the last window may close, and hand over what it has open, while this one lets go.
+      useWorkspace().forgetSession()
+      parking = this._letGo()
+      await parking
+    },
+
+    async _letGo() {
       // Hidden, it must let go whatever happens while saving: otherwise its projects stay
       // “open in another window” that nobody can see.
       try {

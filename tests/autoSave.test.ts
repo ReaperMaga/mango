@@ -6,7 +6,7 @@
  */
 import { test, type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
-import { RETRY_MS, canAutoSave, compareDisk, createAutoSave, overlaps, saveTiming } from '../app/utils/autoSave.ts'
+import { RETRY_MS, canAutoSave, compareDisk, createAutoSave, keepsBackup, overlaps, sameFolder, saveFailure, saveTiming } from '../app/utils/autoSave.ts'
 
 interface Doc {
   path: string
@@ -488,6 +488,18 @@ test('flush waits for an operation to end before it writes', async (t) => {
   assert.deepEqual(log, ['work done', 'start a typed', 'saved a typed'])
 })
 
+test('a file with nothing to save does not wait for an operation to end', async (t) => {
+  const { saver, add, recheck, pass } = setUp(t)
+  const f = add('a')
+  void saver.around(() => true, () => new Promise(resolve => setTimeout(resolve, 60_000)), () => recheck(f))
+  await pass(50)
+  let over = false
+  // What closing the window does.
+  void saver.flush().then(() => { over = true })
+  await pass(50)
+  assert.equal(over, true)
+})
+
 test('two overlapping operations both finish', async (t) => {
   const { saver, add, type, recheck, pass } = setUp(t)
   const f = add('a')
@@ -552,6 +564,23 @@ test("the user's save waits for a rename and lands on the new path", async (t) =
   await pass(100)
   assert.equal(onDisk('new'), 'text')
   assert.equal(disk.has('old'), false)
+})
+
+test('a project that moves while held saves to where it went', async (t) => {
+  const { saver, disk, add, type, pass, onDisk } = setUp(t)
+  const f = add('old', 'env://host/box/work')
+  const its = (x: Doc) => x.project.startsWith('env://host/box/') || x.project.startsWith('env://host/box2/')
+  const release = saver.hold(its, true)
+  type(f, 'typed during the rename')
+  void saver.save(f)
+  await pass(5000)
+  assert.equal(onDisk('old'), 'base')
+  disk.set('new', { ...disk.get('old')! })
+  Object.assign(f, { path: 'new', project: 'env://host/box2/work' })
+  release()
+  await pass(100)
+  assert.equal(onDisk('old'), 'base', 'another instance can have the old name by now')
+  assert.equal(onDisk('new'), 'typed during the rename')
 })
 
 test("the user's save does not wait for git", async (t) => {
@@ -702,4 +731,44 @@ test('working copies overlap by folder, not by spelling', () => {
   assert.equal(overlaps('\\\\srv\\Share\\a', '//srv/share/a/b'), true)
   assert.equal(overlaps('env://h/box/', 'env://h/box/home/agent/app'), true)
   assert.equal(overlaps('env://h/box/', 'env://h/box2/home'), false)
+})
+
+test('the same folder, however it is spelled', () => {
+  assert.ok(sameFolder('C:\\work\\App.worktrees\\fix\\', 'c:/work/app.worktrees/fix'))
+  assert.ok(!sameFolder('/w/App', '/w/app'))
+  assert.ok(!sameFolder('C:/work/app', 'C:/work/app/sub'))
+})
+
+test('a save that left the file broken waits for the user and keeps saying where the backup is', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 })
+  const kept = 'Could not save a.ts, and it may be incomplete now. Its text from before is kept in the environment at /tmp/x/old.'
+  const f = { dirty: true, loading: false, conflict: false, closing: false, error: null, binary: false, tooLarge: false, disk: 'base', saveError: null as string | null }
+  let writes = 0
+  const saver = createAutoSave<typeof f>({
+    on: () => true,
+    open: () => [f],
+    timing: () => saveTiming(true, 10),
+    lane: () => null,
+    write: async () => {
+      writes++
+      f.saveError = saveFailure(f.saveError, writes === 1 ? kept : 'no connection.')
+      return false
+    },
+  })
+  await saver.save(f)
+  assert.equal(canAutoSave(f), false)
+  saver.edited(f)
+  saver.soon()
+  await saver.flush()
+  t.mock.timers.tick(RETRY_MS.reduce((a, b) => a + b, 0) + 30_000)
+  await Promise.resolve()
+  assert.equal(writes, 1, 'never by itself')
+  await saver.save(f)
+  await saver.save(f)
+  assert.equal(writes, 3, 'when asked')
+  assert.equal(f.saveError, `${kept} Trying again: no connection.`)
+  assert.ok(keepsBackup(f.saveError))
+  assert.equal(saveFailure('no connection.', 'timed out.'), 'timed out.')
+  f.saveError = 'no connection.'
+  assert.equal(canAutoSave(f), true, 'other failures are tried again')
 })

@@ -476,7 +476,9 @@ export const useWorkspace = defineStore('workspace', {
           activeProjectPath: this.activeProjectPath,
         }
         // Another window writes the shared prefs only; the main window's layout and projects stay.
-        if (!useWindows().isMain) {
+        // Nor does a parked main one: what is stored is the session of the windows on screen.
+        const win = useWindows()
+        if (!win.isMain || win.parked) {
           const stored = loadPrefs()
           for (const k of [...WINDOW_KEYS, KNOWN_TABS_KEY]) {
             if (k in stored) all[k] = stored[k]
@@ -586,6 +588,20 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
+    /**
+     * The main window is being parked: what it had open is not next time's session. Left alone when
+     * the last window on screen already handed its own over.
+     */
+    forgetSession() {
+      try {
+        const stored = loadPrefs()
+        const own = [...this.openProjects, ...this.lent].map(p => p.path)
+        if (JSON.stringify(stored.openProjects ?? []) !== JSON.stringify(own)) return
+        stored.openProjects = []
+        stored.activeProjectPath = null
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to forget */ }
+    },
     /**
      * The last window on screen is closing while the main window is parked: its projects become
      * the ones the main window reopens next time Mango starts.

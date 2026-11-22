@@ -10,6 +10,13 @@ import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsDeleted, Fs
 
 interface MockFile { text: string | null; modifiedMs: number; size?: number }
 
+/** Stands in for the backend's SHA-256. */
+function hashOf(text: string) {
+  let h = 2166136261
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619)
+  return `${text.length}-${(h >>> 0).toString(16)}`
+}
+
 const MIN = 60_000
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
 
@@ -179,7 +186,7 @@ function readFile(root: string, file: string, limit?: number): FileContent {
   if (!f) throw new Error(`${file} no longer exists`)
   const size = f.size ?? new TextEncoder().encode(f.text ?? '').length
   if (limit !== undefined && size > limit) return { text: null, binary: false, tooLarge: true, size, bom: false, modifiedMs: f.modifiedMs }
-  return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs }
+  return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs, hash: f.text === null ? undefined : hashOf(f.text) }
 }
 
 /** A picture for a binary image in the seed tree, drawn once per file. */
@@ -219,13 +226,14 @@ function readBytes(root: string, file: string): FileBytes {
   return { data, size: Math.floor(data.length * 3 / 4), modifiedMs: f.modifiedMs }
 }
 
-function writeFile(root: string, file: string, text: string, expected: number | null): WriteResult {
+function writeFile(root: string, file: string, text: string, expected: number | null, expectedHash?: string | null): WriteResult {
   const f = filesOf(root).get(clean(file))
   if (!f) throw new Error(`Could not save ${file}: it no longer exists`)
-  if (expected !== null && f.modifiedMs !== expected) return { saved: false, modifiedMs: f.modifiedMs }
+  const changed = expectedHash ? hashOf(f.text ?? '') !== expectedHash : expected !== null && f.modifiedMs !== expected
+  if (changed) return { saved: false, modifiedMs: f.modifiedMs }
   f.text = text
   f.modifiedMs = Date.now()
-  return { saved: true, modifiedMs: f.modifiedMs }
+  return { saved: true, modifiedMs: f.modifiedMs, hash: hashOf(text) }
 }
 
 const isFolder = (root: string, rel: string) =>
@@ -361,7 +369,7 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
     }
     case 'fs_read_file': return readFile(args.root, args.file, args.limit)
     case 'fs_read_bytes': return readBytes(args.root, args.file)
-    case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
+    case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs, args.expectedHash)
     case 'fs_create_file': return createFile(args.root, args.file, args.text)
     case 'fs_delete_file': return deleteFile(args.root, args.file)
     case 'fs_create_dir': return createDir(args.root, args.dir)

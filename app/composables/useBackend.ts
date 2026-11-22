@@ -108,8 +108,9 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
 export async function on<E extends keyof Events>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
   if (isTauri()) {
     const { listen } = await import('@tauri-apps/api/event')
-    // Language servers talk only to their own window, and Tauri gives a listener without a target every event.
-    const target = event.startsWith('lsp://') ? tauriLabel() : undefined
+    // Language servers and a window's close talk only to their own window, and Tauri gives a listener
+    // without a target every event.
+    const target = event.startsWith('lsp://') || event === 'window://close' ? tauriLabel() : undefined
     return listen<Events[E]>(event, e => handler(e.payload), target ? { target } : undefined)
   }
   return mock.on(event, handler)
@@ -182,21 +183,6 @@ export const appWindow = {
     }
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().close()
-  },
-  /**
-   * Run `before` when the window is asked to close (titlebar, the OS, the main window closing),
-   * then close it. In the browser preview, when the tab goes (best effort: the page may be gone first).
-   */
-  async onClose(before: () => Promise<void>) {
-    if (!isTauri()) {
-      window.addEventListener('pagehide', () => { void before() })
-      return
-    }
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().onCloseRequested(async () => {
-      // Never keep a window open because saving failed: it closes either way.
-      await Promise.race([before().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
-    })
   },
 }
 
@@ -394,6 +380,9 @@ const mock = (() => {
       // Browser windows cannot see each other's place on the screen.
       case 'window_at': return null
       case 'window_alone': return true
+      // The browser asks nobody before a tab closes (composables/windowClose.ts).
+      case 'window_close_heard': return true
+      case 'window_close_answer': case 'window_unsaved': return
       case 'chats_remote_list':
         return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
       case 'chats_remote_fetch': {
@@ -488,12 +477,15 @@ const mock = (() => {
         notes: 'Simulated update: the browser preview has no releases to install.',
         dateMs: now - 1000 * 60 * 60 * 3,
       }
-      case 'update_install': {
+      case 'update_download': {
         const total = 18_400_000
         for (let downloaded = 0; downloaded < total; downloaded += 1_150_000) {
           await new Promise(r => setTimeout(r, 120))
           emit('update://progress', { downloaded, total })
         }
+        return
+      }
+      case 'update_install': {
         throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
       }
       case 'attachment_save': return fakeAttachment(args.name, args.data)

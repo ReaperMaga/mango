@@ -6,7 +6,8 @@
  * - A file has one write at a time; a remote project has one among all its files (`lane`).
  * - What changes files from outside the editor runs in `around`: the text is saved first, nothing
  *   saves itself until it is done, and the disk is looked at before saving goes on.
- * - A save that failed is tried again a few times, ever later, and then when asked or edited.
+ * - A save that failed is tried again a few times, ever later, and then when asked or edited. One
+ *   that may have left the file broken (`keepsBackup`) only when asked.
  */
 
 /** What decides whether a file may save itself. */
@@ -17,13 +18,29 @@ export interface SaveFile {
   /** Asked "save before closing?": the answer is the user's. */
   closing: boolean
   error: string | null
+  /** Why the last save failed. */
+  saveError?: string | null
   binary: boolean
   tooLarge: boolean
   disk: string | null
 }
 
+/**
+ * The failure that may have left the file broken, saying where its text from before is kept
+ * (`not_restored` in src-tauri/src/files.rs): never tried again by itself, and never replaced.
+ */
+export const keepsBackup = (why: string | null | undefined): boolean => !!why?.includes('Its text from before is kept')
+
+const AGAIN = ' Trying again: '
+
+/** What to show for a save that failed with `why`, while `before` was showing. */
+export function saveFailure(before: string | null | undefined, why: string): string {
+  return keepsBackup(before) ? `${before!.split(AGAIN)[0]}${AGAIN}${why}` : why
+}
+
 export function canAutoSave(f: SaveFile): boolean {
   return f.dirty && !f.loading && !f.conflict && !f.closing && !f.error && !f.binary && !f.tooLarge && f.disk !== null
+    && !keepsBackup(f.saveError)
 }
 
 export interface SaveTiming {
@@ -59,12 +76,16 @@ export function compareDisk(now: string | null, disk: string | null, attempted: 
   return now === disk || now === attempted ? 'known' : 'changed'
 }
 
-/** One folder lies within the other (project paths, git roots: either slash, Windows ignoring case). */
+/** A folder's path in the one spelling compared here: either slash, Windows ignoring case. */
+function norm(p: string): string {
+  const path = `${p.replace(/\\/g, '/').replace(/\/+$/, '')}/`
+  return /^([a-z]:|\/\/)/i.test(path) ? path.toLowerCase() : path
+}
+
+export const sameFolder = (a: string, b: string): boolean => norm(a) === norm(b)
+
+/** One folder lies within the other (project paths, git roots). */
 export function overlaps(a: string, b: string): boolean {
-  const norm = (p: string) => {
-    const path = `${p.replace(/\\/g, '/').replace(/\/+$/, '')}/`
-    return /^([a-z]:|\/\/)/i.test(path) ? path.toLowerCase() : path
-  }
   const [x, y] = [norm(a), norm(b)]
   return x.startsWith(y) || y.startsWith(x)
 }
@@ -187,7 +208,8 @@ export function createAutoSave<F extends SaveFile>(host: AutoSaveHost<F>) {
   async function flushOne(f: F) {
     for (let round = 0; round < ROUNDS; round++) {
       for (;;) {
-        const wait = stateOf(f).busy ?? holdOn(f)?.done
+        // A file with nothing to save doesn't wait for a pull to end (closing would).
+        const wait = stateOf(f).busy ?? (f.dirty ? holdOn(f)?.done : undefined)
         if (!wait) break
         await wait
       }

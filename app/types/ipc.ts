@@ -729,12 +729,16 @@ export interface FileContent {
   bom: boolean
   /** ms since the epoch: hand it back on save so a change on disk is noticed. */
   modifiedMs: number
+  /** SHA-256 of the file's bytes, when read whole: hand it back on save too (times can be as coarse as two seconds). */
+  hash?: string
 }
 
 export interface WriteResult {
-  /** False when the file changed on disk since `expectedModifiedMs`; nothing was written. */
+  /** False when the file changed on disk since `expectedHash` or `expectedModifiedMs`; nothing was written. */
   saved: boolean
   modifiedMs: number
+  /** SHA-256 of what was saved. */
+  hash?: string
 }
 
 /** An env file at a project's root (Project settings > Environment variables). */
@@ -1417,10 +1421,11 @@ export interface Commands {
   /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
   fs_read_bytes: [{ root: string; file: string }, FileBytes]
   /**
-   * Overwrite an existing file (never creates one). With `expectedModifiedMs`, a file that
-   * changed on disk since then is left alone and `saved` is false; null writes regardless.
+   * Overwrite an existing file (never creates one). With `expectedHash` (or, without one,
+   * `expectedModifiedMs`), a file that changed on disk since it was read is left alone and `saved`
+   * is false; null for both writes regardless.
    */
-  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
+  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null; expectedHash?: string | null }, WriteResult]
   /** Create a new file (never overwrites: an existing file is an error). `file` is project-relative. Returns its modifiedMs. */
   fs_create_file: [{ root: string; file: string; text: string }, WriteResult]
   /** Delete one file in the project (never a folder; a symlink is removed itself, not its target). */
@@ -1542,12 +1547,23 @@ export interface Commands {
   window_at: [{ x: number; y: number }, string | null]
   /** Whether no other Mango window is on screen (closing this one ends the app). */
   window_alone: [Record<string, never>, boolean]
+  /**
+   * The page heard `window://close`; unsaid within a few seconds, the backend decides without it (with
+   * unsaved text, the user does). False: that close is no longer the page's to answer.
+   */
+  window_close_heard: [{ id: number }, boolean]
+  /** Whether this window has unsaved text, said as it changes: what closing a silent page would lose. */
+  window_unsaved: [{ unsaved: boolean }, void]
+  /** The answer to `window://close`: the window may go (the main one hides while others are open), or stays and comes into view. */
+  window_close_answer: [{ id: number; close: boolean }, void]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
+  /** Downloads and verifies the update from the last check, without installing it. Emits `update://progress`. */
+  update_download: [Record<string, never>, void]
   /**
-   * Downloads, verifies and installs the update from the last check, then restarts Mango
-   * (terminals and agent runs are stopped). Emits `update://progress`. Never resolves on success.
+   * Installs what `update_download` fetched (an error when it has not; it never downloads by itself),
+   * then restarts Mango (terminals and agent runs are stopped). Never resolves on success.
    */
   update_install: [Record<string, never>, void]
 
@@ -1681,6 +1697,8 @@ export interface Events {
   'envs://join': { link: string }
   /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
   'window://closed': { label: string }
+  /** This window is asked to close (`composables/windowClose.ts`): answer with `window_close_heard`, then `window_close_answer`. */
+  'window://close': { label: string; id: number }
   /** The main window was closed while others are open: it is hidden and lets go of its projects. */
   'window://parked': Record<string, never>
   /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */

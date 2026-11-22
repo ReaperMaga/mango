@@ -36,7 +36,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = windows::with_quit_item(builder);
+    builder
         // First: a second Mango (started by a mango:// link on Windows and Linux) hands its
         // arguments to this one (through the deep-link plugin, see `envs::join`) and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| envs::join::focus_main(app)))
@@ -64,6 +67,7 @@ pub fn run() {
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
         .manage(lsp::LspState::default())
+        .manage(windows::CloseState::default())
         .manage(mcp::McpState::default())
         .manage(plugins::PluginsState::default())
         .manage(browser_remote::RemoteBrowserState::default())
@@ -196,6 +200,7 @@ pub fn run() {
             env_files::env_files,
             env_files::env_gitignore_add,
             updater::update_check,
+            updater::update_download,
             updater::update_install,
             voice::voice_models,
             voice::voice_download,
@@ -243,6 +248,9 @@ pub fn run() {
             windows::window_list,
             windows::window_at,
             windows::window_alone,
+            windows::window_close_heard,
+            windows::window_close_answer,
+            windows::window_unsaved,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
