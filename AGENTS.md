@@ -167,10 +167,13 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   synchronous commands on purpose (message order) and must not block. What servers say is untrusted: keep `lsp/convert.ts` strict
   and Monaco's markdown text-only (`monaco.ts`; check that deep import when upgrading Monaco). Prove backend changes with the
   ignored `lsp::tests::real_*` tests. A chat's worktree takes its project's answer only while `lsp/folder.rs` proves it a
-  linked git worktree of it; any other folder, Unity VCS workspaces included, answers for itself.
+  linked git worktree of it, and a yes only while it is also the folder bound to that yes (`languageServersWorktree`: where
+  Mango adds a worktree, it calls `worktreeMade`); any other folder, Unity VCS workspaces included, answers for itself. A
+  folder's own no always wins. `lsp/folder.rs` follows a path it read only past `near`: looking asks no other computer.
 - Monaco's workers answer about one file and edit only its current text (`lsp/builtins.ts`): never share a program between
   models, reuse a model URI, trust markdown or let a link run a command. When upgrading Monaco check its deep imports
-  (`monaco.ts`, `lsp/tsWorker.ts`) and the suggest-controller internals in `editorFeel.ts`.
+  (`monaco.ts`, `lsp/tsWorker.ts`), the suggest-controller internals in `editorFeel.ts`, and the TypeScript and
+  tokenization internals in `lsp/builtins.ts`.
 - Remote environments (`src-tauri/src/envs/`): nothing of Mango's runs on the server; each action is one `ssh … incus …`
   call with the user's own keys (`BatchMode` unless a terminal is shown). Every value from the webview passes a validator in
   `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
