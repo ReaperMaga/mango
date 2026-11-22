@@ -41,7 +41,7 @@ const allowed = computed(() => !!folder.value && store.consentOf(folder.value) =
 const consentHint = computed(() => {
   if (remote.value) return 'Language servers run only for projects on this computer. Completion from open files still works here.'
   let what = `They can run this ${alone.value ? 'folder' : 'project'}'s code (build scripts, plugins).`
-  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ' Its git worktrees follow this.'
+  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ' Git worktrees Mango makes for it follow this.'
   return ws.editorLanguageServers ? what : `${what} Nothing runs while language servers are turned off.`
 })
 function allow(on: boolean) {

@@ -51,28 +51,54 @@ struct Sessions {
     stopped_early: VecDeque<(String, String)>,
     /// `(window, id)` of sessions that ended by themselves: stopping one is not an early stop.
     ended: VecDeque<(String, String)>,
-    /// By window and folder: the project a server there belongs to, and that folder's identity when
-    /// the user allowed them (`lsp_folder`).
+    /// By window and folder: what the user allowed there (`lsp_folder`).
     allowed: HashMap<(String, String), Allowed>,
 }
 
 #[derive(Debug, Clone)]
 struct Allowed {
+    /// The project a server there belongs to.
     project: String,
+    /// That project's folder as it was when the user allowed them.
     folder: String,
+    /// The worktree bound to that yes, as it was then: no other folder put at its path takes it.
+    worktree: Option<String>,
+}
+
+impl Allowed {
+    fn binds(&self, root: &str) -> bool {
+        self.worktree.as_deref().is_some_and(|bound| folder::id(root).as_deref() == Some(bound))
+    }
 }
 
 /// The last word before a server starts, as the page's answer can be from before the folder was
-/// deleted and made again.
-fn check_consent(root: &str, allowed: Option<&Allowed>) -> Result<(), String> {
-    let same = allowed.is_some_and(|a| consent_folder(root, &a.project).is_some_and(|now| now == a.folder));
-    same.then_some(()).ok_or_else(|| "Language servers need your permission for this folder again.".to_string())
+/// deleted and made again. What is checked is what it starts in: `root` is resolved once, here.
+fn check_consent(root: &str, allowed: Option<&Allowed>) -> Result<Root, String> {
+    let again = || "Language servers need your permission for this folder again.".to_string();
+    let allowed = allowed.ok_or_else(again)?;
+    let opened = Root::open(root)?;
+    let real = opened.real.to_str().ok_or_else(again)?;
+    let project = &allowed.project;
+    let now = if root == project {
+        folder::id(real)
+    } else {
+        (allowed.binds(real) && folder::is_worktree_of(real, project)).then(|| folder::id(project)).flatten()
+    };
+    if now.as_ref() != Some(&allowed.folder) {
+        return Err(again());
+    }
+    Ok(opened)
 }
 
-/// The folder whose consent holds in `root`: `project`'s, where `root` is that or, now, a linked
-/// worktree of it. Never just because `root` sits where a worktree of it was.
-fn consent_folder(root: &str, project: &str) -> Option<String> {
-    (root == project || folder::is_worktree_of(root, project)).then(|| folder::id(project)).flatten()
+/// The folder whose answer holds in `root`: `project`'s, where `root` is that or, now, a linked
+/// worktree of it. Never just because `root` sits where a worktree of it was: a yes (`allowed`)
+/// holds only in the worktree bound to it.
+fn consent_folder(root: &str, project: &str, allowed: Option<&Allowed>) -> Option<String> {
+    if root == project {
+        return folder::id(project);
+    }
+    let now = folder::is_worktree_of(root, project).then(|| folder::id(project)).flatten()?;
+    allowed.is_none_or(|a| a.folder != now || a.binds(root)).then_some(now)
 }
 
 fn remember(list: &mut VecDeque<(String, String)>, owner: &str, id: &str) {
@@ -278,8 +304,9 @@ pub async fn lsp_servers(roots: Option<Vec<String>>) -> Result<Vec<LspServer>, S
 }
 
 /// Which folder `project` is now, whose consent `root` goes by (none: `root` is no linked worktree
-/// of it, or there is no such folder on this computer). `allowed` is the identity the user allowed
-/// language servers for, if they did: servers start in `root` only while both hold.
+/// of it or not the one its yes is for, or there is no such folder on this computer). `allowed` is
+/// the identity the user allowed language servers for, if they did, and `worktree` that of the
+/// worktree bound to the project: servers start in `root` only while all of them hold.
 #[tauri::command]
 pub async fn lsp_folder(
     webview: Webview,
@@ -287,13 +314,15 @@ pub async fn lsp_folder(
     root: String,
     project: String,
     allowed: Option<String>,
+    worktree: Option<String>,
 ) -> Result<Option<String>, String> {
     let owner = webview.label();
     if !crate::windows::is_mango_window(owner) {
         return Err("Only Mango's own windows can allow language servers.".into());
     }
-    state.lock().allow(owner, &root, allowed.map(|folder| Allowed { project: project.clone(), folder }));
-    blocking(move || Ok(consent_folder(&root, &project))).await
+    let allowed = allowed.map(|folder| Allowed { project: project.clone(), folder, worktree });
+    state.lock().allow(owner, &root, allowed.clone());
+    blocking(move || Ok(consent_folder(&root, &project, allowed.as_ref()))).await
 }
 
 #[tauri::command]
@@ -319,8 +348,8 @@ pub async fn lsp_start(
     let app = webview.app_handle().clone();
     let key = id.clone();
     let started = blocking(move || {
-        check_consent(&root, allowed.as_ref())?;
-        start(app, owner, key, token, known, &root)
+        let root = check_consent(&root, allowed.as_ref())?;
+        start(app, owner, key, token, known, root)
     })
     .await;
     if started.is_err() {
@@ -335,9 +364,8 @@ fn start(
     id: String,
     token: u64,
     server: &'static servers::Server,
-    root: &str,
+    root: Root,
 ) -> Result<LspStarted, String> {
-    let root = Root::open(root)?;
     let started = LspStarted { root: root.real.to_string_lossy().into_owned(), pid: std::process::id() };
     let search = Search::system(Some(&root));
     let (session, io) = spawn_server(&search, server, &root)?;

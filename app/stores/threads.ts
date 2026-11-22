@@ -8,6 +8,7 @@ import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
+import { useLanguageServers } from '~/lsp/store'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { isBrowserTab, parseBrowserTab } from '~/utils/browserTabs'
 import { isTerminalTab, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
@@ -425,6 +426,7 @@ export const useThreads = defineStore('threads', {
         const wt = await call('git_worktree_add', { path: projectPath, branch: opts.branch ?? '', from: opts.from ?? null, create: opts.create ?? true })
         folder = wt.path
         branch = wt.branch
+        await useLanguageServers().worktreeMade(folder)
       }
       const t = this.create(projectPath, opts.agent, branch, folder)
       void useGit().loadWorktrees(projectPath)
@@ -513,6 +515,7 @@ export const useThreads = defineStore('threads', {
         const branch = untakenName(base, taken)
         try {
           const wt = await call('git_worktree_add', { path, branch, from: null, create: true })
+          await useLanguageServers().worktreeMade(wt.path)
           await this.moveToWorktree(id, wt.path, wt.branch ?? branch)
           return
         } catch (e) {

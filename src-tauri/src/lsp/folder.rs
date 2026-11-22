@@ -3,7 +3,7 @@
 //! a rename of its files or a restart of the computer leave it the same.
 
 use std::io::Read;
-use std::path::{Component, Path, PathBuf, Prefix};
+use std::path::{Path, PathBuf};
 
 /// None when there is no such folder on this computer.
 pub fn id(path: &str) -> Option<String> {
@@ -27,10 +27,13 @@ pub fn is_worktree_of(root: &str, project: &str) -> bool {
 fn linked(root: &str, project: &str) -> Option<bool> {
     let (root, project) = (real(Path::new(root))?, real(Path::new(project))?);
     let entry = gitdir_of(&root)?;
-    let back = entry.join(line(&entry.join("gitdir"))?);
     let entries = common_dir(&project)?.join("worktrees");
-    // By which folders they are, not by how their paths are spelled.
-    Some(back.file_name()? == ".git" && same(back.parent()?, &root) && same(entry.parent()?, &entries))
+    // By which folders they are, not by how their paths are spelled. Only that repository's entry is read on.
+    if !near(&entries, &project) || !same(entry.parent()?, &entries) {
+        return Some(false);
+    }
+    let back = entry.join(line(&entry.join("gitdir"), &root)?);
+    Some(back.file_name()? == ".git" && near(&back, &root) && same(back.parent()?, &root))
 }
 
 fn real(path: &Path) -> Option<PathBuf> {
@@ -47,35 +50,79 @@ fn gitdir_of(top: &Path) -> Option<PathBuf> {
     if !std::fs::symlink_metadata(&dot_git).ok()?.is_file() {
         return None;
     }
-    let named = top.join(line(&dot_git)?.strip_prefix("gitdir: ")?);
-    // Only looking must not sign this computer in to a server the file names (Windows).
-    if !on_drive(&named) && on_drive(top) {
-        return None;
-    }
-    real(&named)
+    let named = top.join(line(&dot_git, top)?.strip_prefix("gitdir: ")?);
+    near(&named, top).then(|| real(&named)).flatten()
 }
 
-fn on_drive(path: &Path) -> bool {
-    match path.components().next() {
-        Some(Component::Prefix(prefix)) => matches!(prefix.kind(), Prefix::Disk(_)),
-        _ => true,
+/// Whether looking at `path` asks no computer that `from` isn't on already: only looking must not
+/// sign this computer in to a server that a file or a link on the way names (Windows). So each step
+/// is read as a link before anything follows it.
+#[cfg(windows)]
+fn near(path: &Path, from: &Path) -> bool {
+    use std::path::{Component, Prefix};
+
+    /// "" on a drive or a volume mounted in a folder, else the share.
+    fn place(path: &Path) -> Option<String> {
+        let Some(Component::Prefix(prefix)) = path.components().next() else { return None };
+        match prefix.kind() {
+            Prefix::Disk(_) | Prefix::VerbatimDisk(_) => Some(String::new()),
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                Some(format!("{}/{}", server.to_string_lossy(), share.to_string_lossy()).to_lowercase())
+            }
+            Prefix::Verbatim(volume) if volume.to_string_lossy().starts_with("Volume{") => Some(String::new()),
+            _ => None,
+        }
     }
+    /// Where `path` leads, while that stays here.
+    fn walk(path: &Path, from: &Path, links_left: &mut u32) -> Option<PathBuf> {
+        // As Windows does: `..` by the words, then the links.
+        let path = std::path::absolute(path).ok()?;
+        let there = place(&path)?;
+        if !there.is_empty() && place(from)? != there {
+            return None;
+        }
+        let mut at = PathBuf::new();
+        for part in path.components() {
+            at.push(part);
+            if !matches!(part, Component::Normal(_)) {
+                continue;
+            }
+            let Ok(to) = std::fs::read_link(&at) else { continue };
+            *links_left = links_left.checked_sub(1)?;
+            let next = at.parent()?.join(to);
+            at = walk(&next, from, links_left)?;
+        }
+        Some(at)
+    }
+    walk(path, from, &mut 32).is_some()
+}
+
+/// Paths here name no servers.
+#[cfg(unix)]
+fn near(_path: &Path, _from: &Path) -> bool {
+    true
 }
 
 /// What the worktrees of the repository `dir` is in share; `dir` may be a linked worktree itself.
 fn common_dir(dir: &Path) -> Option<PathBuf> {
-    let top = dir.ancestors().find(|at| at.join(".git").exists())?;
+    let top = dir.ancestors().find(|at| std::fs::symlink_metadata(at.join(".git")).is_ok())?;
     let dot_git = top.join(".git");
+    if !near(&dot_git, top) {
+        return None;
+    }
     let git_dir = if dot_git.is_dir() { dot_git } else { gitdir_of(top)? };
-    match line(&git_dir.join("commondir")) {
-        Some(common) => real(&git_dir.join(common)),
+    match line(&git_dir.join("commondir"), top) {
+        Some(common) => {
+            let common = git_dir.join(common);
+            near(&common, top).then(|| real(&common)).flatten()
+        }
         None => Some(git_dir),
     }
 }
 
 /// The one line of one of git's small files.
-fn line(file: &Path) -> Option<String> {
-    if !file.is_file() {
+fn line(file: &Path, from: &Path) -> Option<String> {
+    if !near(file, from) || !file.is_file() {
         return None;
     }
     let mut text = String::new();
@@ -229,6 +276,63 @@ mod tests {
         scratch.write("game/.plastic/plastic.workspace", "game");
         scratch.write("game.worktrees/fix/.plastic/plastic.workspace", "game-fix");
         assert!(!is_worktree_of(&path("game.worktrees/fix"), &path("game")));
+    }
+
+    /// 192.0.2.0/24 is reserved for documentation: nobody answers there, after some 20 seconds. Windows
+    /// remembers that, so each asking names another.
+    #[cfg(windows)]
+    #[test]
+    fn looking_asks_no_server_a_folder_names() {
+        let scratch = Scratch::new("no-server");
+        let path = |rel: &str| scratch.dir(rel).to_str().unwrap().to_string();
+        add_worktree(&scratch, "app", "app.worktrees/fix", "fix");
+        let asks_nobody = |what: &str, root: &str, project: &str| {
+            let began = std::time::Instant::now();
+            assert!(!is_worktree_of(root, project), "{what}");
+            assert!(began.elapsed() < std::time::Duration::from_secs(1), "{what}: a server was asked");
+        };
+        let (app, fix) = (path("app"), path("app.worktrees/fix"));
+        scratch.write("claims/.git", "gitdir: e\n");
+        let mut last = uuid::Uuid::new_v4().as_bytes()[0];
+        let mut server = || {
+            last = last.wrapping_add(1).max(1);
+            format!("192.0.2.{last}")
+        };
+        for form in ["//{}/share/claims/.git", r"\\{}\share\claims\.git", r"\\?\UNC\{}\share\.git"] {
+            scratch.write("claims/e/gitdir", &format!("{}\n", form.replace("{}", &server())));
+            asks_nobody(&format!("a folder's own entry, {form}"), &path("claims"), &app);
+            scratch.write("app/.git/worktrees/fix/gitdir", &format!("{}\n", form.replace("{}", &server())));
+            asks_nobody(&format!("the project's entry, {form}"), &fix, &app);
+        }
+        add_worktree(&scratch, "app", "app.worktrees/fix", "fix");
+        add_worktree(&scratch, "app", "app.worktrees/other", "other");
+        scratch.write("app/.git/worktrees/other/commondir", &format!("//{}/share/app/.git\n", server()));
+        asks_nobody("the project's commondir", &fix, &path("app.worktrees/other"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_link_is_read_before_it_is_followed() {
+        let scratch = Scratch::new("near");
+        let top = scratch.path();
+        scratch.dir("real/inner");
+        let mut cmd = std::process::Command::new("cmd");
+        crate::bin::hide_console(&mut cmd);
+        assert!(cmd.args(["/d", "/c", "mklink", "/J"]).arg(top.join("junction")).arg(top.join("real")).output().unwrap().status.success());
+        assert!(near(&top.join("junction").join("inner"), top), "a junction on this computer");
+        for named in [r"\\192.0.2.1\share\x", "//192.0.2.1/share/x", r"\\?\UNC\192.0.2.1\share", r"\\.\UNC\192.0.2.1\share"] {
+            assert!(!near(&top.join(named), top), "{named}");
+        }
+        assert!(near(Path::new(r"\\SRV\Share\app\.git"), Path::new(r"\\srv\share\app")), "the share it is on");
+        assert!(!near(Path::new(r"\\other\share\app"), Path::new(r"\\srv\share\app")), "another server");
+        assert!(near(Path::new(r"\\?\Volume{00000000-0000-0000-0000-000000000000}\x"), top), "a volume mounted in a folder");
+        // Only where this computer may make such a link.
+        if std::os::windows::fs::symlink_dir(r"\\192.0.2.1\share", top.join("away")).is_ok() {
+            let began = std::time::Instant::now();
+            assert!(!near(&top.join("away").join("x"), top), "a link to a server");
+            assert!(began.elapsed() < std::time::Duration::from_secs(1), "a link to a server was followed");
+        }
+        std::fs::remove_dir(top.join("junction")).unwrap();
     }
 
     #[test]

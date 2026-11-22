@@ -16,12 +16,14 @@ import { isEnvPath } from '~/utils/envPath'
 interface Folder {
   /** The project it could follow when looked at (`ownerToFollow`). */
   owner: string
-  /** Whose answer counts: the owner's while this is a linked worktree of it, else its own. */
+  /** Whose answer counts: the owner's while this is a linked worktree of it (for a yes, the one bound to it), else its own. */
   project: string
   /** Which folder that project was; null: none on this computer. */
   id: string | null
   /** The folder the backend was told servers here are allowed for. */
   allowed: string | null
+  /** This folder's own, where it follows its project without a yes: what a yes binds (`setConsent`). */
+  worktree?: string | null
 }
 
 /** Looks at one folder run one after another, so the backend keeps the last one's word. */
@@ -29,10 +31,16 @@ const looking = new Map<string, Promise<void>>()
 let following = false
 let loadAgain = false
 
-/** The project `root` could follow as its worktree: none (itself) where it is open as a project of its own. */
+/** Where the answer for `path` is kept: a no counts however the path was spelled. */
+function answerKey(path: string): string {
+  const all = useWorkspace().projectPrefs
+  return Object.keys(all).find(key => all[key]?.languageServers === false && sameFolder(key, path)) ?? path
+}
+
+/** The project `root` could follow as its worktree: none (itself) where it is open as a project of its own, or has a no of its own. */
 function ownerToFollow(root: string): string {
   const owner = useThreads().ownerOf(root)
-  if (owner === root) return root
+  if (owner === root || useWorkspace().projectPrefs[answerKey(root)]?.languageServers === false) return root
   const ownProject = useWorkspace().openProjects.some(p => sameFolder(p.path, root))
     || Object.values(useWindows().table).some(claims => claims.some(c => c.kind === 'project' && sameFolder(c.key, root)))
   return ownProject ? root : owner
@@ -43,7 +51,8 @@ function ownerToFollow(root: string): string {
  * running one is doing. `lsp/service.ts` runs them.
  *
  * The user allows them for a project's folder, not for its path: the answer is kept with the
- * folder's identity, and the backend checks that once more as each server starts.
+ * folder's identity, and so is a worktree that takes its project's yes. The backend checks both
+ * once more as each server starts.
  */
 export const useLanguageServers = defineStore('languageServers', {
   state: () => ({
@@ -62,18 +71,18 @@ export const useLanguageServers = defineStore('languageServers', {
     serverFor: s => (language: string | null | undefined): LspServer | null =>
       (language ? s.servers?.find(x => x.installed && x.languages.includes(language)) : null) ?? null,
     /**
-     * The user's answer that counts in a folder: its project's in a linked git worktree of that, else
-     * the folder's own. Null: not asked yet, or asked about another folder at that path. False while
-     * that is not known yet.
+     * The user's answer that counts in a folder: its own no, else its project's in a linked git worktree
+     * of that (a yes only where that worktree is bound to it), else the folder's own. Null: not asked
+     * yet, or asked about another folder at that path. False while that is not known yet.
      */
     consentOf: s => (root: string): boolean | null => {
       const owner = ownerToFollow(root)
       const all = useWorkspace().projectPrefs
       const seen = s.folders[root]
       if (!seen || seen.owner !== owner) {
-        return all[root]?.languageServers === undefined && all[owner]?.languageServers === undefined ? null : false
+        return all[answerKey(root)]?.languageServers === undefined && all[owner]?.languageServers === undefined ? null : false
       }
-      const prefs = all[seen.project]
+      const prefs = all[answerKey(seen.project)]
       if (prefs?.languageServers === undefined) return null
       if (!seen.id) return false
       return seen.id === prefs.languageServersFolder ? prefs.languageServers : null
@@ -124,15 +133,20 @@ export const useLanguageServers = defineStore('languageServers', {
       if (isEnvPath(root)) return Promise.resolve()
       const look = (looking.get(root) ?? Promise.resolve()).then(async () => {
         const owner = ownerToFollow(root)
-        const ask = async (project: string) => {
-          const prefs = useWorkspace().projectPrefs[project]
+        const ask = async (project: string): Promise<Folder> => {
+          const all = useWorkspace().projectPrefs
+          const prefs = all[answerKey(project)]
           const allowed = prefs?.languageServers === true ? prefs.languageServersFolder ?? null : null
-          return { owner, project, allowed, id: await call('lsp_folder', { root, project, allowed }) ?? null }
+          const worktree = all[root]?.languageServersWorktree ?? null
+          return { owner, project, allowed, id: await call('lsp_folder', { root, project, allowed, worktree }) ?? null }
         }
         try {
           let found = await ask(owner)
-          // No worktree of it (any more): what is there now is asked about for itself.
-          if (!found.id && owner !== root) found = await ask(root)
+          if (owner !== root) {
+            // No worktree of it (any more), or not the one bound to its yes: what is there now is asked about for itself.
+            if (!found.id) found = await ask(root)
+            else if (found.allowed !== found.id) found.worktree = await call('lsp_folder', { root, project: root, allowed: null })
+          }
           this.folders[root] = found
         } catch {
           this.folders[root] = { owner, project: root, id: null, allowed: null }
@@ -146,12 +160,25 @@ export const useLanguageServers = defineStore('languageServers', {
     /** The user's answer, for the folder they were asked about. */
     async setConsent(root: string, on: boolean) {
       const owner = ownerToFollow(root)
-      if (this.folders[root]?.owner !== owner || !this.folders[root]?.id) await this.checkFolder(root)
+      const asked = this.folders[root]
+      if (asked?.owner !== owner || !asked.id) await this.checkFolder(root)
       const seen = this.folders[root]
-      if (!seen?.id || seen.owner !== owner) return
+      // Whom it binds changed since the question was drawn: nothing is stored, and it asks again.
+      if (!seen?.id || seen.owner !== owner || seen.project !== asked?.project) return
+      const ws = useWorkspace()
+      if (on && seen.worktree) ws.setProjectPref(root, { languageServersWorktree: seen.worktree })
       // For what was looked at: a folder that is no worktree of the project answers for itself only.
-      useWorkspace().setProjectPref(seen.project, { languageServers: on, languageServersFolder: seen.id })
+      const answer = { languageServers: on, languageServersFolder: seen.id }
+      // A no under another spelling would stand against it.
+      for (const key of new Set([seen.project, answerKey(seen.project)])) ws.setProjectPref(key, answer)
       await this.checkFolder(root)
+    },
+
+    /** Mango just made this worktree: for as long as it is that folder, it takes its project's answer. */
+    async worktreeMade(path: string) {
+      if (isEnvPath(path)) return
+      const id = await call('lsp_folder', { root: path, project: path, allowed: null }).catch(() => null)
+      if (id) useWorkspace().setProjectPref(path, { languageServersWorktree: id })
     },
 
     /** Keep `folders` right as projects, files and answers come and go. Once, as the workspace starts. */
@@ -174,8 +201,8 @@ export const useLanguageServers = defineStore('languageServers', {
       watch(() => roots().map((root) => {
         const owner = ownerToFollow(root)
         // A clone or a checkout moves HEAD, and in a clone the folder may be new.
-        return [root, owner, ...[root, owner].flatMap((path) => {
-          const prefs = ws.projectPrefs[path]
+        return [root, owner, ws.projectPrefs[root]?.languageServersWorktree, ...[root, owner].flatMap((path) => {
+          const prefs = ws.projectPrefs[answerKey(path)]
           return [prefs?.languageServers, prefs?.languageServersFolder, git.status(path)?.head]
         })].join('\n')
       }).join('\0'), checkAll, { immediate: true })

@@ -947,11 +947,11 @@ fn consent_holds_for_one_folder_only() {
     let scratch = Scratch::new("consent");
     let dir = scratch.dir("app");
     let project = dir.to_str().unwrap().to_string();
-    let now = Allowed { project: project.clone(), folder: folder::id(&project).unwrap() };
-    let mut all = Sessions::default();
-    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_err(), "nobody was asked");
     let tree = scratch.dir("app.worktrees/fix");
     let root = tree.to_str().unwrap().to_string();
+    let now = Allowed { project: project.clone(), folder: folder::id(&project).unwrap(), worktree: folder::id(&root) };
+    let mut all = Sessions::default();
+    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_err(), "nobody was asked");
     let entry = dir.join(".git").join("worktrees").join("fix");
     scratch.write("app/.git/worktrees/fix/gitdir", &format!("{}\n", tree.join(".git").display()));
     scratch.write("app.worktrees/fix/.git", &format!("gitdir: {}\n", entry.display()));
@@ -960,7 +960,7 @@ fn consent_holds_for_one_folder_only() {
     all.allow("main", &root, Some(now.clone()));
     assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_ok());
     assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_ok(), "worktrees follow their project");
-    assert_eq!(consent_folder(&root, &project), Some(now.folder));
+    assert_eq!(consent_folder(&root, &project, Some(&now)), Some(now.folder.clone()));
     assert!(check_consent(&project, all.allowed("w-1", &project).as_ref()).is_err(), "each window checks for itself");
     all.page_gone("w-1");
     assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_ok());
@@ -969,8 +969,8 @@ fn consent_holds_for_one_folder_only() {
     std::fs::remove_dir_all(&tree).unwrap();
     scratch.write("app.worktrees/fix/.git/HEAD", "ref: refs/heads/main");
     assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_err(), "another repository where a worktree was");
-    assert_eq!(consent_folder(&root, &project), None);
-    let own = Allowed { project: root.clone(), folder: folder::id(&root).unwrap() };
+    assert_eq!(consent_folder(&root, &project, None), None);
+    let own = Allowed { project: root.clone(), folder: folder::id(&root).unwrap(), worktree: None };
     all.allow("main", &root, Some(own));
     assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_ok(), "allowed for itself");
 
@@ -980,6 +980,96 @@ fn consent_holds_for_one_folder_only() {
     assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_err(), "cloned again at the same path");
     all.allow("main", &project, None);
     assert!(all.allowed("main", &project).is_none());
+}
+
+/// A repository with a worktree of it made by git: the project, the worktree.
+fn with_worktree(scratch: &Scratch) -> (String, String) {
+    let app = scratch.dir("app");
+    git(&app, &["init", "-q"]);
+    git(&app, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    git(&app, &["worktree", "add", "-q", "-b", "fix", "../app.worktrees/fix"]);
+    let tree = scratch.path().join("app.worktrees").join("fix");
+    (app.to_str().unwrap().to_string(), tree.to_str().unwrap().to_string())
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let mut cmd = Command::new("git");
+    crate::bin::hide_console(&mut cmd);
+    cmd.current_dir(dir).args(["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"]);
+    cmd.args(["-c", "core.hooksPath=.no-hooks", "-c", "init.templateDir="]).args(args);
+    let out = cmd.output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
+fn a_yes_reaches_only_the_worktree_bound_to_it() {
+    let scratch = Scratch::new("consent-bound");
+    let (project, root) = with_worktree(&scratch);
+    let yes = |worktree| Allowed { project: project.clone(), folder: folder::id(&project).unwrap(), worktree };
+    let bound = yes(folder::id(&root));
+    let follows = |a: &Allowed| consent_folder(&root, &project, Some(a)).is_some();
+    let starts = |a: &Allowed| check_consent(&root, Some(a)).is_ok();
+    assert!(follows(&bound) && starts(&bound));
+
+    let old = yes(None);
+    assert!(!follows(&old) && !starts(&old), "from an older Mango: asked");
+    assert!(consent_folder(&root, &project, None).is_some(), "a no, every worktree follows");
+    let stale = Allowed { folder: "an older folder".into(), ..yes(None) };
+    assert!(follows(&stale) && !starts(&stale), "an old yes: the project is asked again");
+
+    // Ordinary work.
+    let tree = Path::new(&root);
+    git(tree, &["switch", "-q", "-c", "other"]);
+    assert!(follows(&bound) && starts(&bound), "a branch switch");
+    git(Path::new(&project), &["worktree", "repair", &root]);
+    assert!(follows(&bound) && starts(&bound), "repair");
+    git(Path::new(&project), &["worktree", "move", &root, "../app.worktrees/moved"]);
+    let moved = scratch.path().join("app.worktrees").join("moved").to_str().unwrap().to_string();
+    assert!(!follows(&bound) && !starts(&bound), "nothing is left at the old path");
+    assert!(consent_folder(&moved, &project, Some(&old)).is_none(), "no binding at the new path: asked");
+    git(Path::new(&project), &["worktree", "move", &moved, &root]);
+    assert!(follows(&bound) && starts(&bound), "moved back");
+
+    // Deleted, not pruned, and another folder there says it is that worktree.
+    std::thread::sleep(Duration::from_millis(30));
+    std::fs::remove_dir_all(&root).unwrap();
+    scratch.write("app.worktrees/fix/.git", "gitdir: ../../app/.git/worktrees/fix\n");
+    assert!(folder::is_worktree_of(&root, &project), "by git's files it is one");
+    assert!(!follows(&bound) && !starts(&bound), "another folder at an unpruned worktree's path");
+}
+
+#[test]
+fn what_is_checked_is_what_starts() {
+    let scratch = Scratch::new("consent-resolved");
+    let (project, tree) = with_worktree(&scratch);
+    let evil = scratch.dir("evil");
+    let link = scratch.path().join("link");
+    let point_at = |to: &Path| {
+        #[cfg(windows)]
+        {
+            let mut cmd = Command::new("cmd");
+            crate::bin::hide_console(&mut cmd);
+            assert!(cmd.args(["/d", "/c", "mklink", "/J"]).arg(&link).arg(to).output().unwrap().status.success());
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(to, &link).unwrap();
+    };
+    let unlink = || {
+        #[cfg(windows)]
+        std::fs::remove_dir(&link).unwrap();
+        #[cfg(unix)]
+        std::fs::remove_file(&link).unwrap();
+    };
+    for (given, allowed_project, real) in [(&link, project.as_str(), &tree), (&link, link.to_str().unwrap(), &project)] {
+        point_at(Path::new(real));
+        let allowed = Allowed { project: allowed_project.into(), folder: folder::id(allowed_project).unwrap(), worktree: folder::id(&tree) };
+        let checked = check_consent(given.to_str().unwrap(), Some(&allowed)).unwrap();
+        unlink();
+        point_at(&evil);
+        assert_eq!(folder::id(checked.real.to_str().unwrap()), folder::id(real), "not where the link leads by now");
+        assert!(check_consent(given.to_str().unwrap(), Some(&allowed)).is_err());
+        unlink();
+    }
 }
 
 fn run_in_pty(installer: &Installer, cwd: &std::path::Path, inherited: &std::ffi::OsStr) {

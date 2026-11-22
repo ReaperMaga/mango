@@ -104,11 +104,17 @@ export interface ProjectPrefs {
   excluded?: string[]
   /**
    * Language servers may run in this project (they can run its code: build scripts, plugins).
-   * Missing: not answered yet, so none starts. Its linked git worktrees share it.
+   * Missing: not answered yet, so none starts. Its linked git worktrees share a no, and those bound
+   * to it (`languageServersWorktree`) a yes.
    */
   languageServers?: boolean
   /** The folder that answer was given for (`lsp_folder`): one made again at the same path asks again. */
   languageServersFolder?: string
+  /**
+   * A worktree's folder as Mango made it, or as it was when the user said yes there: only that folder
+   * takes its project's yes, not another put at its path.
+   */
+  languageServersWorktree?: string
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 

@@ -1235,9 +1235,10 @@ export interface Commands {
    * Which folder `project` is now, as an identity that changes when it is deleted and made again
    * (null: no such folder here). `allowed` is the identity the user allowed language servers for:
    * the backend starts one in `root` only while `project` still is that folder. Null also when `root`
-   * is neither `project` nor, right now, a linked git worktree of it.
+   * is neither `project` nor, right now, a linked git worktree of it, or is one that such a yes does
+   * not reach: `worktree` is the identity of the only folder it does.
    */
-  lsp_folder: [{ root: string; project: string; allowed: string | null }, string | null]
+  lsp_folder: [{ root: string; project: string; allowed: string | null; worktree?: string | null }, string | null]
   /**
    * Start a server in a local project (remote projects are refused). The caller makes up `id` and
    * listens for it first. Only after the user allowed language servers for the project.

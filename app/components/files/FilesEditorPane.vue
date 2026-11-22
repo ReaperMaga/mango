@@ -388,12 +388,14 @@ const consent = computed(() => {
   const alone = path === root && threads.ownerOf(root) !== root
   const scope = alone ? 'folder' : 'project'
   const worktrees = !alone && project?.isGit && project.vcs !== 'plastic'
+  // A yes given in a worktree binds that one too.
+  const here = path === root ? ' and the' : ', this worktree and the'
   return {
     scope,
     name: project?.name ?? baseName(path),
     covers: alone
       ? 'Every language server, in this folder only'
-      : `Every language server, in this project${worktrees ? ' and its git worktrees' : ''}`,
+      : `Every language server, in this project${worktrees ? `${here} git worktrees Mango makes for it` : ''}`,
   }
 })
 
