@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.43
+
+### New
+
+- Open decompiled library source on go to definition in C#.
+
 ## 0.1.42
 
 ### New
