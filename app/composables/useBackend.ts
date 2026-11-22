@@ -153,6 +153,16 @@ export const appWindow = {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().toggleMaximize()
   },
+  /** Calls back with whether the window is maximized now and after every resize; returns a stop function. */
+  async watchMaximized(cb: (maximized: boolean) => void): Promise<() => void> {
+    if (!isTauri()) return () => {}
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const w = getCurrentWindow()
+    const read = () => { w.isMaximized().then(cb).catch(() => {}) }
+    read()
+    const off = await w.onResized(read)
+    return off
+  },
   /** The window's title: what the taskbar, Alt+Tab and window previews show. */
   async setTitle(title: string) {
     if (!isTauri()) {

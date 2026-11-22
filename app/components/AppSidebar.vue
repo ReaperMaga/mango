@@ -586,7 +586,8 @@ function endResize() {
 }
 .sb__new:hover { background: var(--bg-raised); border-color: var(--line); }
 .sb__new svg { width: 15px; height: 15px; color: var(--accent-ink); stroke-width: 1.85; }
-.sb__new span { flex: 1; text-align: left; }
+.sb__new span { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb__new kbd { flex: none; white-space: nowrap; }
 .sb__new kbd + kbd { margin-left: -4px; }
 
 .sb__scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: var(--space-1) var(--space-2) var(--space-3) var(--space-3); }
