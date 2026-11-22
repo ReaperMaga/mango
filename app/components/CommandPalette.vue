@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitCommitHorizontal, GitFork, GitGraph, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
-  Bell, Keyboard, FolderCog, FileKey, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Puzzle, Server, SquareTerminal, Sun, History, AppWindow,
+  Bell, Keyboard, FolderCog, FileKey, FilePen, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Puzzle, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
 import { useWorkspace } from '~/stores/workspace'
@@ -179,6 +179,7 @@ const actions = computed<Item[]>(() => {
   items.push({ id: 'settings-mcp', group: 'Actions', label: 'MCP servers', icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
   items.push({ id: 'plugins-browse', group: 'Actions', label: 'Browse plugins', icon: Puzzle, keywords: 'plugins extensions addons catalog install marketplace', run: () => openPlugins({ tab: 'browse' }) })
   items.push({ id: 'plugins-add', group: 'Actions', label: 'Add plugin from link', icon: Puzzle, keywords: 'plugins install git repository url extension', run: () => openPlugins({ add: true }) })
+  items.push({ id: 'settings-editor', group: 'Actions', label: 'Editor settings', icon: FilePen, keywords: 'editor autosave auto save files smooth caret cursor language servers lsp completion', run: () => ws.openSettings('editor') })
   items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
   items.push({ id: 'settings-notifications', group: 'Actions', label: 'Notification settings', icon: Bell, keywords: 'notifications notify alert sound desktop finished approval fails background', run: () => ws.openSettings('notifications') })
   items.push({ id: 'settings-shortcuts', group: 'Actions', label: 'Keyboard shortcuts', icon: Keyboard, keywords: 'keyboard shortcuts keys keybindings bindings hotkeys rebind remap', run: () => ws.openSettings('shortcuts') })
