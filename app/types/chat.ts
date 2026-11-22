@@ -182,6 +182,11 @@ export interface Thread {
    * filled by the parent's run, and listed under its parent instead of on its own.
    */
   parentId?: string | null
+  /**
+   * Set on a fork ("Branch from here"): the chat it continues from. Unlike a sub-agent chat it is a normal,
+   * writable chat; it is only listed under the original in the sidebar.
+   */
+  forkOf?: string
   /** Sub-agent chats: the tool call in the parent that started it. */
   toolId?: string
   /** Sub-agent chats: the kind of agent ("Explore", "general-purpose"). */

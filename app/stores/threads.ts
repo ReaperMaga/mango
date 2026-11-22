@@ -92,12 +92,12 @@ export const useThreads = defineStore('threads', {
      * Sub-agent chats are not in it: they sit under their parent (childrenOf).
      */
     forProject: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && !t.archived && !t.parentId).sort(byListOrder),
+      s.threads.filter(t => t.projectPath === path && !t.archived && !t.parentId && !isListedUnderOriginal(s.threads, t)).sort(byListOrder),
     archivedFor: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && t.archived && !t.parentId).sort((a, b) => b.updatedAt - a.updatedAt),
-    /** The sub-agent chats a chat (or a sub-agent) started, oldest first. */
+      s.threads.filter(t => t.projectPath === path && t.archived && !t.parentId && !isListedUnderOriginal(s.threads, t)).sort((a, b) => b.updatedAt - a.updatedAt),
+    /** The sub-agent chats a chat (or a sub-agent) started and the forks made from it, oldest first. */
     childrenOf: s => (id: string) =>
-      s.threads.filter(t => t.parentId === id).sort((a, b) => a.createdAt - b.createdAt),
+      s.threads.filter(t => t.parentId === id || t.forkOf === id).sort((a, b) => a.createdAt - b.createdAt),
     /** The top-level chat a sub-agent chat belongs to, whose run fills it (a top-level chat is its own). */
     rootOf(): (id: string) => Thread | null {
       return (id) => {
@@ -1060,6 +1060,7 @@ export const useThreads = defineStore('threads', {
         updatedAt: now,
         seen: true,
         branch: src.branch ?? null,
+        forkOf: src.id,
         ...(src.worktree ? { worktree: src.worktree } : {}),
       }
       const earlier = transcript(kept)
@@ -1432,6 +1433,11 @@ function normalizeLoaded(t: Thread): Thread {
 function errorText(e: unknown): string {
   const text = e instanceof Error ? e.message : typeof e === 'string' ? e : String(e)
   return text.trim().replace(/\.$/, '') || 'git gave no reason'
+}
+
+/** A fork sits under its original in the sidebar (while the original is still there, in the same list). */
+function isListedUnderOriginal(all: Thread[], t: Thread) {
+  return !!t.forkOf && all.some(o => o.id === t.forkOf && !!o.archived === !!t.archived)
 }
 
 function titleFrom(text: string) {
