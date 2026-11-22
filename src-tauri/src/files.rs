@@ -5,7 +5,10 @@
 //! instance (see `remote` below).
 
 use std::fs;
-use std::path::PathBuf;
+use std::hash::{Hash, Hasher};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
@@ -292,6 +295,33 @@ pub(crate) fn read_bytes(root: &str, file: &str) -> Result<FileBytes, String> {
     })
 }
 
+/// One save at a time per file, whichever window it comes from: two that expect the same time
+/// must not both find it and write.
+fn write_lock(target: &Path) -> MutexGuard<'static, ()> {
+    static LOCKS: [Mutex<()>; 32] = [const { Mutex::new(()) }; 32];
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    target.hash(&mut hash);
+    LOCKS[hash.finish() as usize % LOCKS.len()].lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Put `bytes` in the place of what `file` holds, without emptying it first, and put the old bytes
+/// back when that fails (a full disk, a locked range). In place on purpose: a temporary file renamed
+/// over it would lose hard links, the owner and some watchers, and Windows refuses that rename while
+/// another program has the file open.
+fn overwrite<F: Read + Write + Seek>(file: &mut F, bytes: &[u8], set_len: impl Fn(&mut F, u64) -> std::io::Result<()>) -> std::io::Result<()> {
+    let mut old = Vec::new();
+    file.read_to_end(&mut old)?;
+    let put = |file: &mut F, bytes: &[u8]| {
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        set_len(file, bytes.len() as u64)
+    };
+    put(file, bytes).inspect_err(|_| {
+        let _ = put(file, &old);
+    })
+}
+
 /// Write `text` over an existing file. With `expected_modified_ms`, refuse
 /// (`saved: false`) when the file changed on disk since it was read: an
 /// agent may have edited it in the meantime.
@@ -303,21 +333,29 @@ pub(crate) fn write_file(
     expected_modified_ms: Option<u64>,
 ) -> Result<WriteResult, String> {
     let (_, target) = resolve(root, file)?;
-    let meta = fs::metadata(&target).map_err(|e| format!("Could not save {file}: {e}"))?;
+    let failed = |e: std::io::Error| format!("Could not save {file}: {e}");
+    let _writing = write_lock(&target);
+    let meta = fs::metadata(&target).map_err(failed)?;
     if !meta.is_file() {
         return Err(format!("{file} is not a file"));
     }
     if meta.permissions().readonly() {
         return Err(format!("{file} is read-only"));
     }
+    // Never created: a file deleted since it was looked at stays deleted.
+    let mut out = fs::OpenOptions::new().read(true).write(true).open(&target).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("{file} no longer exists"),
+        _ => failed(e),
+    })?;
+    // Checked, written and timed through the one handle, so it is all the same file.
     if let Some(expected) = expected_modified_ms {
-        let now = modified_ms(&meta);
+        let now = modified_ms(&out.metadata().map_err(failed)?);
         if now != expected {
             return Ok(WriteResult { saved: false, modified_ms: now });
         }
     }
-    fs::write(&target, with_bom(text, bom)).map_err(|e| format!("Could not save {file}: {e}"))?;
-    let after = fs::metadata(&target).map(|m| modified_ms(&m)).unwrap_or(0);
+    overwrite(&mut out, &with_bom(text, bom), |f, len| f.set_len(len)).map_err(failed)?;
+    let after = out.metadata().map(|m| modified_ms(&m)).unwrap_or(0);
     Ok(WriteResult { saved: true, modified_ms: after })
 }
 
@@ -408,6 +446,7 @@ pub(crate) mod remote {
     pub(crate) const READ_ONLY: i32 = 14;
     const EXISTS: i32 = 15;
     const IS_DIR: i32 = 16;
+    const CUT_SHORT: i32 = 17;
 
     /// Shared start of every script: `$1` is the path relative to the project (the working
     /// folder), already checked by [`remote_rel`]. Leaves the resolved path in `$t` and defines
@@ -548,15 +587,26 @@ exec cat "$t"
 "#
     );
 
-    /// `$2`: the modification time the file must still have (empty: any). Writes stdin over
-    /// the file and prints `saved <mtime>`, or leaves it alone and prints `stale <mtime>`.
+    /// `$2`: the modification time the file must still have (empty: any), `$3`: how many bytes
+    /// stdin brings. Writes them over the file and prints `saved <mtime>`, or leaves it alone and
+    /// prints `stale <mtime>`. The file is touched only once all of them arrived (a dropped connection
+    /// ends stdin early), and gets its old bytes back when writing fails.
     pub(super) const WRITE: &str = concat!(
         prelude!(),
         r#"[ -f "$t" ] || exit 13
 [ -w "$t" ] || exit 14
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+cat > "$tmp/new" || exit 1
+got=$(wc -c < "$tmp/new") || exit 1
+[ "$got" -eq "$3" ] || exit 17
+[ -f "$t" ] || exit 10
 mtime "$t"
 if [ -n "$2" ] && [ "$2" != "$m" ]; then printf 'stale %s\n' "$m"; exit 0; fi
-cat > "$t" || exit 1
+cat "$t" > "$tmp/old" || exit 1
+trap '' HUP INT TERM
+if ! cat "$tmp/new" > "$t"; then cat "$tmp/old" > "$t"; exit 1; fi
 mtime "$t"
 printf 'saved %s\n' "$m"
 "#
@@ -626,6 +676,7 @@ printf 'deleted\n'
             Some(NOT_DIR) => format!("{shown} is not a folder"),
             Some(NOT_FILE) => format!("{shown} is not a file"),
             Some(READ_ONLY) => format!("{shown} is read-only"),
+            Some(CUT_SHORT) => format!("Could not {verb} {shown}: the connection dropped before all of it arrived. Try again."),
             _ => out.error(&format!("Could not {verb} {shown}")),
         }
     }
@@ -784,7 +835,9 @@ printf 'deleted\n'
             return Err("The project folder is not a file".into());
         }
         let expected = expected_modified_ms.map(|m| m.to_string()).unwrap_or_default();
-        let out = run(env, WRITE, &[&rel, &expected], Some(with_bom(text, bom)), HEADER)?;
+        let bytes = with_bom(text, bom);
+        let len = bytes.len().to_string();
+        let out = run(env, WRITE, &[&rel, &expected, &len], Some(bytes), HEADER)?;
         if !out.ok() {
             return Err(failure(&out, &rel, "save"));
         }
@@ -944,6 +997,78 @@ pub async fn fs_delete_file(app: AppHandle, root: String, file: String) -> Resul
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn saves_in_place() {
+        let dir = scratch();
+        let root = path_of(&dir);
+        fs::write(dir.join("f.txt"), "first\r\nsecond\r\nthird\r\n").unwrap();
+        fs::hard_link(dir.join("f.txt"), dir.join("link.txt")).unwrap();
+        let mut expected = read_file(&root, "f.txt").unwrap().modified_ms;
+        // Shorter, longer, empty: no tail of the old text stays, and the time returned is the file's.
+        for text in ["short\r\n", "much longer than it was\r\nand more\r\n", "", "again"] {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let saved = write_file(&root, "f.txt", text, false, Some(expected)).unwrap();
+            assert!(saved.saved);
+            assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), text);
+            assert_eq!(fs::read_to_string(dir.join("link.txt")).unwrap(), text);
+            assert_eq!(read_file(&root, "f.txt").unwrap().modified_ms, saved.modified_ms);
+            expected = saved.modified_ms;
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saves_hidden_and_open_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const HIDDEN: u32 = 0x2;
+        const SHARE_READ_WRITE: u32 = 0x3;
+        let dir = scratch();
+        let root = path_of(&dir);
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true).attributes(HIDDEN);
+        opts.open(dir.join("hidden.txt")).unwrap().write_all(b"old").unwrap();
+        assert!(write_file(&root, "hidden.txt", "new", false, None).unwrap().saved);
+        // Another program has it open without letting it be renamed or replaced.
+        let _held = fs::OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE).open(dir.join("hidden.txt")).unwrap();
+        assert!(write_file(&root, "hidden.txt", "newer", false, None).unwrap().saved);
+        assert_eq!(fs::read_to_string(dir.join("hidden.txt")).unwrap(), "newer");
+        drop(_held);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn puts_the_old_bytes_back_when_a_save_fails() {
+        use std::io::Cursor;
+        let mut file = Cursor::new(b"the old text".to_vec());
+        let failed_once = std::cell::Cell::new(false);
+        let res = overwrite(&mut file, b"new", |f, len| {
+            if !failed_once.replace(true) {
+                return Err(std::io::Error::other("no space"));
+            }
+            f.get_mut().truncate(len as usize);
+            Ok(())
+        });
+        assert!(res.is_err());
+        assert_eq!(file.into_inner(), b"the old text");
+    }
+
+    #[test]
+    fn of_two_saves_expecting_the_same_time_one_wins() {
+        let dir = scratch();
+        let root = path_of(&dir);
+        fs::write(dir.join("f.txt"), "base").unwrap();
+        let expected = read_file(&root, "f.txt").unwrap().modified_ms;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let saved = std::thread::scope(|s| {
+            let a = s.spawn(|| write_file(&root, "f.txt", "from window a", false, Some(expected)).unwrap().saved);
+            let b = s.spawn(|| write_file(&root, "f.txt", "from window b", false, Some(expected)).unwrap().saved);
+            [a.join().unwrap(), b.join().unwrap()]
+        });
+        assert_eq!(saved.iter().filter(|s| **s).count(), 1);
+        fs::remove_dir_all(&dir).ok();
+    }
 
     fn path_of(p: &Path) -> String {
         p.to_string_lossy().into_owned()
@@ -1511,27 +1636,33 @@ mod tests {
             assert_eq!(code, Some(13));
 
             let stale = (mtime - 5000).to_string();
-            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &stale], b"nope");
+            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &stale, "4"], b"nope");
             assert_eq!(code, Some(0));
             let res = remote::parse_write(remote::body(&out).unwrap()).unwrap();
             assert!(!res.saved && res.modified_ms == mtime);
             assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}\n");
 
             let text = with_bom("hey \u{e9}", true);
-            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string()], &text);
+            // Cut short on the way: the file is left alone.
+            let len = text.len().to_string();
+            let (code, _) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string(), &len], &text[..3]);
+            assert_eq!(code, Some(17));
+            assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}\n");
+
+            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string(), &len], &text);
             assert_eq!(code, Some(0));
             assert!(remote::parse_write(remote::body(&out).unwrap()).unwrap().saved);
             assert_eq!(fs::read(root.join("src/main.rs")).unwrap(), text);
 
             // Without an expected time it always writes; it never creates a file.
-            let (code, _) = sh(&root, remote::WRITE, &["new.txt", ""], b"x");
+            let (code, _) = sh(&root, remote::WRITE, &["new.txt", "", "1"], b"x");
             assert_eq!(code, Some(10));
             assert!(!root.join("new.txt").exists());
 
             let mut perms = fs::metadata(root.join(".env")).unwrap().permissions();
             perms.set_readonly(true);
             fs::set_permissions(root.join(".env"), perms).unwrap();
-            let (code, _) = sh(&root, remote::WRITE, &[".env", ""], b"x");
+            let (code, _) = sh(&root, remote::WRITE, &[".env", "", "1"], b"x");
             // root ignores the write bit; everyone else is refused.
             assert!(code == Some(14) || code == Some(0));
             fs::remove_dir_all(&dir).ok();
