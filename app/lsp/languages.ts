@@ -19,6 +19,11 @@ export interface ServerProfile {
    * watch for themselves when a client does not offer to, and see more than Mango could.
    */
   clientWatches?: boolean
+  /**
+   * Its definitions may point into a compiled library, at an address whose decompiled source it gives
+   * on asking (csharp-ls: `csharp:/…` and `csharp/metadata`). It does so only for a client that says it can.
+   */
+  metadataUris?: boolean
 }
 
 export const PROFILES: Record<LspServerId, ServerProfile> = {
@@ -39,7 +44,7 @@ export const PROFILES: Record<LspServerId, ServerProfile> = {
   python: { settings: { python: {}, 'python.analysis': { diagnosticMode: 'openFilesOnly' } } },
   go: { clientWatches: true },
   clangd: {},
-  csharp: { clientWatches: true },
+  csharp: { clientWatches: true, metadataUris: true },
 }
 
 /** What Mango's editor can do, as `initialize` says it. */
@@ -82,5 +87,6 @@ export function clientCapabilities(profile: ServerProfile) {
       definition: { linkSupport: true },
       publishDiagnostics: { versionSupport: true, tagSupport: { valueSet: [1, 2] } },
     },
+    ...(profile.metadataUris ? { experimental: { csharp: { metadataUris: true } } } : {}),
   }
 }

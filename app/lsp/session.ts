@@ -110,6 +110,9 @@ export class Session {
 
   get ready() { return this.view.state === 'ready' }
 
+  /** Its definitions may point at decompiled library source (`ServerProfile.metadataUris`). */
+  get metadataUris() { return !!this.options.profile.metadataUris }
+
   private set(view: Partial<SessionView>) {
     this.view = { ...this.view, ...view }
     this.options.changed(this.view)

@@ -5,6 +5,7 @@ import { reloadModel } from '~/utils/reloadEdits'
 import { fileTabId, parseFileTab } from '~/utils/fileTabs'
 import { relativeTo } from '~/lsp/uri'
 import { linkRoute } from '~/lsp/builtins'
+import { decompiledInFolder, decompiledOfUri, openDecompiled } from '~/lsp/decompiled'
 import { ModelUris } from '~/lsp/modelUris'
 import { openExternal } from '~/composables/useBackend'
 import { languageFor, type MonacoApi } from '~/composables/monaco'
@@ -34,6 +35,10 @@ export function fileOfUri(uri: { scheme: string; path: string }): { project: str
 
 /** Monaco's label for a URI, in a peek's header and lists: a model's path inside its project. */
 export function uriLabel(uri: { scheme: string; path: string; fsPath: string }): string {
+  const library = decompiledOfUri(uri)
+  if (library) return library.assembly ? `${library.symbol} (decompiled from ${library.assembly})` : `${library.symbol} (decompiled)`
+  const folder = decompiledInFolder(uri)
+  if (folder) return folder.assembly ? `decompiled from ${folder.assembly}` : 'decompiled'
   return fileOfUri(uri)?.file ?? (uri.scheme === 'file' ? uri.fsPath : uri.path)
 }
 
@@ -163,7 +168,10 @@ export function openAt(project: string, file: string, at: { lineNumber: number; 
   files.revealLine(id, at.lineNumber)
 }
 
-/** Jumps and links out of the editor: to a tab inside the project, the browser for the web, nowhere else. */
+/**
+ * Jumps and links out of the editor: to a tab inside the project (or a library's decompiled source
+ * the project's server gave), the browser for the web, nowhere else.
+ */
 export function routeEditorLinks(monaco: MonacoApi) {
   monaco.editor.registerEditorOpener({
     openCodeEditor(source, resource, where) {
@@ -175,6 +183,14 @@ export function routeEditorLinks(monaco: MonacoApi) {
       const at = !where
         ? { lineNumber: 1, column: 1 }
         : 'startLineNumber' in where ? { lineNumber: where.startLineNumber, column: where.startColumn } : { lineNumber: where.lineNumber, column: where.column }
+      // A library's decompiled source, for the folder that asked for it.
+      const library = decompiledOfUri(resource)
+      if (library) {
+        if (library.project !== project) return false
+        if (from) useFiles().pin(from)
+        openDecompiled(library, at)
+        return true
+      }
       const target = monaco.editor.getModel(resource)
       const tab = parseFileTab(target ? tabOfModel(target) : null)
       let to = tab ? { project: tab.projectPath, file: tab.file } : fileOfUri(resource)
