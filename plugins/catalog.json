@@ -91,6 +91,19 @@
       "source": { "url": "https://github.com/ReaperMaga/mango", "ref": null, "subpath": "plugins/copy-as-markdown" },
       "minAppVersion": "0.1.36",
       "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/copy-as-markdown"
+    },
+    {
+      "id": "unity",
+      "name": "Unity",
+      "description": "Unity projects in Mango: asset icons, hidden .meta files that follow their assets, project details and reference search.",
+      "author": "Mango",
+      "version": "1.0.0",
+      "tags": ["unity", "files", "tools"],
+      "official": true,
+      "icon": "box",
+      "source": { "url": "https://github.com/ReaperMaga/mango", "ref": null, "subpath": "plugins/unity" },
+      "minAppVersion": "0.1.41",
+      "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/unity"
     }
   ]
 }

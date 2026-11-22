@@ -170,6 +170,13 @@ function fakeApi(id: string) {
       codeBlocks: { register: reg('codeBlocks') },
     },
     ui: {
+      files: {
+        filters: { register: reg('fileFilters'), isShown: () => false, setShown() {} },
+        companions: { register: reg('fileCompanions') },
+        icons: { register: reg('fileIcons') },
+        languages: { register: reg('fileLanguages') },
+        reveal: async () => {},
+      },
       toolWindows: { register: reg('toolWindows'), open() {}, close() {} },
       panelTabs: { register: reg('panelTabs'), open() {} },
       tabs: { register: reg('tabs'), open() {} },
@@ -183,7 +190,7 @@ function fakeApi(id: string) {
       activeProject: () => '/home/me/project', openProjects: () => ['/home/me/project'], workdir: () => '/home/me/project',
       onProjectChange: reg('projectChange'), openFile() {}, openBrowser() {}, openTerminal() {},
     },
-    files: { read: async () => '', write: async () => {}, list: async () => [] },
+    files: { read: async () => '', write: async () => {}, list: async () => [], onChange: reg('filesChange') },
     git: { status: async () => null, refresh: async () => {} },
     agents: { registerMcpServer: reg('mcp'), appendSystemPrompt: reg('systemPrompt') },
     settings: { get: (k: string) => settings[k], set: (k: string, v: unknown) => { settings[k] = v }, all: () => ({ ...settings }), onChange: reg('settingsChange') },
@@ -204,6 +211,7 @@ const expected: Record<string, string[]> = {
   'csv-preview': ['codeBlocks'],
   'turn-chime': ['turnEnd', 'commands'],
   'copy-as-markdown': ['messageActions', 'menus', 'commands'],
+  'unity': ['fileFilters', 'fileCompanions', 'fileIcons', 'fileLanguages', 'toolWindows', 'statusItems', 'menus', 'commands', 'systemPrompt', 'turnEnd'],
 }
 
 test('every entry module exports activate, which registers what the plugin is for', async () => {
