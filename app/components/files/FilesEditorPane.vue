@@ -100,6 +100,15 @@ function syncDirty() {
   files.setDirty(shownTab, entry.model.getAlternativeVersionId() !== entry.savedVersion)
 }
 
+/**
+ * A field has the keyboard (a name in the Files tree, the commit message). An editor can arrive seconds
+ * after it was asked for: what is being typed would end up in its file.
+ */
+function typingElsewhere() {
+  const el = document.activeElement
+  return !!el?.matches('input, textarea, [contenteditable="true"]') && !el.closest('.monaco-editor')
+}
+
 /** Put the current tab's model in the editor, keeping the previous one's scroll and cursor. */
 function show() {
   if (!editor || !monaco) return
@@ -118,7 +127,7 @@ function show() {
     void loadBase()
     revealAsked()
     // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
-    if (props.active && !svgPreview.value) editor.focus()
+    if (props.active && !svgPreview.value && !files.deleting.length && !typingElsewhere()) editor.focus()
   }
 }
 
@@ -198,7 +207,8 @@ watch(() => [props.tabId, editable.value, file.value?.version] as const, () => {
   else show()
 })
 
-watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value) editor.focus() })
+// Not for a pane that comes forward because a file was deleted: the next Delete would edit this one.
+watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value && !files.deleting.length) editor.focus() })
 
 /* ---------- change markers ---------- */
 
