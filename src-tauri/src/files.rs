@@ -1478,7 +1478,6 @@ mod tests {
     #[cfg(unix)]
     mod remote_scripts {
         use super::*;
-        use std::io::Write as _;
         use std::process::{Command, Stdio};
 
         fn sh(root: &Path, script: &str, args: &[&str], stdin: &[u8]) -> (Option<i32>, Vec<u8>) {
