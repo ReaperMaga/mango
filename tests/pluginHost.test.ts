@@ -7,12 +7,19 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { DisposableScope, once } from '../app/plugin-host/scope.ts'
-import { compareVersions, incompatibility, parseVersion } from '../app/plugin-host/semver.ts'
+import { compareVersions, devVersion, incompatibility, parseVersion } from '../app/plugin-host/semver.ts'
 import {
   effectiveScheme, fullId, isPanelEditorTab, isPanelTabRef, isPluginRef, isPluginTab, normalizePanelOrder, normalizePanelPlaces,
   panelEditorTabId, panelStrip, parsePanelEditorTab, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations,
 } from '../app/plugin-host/ids.ts'
 import { capped, emitAll, logText, parseSlash, runBeforeSend } from '../app/plugin-host/hooks.ts'
+
+test('a dev build runs plugins written for the next release, no further', () => {
+  assert.equal(devVersion('0.1.40'), '0.1.41')
+  assert.equal(incompatibility(devVersion('0.1.40'), '0.1.41'), null)
+  assert.ok(incompatibility(devVersion('0.1.40'), '0.2.0'))
+  assert.ok(incompatibility('0.1.40', '0.1.41'))
+})
 
 /* ---------- disposal */
 

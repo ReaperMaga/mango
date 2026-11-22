@@ -346,15 +346,16 @@ mango.ui.tabs.register({
 mango.ui.tabs.open('report', { title: 'Report', key: 'weekly', state: { week: 47 } })  // same key: focus the open tab
 ```
 
-**Status items** are small text-and-icon buttons in the titlebar or the sidebar foot. Text, icon and tooltip may be
-getters, so they update by themselves:
+**Status items** are small text-and-icon buttons in the titlebar or the sidebar foot. Location `project` (since
+0.1.41) is beside the project and branch, for what kind of project it is; in a narrow window it keeps only the icon,
+so give it one. Text, icon and tooltip may be getters, so they update by themselves:
 
 ```js
 const { ref } = mango.vue
 const left = ref(25 * 60)
 mango.ui.statusItems.register({
   id: 'timer',
-  location: 'titlebar',   // or 'sidebar'
+  location: 'titlebar',   // or 'project', 'sidebar'
   icon: 'timer',
   text: () => `${Math.floor(left.value / 60)}:${String(left.value % 60).padStart(2, '0')}`,
   tooltip: () => 'Click to pause',
@@ -385,6 +386,51 @@ mango.ui.menus.register('file', {
   run: async ({ path }) => mango.ui.toast({ title: `${(await mango.files.read(path)).split('\n').length} lines` }),
 })
 ```
+
+**Project files** (`ui.files`, since 0.1.41) shape the Files view, file tabs and the editor. The callbacks run for every
+row, so keep them quick and synchronous; read what they need beforehand into a `ref` and they follow it. One that
+throws is logged once and counts as no answer.
+
+```js
+// A checkbox under View options > Show, off at first: what it hides shows when the user ticks it.
+mango.ui.files.filters.register({
+  id: 'meta',
+  label: 'Unity .meta files',
+  when: ({ projectPath }) => isUnity(projectPath),   // which projects list it
+  hide: ({ path, name, isDir, hasSibling }) => name.endsWith('.meta') && hasSibling(name.slice(0, -5)),
+})
+
+// A file that goes with another (`Player.cs` and `Player.cs.meta`).
+mango.ui.files.companions.register({
+  id: 'meta',
+  suffix: '.meta',
+  when: ({ projectPath, path }) => isUnity(projectPath) && path.startsWith('Assets/'),
+})
+
+// The first provider with an answer wins, then Mango's own icons.
+mango.ui.files.icons.register({
+  id: 'types',
+  icon: ({ name, isDir, open }) => name.endsWith('.prefab') ? { icon: PREFAB_SVG, tint: 'blue', note: 'Prefab' } : null,
+})
+
+// For extensions Monaco does not know.
+mango.ui.files.languages.register({ id: 'yaml', extensions: ['.prefab', '.unity'], language: 'yaml' })
+
+mango.ui.files.filters.isShown('meta')
+mango.ui.files.filters.setShown('meta', true)
+await mango.ui.files.reveal('/path/in/project/Assets/Main.unity')   // opens Files at it
+```
+
+- `path` is relative to `projectPath` and has forward slashes on every system.
+- `hasSibling(name, ignoreCase?)` says whether the same folder has a name. In a folder too big to read whole a filter gets `false` and
+  an icon provider gets no `hasSibling`: never report something as missing then.
+- A companion is renamed and deleted with its entry (a rename moves all or none) and is not copied by Duplicate. While
+  hidden, its git change shows on the entry. If you hide companions, hide only those whose `when` is true, or a
+  hidden file is left behind.
+- A companion's `when` returns `null` while it does not know yet (still reading the project): rename and delete are
+  then refused instead of leaving the companion behind. A throw refuses them too.
+- Tints are Mango's file-type colours (`blue`, `yellow`, `orange`, `green`, `purple`, `red`, `neutral`). Return the
+  same icon value each time; SVG markup draws at once, a lucide name is looked up first.
 
 **Messages and dialogs:**
 
@@ -447,6 +493,9 @@ mango.workspace.openTerminal({ cwd, command: 'pnpm test' })
 await mango.files.read(path)                 // text; paths are absolute and inside an open project
 await mango.files.write(path, content)       // creates the file when it is not there
 await mango.files.list(dir)                  // [{ name, path, isDir }]
+await mango.files.list(dir, { children: true })  // since 0.1.41: some subfolders come with their `children`, in one call
+
+mango.files.onChange(projectPath => {})      // since 0.1.41: files may have changed (Files view, agent turn, branch or commit)
 
 await mango.git.status(path)                 // the working copy's status, or null outside version control
 await mango.git.refresh(path)                // after changing files, so the Changes view catches up
@@ -467,7 +516,13 @@ mango.agents.registerMcpServer({
 
 // Text appended to every run's system prompt (Claude Code --append-system-prompt, Codex instructions).
 mango.agents.appendSystemPrompt(() => `Today is ${new Date().toDateString()}.`)
+
+// Since 0.1.41 the function gets the run: '' adds nothing to it.
+mango.agents.appendSystemPrompt(({ threadId, agent, projectPath, workdir }) => isUnity(workdir) ? UNITY_RULES : '')
 ```
+
+Keep the text to one line: a CLI installed as a Windows batch file (`claude.cmd`) refuses arguments with line breaks,
+and the run does not start.
 
 ### Settings and storage
 
@@ -665,7 +720,8 @@ A plugin is published by pushing its folder to a git repository (its own, or a f
 install it with the repository URL and, if needed, the folder.
 
 - Bump `version` in the manifest for every release: Mango offers updates by commit, but shows the version.
-- Set `minAppVersion` to the oldest Mango you tested with.
+- Set `minAppVersion` to the oldest Mango you tested with. (`pnpm dev` and `pnpm app` count as the next patch release,
+  so a plugin for an API that is not released yet runs there.)
 - Ship the built `main.js` in the repository (Mango does not build plugins), and a README that says what the plugin
   does, which settings it has, and what it reaches outside the API (network, escape hatches).
 

@@ -8,7 +8,10 @@ import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
-import { fileIcon } from '~/utils/fileIcons'
+import { fileLook } from '~/plugin-host/fileHooks'
+import { tabProject } from '~/utils/fileTabs'
+import { parseEnvPath } from '~/utils/envPath'
+import { nameOf } from '~/utils/fileOps'
 import { useFiles } from '~/stores/files'
 import { browserTitle, useBrowser, type Browser } from '~/stores/browser'
 import { isBrowserTab, isBlank } from '~/utils/browserTabs'
@@ -326,6 +329,23 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   )
   return items
 })
+
+/** A diff tab's file is relative to the repository, which the project may be a folder of. */
+function inProjectPath(project: string, file: string) {
+  const root = git.status(project)?.root
+  if (!root) return file
+  const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+  const [top, at] = [norm(root), norm(parseEnvPath(project)?.dir ?? project)]
+  const prefix = at.startsWith(top + '/') ? at.slice(top.length + 1) + '/' : ''
+  return prefix && file.startsWith(prefix) ? file.slice(prefix.length) : file
+}
+
+/** A file or diff tab's icon and tint: what the Files view gives that file. */
+function lookOf(t: { id: string, kind: string, file: string }) {
+  const projectPath = tabProject(t.id) ?? ''
+  const path = t.kind === 'diff' ? inProjectPath(projectPath, t.file) : t.file
+  return fileLook({ projectPath, path, name: nameOf(path), isDir: false, open: false })
+}
 </script>
 
 <template>
@@ -381,7 +401,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
               </template>
               <template v-else-if="t.kind === 'diff'">
-                <FileDiff class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
+                <FileDiff class="ca__tab-icon" :style="{ color: lookOf(t).tint ?? undefined }" aria-hidden="true" />
                 <span class="ca__tab-title">{{ t.title }}</span>
                 <span v-if="t.staged" class="ca__tab-note">staged</span>
               </template>
@@ -405,7 +425,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
                 <span v-if="t.browser.threadId" class="ca__tab-note">agent</span>
               </template>
               <template v-else>
-                <component :is="fileIcon(t.title).icon" class="ca__tab-icon" :style="{ color: fileIcon(t.title).tint }" aria-hidden="true" />
+                <component :is="lookOf(t).icon" class="ca__tab-icon" :style="{ color: lookOf(t).tint ?? undefined }" aria-hidden="true" />
                 <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
               </template>
               <button

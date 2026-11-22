@@ -1,0 +1,27 @@
+{
+  "id": "unity",
+  "name": "Unity",
+  "version": "1.0.0",
+  "description": "Unity projects in Mango: asset icons, hidden .meta files that follow their assets, project details and reference search.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/unity",
+  "main": "main.js",
+  "styles": "styles.css",
+  "minAppVersion": "0.1.41",
+  "settings": [
+    {
+      "key": "icons",
+      "type": "boolean",
+      "label": "Unity file icons",
+      "description": "Icons for scenes, prefabs, materials and other Unity files in Files and on tabs.",
+      "default": true
+    },
+    {
+      "key": "agentNote",
+      "type": "boolean",
+      "label": "Tell agents about Unity",
+      "description": "Adds one line to agent runs in Unity projects: keep .meta files with their assets, leave generated files alone.",
+      "default": true
+    }
+  ]
+}

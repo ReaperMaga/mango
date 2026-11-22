@@ -34,6 +34,15 @@ export function compareVersions(a: string, b: string): number | null {
 }
 
 /**
+ * What a dev build counts as: the working tree is ahead of the release it names, and carries the
+ * plugins written for the next one (`plugins/`).
+ */
+export function devVersion(version: string): string {
+  const v = parseVersion(version)
+  return v ? `${v.major}.${v.minor}.${v.patch + 1}` : version
+}
+
+/**
  * Why a plugin cannot run on this app version, or null when it can (or names no minimum).
  * The app's own pre-release counts as its release (a dev build of the version it names).
  */

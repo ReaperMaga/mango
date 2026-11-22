@@ -228,8 +228,11 @@ export interface PluginTabView {
 
 export interface PluginStatusItem {
   id: string
-  /** `titlebar`: right side of the titlebar. `sidebar`: the sidebar foot, above account and settings. */
-  location: 'titlebar' | 'sidebar'
+  /**
+   * `project` (since 0.1.41): in the titlebar after the project and its branch, for what kind of project it is.
+   * `titlebar`: right side of the titlebar. `sidebar`: the sidebar foot, above account and settings.
+   */
+  location: 'project' | 'titlebar' | 'sidebar'
   text?: Reactive<string>
   icon?: Reactive<PluginIcon | undefined>
   tooltip?: Reactive<string>
@@ -270,7 +273,99 @@ export interface ToastOptions {
   action?: { label: string; run(): void }
 }
 
+/* ---------- project files: the Files view, file tabs, the editor */
+
+export interface FileEntryContext {
+  /** The folder in view (a project, or a chat's worktree). */
+  projectPath: string
+  /** Relative to `projectPath`, with forward slashes on every system. */
+  path: string
+  name: string
+  isDir: boolean
+}
+
+export interface FileFilterContext extends FileEntryContext {
+  /** Whether the same folder has an entry of this name (false where the folder was not read whole). */
+  hasSibling(name: string, ignoreCase?: boolean): boolean
+}
+
+/**
+ * Entries the Files view hides until the user asks for them: each filter is a checkbox under
+ * View options > Show, off at first and remembered. A file asked for by name ("Show in Files") shows anyway.
+ */
+export interface PluginFileFilter {
+  id: string
+  /** What the checkbox shows, e.g. `Unity .meta files`. */
+  label: string
+  hint?: string
+  /** The projects that have it; all when omitted. */
+  when?: (ctx: { projectPath: string }) => boolean
+  /** Called for every row, often: keep it quick. A throw shows the entry. */
+  hide(ctx: FileFilterContext): boolean
+}
+
+/**
+ * A file that goes with another: the entry's name plus `suffix`, beside it (Unity's `Player.cs.meta`).
+ * Renaming or deleting the entry in the Files view takes it along; duplicating leaves it behind. While
+ * it is hidden its git change shows on the entry.
+ */
+export interface PluginFileCompanion {
+  id: string
+  /** `.meta`: starts with a dot, up to 32 characters. */
+  suffix: string
+  /**
+   * The entries that have one. Null: not known yet, so renaming or deleting the entry waits (it is
+   * refused with "try again"); a throw refuses them too.
+   */
+  when(ctx: FileEntryContext): boolean | null
+}
+
+/** Mango's file-type colours; `neutral` is the plain ink. */
+export type FileTint = 'blue' | 'yellow' | 'orange' | 'green' | 'purple' | 'red' | 'neutral'
+
+export interface FileIconContext extends FileEntryContext {
+  /** An open folder. */
+  open: boolean
+  /** Only in the Files view, and only where the whole folder was read. */
+  hasSibling?: (name: string, ignoreCase?: boolean) => boolean
+}
+
+/** Icons in the Files view and on file tabs. The first provider with an answer wins, then Mango's own. */
+export interface PluginFileIconProvider {
+  id: string
+  /**
+   * Called for every row, often: keep it quick. `note` joins the row's tooltip. Return the same icon value
+   * each time (SVG markup draws at once; a lucide name is looked up first).
+   */
+  icon(ctx: FileIconContext): { icon: PluginIcon; tint?: FileTint; note?: string } | null | undefined
+}
+
+/** An editor language for extensions Monaco does not know (`.prefab` is YAML). */
+export interface PluginFileLanguage {
+  id: string
+  /** With the dot: `['.prefab', '.unity']`. */
+  extensions: string[]
+  /** A Monaco language id: `yaml`, `xml`, `hlsl`… */
+  language: string
+}
+
+export interface PluginFilesUiApi {
+  filters: {
+    register(filter: PluginFileFilter): Disposable
+    /** Whether the user shows what this plugin's filter hides. */
+    isShown(id: string): boolean
+    setShown(id: string, shown: boolean): void
+  }
+  companions: { register(companion: PluginFileCompanion): Disposable }
+  icons: { register(provider: PluginFileIconProvider): Disposable }
+  languages: { register(language: PluginFileLanguage): Disposable }
+  /** Open the Files tool window at a path of an open project. */
+  reveal(path: string): Promise<void>
+}
+
 export interface PluginUiApi {
+  /** Since 0.1.41. */
+  files: PluginFilesUiApi
   toolWindows: {
     register(win: PluginToolWindow): Disposable
     open(id: string): void
@@ -348,7 +443,25 @@ export interface PluginFilesApi {
   /** Paths are absolute, inside an open project (remote `env://` projects work too). */
   read(path: string): Promise<string>
   write(path: string, content: string): Promise<void>
-  list(dir: string): Promise<Array<{ name: string; path: string; isDir: boolean }>>
+  /**
+   * Since 0.1.41. A folder's files may have changed: the Files view or a plugin changed them, an agent's
+   * turn ended, or the working copy in view moved to another branch or commit.
+   */
+  onChange(handler: (projectPath: string) => void): Disposable
+  list(dir: string, opts?: {
+    /**
+     * Since 0.1.41. Read subfolders in the same call (one round trip for a remote project): those that
+     * came along have `children`. Only some do (24 folders, 2000 entries, none that git ignores).
+     */
+    children?: boolean
+  }): Promise<PluginDirEntry[]>
+}
+
+export interface PluginDirEntry {
+  name: string
+  path: string
+  isDir: boolean
+  children?: PluginDirEntry[]
 }
 
 export interface PluginGitApi {
@@ -373,8 +486,20 @@ export interface PluginMcpServer {
 
 export interface PluginAgentsApi {
   registerMcpServer(server: PluginMcpServer): Disposable
-  /** Text appended to the system prompt of every run (Claude `--append-system-prompt`, Codex instructions). */
-  appendSystemPrompt(text: Reactive<string>): Disposable
+  /**
+   * Text appended to the system prompt of every run (Claude `--append-system-prompt`, Codex instructions).
+   * A function gets the run (since 0.1.41) and returns '' to add nothing to it. Keep it to one line: a
+   * CLI installed as a Windows batch file refuses arguments with line breaks.
+   */
+  appendSystemPrompt(text: string | ((run: AgentRunContext) => string)): Disposable
+}
+
+export interface AgentRunContext {
+  threadId: string
+  agent: AgentId
+  projectPath: string
+  /** Where the agent works: the chat's worktree, else the project. */
+  workdir: string
 }
 
 /* ---------------------------------------------------------------- data */

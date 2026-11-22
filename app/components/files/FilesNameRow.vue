@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { File, Folder } from 'lucide-vue-next'
-import { fileIcon } from '~/utils/fileIcons'
-import { stemEnd } from '~/utils/fileOps'
+import { fileLook } from '~/plugin-host/fileHooks'
+import { pathIn, stemEnd } from '~/utils/fileOps'
 
 /**
  * A name being typed in the Files tree, for a new entry or a rename. Enter or leaving the field
@@ -11,6 +11,9 @@ const props = defineProps<{
   /** The name to start from; empty for a new entry. */
   initial: string
   isDir: boolean
+  /** The project and the folder the name is in. */
+  project: string
+  dir: string
   depth: number
   /** The folders that share the row before the name (compact folders), with their trailing slash. */
   prefix: string
@@ -28,7 +31,12 @@ const value = ref(props.initial)
 const input = ref<HTMLInputElement | null>(null)
 const errorId = useId()
 
-const icon = computed(() => (props.isDir ? Folder : value.value ? fileIcon(value.value).icon : File))
+const icon = computed(() => {
+  const name = value.value
+  if (!name) return props.isDir ? Folder : File
+  const look = fileLook({ projectPath: props.project, path: pathIn(props.dir, name), name, isDir: props.isDir, open: false })
+  return look.icon ?? Folder
+})
 
 onMounted(() => nextTick(() => {
   const el = input.value

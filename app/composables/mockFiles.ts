@@ -41,6 +41,61 @@ const SEED: Record<string, string | null> = {
   '.nuxt/nuxt.d.ts': '/// <reference types="nuxt" />\n',
 }
 
+const metaText = (guid: number) => `fileFormatVersion: 2\nguid: ${guid.toString(16).padStart(32, '0')}\n`
+
+/** The `fruit-stand` project: a Unity project (see mockGit.ts), with one .meta that lost its asset and one asset without. */
+const UNITY_SEED: Record<string, string | null> = (() => {
+  const files: Record<string, string | null> = {
+    'Assets/Scenes/Farm.unity': '%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!1 &100\nGameObject:\n  m_Name: Well\n',
+    'Assets/Scenes/Menu.unity': '%YAML 1.1\n--- !u!1 &100\nGameObject:\n  m_Name: Menu\n',
+    'Assets/Prefabs/Crate.prefab': `%YAML 1.1\n--- !u!23 &200\nMeshRenderer:\n  m_Materials:\n  - {fileID: 2100000, guid: ${(1).toString(16).padStart(32, '0')}, type: 2}\n`,
+    'Assets/Materials/Wood.mat': '%YAML 1.1\n--- !u!21 &2100000\nMaterial:\n  m_Name: Wood\n',
+    'Assets/Scripts/Inventory/InventoryGrid.cs': 'using UnityEngine;\n\npublic class InventoryGrid : MonoBehaviour\n{\n}\n',
+    'Assets/Scripts/FruitStand.asmdef': '{\n  "name": "FruitStand"\n}\n',
+    'Assets/Editor/CropBaker.cs': 'using UnityEditor;\n',
+    'Assets/Resources/Crops.asset': '%YAML 1.1\n--- !u!114 &11400000\nMonoBehaviour:\n  m_Name: Crops\n',
+    'Assets/Plugins/Native.dll': null,
+    'Assets/StreamingAssets/levels.json': '{}\n',
+    'Assets/Art/Crate.fbx': null,
+    'Assets/Art/Crate.png': null,
+    'Assets/Art/Leaves.shadergraph': '{}\n',
+    'Assets/Art/Water.shader': 'Shader "Fruit/Water"\n{\n}\n',
+    'Assets/Art/Pickup.vfx': '%YAML 1.1\n',
+    'Assets/Animation/Walk.anim': '%YAML 1.1\n',
+    'Assets/Animation/Farmer.controller': '%YAML 1.1\n',
+    'Assets/Audio/Birds.wav': null,
+    'Assets/Audio/Main.mixer': '%YAML 1.1\n',
+    'Assets/UI/Hud.uxml': '<UXML />\n',
+    'Assets/UI/Hud.uss': '.hud {\n  flex-grow: 1;\n}\n',
+    'Assets/UI/Controls.inputactions': '{}\n',
+    'Assets/UI/Inter.ttf': null,
+  }
+  // Every entry and folder below Assets has its .meta; the first gets guid 1, the crate's reference.
+  const entries = new Set<string>(['Assets/Materials/Wood.mat'])
+  for (const path of Object.keys(files)) {
+    const parts = path.split('/')
+    for (let i = 2; i <= parts.length; i++) entries.add(parts.slice(0, i).join('/'))
+  }
+  ;[...entries].forEach((path, i) => { files[`${path}.meta`] = metaText(i + 1) })
+  return {
+    ...files,
+    'Assets/Scripts/OldShop.cs.meta': metaText(900),
+    'Assets/Scripts/NewShop.cs': 'public class NewShop {}\n',
+    'Packages/manifest.json': '{\n  "dependencies": {\n    "com.unity.inputsystem": "1.20.0",\n    "com.unity.render-pipelines.universal": "17.5.0",\n    "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git"\n  }\n}\n',
+    'ProjectSettings/ProjectVersion.txt': 'm_EditorVersion: 6000.5.8f1\n',
+    'ProjectSettings/ProjectSettings.asset': 'PlayerSettings:\n  companyName: Orchard Studio\n  productName: Fruit Stand\n  bundleVersion: 0.3.0\n  activeInputHandler: 1\n',
+    'ProjectSettings/GraphicsSettings.asset': 'GraphicsSettings:\n  m_CustomRenderPipeline: {fileID: 11400000, guid: 000000000000000000000000000000aa, type: 2}\n',
+    'ProjectSettings/EditorBuildSettings.asset': 'EditorBuildSettings:\n  m_Scenes:\n  - enabled: 1\n    path: Assets/Scenes/Farm.unity\n  - enabled: 0\n    path: Assets/Scenes/Menu.unity\n',
+    'Library/ArtifactDB': null,
+    'Temp/UnityLockfile': null,
+    'Assembly-CSharp.csproj': '<Project />\n',
+    'fruit-stand.sln': '\n',
+    'README.md': '# Fruit Stand\n',
+  }
+})()
+
+const seedOf = (root: string) => (/(^|\/)fruit-stand(\/|$)/.test(root) ? UNITY_SEED : SEED)
+
 const projects = new Map<string, Map<string, MockFile>>()
 /** Folders that exist without a file in them: made here, or emptied here. */
 const folders = new Map<string, Set<string>>()
@@ -56,7 +111,7 @@ function filesOf(root: string) {
   if (!files) {
     files = new Map()
     let i = 0
-    for (const [path, text] of Object.entries(SEED)) {
+    for (const [path, text] of Object.entries(seedOf(root))) {
       files.set(path, { text, modifiedMs: Date.now() - (++i * 7 + 3) * MIN, size: text === null ? 184_320 : undefined })
     }
     projects.set(root, files)

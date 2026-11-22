@@ -71,6 +71,11 @@ and log. A plugin is trusted code with the same rights as Mango, so install only
 
 The official plugins are in [`plugins/`](plugins/). Writing one: [docs/plugins.md](docs/plugins.md).
 
+For Unity projects there is the official [Unity plugin](plugins/unity/): it recognises them and marks them in the
+titlebar, hides `.meta` and generated files in Files (View options shows them), keeps each `.meta` with its asset when
+you rename or delete there, gives Unity's files their icons and highlighting, and adds a Unity tool window with the
+project's details, a `.meta` check and a reference search.
+
 ## Run it
 
 ```bash

@@ -19,6 +19,7 @@ How to write a plugin is in [docs/plugins.md](../docs/plugins.md).
 | [csv-preview](csv-preview/) | csv and tsv blocks in replies as tables | code block renderers, styles |
 | [turn-chime](turn-chime/) | A chime when an agent finishes | `onTurnEnd`, WebAudio |
 | [copy-as-markdown](copy-as-markdown/) | Copy a reply or a chat as Markdown | message actions, menus |
+| [unity](unity/) | Unity projects: hidden `.meta` files that follow their assets, icons, project details, checks | `ui.files`, project status item, `appendSystemPrompt` |
 
 The official plugins are plain JavaScript with no build step. `pnpm test` checks them and the catalog
 (`tests/officialPlugins.test.ts`). In `pnpm dev` the mock backend serves them straight from this folder.

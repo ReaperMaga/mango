@@ -9,6 +9,7 @@ import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
@@ -927,6 +928,14 @@ export const useWorkspace = defineStore('workspace', {
     setFilesView(patch: Partial<FilesView>) {
       this.filesView = { ...this.filesView, ...patch }
       this.persist()
+    },
+    /** Show or hide what a plugin's file filter covers. Hiding is meant: a file that only showed because it was asked for goes too. */
+    setFileFilterShown(id: string, shown: boolean) {
+      const rest = this.filesView.shown.filter(x => x !== id)
+      if (!shown) {
+        for (const tree of Object.values(useFiles().trees)) tree.revealed = null
+      }
+      this.setFilesView({ shown: shown ? [...rest, id] : rest })
     },
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {

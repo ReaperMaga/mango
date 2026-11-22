@@ -8,6 +8,7 @@ import { parseFileTab } from '~/utils/fileTabs'
 import { editorModel, setEditorModel, type EditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
+import { pluginLanguage } from '~/plugin-host/fileHooks'
 import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
 import { changeMarkers, type ChangeMarkers } from '~/composables/changeMarkers'
 import { useGit } from '~/stores/git'
@@ -93,6 +94,12 @@ function modelFor(tabId: string): Monaco.editor.ITextModel | null {
   if (entry.model.getLanguageId() !== language) monaco.editor.setModelLanguage(entry.model, language)
   return entry.model
 }
+
+/* A plugin gave this kind of file a language (or took it back): plugins start after the tabs are back. */
+watch(() => (tab.value ? pluginLanguage(tab.value.file) : null), () => {
+  const model = editorModel(props.tabId)?.model
+  if (monaco && tab.value && model && !model.isDisposed()) monaco.editor.setModelLanguage(model, languageFor(monaco, tab.value.file))
+})
 
 function syncDirty() {
   const entry = shownTab ? editorModel(shownTab) : null

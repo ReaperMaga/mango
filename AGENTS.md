@@ -77,7 +77,7 @@ app/
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
                      plugins.ts (installed plugins, the catalog, each plugin's settings values)
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
-                     registry.ts (everything plugins registered), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
+                     registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
@@ -173,6 +173,9 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   Everything a plugin registers goes through its scope and is undone when it stops; a plugin's error is caught, logged to it, and never
   breaks the app. Git sources pass `validate.rs` (URL, ref, subpath) before reaching git, and a plugin's files are read only from inside its
   folder. An official plugin is a folder in `plugins/` plus its entry in `plugins/catalog.json` (`tests/officialPlugins.test.ts` checks them).
+- Plugins' file hooks (`ui.files`, `plugin-host/fileHooks.ts`) run per row inside computeds: call them only through
+  that file, which guards them and reports outside the computed. A companion (Unity's `.meta`) must never be separated
+  from its entry: whatever in Mango renames or deletes project entries goes through `stores/files.ts` (`renameEntry`, `companionPaths` + `deleteEntry`), which uses `utils/companions.ts`.
 - User MCP servers (Settings > MCP servers, `stores/mcp.ts`, `utils/mcpServers.ts`): each run gets the enabled ones for its agent
   and project (`mcpServersForRun`; a remote project only its own), and `agents/mcp.ts` turns them into the CLI's arguments.
   Their env values and headers are secrets: never log them or put them on the command line; they go into the CLI's

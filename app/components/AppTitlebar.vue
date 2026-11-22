@@ -240,6 +240,7 @@ const branchTitle = computed(() => {
           </button>
         </template>
       </GitBranchPopup>
+      <PluginStatusItems location="project" />
     </div>
 
     <div class="tb__center" data-tauri-drag-region>

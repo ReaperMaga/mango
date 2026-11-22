@@ -3,7 +3,7 @@ import {
   ChevronRight, ChevronsDownUp, Copy, CopyPlus, EllipsisVertical, FilePlus, FileX, Folder, FolderOpen, FolderPlus, FolderSearch, FolderX,
   LocateFixed, Pencil, RefreshCw, SquareTerminal, Trash2, Undo2,
 } from 'lucide-vue-next'
-import { fileIcon } from '~/utils/fileIcons'
+import { companionSuffixes, fileFilters, fileLook, hiddenRule, type FileLook } from '~/plugin-host/fileHooks'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
@@ -14,7 +14,7 @@ import { sepOf, withTrailingSep } from '~/utils/paths'
 import { copyText } from '~/utils/clipboard'
 import { nameOf, parentOf } from '~/utils/fileOps'
 import { fileManagerName, useFileActions, type NameEdit } from '~/composables/useFileActions'
-import { excludedPathsOf, layoutTree, type FilesView, type TreeEntry, type TreeNote } from '~/utils/fileTree'
+import { companionChange, excludedPathsOf, layoutTree, siblingLookup, type FilesView, type TreeEntry, type TreeNote } from '~/utils/fileTree'
 import type { MenuItem } from '~/types/ui'
 import { pluginMenuItems } from '~/plugin-host/menus'
 
@@ -82,7 +82,8 @@ const decorations = computed(() => {
 
 /* ---------- visible rows ---------- */
 
-type EntryRow = TreeEntry & { kind: Kind | null }
+/** `via`: the hidden companion whose change the row shows. */
+type EntryRow = TreeEntry & { kind: Kind | null, via: string | null }
 /** The field a name is typed in: in place of the row being renamed, or first inside the folder it is for. */
 interface NameRow { type: 'name'; key: string; depth: number; edit: NameEdit; initial: string; prefix: string }
 type Row = EntryRow | TreeNote | NameRow
@@ -97,7 +98,22 @@ const marks = computed(() => excludedPathsOf(ws.activeProjectPath ? ws.projectPr
 const layout = computed(() => {
   const t = tree.value
   if (!t) return null
-  return layoutTree({ dirs: t.dirs, expanded: t.expanded, view: ws.filesView, marks: marks.value, keep: t.revealed?.file ?? null })
+  const hidden = path.value ? hiddenRule(path.value, ws.filesView.shown) : null
+  return layoutTree({ dirs: t.dirs, expanded: t.expanded, view: ws.filesView, marks: marks.value, keep: t.revealed?.file ?? null, hidden })
+})
+
+/* Apart from the git marks too: plugins are asked once per row, not on every status refresh. */
+const looks = computed(() => {
+  const out = new Map<string, FileLook>()
+  const project = path.value
+  if (!project || !tree.value || !layout.value) return out
+  const siblings = siblingLookup(tree.value.dirs)
+  for (const r of layout.value.rows) {
+    if (r.type !== 'entry') continue
+    const { path: rel, name, isDir } = r.entry
+    out.set(r.key, fileLook({ projectPath: project, path: rel, name, isDir, open: r.open, hasSibling: siblings(parentOf(rel)) }))
+  }
+  return out
 })
 watch(layout, (l) => {
   if (!l || !path.value) return
@@ -107,8 +123,23 @@ watch(layout, (l) => {
 
 const rows = computed<Row[]>(() => {
   const { fileKinds, dirKinds } = decorations.value
-  const out: Row[] = (layout.value?.rows ?? []).map(r =>
-    r.type === 'note' ? r : { ...r, kind: (r.entry.isDir ? dirKinds.get(r.key) : fileKinds.get(r.key)) ?? null })
+  const all = layout.value?.rows ?? []
+  const visible = new Set(all.flatMap(r => (r.type === 'entry' ? r.chain : [])))
+  const out: Row[] = all.map((r) => {
+    if (r.type === 'note') return r
+    let kind = (r.entry.isDir ? dirKinds.get(r.key) : fileKinds.get(r.key)) ?? null
+    let via: string | null = null
+    if (path.value && fileKinds.size) {
+      for (const rel of r.chain) {
+        const change = companionChange(kind, rel, companionSuffixes(path.value, rel, r.entry.isDir), fileKinds, visible)
+        if (change) {
+          kind = change.kind
+          via = change.suffix
+        }
+      }
+    }
+    return { ...r, kind, via }
+  })
   const e = editing.value
   if (!e) return out
   const key = `name:${e.id}`
@@ -279,11 +310,22 @@ function setView(patch: Partial<FilesView>) {
   nextTick(() => optionsButton.value?.$el.focus())
 }
 
+function setFilterShown(id: string, shown: boolean) {
+  revealing.value = null
+  ws.setFileFilterShown(id, shown)
+  nextTick(() => optionsButton.value?.$el.focus())
+}
+
 const viewItems = computed<MenuItem[]>(() => {
   const v = ws.filesView
+  const extra: MenuItem[] = (path.value ? fileFilters(path.value) : []).map((f) => {
+    const on = v.shown.includes(f.fullId)
+    return { label: f.label, hint: f.hint, check: 'checkbox', checked: on, onSelect: () => setFilterShown(f.fullId, !on) }
+  })
   return [
     { group: 'Show', label: 'Excluded files', hint: 'Ignored by git or excluded by you', check: 'checkbox', checked: v.excluded, onSelect: () => setView({ excluded: !v.excluded }) },
     { label: 'Dotfiles', check: 'checkbox', checked: v.dotfiles, onSelect: () => setView({ dotfiles: !v.dotfiles }) },
+    ...extra,
     { label: 'Compact middle folders', check: 'checkbox', checked: v.compact, onSelect: () => setView({ compact: !v.compact }) },
     { divider: true, group: 'Sort by', label: 'Name', check: 'radio', checked: v.sort === 'name', onSelect: () => setView({ sort: 'name' }) },
     { label: 'File type', check: 'radio', checked: v.sort === 'type', onSelect: () => setView({ sort: 'type' }) },
@@ -292,6 +334,8 @@ const viewItems = computed<MenuItem[]>(() => {
   ]
 })
 const filtering = computed(() => !ws.filesView.excluded || !ws.filesView.dotfiles)
+/** Plugins' filters hide some by default: said in the label, without the tint of a changed view. */
+const hidesSome = computed(() => filtering.value || (!!path.value && fileFilters(path.value).some(f => !ws.filesView.shown.includes(f.fullId))))
 
 /* ---------- a row's menu: Mango's items, then plugins' (`ui.menus` 'file') ---------- */
 
@@ -417,18 +461,26 @@ function openMenu(row: EntryRow | null, e: MouseEvent) {
 
 /* ---------- icons ---------- */
 
-function iconFor({ entry, open, marked }: EntryRow) {
-  if (entry.isDir) return marked ? FolderX : open ? FolderOpen : Folder
-  return marked ? FileX : fileIcon(entry.name).icon
+function iconFor({ key, entry, open, marked }: EntryRow) {
+  if (marked) return entry.isDir ? FolderX : FileX
+  return looks.value.get(key)?.icon ?? (entry.isDir && open ? FolderOpen : Folder)
 }
-/** A file's language tint; folders and excluded files keep the plain ink. */
-function tintFor({ entry, excluded }: EntryRow) {
-  return entry.isDir || excluded ? undefined : { color: fileIcon(entry.name).tint }
+/** A file's type tint; excluded entries, and folders no plugin tints, keep the plain ink. */
+function tintFor({ key, excluded }: EntryRow) {
+  const tint = excluded ? null : looks.value.get(key)?.tint
+  return tint ? { color: tint } : undefined
+}
+/** What a row's change is, in words. */
+function changeWord(row: EntryRow) {
+  if (!row.kind) return null
+  if (row.via) return `Its ${row.via} file: ${KIND_WORD[row.kind]}`
+  return row.entry.isDir ? 'Contains changes' : KIND_WORD[row.kind]
 }
 function titleFor(row: EntryRow) {
   const about = [
     row.entry.path,
-    row.kind && (row.entry.isDir ? 'Contains changes' : KIND_WORD[row.kind]),
+    changeWord(row),
+    looks.value.get(row.key)?.note,
     row.marked ? 'Excluded by you' : row.entry.ignored ? 'Ignored by git' : row.excluded && 'In an excluded folder',
   ]
   return about.filter(Boolean).join(' · ')
@@ -447,7 +499,7 @@ function titleFor(row: EntryRow) {
         <UiMenu v-slot="{ open, toggle }" :items="viewItems" placement="bottom-end" :width="248" label="View options">
           <UiIconButton
             ref="optionsButton"
-            :label="filtering ? 'View options (some files are hidden)' : 'View options'"
+            :label="hidesSome ? 'View options (some files are hidden)' : 'View options'"
             :class="{ 'is-filtering': filtering }"
             aria-haspopup="menu"
             :aria-expanded="open"
@@ -518,11 +570,14 @@ function titleFor(row: EntryRow) {
           <span class="fp__name">{{ row.label }}</span>
           <span v-if="row.kind && row.entry.isDir" class="fp__dot" aria-hidden="true" />
           <span v-else-if="row.kind" class="fp__letter" aria-hidden="true">{{ KIND_LETTER[row.kind] }}</span>
-          <span v-if="row.kind" class="sr-only">, {{ row.entry.isDir ? 'contains changes' : KIND_WORD[row.kind] }}</span>
+          <span v-if="row.kind" class="sr-only">, {{ changeWord(row) }}</span>
+          <span v-if="looks.get(row.key)?.note" class="sr-only">, {{ looks.get(row.key)?.note }}</span>
           <span v-if="row.excluded" class="sr-only">, excluded</span>
         </div>
         <FilesNameRow
           v-else-if="row.type === 'name'"
+          :project="path"
+          :dir="row.edit.dir"
           :initial="row.initial"
           :is-dir="row.edit.isDir"
           :depth="row.depth"

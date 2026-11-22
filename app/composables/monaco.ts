@@ -1,5 +1,6 @@
 import type * as Monaco from 'monaco-editor'
 import { tokenHex } from '~/utils/cssColor'
+import { pluginLanguage } from '~/plugin-host/fileHooks'
 
 /**
  * Monaco, loaded the first time a file is opened (it is a few megabytes and
@@ -137,5 +138,7 @@ export function languageFor(monaco: MonacoApi, file: string): string {
     if (lang.filenames?.some(f => f.toLowerCase() === name)) return lang.id
     if (ext && lang.extensions?.some(e => e.toLowerCase() === ext)) return lang.id
   }
+  const added = pluginLanguage(file)
+  if (added && monaco.languages.getLanguages().some(l => l.id === added)) return added
   return 'plaintext'
 }

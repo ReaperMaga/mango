@@ -2,11 +2,11 @@ import * as Vue from 'vue'
 import { markRaw, watch } from 'vue'
 import type { App } from 'vue'
 import type { Pinia } from 'pinia'
-import type { InstalledPlugin } from '~/types/ipc'
+import type { FsEntry, InstalledPlugin } from '~/types/ipc'
 import type { AgentId, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
 import type {
-  Disposable, MangoPluginApi, MenuLocation, PluginColorScheme, PluginMenuItem, PluginSettingsPage, PluginView,
+  Disposable, MangoPluginApi, MenuLocation, PluginColorScheme, PluginDirEntry, PluginMenuItem, PluginSettingsPage, PluginView,
 } from './types'
 import { DisposableScope } from './scope'
 import { PART_ID, fullId, pluginRef, pluginTabId, schemeCss, tokenDeclarations } from './ids'
@@ -23,7 +23,7 @@ import { useBrowser } from '~/stores/browser'
 import { usePlugins } from '~/stores/plugins'
 import { MANGO_COMMANDS } from '~/stores/commands'
 import { normalizeAddress } from '~/utils/browserTabs'
-import { withTrailingSep } from '~/utils/paths'
+import { sepOf, withTrailingSep } from '~/utils/paths'
 import { fileTabId } from '~/utils/fileTabs'
 
 /**
@@ -64,14 +64,20 @@ const platform = (): MangoPluginApi['platform'] => {
   return /Win/i.test(p) ? 'windows' : /Mac|iPhone|iPad/i.test(p) ? 'macos' : 'linux'
 }
 
-/** The open project (or a chat's worktree) a path is inside, and the path relative to it. */
-function locate(path: string): { root: string; file: string } {
+/**
+ * The open project (or a chat's worktree) a path is inside, and the path relative to it. `inView`: the
+ * folder in view wins over a project nested in it, for what is to be shown there.
+ */
+function locate(path: string, inView = false): { root: string; file: string } {
   if (typeof path !== 'string' || !path) throw new TypeError('A path is needed.')
   const ws = useWorkspace()
   const threads = useThreads()
-  const roots = [...ws.openProjects.map(p => p.path), ...threads.threads.map(t => t.worktree).filter((w): w is string => !!w)]
   const norm = (p: string) => p.replace(/\\/g, '/')
   const target = norm(path)
+  const here = inView ? threads.workdir : null
+  const roots = here && (target === norm(here) || target.startsWith(norm(withTrailingSep(here))))
+    ? [here]
+    : [...ws.openProjects.map(p => p.path), ...threads.threads.map(t => t.worktree).filter((w): w is string => !!w)]
   let best: string | null = null
   for (const r of roots) {
     const base = norm(withTrailingSep(r))
@@ -81,6 +87,9 @@ function locate(path: string): { root: string; file: string } {
   const file = target === norm(best) ? '' : target.slice(norm(withTrailingSep(best)).length)
   return { root: best, file }
 }
+
+/** A companion's suffix: part of a name, and never all of one. */
+const SUFFIX = /^\.[\w.~-]{0,30}[\w~-]$/
 
 let busSeq = 0
 const bus = new Map<string, Map<number, { pluginId: string; fn: (payload: unknown) => void }>>()
@@ -239,6 +248,54 @@ export function createApi(host: ApiHost): MangoPluginApi {
 
     /* ---------------------------------------------------------------- UI */
     ui: {
+      files: {
+        filters: {
+          register(filter) {
+            checkId(filter?.id, 'files.filters.register')
+            needFn(filter.hide, 'files.filters.register: hide')
+            if (typeof filter.label !== 'string' || !filter.label.trim()) throw new TypeError('files.filters.register: "label" is needed.')
+            return track(reg.fileFilters, owned(filter, id, fullId(id, filter.id)), 'fileFilters')
+          },
+          isShown: filterId => ws().filesView.shown.includes(fullId(id, filterId)),
+          setShown(filterId, on) {
+            ws().setFileFilterShown(fullId(id, checkId(filterId, 'files.filters.setShown')), !!on)
+          },
+        },
+        companions: {
+          register(companion) {
+            checkId(companion?.id, 'files.companions.register')
+            needFn(companion.when, 'files.companions.register: when')
+            if (typeof companion.suffix !== 'string' || !SUFFIX.test(companion.suffix)) throw new TypeError('files.companions.register: "suffix" is a dot and the rest of a name, like ".meta".')
+            return track(reg.fileCompanions, owned(companion, id, fullId(id, companion.id)), 'fileCompanions')
+          },
+        },
+        icons: {
+          register(provider) {
+            checkId(provider?.id, 'files.icons.register')
+            needFn(provider.icon, 'files.icons.register: icon')
+            return track(reg.fileIcons, owned(provider, id, fullId(id, provider.id)), 'fileIcons')
+          },
+        },
+        languages: {
+          register(lang) {
+            checkId(lang?.id, 'files.languages.register')
+            const { extensions, language } = lang
+            if (!Array.isArray(extensions) || !extensions.length || !extensions.every(e => typeof e === 'string' && /^\.[^\\/]+$/.test(e))) {
+              throw new TypeError('files.languages.register: "extensions" lists extensions with their dot.')
+            }
+            if (typeof language !== 'string' || !language) throw new TypeError('files.languages.register: "language" is a Monaco language id.')
+            const item = { id: lang.id, language, extensions: extensions.map(e => e.toLowerCase()) }
+            return track(reg.fileLanguages, owned(item, id, fullId(id, lang.id)), 'fileLanguages')
+          },
+        },
+        async reveal(path) {
+          const { root, file } = locate(path, true)
+          if (root !== threads().workdir && ws().openProjects.some(p => p.path === root)) ws().setActiveProject(root)
+          if (root !== threads().workdir) throw new Error('That folder is not in view: show the chat that works in it first.')
+          ws().openTool('files')
+          if (file) await useFiles().reveal(root, file)
+        },
+      },
       toolWindows: {
         register(win) {
           checkId(win?.id, 'toolWindows.register')
@@ -294,7 +351,7 @@ export function createApi(host: ApiHost): MangoPluginApi {
       statusItems: {
         register(item) {
           checkId(item?.id, 'statusItems.register')
-          if (item.location !== 'titlebar' && item.location !== 'sidebar') throw new TypeError('statusItems.register: location is "titlebar" or "sidebar".')
+          if (!['project', 'titlebar', 'sidebar'].includes(item.location)) throw new TypeError('statusItems.register: location is "project", "titlebar" or "sidebar".')
           return track(reg.statusItems, owned(item, id, fullId(id, item.id)), 'statusItems')
         },
       },
@@ -390,7 +447,7 @@ export function createApi(host: ApiHost): MangoPluginApi {
       workdir: () => threads().workdir,
       onProjectChange: handler => watchScoped(() => ws().activeProjectPath, v => handler(v), 'workspace.onProjectChange'),
       openFile(path, opts) {
-        const { root, file } = locate(path)
+        const { root, file } = locate(path, true)
         if (!file) throw new Error('openFile needs a file, not a project folder.')
         const files = useFiles()
         if (opts?.line) files.revealLine(fileTabId(root, file), Number(opts.line))
@@ -437,11 +494,41 @@ export function createApi(host: ApiHost): MangoPluginApi {
         }
         window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path: root } }))
       },
-      async list(dir) {
+      onChange(handler) {
+        needFn(handler, 'files.onChange')
+        const tell = (path: string) => {
+          try { handler(path) } catch (e) { report(id, e, 'files.onChange') }
+        }
+        const onEvent = (e: Event) => {
+          const path = (e as CustomEvent<{ path?: string }>).detail?.path
+          if (path) tell(path)
+        }
+        window.addEventListener('mango:files-changed', onEvent)
+        // A checkout, pull or commit changes files without that event.
+        const stop = watch(() => {
+          const path = threads().workdir
+          const st = path ? useGit().repos[path]?.status : null
+          return path && st?.isRepo ? `${path}\n${st.branch}\n${st.head}` : ''
+        }, (now, before) => {
+          const path = now.split('\n')[0]
+          if (path && before && before.split('\n')[0] === path) tell(path)
+        })
+        return scope.add(() => {
+          stop()
+          window.removeEventListener('mango:files-changed', onEvent)
+        })
+      },
+      async list(dir, opts) {
         const { root, file } = locate(dir)
-        const listing = await call('fs_list_dir', { root, dir: file })
-        const sep = root.includes('\\') && !root.startsWith('env://') ? '\\' : '/'
-        return listing.entries.map(e => ({ name: e.name, path: withTrailingSep(root) + (sep === '\\' ? e.path.replace(/\//g, '\\') : e.path), isDir: e.isDir }))
+        const listing = await call('fs_list_dir', { root, dir: file, ahead: !!opts?.children })
+        const base = withTrailingSep(root)
+        const windows = sepOf(root) === '\\'
+        const entry = (e: FsEntry): PluginDirEntry => ({ name: e.name, path: base + (windows ? e.path.replace(/\//g, '\\') : e.path), isDir: e.isDir })
+        const below = new Map((listing.ahead ?? []).map(a => [a.dir, a.entries]))
+        return listing.entries.map((e) => {
+          const children = e.isDir ? below.get(e.path) : undefined
+          return children ? { ...entry(e), children: children.map(entry) } : entry(e)
+        })
       },
     },
 

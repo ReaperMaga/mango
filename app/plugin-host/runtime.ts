@@ -3,7 +3,7 @@ import { markRaw, watch, type App } from 'vue'
 import type { InstalledPlugin } from '~/types/ipc'
 import type { MangoPluginModule, PluginLogLine, PluginRunState, PluginSettingsPage } from '~/plugin-host/types'
 import { DisposableScope } from './scope'
-import { incompatibility } from './semver'
+import { devVersion, incompatibility } from './semver'
 import { capped, logText } from './hooks'
 import { createApi } from './api'
 import { emitStatusChange, hooks, pluginNames, pluginTabs, setReporter } from './registry'
@@ -208,7 +208,7 @@ export const usePluginRuntime = defineStore('pluginRuntime', {
       if (builtIn) return this._setStatus(id, 'builtIn', builtIn)
       if (!latest.enabled || this.safeMode) return
       failedWith.delete(id)
-      const why = incompatibility(versionRef, latest.manifest.minAppVersion)
+      const why = incompatibility(import.meta.dev ? devVersion(versionRef) : versionRef, latest.manifest.minAppVersion)
       if (why) {
         this._setStatus(id, 'incompatible', why)
         failedWith.set(id, signatureOf(latest))
