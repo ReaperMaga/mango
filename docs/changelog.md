@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.42
+
+### New
+
+- Add autosave, autocomplete, language servers and a smooth caret.
+
 ## 0.1.41
 
 ### New
