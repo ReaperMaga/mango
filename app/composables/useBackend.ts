@@ -461,6 +461,7 @@ const mock = (() => {
         return id
       }
       case 'lsp_servers': return lspServers.map(s => ({ ...s }))
+      case 'lsp_folder': return isEnvPath(args.project) ? null : `preview:${args.project}`
       case 'lsp_install': {
         const id = newPtyId()
         fakeLspInstall(id, args.server)

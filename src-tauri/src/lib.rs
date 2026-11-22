@@ -134,6 +134,7 @@ pub fn run() {
             setup::setup_check,
             setup::setup_install,
             lsp::lsp_servers,
+            lsp::lsp_folder,
             lsp::lsp_start,
             lsp::lsp_send,
             lsp::lsp_stop,

@@ -244,8 +244,8 @@ function create(monaco: MonacoApi): LanguageService {
     store.servers?.map(s => `${s.id}${s.installed}`).join(),
     // A tab, or a worktree changing whose project it is.
     ...Object.entries(files.open).map(([id, f]) => `${id}\n${store.allowed(f.projectPath)}`),
-    // A project's answer, also while only an idle server is left of it.
-    ...Object.entries(ws.projectPrefs).map(([path, p]) => (p.languageServers ? path : '')),
+    // The gate, also where only an idle server is left.
+    ...Object.keys(store.sessions).map(id => `${id}\n${store.allowed(id.slice(id.indexOf('\0') + 1))}`),
   ].join('\0'), update)
   monaco.editor.onDidChangeModelLanguage(update)
 

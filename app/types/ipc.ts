@@ -1230,7 +1230,14 @@ export interface Commands {
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** The language servers Mango knows, and which are installed on this computer. */
-  lsp_servers: [Record<string, never>, LspServer[]]
+  lsp_servers: [{ roots?: string[] }, LspServer[]]
+  /**
+   * Which folder `project` is now, as an identity that changes when it is deleted and made again
+   * (null: no such folder here). `allowed` is the identity the user allowed language servers for:
+   * the backend starts one in `root` only while `project` still is that folder. Null also when `root`
+   * is neither `project` nor, right now, a linked git worktree of it.
+   */
+  lsp_folder: [{ root: string; project: string; allowed: string | null }, string | null]
   /**
    * Start a server in a local project (remote projects are refused). The caller makes up `id` and
    * listens for it first. Only after the user allowed language servers for the project.
@@ -1240,7 +1247,7 @@ export interface Commands {
   lsp_send: [{ id: string; message: string }, void]
   lsp_stop: [{ id: string }, void]
   /** Run a server's installer in a PTY (the backend picks the command). Returns the pty id. */
-  lsp_install: [{ server: LspServerId; cols: number; rows: number }, string]
+  lsp_install: [{ server: LspServerId; cols: number; rows: number; roots?: string[] }, string]
 
   /** `path` is any folder inside the repository (normally the project path). */
   git_status: [{ path: string }, GitStatus]

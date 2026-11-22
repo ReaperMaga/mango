@@ -1,19 +1,22 @@
 <script setup lang="ts">
-import { ExternalLink, RefreshCw } from 'lucide-vue-next'
+import { ExternalLink, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import type { LspServer, LspServerId } from '~/types/ipc'
 import { useLanguageServers } from '~/lsp/store'
 import { useWorkspace } from '~/stores/workspace'
+import { useThreads } from '~/stores/threads'
 import { call, openExternal } from '~/composables/useBackend'
 import { isEnvPath } from '~/utils/envPath'
+import { baseName } from '~/utils/paths'
 import LoginTerminal from './LoginTerminal.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSwitch from './SettingsSwitch.vue'
 
 /**
- * Settings > Editor, the language servers: whether this project lets them run (they can run its
+ * Settings > Editor, the language servers: whether the folder in view lets them run (they can run its
  * code), which are installed, and installing one with its own installer in a terminal the user watches.
  */
 const ws = useWorkspace()
+const threads = useThreads()
 const store = useLanguageServers()
 
 const LANGUAGES: Record<LspServerId, string> = {
@@ -26,15 +29,23 @@ const LANGUAGES: Record<LspServerId, string> = {
 }
 
 const project = computed(() => ws.activeProject)
-const remote = computed(() => isEnvPath(project.value?.path))
-const allowed = computed(() => !!project.value && store.consentOf(project.value.path) === true)
+/** The folder in view: a chat's worktree, or the project. */
+const folder = computed(() => threads.workdir ?? project.value?.path)
+const remote = computed(() => isEnvPath(folder.value))
+/** Whose answer that folder goes by (`setConsent`): its project's, or its own. Not known until looked at. */
+const answers = computed(() => (folder.value ? store.folders[folder.value]?.project : undefined))
+/** That folder answers for itself alone. */
+const alone = computed(() => !!answers.value && answers.value !== project.value?.path)
+const consentName = computed(() => (alone.value ? baseName(answers.value!) : project.value?.name ?? ''))
+const allowed = computed(() => !!folder.value && store.consentOf(folder.value) === true)
 const consentHint = computed(() => {
   if (remote.value) return 'Language servers run only for projects on this computer. Completion from open files still works here.'
-  const what = 'They can run this project\'s code (build scripts, plugins). Its worktrees follow this.'
+  let what = `They can run this ${alone.value ? 'folder' : 'project'}'s code (build scripts, plugins).`
+  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ' Its git worktrees follow this.'
   return ws.editorLanguageServers ? what : `${what} Nothing runs while language servers are turned off.`
 })
 function allow(on: boolean) {
-  if (project.value) store.setConsent(project.value.path, on)
+  if (folder.value) store.setConsent(folder.value, on)
 }
 
 interface Job {
@@ -44,11 +55,14 @@ interface Job {
   attempt: number
 }
 const job = ref<Job | null>(null)
+const termFocused = ref(false)
+const root = ref<HTMLElement | null>(null)
 
 function install(server: LspServer) {
+  termFocused.value = false
   job.value = { server, phase: 'running', note: '', attempt: (job.value?.attempt ?? 0) + 1 }
 }
-const startInstall = (server: LspServerId) => (cols: number, rows: number) => call('lsp_install', { server, cols, rows })
+const startInstall = (server: LspServerId) => (cols: number, rows: number) => call('lsp_install', { server, cols, rows, roots: store.openRoots() })
 
 async function onExit(code: number | null) {
   const j = job.value
@@ -67,6 +81,14 @@ async function onExit(code: number | null) {
       ? 'The installer stopped before it finished.'
       : `The installer exited with code ${code}.`
 }
+async function closeJob() {
+  const id = job.value?.server.id
+  job.value = null
+  termFocused.value = false
+  await nextTick()
+  // The button that had the keyboard is gone, and Install is back.
+  root.value?.querySelector<HTMLElement>(`[data-install="${id}"]`)?.focus()
+}
 function onFailed(message: string) {
   if (!job.value) return
   job.value.phase = 'failed'
@@ -81,11 +103,11 @@ onMounted(() => void store.load(true))
 </script>
 
 <template>
-  <div class="ls">
+  <div ref="root" class="ls">
     <div v-if="project" class="ls__card">
-      <SettingsRow :label="`Language servers in ${project.name}`" :hint="consentHint" class="ls__project">
+      <SettingsRow :label="`Language servers in ${consentName}`" :hint="consentHint" class="ls__project">
         <template #default="{ labelId }">
-          <SettingsSwitch v-if="!remote" :model-value="allowed" :labelledby="labelId" @update:model-value="allow" />
+          <SettingsSwitch v-if="!remote && answers" :model-value="allowed" :labelledby="labelId" @update:model-value="allow" />
         </template>
       </SettingsRow>
     </div>
@@ -110,13 +132,46 @@ onMounted(() => void store.load(true))
           </div>
           <span class="ls__state" :class="{ 'is-installed': s.installed }">{{ s.installed ? 'Installed' : 'Not installed' }}</span>
           <template v-if="!s.installed">
-            <UiButton v-if="s.install" size="sm" :disabled="!!job && job.phase !== 'failed'" :aria-label="`Install ${s.name}`" @click="install(s)">Install</UiButton>
+            <template v-if="s.install">
+              <UiButton
+                v-if="job?.server.id !== s.id"
+                size="sm"
+                :data-install="s.id"
+                :disabled="!!job && job.phase !== 'failed'"
+                :aria-label="`Install ${s.name}`"
+                @click="install(s)"
+              >Install</UiButton>
+            </template>
             <UiButton v-else size="sm" variant="ghost" :aria-label="`How to install ${s.name}`" @click="help(s)"><ExternalLink />How to install</UiButton>
           </template>
         </div>
 
-        <div v-if="job?.server.id === s.id" class="ls__job">
-          <div class="ls__term">
+        <section
+          v-if="job?.server.id === s.id"
+          class="ls__job"
+          :class="{ 'is-failed': job.phase === 'failed', 'is-focused': termFocused }"
+          :aria-label="`Install ${s.name}`"
+        >
+          <header class="ls__job-head">
+            <span class="ls__job-status" role="status">
+              <TriangleAlert v-if="job.phase === 'failed'" class="ls__warn" aria-hidden="true" />
+              <span v-else class="ring" :class="{ 'ring--work': job.phase === 'running' }" aria-hidden="true" />
+              <span class="ls__job-title">
+                {{ job.phase === 'running' ? `Installing ${s.name}…` : job.phase === 'checking' ? `Checking ${s.name}…` : `${s.name} isn't installed` }}
+              </span>
+            </span>
+            <span v-if="job.phase !== 'checking'" class="ls__job-actions">
+              <template v-if="job.phase === 'failed'">
+                <UiButton size="sm" @click="install(s)">Try again</UiButton>
+                <UiButton size="sm" variant="ghost" @click="help(s)"><ExternalLink />How to install</UiButton>
+              </template>
+              <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? 'Cancel' : 'Close' }}</UiButton>
+            </span>
+          </header>
+
+          <p v-if="job.phase === 'failed'" class="ls__job-note selectable" role="alert">{{ job.note }} The output is kept below.</p>
+
+          <div class="ls__term" @focusin="termFocused = true" @focusout="termFocused = false">
             <LoginTerminal
               :key="job.attempt"
               :start="startInstall(s.id)"
@@ -126,14 +181,8 @@ onMounted(() => void store.load(true))
               @failed="onFailed"
             />
           </div>
-          <div class="ls__job-foot">
-            <p class="ls__note" :class="{ 'is-error': job.phase === 'failed' }" role="status">
-              {{ job.phase === 'running' ? 'If the installer asks a question, answer it here.' : job.phase === 'checking' ? 'Checking…' : job.note }}
-            </p>
-            <UiButton v-if="job.phase === 'failed'" size="sm" variant="ghost" @click="help(s)"><ExternalLink />How to install</UiButton>
-            <UiButton v-if="job.phase !== 'checking'" size="sm" variant="ghost" @click="job = null">{{ job.phase === 'running' ? 'Cancel' : 'Close' }}</UiButton>
-          </div>
-        </div>
+          <p v-if="job.phase === 'running'" class="ls__hint">If the installer asks a question, answer it here.</p>
+        </section>
       </li>
     </ul>
   </div>
@@ -167,6 +216,7 @@ onMounted(() => void store.load(true))
 .ls__where,
 .ls__command {
   font-family: var(--font-mono);
+  font-variant-ligatures: none;
   font-size: var(--text-xs);
   color: var(--fg-subtle);
 }
@@ -181,9 +231,69 @@ onMounted(() => void store.load(true))
 .ls__command { overflow-wrap: anywhere; }
 .ls__state { flex: none; font-size: var(--text-xs); color: var(--fg-subtle); }
 .ls__state.is-installed { color: var(--ripe-queued-fg); }
-.ls__job { padding: 0 var(--space-4) var(--space-3); }
-.ls__term { overflow: hidden; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
-.ls__job-foot { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
-.ls__note { flex: 1; margin: 0; font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
+/* The installer, running in place: Mango's job panel, as the agents' sign-in (SettingsAgentRow). */
+.ls__job {
+  margin: 0 var(--space-4) var(--space-3);
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.ls__job.is-focused {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.ls__job.is-failed,
+.ls__job.is-failed.is-focused {
+  border-color: color-mix(in oklch, var(--ripe-error) 45%, transparent);
+  box-shadow: none;
+}
+.ls__job-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 0 var(--space-2) 0 var(--space-3);
+}
+.ls__job-status { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
+.ls__job-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+  font-weight: 560;
+}
+.ls__job-actions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
+.ls__warn { flex: none; width: 14px; height: 14px; stroke-width: 1.85; color: var(--ripe-error); }
+.ls__job-note {
+  margin: 0;
+  padding: 0 var(--space-3) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--ripe-error-fg);
+  text-wrap: pretty;
+}
+.ls__term { border-top: 1px solid var(--line-soft); background: var(--term-bg); }
+.ls__hint {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--line-soft);
+  font-size: var(--text-xs);
+  color: var(--fg-subtle);
+  text-wrap: pretty;
+}
+.ring {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.75px solid var(--fg-subtle);
+  border-right-color: transparent;
+  animation: ls-turn 0.7s linear infinite;
+}
+.ring--work { border-color: var(--ripe-running); border-right-color: transparent; }
+@keyframes ls-turn { to { transform: rotate(360deg); } }
+.ls__note { margin: 0; font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
 .ls__note.is-error { color: var(--ripe-error-fg); }
 </style>

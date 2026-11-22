@@ -16,7 +16,7 @@ use super::servers::{Program, Server};
 pub const NO_CWD_SEARCH: &str = "NoDefaultCurrentDirectoryInExePath";
 /// Carries a .cmd shim's path to cmd.exe (see [`Launch::command`]).
 #[cfg(windows)]
-const SHIM_VAR: &str = "MANGO_LSP_SHIM";
+pub(super) const SHIM_VAR: &str = "MANGO_LSP_SHIM";
 
 /// The folder a server may be started in: the path as given and where it really is.
 #[derive(Debug)]
@@ -89,12 +89,20 @@ pub struct Search {
 
 impl Search {
     pub fn system(project: Option<&Root>) -> Search {
-        Search::new(crate::bin::search_dirs().into_iter().chain(install_dirs()), project)
+        Search::new(system_dirs(), project)
+    }
+
+    /// Outside all of these open projects: to say what is installed, and to install.
+    pub fn system_outside(roots: &[String]) -> Search {
+        Search::build(system_dirs(), open_projects(roots, dirs::home_dir().as_deref()))
     }
 
     /// Of `dirs`, in order, the absolute ones that exist outside the project.
     pub fn new(dirs: impl IntoIterator<Item = PathBuf>, project: Option<&Root>) -> Search {
-        let project = project.map(|r| vec![r.given.clone(), r.real.clone()]).unwrap_or_default();
+        Search::build(dirs, project.map(|r| vec![r.given.clone(), r.real.clone()]).unwrap_or_default())
+    }
+
+    fn build(dirs: impl IntoIterator<Item = PathBuf>, project: Vec<PathBuf>) -> Search {
         let mut search = Search { dirs: Vec::new(), project };
         for dir in dirs {
             // Relative and empty entries mean "under the current directory", which is the project's.
@@ -137,7 +145,7 @@ impl Search {
         self.all(name).next()
     }
 
-    fn path_var(&self) -> Result<OsString, String> {
+    pub(super) fn path_var(&self) -> Result<OsString, String> {
         // An empty PATH means the current directory to some systems.
         if self.dirs.is_empty() {
             return Err("There is no folder outside the project to run programs from.".into());
@@ -330,6 +338,21 @@ fn toolchain_component(home: &Path, wanted: Option<String>) -> Option<PathBuf> {
     file.is_file().then_some(file)
 }
 
+fn system_dirs() -> Vec<PathBuf> {
+    crate::bin::search_dirs().into_iter().chain(install_dirs()).collect()
+}
+
+/// Where the open projects are. Not one that holds the home folder: everything installed for the
+/// user is below it, and would count as the project's.
+fn open_projects(roots: &[String], home: Option<&Path>) -> Vec<PathBuf> {
+    roots
+        .iter()
+        .filter_map(|root| Root::open(root).ok())
+        .filter(|root| !home.is_some_and(|home| within(home, &root.given) || within(home, &root.real)))
+        .flat_map(|root| [root.given, root.real])
+        .collect()
+}
+
 /// Where these servers' installers put things that [`crate::bin::search_dirs`] doesn't cover.
 fn install_dirs() -> Vec<PathBuf> {
     let var = |key: &str| std::env::var_os(key).filter(|v| !v.is_empty());
@@ -465,6 +488,24 @@ mod tests {
         let search = Search::new(unsafe_dirs, Some(&root));
         assert_eq!(search.first("gopls"), Some(real));
         assert_eq!(std::env::split_paths(&search.path_var().unwrap()).collect::<Vec<_>>(), [good]);
+    }
+
+    #[test]
+    fn what_is_installed_skips_open_projects() {
+        let scratch = Scratch::new("planted");
+        let project = scratch.dir("home/work/app");
+        let planted = scratch.dir("home/work/app/tools");
+        program_file(&planted, "gopls");
+        let good = scratch.dir("home/bin");
+        let real = program_file(&good, "gopls");
+        let path = || [planted.clone(), good.clone()];
+        let home = scratch.path().join("home");
+        let roots = |dir: &Path| open_projects(&[dir.to_str().unwrap().to_string()], Some(&home));
+
+        assert_eq!(Search::build(path(), roots(&project)).first("gopls"), Some(real));
+        // The home folder opened as a project doesn't hide what is installed in it.
+        assert!(roots(&home).is_empty() && roots(scratch.path()).is_empty());
+        assert!(open_projects(&["env://h/dev/srv".into(), "relative".into()], Some(&home)).is_empty());
     }
 
     #[test]

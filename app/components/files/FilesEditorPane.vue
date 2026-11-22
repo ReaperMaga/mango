@@ -13,6 +13,7 @@ import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
 import { changeMarkers, type ChangeMarkers } from '~/composables/changeMarkers'
 import { useGit } from '~/stores/git'
 import { call } from '~/composables/useBackend'
+import { baseName } from '~/utils/paths'
 import { documentFor, needsNewModel, takePosition } from '~/composables/editorDocuments'
 import { COMPLETION_OPTIONS, caretGlide, quickSuggestions, widgetsOverBrowsers } from '~/composables/editorFeel'
 import { languageService } from '~/lsp/service'
@@ -195,6 +196,8 @@ async function setUp() {
       scrollBeyondLastLine: false,
       renderLineHighlight: 'line',
       bracketPairColorization: { enabled: false },
+      // The models colour the brackets, and standalone Monaco tells them only under the flat key.
+      ...{ 'bracketPairColorization.enabled': false },
       guides: { indentation: true, bracketPairs: false },
       padding: { top: 10, bottom: 10 },
       smoothScrolling: !reducedMotion(),
@@ -369,9 +372,30 @@ const server = computed(() => {
   if (!t || !editable.value || !language.value || isEnvPath(t.projectPath) || !ws.editorLanguageServers) return null
   return servers.serverFor(lspLanguage(t.file, language.value))
 })
-/** An installed server fits this file and the project has not answered yet. */
+/** What an answer binds (`setConsent`): the project, or a folder that is no worktree of it. Not known until looked at. */
+const consentFor = computed(() => (tab.value ? servers.folders[tab.value.projectPath]?.project : undefined))
+/** An installed server fits this file and that project has not answered yet. */
 const asksConsent = computed(() =>
-  !!server.value && !!tab.value && !svgPreview.value && !failed.value && servers.consentOf(tab.value.projectPath) === null)
+  !!server.value && !!tab.value && !!consentFor.value && !svgPreview.value && !failed.value && servers.consentOf(tab.value.projectPath) === null)
+
+/** A yes is for every language server there: the question names where, not this file's server. */
+const consent = computed(() => {
+  const path = consentFor.value
+  const root = tab.value?.projectPath
+  if (!path || !root) return null
+  const project = ws.openProjects.find(p => p.path === path)
+  // A chat's folder that is no git worktree of the project answers for itself alone.
+  const alone = path === root && threads.ownerOf(root) !== root
+  const scope = alone ? 'folder' : 'project'
+  const worktrees = !alone && project?.isGit && project.vcs !== 'plastic'
+  return {
+    scope,
+    name: project?.name ?? baseName(path),
+    covers: alone
+      ? 'Every language server, in this folder only'
+      : `Every language server, in this project${worktrees ? ' and its git worktrees' : ''}`,
+  }
+})
 
 function answerConsent(on: boolean) {
   if (tab.value) servers.setConsent(tab.value.projectPath, on)
@@ -421,11 +445,11 @@ function answerConsent(on: boolean) {
       <UiButton v-if="ws.editorAutoSave" size="sm" :loading="f.saving" @click="save">Try again</UiButton>
       <UiButton v-else size="sm" variant="ghost" @click="f.saveError = null">Dismiss</UiButton>
     </div>
-    <div v-else-if="asksConsent && server" class="fe__bar is-asking" role="region" :aria-label="`Use ${server.name} in this project`">
+    <div v-else-if="asksConsent && consent" class="fe__bar" role="region" :aria-label="`Use language servers in ${consent.name}`">
       <ShieldQuestion class="fe__bar-icon is-quiet" aria-hidden="true" />
-      <span class="fe__bar-text"><strong>{{ server.name }}</strong> adds completion and errors. It can run this project's code.</span>
-      <UiButton size="sm" @click="answerConsent(true)">Turn on for this project</UiButton>
-      <UiButton size="sm" variant="ghost" @click="answerConsent(false)">Not now</UiButton>
+      <span class="fe__bar-text">Use language servers in <strong>{{ consent.name }}</strong>? They add completion and errors, and can run this {{ consent.scope }}'s code.</span>
+      <UiButton size="sm" :title="consent.covers" @click="answerConsent(true)">Turn on for this {{ consent.scope }}</UiButton>
+      <UiButton size="sm" variant="ghost" title="You can change this in Settings > Editor" @click="answerConsent(false)">Not for this {{ consent.scope }}</UiButton>
     </div>
 
     <div class="fe__body">
@@ -537,6 +561,7 @@ function answerConsent(on: boolean) {
 .fe__bar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-height: 40px;
@@ -549,12 +574,17 @@ function answerConsent(on: boolean) {
 .fe__bar-icon.is-waiting { color: var(--ripe-waiting); }
 .fe__bar-icon.is-error { color: var(--ripe-error); }
 .fe__bar-icon.is-quiet { color: var(--fg-subtle); }
-.fe__bar-text { flex: 1; min-width: 0; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* What is asked is never cut off: the buttons go below it, and it stays beside its icon. */
+.fe__bar-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: calc(100% - 15px - var(--space-2));
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .fe__bar-text strong { color: var(--fg); font-weight: 600; }
-.fe__bar-text.is-error { color: var(--ripe-error-fg); white-space: normal; }
-/* What it is being allowed is never cut off. */
-.fe__bar.is-asking { flex-wrap: wrap; }
-.fe__bar.is-asking .fe__bar-text { flex: 1 1 240px; white-space: normal; }
+.fe__bar-text.is-error { color: var(--ripe-error-fg); }
 
 .fe__body { position: relative; flex: 1; min-height: 0; }
 .fe__editor { position: absolute; inset: 0; }
@@ -616,8 +646,8 @@ function answerConsent(on: boolean) {
  */
 .fe__editor.is-caret-gliding .monaco-editor .cursors-layer > .cursor {
   transition-property: top, left;
-  transition-duration: var(--dur-fast) !important;
-  transition-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition-duration: var(--dur-med) !important;
+  transition-timing-function: var(--ease-out);
 }
 /* The same rule would freeze the blink when Animations is Full over the OS's setting. */
 .fe__editor[data-motion-full] .monaco-editor .cursors-layer.cursor-smooth {
@@ -627,6 +657,8 @@ function answerConsent(on: boolean) {
 
 /* Monaco's floating widgets, as Mango's floating layers. */
 .fe__editor .monaco-editor {
+  font-family: var(--font-ui);
+  --monaco-monospace-font: var(--font-mono);
   --vscode-cornerRadius-large: var(--radius-md);
   --vscode-cornerRadius-medium: var(--radius-sm);
   --vscode-cornerRadius-small: var(--radius-xs);
@@ -640,17 +672,18 @@ function answerConsent(on: boolean) {
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-pop);
 }
-.fe__editor .monaco-editor .monaco-hover .markdown-hover p,
-.fe__editor .monaco-editor .suggest-details .docs,
-.fe__editor .monaco-editor .parameter-hints-widget .docs {
-  font-family: var(--font-ui);
+.fe__editor .monaco-editor .suggest-widget,
+.fe__editor .monaco-editor .suggest-details-container,
+.fe__editor .monaco-editor .monaco-hover,
+.fe__editor .monaco-editor .parameter-hints-widget {
+  font-variant-ligatures: none;
 }
-.fe__editor .monaco-editor .monaco-hover .monaco-tokenized-source,
-.fe__editor .monaco-editor .monaco-hover code,
-.fe__editor .monaco-editor .suggest-details .docs code,
-.fe__editor .monaco-editor .suggest-details .docs .monaco-tokenized-source,
-.fe__editor .monaco-editor .parameter-hints-widget .docs code,
-.fe__editor .monaco-editor .parameter-hints-widget .docs .monaco-tokenized-source {
-  font-family: var(--font-mono);
+/* Peek's list is lines of code. */
+.fe__editor .monaco-editor .ref-tree .monaco-tl-contents > .monaco-highlighted-label {
+  font-family: var(--monaco-monospace-font);
+  font-variant-ligatures: none;
 }
+/* Peek's close is a button, if an <a> to Monaco. */
+.fe__editor .monaco-editor .peekview-widget .head .peekview-actions a.action-label { color: var(--fg-subtle); }
+.fe__editor .monaco-editor .peekview-widget .head .peekview-actions a.action-label:hover { color: var(--fg); }
 </style>

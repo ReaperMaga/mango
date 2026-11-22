@@ -4,8 +4,9 @@ import { call } from '~/composables/useBackend'
 import { useGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
-import { compareDisk, createAutoSave, overlaps, saveTiming } from '~/utils/autoSave'
-import { envPath, parseEnvPath } from '~/utils/envPath'
+import { canAutoSave, compareDisk, createAutoSave, keepsBackup, overlaps, saveFailure, saveTiming } from '~/utils/autoSave'
+import { envPath, movedEnvPath, parseEnvPath } from '~/utils/envPath'
+import { useLanguageServers } from '~/lsp/store'
 import { fileTabId, isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { disposeEditorModel, editorModel, moveEditorModel } from '~/utils/editorModels'
 import { imageKind, imageMime } from '~/utils/imageFiles'
@@ -605,6 +606,8 @@ export const useFiles = defineStore('files', {
       const threads = useThreads()
       const id = fileTabId(projectPath, file)
       this.treeOf(projectPath).selected = file
+      // Language servers may run only in the folder the user allowed: is it still that one?
+      void useLanguageServers().checkFolder(projectPath)
       if (!this.open[id]) {
         this.open[id] = {
           projectPath, file, loading: true, error: null, binary: false, tooLarge: false, size: 0, bom: false,

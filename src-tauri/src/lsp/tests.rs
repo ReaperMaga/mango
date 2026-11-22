@@ -901,25 +901,102 @@ fn real_listing() {
 fn real_installer_invocation() {
     let search = Search::system(None);
     for probe in [["npm", "--version"], ["rustup", "--version"], ["go", "version"], ["dotnet", "--version"], ["winget", "--version"]] {
-        let Some(argv) = installer_argv(&search, &crate::setup::Plan::direct(&probe, "test")) else {
+        let Some(installer) = installer(&search, &crate::setup::Plan::direct(&probe, "test")) else {
             eprintln!("{}: not here", probe[0]);
             continue;
         };
-        run_in_pty(&argv);
+        run_in_pty(&installer, &dirs::home_dir().unwrap(), &crate::bin::augmented_path(None).unwrap());
     }
 }
 
-fn run_in_pty(argv: &[String]) {
+/// An installer gets the program that was found, and finds its tools where that was found: never
+/// in a project's folders or the current one.
+#[cfg(windows)]
+#[test]
+fn installers_never_look_in_the_project() {
+    let scratch = Scratch::new("installer");
+    let planted = scratch.dir("app/node_modules/.bin");
+    let project = scratch.dir("app");
+    let good = scratch.dir("npm R&D ^ 100% größer");
+    for dir in [&planted, &project] {
+        std::fs::write(dir.join("npm.cmd"), "@echo bad> \"%~dp0ran.txt\"\r\n").unwrap();
+        std::fs::write(dir.join("node.cmd"), "@echo bad> \"%~dp0ran-node.txt\"\r\n").unwrap();
+    }
+    // As npm's own shim: it goes on to look up node.
+    std::fs::write(good.join("npm.cmd"), "@echo %*> \"%~dp0ran.txt\"\r\n@call node\r\n").unwrap();
+    std::fs::write(good.join("node.cmd"), "@echo node> \"%~dp0ran-node.txt\"\r\n").unwrap();
+
+    let system = resolve::cmd_exe().parent().unwrap().to_path_buf();
+    // The user's PATH has the project's folders on it. No real npm is on either path.
+    let inherited = std::env::join_paths([&planted, &project, &system]).unwrap();
+    let search = Search::new([planted.clone(), good.clone(), system], None);
+    let installer = installer(&search, &crate::setup::Plan::direct(&["npm", "probe", "-g", "typescript@6"], "test")).unwrap();
+    assert!(!installer.argv.join(" ").contains("R&D"), "no path on cmd's line: {:?}", installer.argv);
+    run_in_pty(&installer, &project, &inherited);
+
+    for dir in [&planted, &project] {
+        assert!(!dir.join("ran.txt").exists(), "the project's npm ran");
+        assert!(!dir.join("ran-node.txt").exists(), "the project's node ran");
+    }
+    assert_eq!(std::fs::read_to_string(good.join("ran.txt")).unwrap().trim(), "probe -g typescript@6");
+    assert!(good.join("ran-node.txt").exists());
+}
+
+#[test]
+fn consent_holds_for_one_folder_only() {
+    let scratch = Scratch::new("consent");
+    let dir = scratch.dir("app");
+    let project = dir.to_str().unwrap().to_string();
+    let now = Allowed { project: project.clone(), folder: folder::id(&project).unwrap() };
+    let mut all = Sessions::default();
+    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_err(), "nobody was asked");
+    let tree = scratch.dir("app.worktrees/fix");
+    let root = tree.to_str().unwrap().to_string();
+    let entry = dir.join(".git").join("worktrees").join("fix");
+    scratch.write("app/.git/worktrees/fix/gitdir", &format!("{}\n", tree.join(".git").display()));
+    scratch.write("app.worktrees/fix/.git", &format!("gitdir: {}\n", entry.display()));
+
+    all.allow("main", &project, Some(now.clone()));
+    all.allow("main", &root, Some(now.clone()));
+    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_ok());
+    assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_ok(), "worktrees follow their project");
+    assert_eq!(consent_folder(&root, &project), Some(now.folder));
+    assert!(check_consent(&project, all.allowed("w-1", &project).as_ref()).is_err(), "each window checks for itself");
+    all.page_gone("w-1");
+    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_ok());
+
+    // The worktree removed, and another repository cloned at its path.
+    std::fs::remove_dir_all(&tree).unwrap();
+    scratch.write("app.worktrees/fix/.git/HEAD", "ref: refs/heads/main");
+    assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_err(), "another repository where a worktree was");
+    assert_eq!(consent_folder(&root, &project), None);
+    let own = Allowed { project: root.clone(), folder: folder::id(&root).unwrap() };
+    all.allow("main", &root, Some(own));
+    assert!(check_consent(&root, all.allowed("main", &root).as_ref()).is_ok(), "allowed for itself");
+
+    std::thread::sleep(Duration::from_millis(30));
+    std::fs::remove_dir_all(&dir).unwrap();
+    std::fs::create_dir(&dir).unwrap();
+    assert!(check_consent(&project, all.allowed("main", &project).as_ref()).is_err(), "cloned again at the same path");
+    all.allow("main", &project, None);
+    assert!(all.allowed("main", &project).is_none());
+}
+
+fn run_in_pty(installer: &Installer, cwd: &std::path::Path, inherited: &std::ffi::OsStr) {
     use portable_pty::{native_pty_system, CommandBuilder, PtySize};
     use std::io::Read;
 
+    let argv = &installer.argv;
     let program = crate::bin::find(&argv[0]).unwrap();
     let pty = native_pty_system().openpty(PtySize { rows: 24, cols: 100, pixel_width: 0, pixel_height: 0 }).unwrap();
     let mut cmd = CommandBuilder::new(&program);
     cmd.args(&argv[1..]);
-    cmd.cwd(dirs::home_dir().unwrap());
-    cmd.env("PATH", crate::bin::augmented_path(program.parent()).unwrap());
-    cmd.env(resolve::NO_CWD_SEARCH, "1");
+    cmd.cwd(cwd);
+    cmd.env("PATH", inherited);
+    // After it, as the PTY does.
+    for (key, value) in &installer.env {
+        cmd.env(key, value);
+    }
     let mut child = pty.slave.spawn_command(cmd).unwrap();
     drop(pty.slave);
     let mut reader = pty.master.try_clone_reader().unwrap();

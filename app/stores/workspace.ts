@@ -10,6 +10,7 @@ import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
+import { useLanguageServers } from '~/lsp/store'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
@@ -103,9 +104,11 @@ export interface ProjectPrefs {
   excluded?: string[]
   /**
    * Language servers may run in this project (they can run its code: build scripts, plugins).
-   * Missing: not answered yet, so none starts. Its worktrees share it.
+   * Missing: not answered yet, so none starts. Its linked git worktrees share it.
    */
   languageServers?: boolean
+  /** The folder that answer was given for (`lsp_folder`): one made again at the same path asks again. */
+  languageServersFolder?: string
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
@@ -501,6 +504,7 @@ export const useWorkspace = defineStore('workspace', {
 
     async init() {
       this.applyTheme()
+      useLanguageServers().follow()
       // "System" follows the OS while the app is open.
       window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
       window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => this.applyTheme())
@@ -717,6 +721,7 @@ export const useWorkspace = defineStore('workspace', {
     /** A project just created or cloned (`info` from the backend): open it where the user says. */
     async placeProject(info: ProjectInfo): Promise<'this' | 'new' | null> {
       this.dialog = null
+      this.forgetConsent(info.path)
       const where = await this.chooseWhere(info.path, info.name)
       if (where === 'this') this.adopt(info)
       else if (where === 'new') await this.openInWindow(info.path)
@@ -844,6 +849,15 @@ export const useWorkspace = defineStore('workspace', {
       if (isEnvPath(path)) saveEnvProjects(loadEnvProjects().filter(r => r.path !== path))
       else await call('forget_project', { path }).catch(() => {})
       this.recent = this.recent.filter(r => r.path !== path)
+      this.forgetConsent(path)
+    },
+
+    /** What ends with a project (removed, or another created or cloned at its path): its answer about language servers. */
+    forgetConsent(path: string) {
+      const prefs = this.projectPrefs[path]
+      if (prefs?.languageServers !== undefined || prefs?.languageServersFolder) {
+        this.setProjectPref(path, { languageServers: null, languageServersFolder: null })
+      }
     },
 
     setActiveProject(path: string) {

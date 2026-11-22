@@ -5,6 +5,7 @@
 //! never by the webview or the project. A session belongs to the window that started it: only that
 //! window hears it or can talk to it, and it ends when that window closes or reloads.
 
+mod folder;
 mod framing;
 mod resolve;
 mod servers;
@@ -50,6 +51,28 @@ struct Sessions {
     stopped_early: VecDeque<(String, String)>,
     /// `(window, id)` of sessions that ended by themselves: stopping one is not an early stop.
     ended: VecDeque<(String, String)>,
+    /// By window and folder: the project a server there belongs to, and that folder's identity when
+    /// the user allowed them (`lsp_folder`).
+    allowed: HashMap<(String, String), Allowed>,
+}
+
+#[derive(Debug, Clone)]
+struct Allowed {
+    project: String,
+    folder: String,
+}
+
+/// The last word before a server starts, as the page's answer can be from before the folder was
+/// deleted and made again.
+fn check_consent(root: &str, allowed: Option<&Allowed>) -> Result<(), String> {
+    let same = allowed.is_some_and(|a| consent_folder(root, &a.project).is_some_and(|now| now == a.folder));
+    same.then_some(()).ok_or_else(|| "Language servers need your permission for this folder again.".to_string())
+}
+
+/// The folder whose consent holds in `root`: `project`'s, where `root` is that or, now, a linked
+/// worktree of it. Never just because `root` sits where a worktree of it was.
+fn consent_folder(root: &str, project: &str) -> Option<String> {
+    (root == project || folder::is_worktree_of(root, project)).then(|| folder::id(project)).flatten()
 }
 
 fn remember(list: &mut VecDeque<(String, String)>, owner: &str, id: &str) {
@@ -90,6 +113,18 @@ impl Sessions {
             }
             _ => false,
         }
+    }
+
+    fn allow(&mut self, owner: &str, root: &str, allowed: Option<Allowed>) {
+        let key = (owner.to_string(), root.to_string());
+        match allowed {
+            Some(allowed) => self.allowed.insert(key, allowed),
+            None => self.allowed.remove(&key),
+        };
+    }
+
+    fn allowed(&self, owner: &str, root: &str) -> Option<Allowed> {
+        self.allowed.get(&(owner.to_string(), root.to_string())).cloned()
     }
 
     fn forget(&mut self, id: &str, token: u64) {
@@ -236,9 +271,29 @@ fn list_servers(search: &Search) -> Vec<LspServer> {
         .collect()
 }
 
+/// `roots`: the open projects, whose own programs never count as installed.
 #[tauri::command]
-pub async fn lsp_servers() -> Result<Vec<LspServer>, String> {
-    blocking(|| Ok(list_servers(&Search::system(None)))).await
+pub async fn lsp_servers(roots: Option<Vec<String>>) -> Result<Vec<LspServer>, String> {
+    blocking(move || Ok(list_servers(&Search::system_outside(&roots.unwrap_or_default())))).await
+}
+
+/// Which folder `project` is now, whose consent `root` goes by (none: `root` is no linked worktree
+/// of it, or there is no such folder on this computer). `allowed` is the identity the user allowed
+/// language servers for, if they did: servers start in `root` only while both hold.
+#[tauri::command]
+pub async fn lsp_folder(
+    webview: Webview,
+    state: State<'_, LspState>,
+    root: String,
+    project: String,
+    allowed: Option<String>,
+) -> Result<Option<String>, String> {
+    let owner = webview.label();
+    if !crate::windows::is_mango_window(owner) {
+        return Err("Only Mango's own windows can allow language servers.".into());
+    }
+    state.lock().allow(owner, &root, allowed.map(|folder| Allowed { project: project.clone(), folder }));
+    blocking(move || Ok(consent_folder(&root, &project))).await
 }
 
 #[tauri::command]
@@ -256,11 +311,18 @@ pub async fn lsp_start(
         return Err("Only Mango's own windows can start language servers.".into());
     }
     // Before the first await, so a stop or a reload from here on finds it.
-    let token = state.lock().reserve(&owner, &id)?;
+    let (token, allowed) = {
+        let mut sessions = state.lock();
+        (sessions.reserve(&owner, &id)?, sessions.allowed(&owner, &root))
+    };
 
     let app = webview.app_handle().clone();
     let key = id.clone();
-    let started = blocking(move || start(app, owner, key, token, known, &root)).await;
+    let started = blocking(move || {
+        check_consent(&root, allowed.as_ref())?;
+        start(app, owner, key, token, known, &root)
+    })
+    .await;
     if started.is_err() {
         state.lock().forget(&id, token);
     }
@@ -336,34 +398,45 @@ pub fn lsp_stop(webview: Webview, state: State<'_, LspState>, id: String) -> Res
     Ok(())
 }
 
-/// What the PTY runs for a plan: the program as found here, never a name looked up again.
-fn installer_argv(search: &Search, plan: &crate::setup::Plan) -> Option<Vec<String>> {
+/// What the PTY runs for a plan.
+struct Installer {
+    argv: Vec<String>,
+    env: Vec<(&'static str, String)>,
+}
+
+/// The program as found here, never a name looked up again, with the search's PATH: installers look
+/// up their own tools (npm's shim looks for node, npm runs node again for a package's scripts).
+fn installer(search: &Search, plan: &crate::setup::Plan) -> Option<Installer> {
     let (name, args) = plan.argv.split_first()?;
-    let program = search.first(name)?;
-    // npm is a .cmd here, and the PTY's quoting is not cmd.exe's: cmd finds it by name instead.
+    let program = search.first(name)?.to_str()?.to_string();
+    let mut env: Vec<(&'static str, String)> = plan.env.iter().map(|(key, value)| (*key, value.to_string())).collect();
+    env.push((resolve::NO_CWD_SEARCH, "1".into()));
+    env.push(("PATH", search.path_var().ok()?.into_string().ok()?));
+    let mut argv = vec![program.clone()];
+    // npm is a .cmd here, and the PTY's quoting is not cmd.exe's: so the command line names only a
+    // variable, which holds the path in quotes, and cmd expands it just the once.
     #[cfg(windows)]
-    if resolve::is_batch(&program) {
-        let mut argv = vec![resolve::cmd_exe().to_string_lossy().into_owned(), "/d".into(), "/c".into()];
-        argv.extend(plan.argv.iter().cloned());
-        return Some(argv);
+    if resolve::is_batch(std::path::Path::new(&program)) {
+        argv = vec![resolve::cmd_exe().to_str()?.to_string()];
+        argv.extend(["/d", "/e:on", "/v:off", "/c"].map(String::from));
+        argv.push(format!("%{}%", resolve::SHIM_VAR));
+        env.push((resolve::SHIM_VAR, format!("\"{program}\"")));
     }
-    let mut argv = vec![program.to_string_lossy().into_owned()];
     argv.extend(args.iter().cloned());
-    Some(argv)
+    Some(Installer { argv, env })
 }
 
 /// Run a server's installer in a terminal. Returns the pty id, as `setup_install` does.
 #[tauri::command]
-pub async fn lsp_install(app: AppHandle, server: String, cols: u16, rows: u16) -> Result<String, String> {
+pub async fn lsp_install(app: AppHandle, server: String, cols: u16, rows: u16, roots: Option<Vec<String>>) -> Result<String, String> {
     let server = servers::by_id(&server)?;
     blocking(move || {
-        let search = Search::system(None);
+        let search = Search::system_outside(&roots.unwrap_or_default());
         let find = |bin: &str| search.first(bin);
         let cannot = || format!("Mango can't install {} on this computer. Follow its install page instead.", server.name);
         let plan = servers::plan_for(server, this_os(), &find).ok_or_else(cannot)?;
-        let argv = installer_argv(&search, &plan).ok_or_else(cannot)?;
-        let mut env = plan.env.to_vec();
-        env.push((resolve::NO_CWD_SEARCH, "1"));
+        let Installer { argv, env } = installer(&search, &plan).ok_or_else(cannot)?;
+        let env: Vec<(&str, &str)> = env.iter().map(|(key, value)| (*key, value.as_str())).collect();
         let state = app.state::<crate::pty::PtyState>();
         crate::pty::start(app.clone(), &state, None, cols, rows, Some(argv), &env)
     })
