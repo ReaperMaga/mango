@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.44
+
+### New
+
+- Colour types, methods and constants as the language server knows them.
+- `/create-release` in any chat: the agent picks the next version, runs the checks, tags, pushes and publishes a GitHub release, following the project's own release steps.
+
 ## 0.1.43
 
 ### New
