@@ -20,7 +20,8 @@ import type { MonacoApi } from '~/composables/monaco'
 
 /**
  * Runs the language servers for the open files: one per server and project folder, only where the
- * user allowed them, started when a file needs one. Loaded with the editor and lives as long as the window.
+ * user allowed them, started when a file needs one and kept while its project is open in the window,
+ * so a project is indexed once. Loaded with the editor and lives as long as the window.
  */
 
 const MARKERS = 'mango-lsp'
@@ -152,8 +153,12 @@ function create(monaco: MonacoApi): LanguageService {
     }, 300)
   }
 
+  /** Its project is open in this window (a worktree's, its chat's project). */
+  const live = (root: string) => ws.openProjects.some(p => p.path === threads.ownerOf(root))
+
   const pool = new Pool<LspServerId, Session>({
     allowed: key => store.allowed(key.root),
+    live: key => live(key.root),
     create(key) {
       const id = poolKey(key)
       const name = store.servers?.find(s => s.id === key.server)?.name ?? key.server
@@ -261,8 +266,11 @@ function create(monaco: MonacoApi): LanguageService {
     store.servers?.map(s => `${s.id}${s.installed}`).join(),
     // A tab, or a worktree changing whose project it is.
     ...Object.entries(files.open).map(([id, f]) => `${id}\n${store.allowed(f.projectPath)}`),
-    // The gate, also where only an idle server is left.
-    ...Object.keys(store.sessions).map(id => `${id}\n${store.allowed(id.slice(id.indexOf('\0') + 1))}`),
+    // The gate, and whether its project is still open, also where no file needs a server any more.
+    ...Object.keys(store.sessions).map((id) => {
+      const root = id.slice(id.indexOf('\0') + 1)
+      return `${id}\n${store.allowed(root)}\n${live(root)}`
+    }),
   ].join('\0'), update)
   monaco.editor.onDidChangeModelLanguage(update)
 

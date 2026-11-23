@@ -539,6 +539,7 @@ test('one session per server and folder, idle for a while, gone at once when dis
   const pool = new Pool({
     idleMs: 25,
     allowed: () => allowed,
+    live: () => false,
     create: (key: PoolKey) => ({
       async start() { log.push(`start ${key.server} ${key.root}`) },
       async stop(now?: boolean) { log.push(`stop ${key.server} ${key.root}${now ? ' now' : ''}`) },
@@ -1093,4 +1094,36 @@ test('no answer is told apart from an answer, so colours that still hold are kep
   assert.deepEqual(await session.ask('textDocument/hover', 'a.rs'), [])
   assert.equal(await session.ask('textDocument/hover', 'closed.rs'), undefined)
   await session.stop()
+})
+
+test('a session runs on without files while its folder is open', async () => {
+  const log: string[] = []
+  const open = new Set(['/game'])
+  let allowed = true
+  const pool = new Pool({
+    idleMs: 25,
+    allowed: () => allowed,
+    live: (key: PoolKey) => open.has(key.root),
+    create: (key: PoolKey) => ({
+      async start() { log.push(`start ${key.root}`) },
+      async stop(now?: boolean) { log.push(`stop ${key.root}${now ? ' now' : ''}`) },
+    }),
+  })
+  const game = { server: 'csharp', root: '/game' }
+  pool.update([game])
+  pool.update([])
+  await tick(45)
+  assert.deepEqual(log, ['start /game'], 'its last file closed: the index stays')
+  pool.update([game])
+  assert.equal(log.length, 1, 'a file opened again finds it running')
+  pool.update([])
+  open.delete('/game')
+  pool.update([])
+  await tick(45)
+  assert.deepEqual(log, ['start /game', 'stop /game'], 'the project closed: it goes after the wait')
+  open.add('/game')
+  pool.update([game])
+  allowed = false
+  pool.update([])
+  assert.equal(log.at(-1), 'stop /game now', 'disallowed: at once, open or not')
 })
