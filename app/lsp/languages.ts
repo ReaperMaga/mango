@@ -1,4 +1,5 @@
 import type { LspServerId } from '../types/ipc.ts'
+import { KNOWN_TOKEN_TYPES } from './semanticTokens.ts'
 
 /** What each language server needs to hear from its client; its command line is the backend's. */
 
@@ -57,6 +58,7 @@ export function clientCapabilities(profile: ServerProfile) {
       applyEdit: false,
       configuration: true,
       workspaceFolders: true,
+      semanticTokens: { refreshSupport: true },
       ...(profile.clientWatches ? { didChangeWatchedFiles: { dynamicRegistration: true, relativePatternSupport: true } } : {}),
     },
     textDocument: {
@@ -85,6 +87,17 @@ export function clientCapabilities(profile: ServerProfile) {
         signatureInformation: { documentationFormat: markdown, activeParameterSupport: true, parameterInformation: { labelOffsetSupport: true } },
       },
       definition: { linkSupport: true },
+      semanticTokens: {
+        dynamicRegistration: false,
+        requests: { full: true },
+        tokenTypes: KNOWN_TOKEN_TYPES,
+        tokenModifiers: [],
+        formats: ['relative'],
+        overlappingTokenSupport: false,
+        multilineTokenSupport: false,
+        // Keywords, strings and comments are the tokenizer's.
+        augmentsSyntaxTokens: true,
+      },
       publishDiagnostics: { versionSupport: true, tagSupport: { valueSet: [1, 2] } },
     },
     ...(profile.metadataUris ? { experimental: { csharp: { metadataUris: true } } } : {}),

@@ -72,7 +72,7 @@ app/
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
   composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), windowClose.ts (saves before a window goes), useShortcuts.ts
-  lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
+  lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, semanticTokens, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
@@ -165,7 +165,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   local projects the user allowed (`allowed` in `lsp/store.ts`), never for `env://`. The frontend names an id; the backend resolves
   the program outside the project (never `node_modules/.bin`, the current folder or a rustup proxy). `lsp_send` and `lsp_stop` are
   synchronous commands on purpose (message order) and must not block. What servers say is untrusted: keep `lsp/convert.ts` strict
-  and Monaco's markdown text-only (`monaco.ts`; check that deep import when upgrading Monaco). Prove backend changes with the
+  (and `lsp/semanticTokens.ts`, which maps each server's token legend onto the few kinds the theme colours, each a rule in
+  `monaco.ts`; types it does not map are dropped so the tokenizer's colours stay) and Monaco's markdown text-only (`monaco.ts`; check that deep import when upgrading Monaco). Prove backend changes with the
   ignored `lsp::tests::real_*` tests. Go to definition opens only the project's own files; a library's source comes only as
   text its server decompiled (`csharp/metadata`, checked in `utils/decompiledTabs.ts`), shown read-only and never read from disk. A chat's worktree takes its project's answer only while `lsp/folder.rs` proves it a
   linked git worktree of it, and a yes only while it is also the folder bound to that yes (`languageServersWorktree`: where

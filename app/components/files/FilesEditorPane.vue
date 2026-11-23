@@ -199,6 +199,8 @@ async function setUp() {
       // The models colour the brackets, and standalone Monaco tells them only under the flat key.
       ...{ 'bracketPairColorization.enabled': false },
       guides: { indentation: true, bracketPairs: false },
+      // A language server's word on what names are (a class, a method), coloured by the theme.
+      ...{ 'semanticHighlighting.enabled': true },
       padding: { top: 10, bottom: 10 },
       smoothScrolling: !reducedMotion(),
       // Mango's own glide (`caretGlide`): Monaco's is too short to see, and runs while the page moves.

@@ -18,6 +18,7 @@ import { MAX_DECOMPILED, decompiledTabId, fileNameOf, isDecompiledTab, isMetadat
 import { FILE_METHODS, linkRoute, oneFileWorker, refusesFirst, untrusted, withWords, workerGuards } from '../app/lsp/builtins.ts'
 import { ModelUris } from '../app/lsp/modelUris.ts'
 import { CompletionText, UntouchedText } from '../app/lsp/editGuard.ts'
+import { KNOWN_TOKEN_TYPES, LEGEND, MAX_TOKENS, TOKEN_KINDS, kindMap, toSemanticTokens } from '../app/lsp/semanticTokens.ts'
 
 const tick = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
 const range = (a: number, b: number, c: number, d: number) => ({ start: { line: a, character: b }, end: { line: c, character: d } })
@@ -324,7 +325,7 @@ const CAPS = {
   completionProvider: {},
 }
 
-function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]; refuse?: string; slowStart?: Promise<void> } = {}) {
+function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]; refuse?: string; slowStart?: Promise<void>; tokensChanged?: () => void } = {}) {
   const sent: any[] = []
   const views: SessionView[] = []
   const markers: Array<[string, any[]]> = []
@@ -335,6 +336,7 @@ function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]
     backoff: options.backoff ?? [1, 1],
     changed: v => views.push(v),
     diagnostics: (file, m) => markers.push([file, m]),
+    tokensChanged: options.tokensChanged,
     async connect(handlers) {
       if (options.refuse) throw new Error(options.refuse)
       await options.slowStart
@@ -1017,4 +1019,78 @@ test('the server\'s decompiled source is checked before it is shown', () => {
   assert.equal(toDecompiled('class A {}'), null)
   assert.equal(toDecompiled({ assemblyName: 'A', symbolName: 'B', source: '' }), null)
   assert.equal(toDecompiled({ assemblyName: 'A', symbolName: 'B', source: 'x'.repeat(MAX_DECOMPILED + 1) }), null)
+})
+
+/* ---------- semantic colouring */
+
+// Part of csharp-ls's legend, in its order.
+const CSHARP_LEGEND = { tokenTypes: ['class', 'comment', 'keyword', 'method', 'field', 'namespace', 'jsonText', 'struct', 'interface', 'typeParameter'], tokenModifiers: ['static'] }
+
+test('a server\'s legend maps onto the kinds the theme colours', () => {
+  const map = kindMap(CSHARP_LEGEND)!
+  const kind = (i: number) => (map[i]! < 0 ? null : TOKEN_KINDS[map[i]!])
+  assert.deepEqual([...map.keys()].map(kind), ['type', null, null, 'function', 'property', 'namespace', null, 'type', 'type', 'type'])
+  assert.equal(kindMap(null), null)
+  assert.equal(kindMap({ tokenTypes: 'class' } as any), null)
+  assert.deepEqual([...kindMap({ tokenTypes: [7, 'constructor', 'enumMember'], tokenModifiers: [] } as any)!].map(i => (i < 0 ? null : TOKEN_KINDS[i])), [null, null, 'constant'])
+  assert.deepEqual(LEGEND.tokenTypes, [...TOKEN_KINDS])
+  assert.ok(KNOWN_TOKEN_TYPES.includes('class') && !KNOWN_TOKEN_TYPES.includes('keyword'))
+})
+
+test('tokens the theme leaves to the tokenizer are dropped, and the rest placed again', () => {
+  const map = kindMap(CSHARP_LEGEND)!
+  // using UnityEngine;  /  (blank)  /  public sealed AudioBus : ScriptableObject {  /  float volume;
+  const data = [
+    0, 0, 5, 2, 0, // using: keyword
+    0, 6, 11, 5, 0, // UnityEngine: namespace
+    2, 4, 6, 2, 0, // public: keyword
+    0, 7, 16, 0, 1, // AudioBus: class, static
+    0, 19, 8, 0, 0, // ScriptableObject: class
+    1, 2, 3, 4, 0, // volume: field
+  ]
+  assert.deepEqual([...toSemanticTokens({ data }, map)!], [
+    0, 6, 11, 5, 0,
+    2, 11, 16, 0, 0,
+    0, 19, 8, 0, 0,
+    1, 2, 3, 3, 0,
+  ])
+  // A type the legend does not have, and an empty token, colour nothing.
+  assert.deepEqual([...toSemanticTokens({ data: [0, 0, 3, 99, 0, 0, 4, 0, 0, 0, 1, 0, 2, 0, 0] }, map)!], [1, 0, 2, 0, 0])
+  assert.deepEqual([...toSemanticTokens({ data: [] }, map)!], [])
+})
+
+test('a malformed answer colours nothing', () => {
+  const map = kindMap(CSHARP_LEGEND)!
+  for (const result of [null, 'x', {}, { data: 'x' }, { data: [0, 0, 1, 0] }, { data: [0, -1, 1, 0, 0] }, { data: [0, 0.5, 1, 0, 0] },
+    { data: [0, 0, '1', 0, 0] }, { data: [2 ** 31, 0, 1, 0, 0] }, { data: [2 ** 30, 0, 1, 0, 0, 2 ** 30, 0, 1, 0, 0] }]) {
+    assert.equal(toSemanticTokens(result, map), null, JSON.stringify(result))
+  }
+  assert.equal(toSemanticTokens({ data: { length: MAX_TOKENS * 5 + 5 } }, map), null)
+  assert.equal(toSemanticTokens({ data: new Array(MAX_TOKENS * 5 + 5).fill(0) }, map), null)
+})
+
+test('Mango asks for semantic tokens, and hears when they changed', async () => {
+  const caps: any = clientCapabilities(PROFILES.csharp)
+  assert.deepEqual(caps.textDocument.semanticTokens.requests, { full: true })
+  assert.deepEqual(caps.textDocument.semanticTokens.formats, ['relative'])
+  assert.equal(caps.workspace.semanticTokens.refreshSupport, true)
+  let told = 0
+  const { session, sent, runs } = pretend({ tokensChanged: () => told++ })
+  await session.start()
+  runs[0]!.receive({ id: 's', method: 'workspace/semanticTokens/refresh' })
+  assert.equal(told, 1)
+  assert.equal(sent.at(-1).id, 's')
+  assert.equal(sent.at(-1).result, null)
+  await session.stop()
+})
+
+test('no answer is told apart from an answer, so colours that still hold are kept', async () => {
+  const { session } = pretend({ silent: ['textDocument/semanticTokens/full'] })
+  await session.start()
+  session.open({ file: 'a.rs', language: 'rust', text: () => '' })
+  assert.equal(await session.ask('textDocument/semanticTokens/full', 'a.rs', {}, { timeout: 5 }), undefined)
+  assert.equal(await session.request('textDocument/semanticTokens/full', 'a.rs', {}, { timeout: 5 }), null)
+  assert.deepEqual(await session.ask('textDocument/hover', 'a.rs'), [])
+  assert.equal(await session.ask('textDocument/hover', 'closed.rs'), undefined)
+  await session.stop()
 })

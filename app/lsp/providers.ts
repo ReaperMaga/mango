@@ -12,6 +12,7 @@ import { PEEK_SCHEME, documentUri } from '~/composables/editorDocuments'
 import { languageFor, type MonacoApi } from '~/composables/monaco'
 import { decompile } from '~/lsp/decompiled'
 import { isMetadataUri } from '~/utils/decompiledTabs'
+import { LEGEND, kindMap, toSemanticTokens } from '~/lsp/semanticTokens'
 
 /**
  * Monaco's side of the language servers: providers that ask the model's session, and Monaco's own
@@ -19,7 +20,7 @@ import { isMetadataUri } from '~/utils/decompiledTabs'
  */
 
 export interface Served { session: Session; file: string; project: string }
-export type Feature = 'completion' | 'hover' | 'signature' | 'definition'
+export type Feature = 'completion' | 'hover' | 'signature' | 'definition' | 'semanticTokens'
 /** The running server answering for a model, if one has this feature. */
 export type ServedBy = (model: Monaco.editor.ITextModel, feature: Feature) => Served | null
 
@@ -28,6 +29,7 @@ export const PROVIDES: Record<Feature, (caps: ServerCapabilities) => boolean> = 
   hover: caps => !!caps.hoverProvider,
   signature: caps => !!caps.signatureHelpProvider,
   definition: caps => !!caps.definitionProvider,
+  semanticTokens: caps => !!caps.semanticTokensProvider?.full && Array.isArray(caps.semanticTokensProvider.legend?.tokenTypes),
 }
 
 /**
@@ -85,6 +87,10 @@ const PEEK_MAX = 12
 const PREVIEWS = 6
 /** Library definitions decompiled for one jump (a server may list every overload's assembly). */
 const MAX_DECOMPILED_TARGETS = 3
+/** A server still loading its project may take a while to classify a file. */
+const TOKENS_TIMEOUT = 15_000
+/** What Monaco takes for a cancellation (`isCancellationError`). */
+const cancelled = () => Object.assign(new Error('Canceled'), { name: 'Canceled' })
 
 export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
   const { languages } = monaco
@@ -234,8 +240,32 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
     },
   }
 
+  /** Monaco asks again for every open file's colours when this fires. */
+  const tokensChanged = new monaco.Emitter<void>()
+  /** Each start's legend, mapped once. */
+  const kindMaps = new WeakMap<ServerCapabilities, Int16Array | null>()
+  const semanticTokens: Monaco.languages.DocumentSemanticTokensProvider = {
+    onDidChange: tokensChanged.event,
+    getLegend: () => LEGEND,
+    async provideDocumentSemanticTokens(model, _lastResultId, token) {
+      const at = servedBy(model, 'semanticTokens')
+      if (!at) return null
+      const caps = at.session.caps
+      if (!kindMaps.has(caps)) kindMaps.set(caps, kindMap(caps.semanticTokensProvider?.legend))
+      const map = kindMaps.get(caps)
+      if (!map) return null
+      const result = await at.session.ask('textDocument/semanticTokens/full', at.file, {}, { token, timeout: TOKENS_TIMEOUT })
+      // No answer (a request overtaken by an edit, a slow reload): Monaco keeps the colours it has
+      // for a cancellation, where null would clear them.
+      if (result === undefined || token.isCancellationRequested || model.isDisposed()) throw cancelled()
+      const data = toSemanticTokens(result, map)
+      return data ? { data } : null
+    },
+    releaseDocumentSemanticTokens() {},
+  }
+
   /** Register for a Monaco language once, and again when a server brings other trigger characters. */
-  return function ensure(language: string, caps: ServerCapabilities) {
+  function ensure(language: string, caps: ServerCapabilities) {
     const had = registered.get(language)
     const suggest = new Set([...had?.suggest ?? [], ...caps.completionProvider?.triggerCharacters ?? []])
     const sign = new Set([...had?.sign ?? [], ...caps.signatureHelpProvider?.triggerCharacters ?? []])
@@ -249,7 +279,10 @@ export function languageProviders(monaco: MonacoApi, servedBy: ServedBy) {
       languages.registerHoverProvider(selector, hover),
       languages.registerSignatureHelpProvider(selector, signature([...sign], [...resign])),
       languages.registerDefinitionProvider(selector, definition),
+      languages.registerDocumentSemanticTokensProvider(selector, semanticTokens),
     ]
     registered.set(language, { suggest, sign, resign, subs })
   }
+
+  return { ensure, refreshTokens: () => tokensChanged.fire() }
 }

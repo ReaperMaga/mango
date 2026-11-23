@@ -49,6 +49,8 @@ export interface SessionOptions {
   profile: ServerProfile
   changed(view: SessionView): void
   diagnostics(file: string, markers: Marker[]): void
+  /** What it knows of the names in the open files changed (a project finished loading): their colours are asked for again. */
+  tokensChanged?(): void
   /** The waits before each restart after a crash. */
   backoff?: number[]
 }
@@ -345,22 +347,34 @@ export class Session {
    * on another's. Null when there is nothing to say (not ready, cancelled, out of time).
    */
   async request<T>(method: string, file: string, params: object = {}, options: RequestOptions = {}): Promise<T | null> {
+    return (await this.ask<T>(method, file, params, options)) ?? null
+  }
+
+  /**
+   * As `request`, but `undefined` when no answer came (not ready, cancelled, failed, out of time),
+   * told apart from the server's own null: what it gave before may still hold.
+   */
+  async ask<T>(method: string, file: string, params: object = {}, options: RequestOptions = {}): Promise<T | null | undefined> {
     // Monaco can ask from inside the very change it asks about, before that change was noted here.
     await null
     const doc = this.docs.get(file)
-    if (!this.ready || !doc?.opened) return null
-    return this.send<T>(method, { textDocument: { uri: doc.uri }, ...params }, options)
+    if (!this.ready || !doc?.opened) return undefined
+    return this.trySend<T>(method, { textDocument: { uri: doc.uri }, ...params }, options)
   }
 
   /** A request that names no document itself (`completionItem/resolve`). */
   async send<T>(method: string, params: unknown, options: RequestOptions = {}): Promise<T | null> {
-    if (!this.ready || options.token?.isCancellationRequested) return null
+    return (await this.trySend<T>(method, params, options)) ?? null
+  }
+
+  private async trySend<T>(method: string, params: unknown, options: RequestOptions): Promise<T | null | undefined> {
+    if (!this.ready || options.token?.isCancellationRequested) return undefined
     this.flushAll()
     try {
       return await this.rpc!.request<T>(method, params, options)
     } catch (e) {
       if (!isBenign(e)) console.warn(`${this.options.name} ${method}:`, e instanceof Error ? e.message : e)
-      return null
+      return undefined
     }
   }
 
@@ -388,6 +402,9 @@ export class Session {
         for (const r of Array.isArray(params?.unregisterations) ? params.unregisterations : []) this.watched?.unregister(String(r?.id))
         return null
       }
+      case 'workspace/semanticTokens/refresh':
+        this.options.tokensChanged?.()
+        return null
       case 'window/workDoneProgress/create':
       case 'workspace/diagnostic/refresh':
       case 'window/showMessageRequest':

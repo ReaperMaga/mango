@@ -78,6 +78,11 @@ export interface ServerCapabilities {
   signatureHelpProvider?: { triggerCharacters?: string[]; retriggerCharacters?: string[] }
   hoverProvider?: boolean | object
   definitionProvider?: boolean | object
+  semanticTokensProvider?: { legend?: SemanticTokensLegend; full?: boolean | object; range?: boolean | object }
 }
+
+export interface SemanticTokensLegend { tokenTypes: string[]; tokenModifiers: string[] }
+/** Five numbers a token, each place counted from the token before (`relative`). */
+export interface SemanticTokens { resultId?: string; data: number[] }
 
 export interface InitializeResult { capabilities: ServerCapabilities }
