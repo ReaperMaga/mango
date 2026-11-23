@@ -171,7 +171,7 @@ function parseQuestions(input: any): AgentQuestion[] {
       .map((o: any) => ({ label: typeof o?.label === 'string' ? o.label : '', description: typeof o?.description === 'string' ? o.description : undefined }))
       .filter((o: { label: string }) => o.label)
     if (!question || !options.length) return []
-    return [{ question, header: typeof q.header === 'string' && q.header ? q.header : undefined, options, multiSelect: q.multiSelect === true }]
+    return [{ question, header: typeof q.header === 'string' && q.header ? q.header : undefined, options, multiSelect: q.multiSelect === true, freeText: true }]
   })
 }
 
