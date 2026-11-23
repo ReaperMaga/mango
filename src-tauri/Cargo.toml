@@ -43,6 +43,8 @@ ring = "0.17"
 base64 = "0.23"
 # Chat history: SQLite compiled in (no system library to find on Windows or macOS).
 rusqlite = { version = "0.37", features = ["bundled"] }
+# Language servers that leave watching to their client hear of files changed on disk (lsp/watch.rs).
+notify = "8"
 
 # Deleting in the Files view goes to the Recycle Bin through our own shell calls: the trash crate
 # deletes for good what does not fit the bin (trash_bin.rs). Language servers run in a job object,

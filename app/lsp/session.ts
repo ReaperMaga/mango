@@ -16,12 +16,16 @@ export interface Connection {
   root: string
   /** Mango's process id. */
   pid: number
+  /** Its folder is watched for it: changes on disk come through `files`. */
+  watching?: boolean
   send(message: string): void
   kill(): void
 }
 
 export type Connect = (handlers: {
   message(text: string): void
+  /** Changed on disk; `more`: there were changes not listed. */
+  files?(changes: Array<{ file: string; type: FileChange }>, more: boolean): void
   exit(code: number | null, stderr: string): void
 }) => Promise<Connection>
 
@@ -53,6 +57,8 @@ export interface SessionOptions {
   tokensChanged?(): void
   /** The waits before each restart after a crash. */
   backoff?: number[]
+  /** Its folder's watch missed changes: the host tells it what else it knows. */
+  filesLost?(): void
 }
 
 interface Doc extends Document {
@@ -112,6 +118,9 @@ export class Session {
 
   get ready() { return this.view.state === 'ready' }
 
+  /** Mango watches its folder for it: changes on disk reach it without the host's help. */
+  get watching() { return !!this.connection?.watching }
+
   /** Its definitions may point at decompiled library source (`ServerProfile.metadataUris`). */
   get metadataUris() { return !!this.options.profile.metadataUris }
 
@@ -143,6 +152,11 @@ export class Session {
     try {
       const connection = await this.options.connect({
         message: (text) => { if (current()) this.rpc?.receive(text) },
+        files: (changes, more) => {
+          if (!current()) return
+          this.filesChanged(changes)
+          if (more) this.options.filesLost?.()
+        },
         exit: (code, stderr) => {
           if (!current()) return
           if (this.exited) return this.exited()

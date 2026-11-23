@@ -325,11 +325,16 @@ const CAPS = {
   completionProvider: {},
 }
 
-function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]; refuse?: string; slowStart?: Promise<void>; tokensChanged?: () => void } = {}) {
+function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]; refuse?: string; slowStart?: Promise<void>; tokensChanged?: () => void; watching?: boolean; filesLost?: () => void } = {}) {
   const sent: any[] = []
   const views: SessionView[] = []
   const markers: Array<[string, any[]]> = []
-  const runs: Array<{ receive(m: object): void; exit(code: number | null, stderr: string): void; killed: boolean }> = []
+  const runs: Array<{
+    receive(m: object): void
+    exit(code: number | null, stderr: string): void
+    files?: (changes: Array<{ file: string; type: 1 | 2 | 3 }>, more: boolean) => void
+    killed: boolean
+  }> = []
   const session = new Session({
     name: 'pretend',
     profile: { settings: { pretend: { on: true } }, clientWatches: true },
@@ -337,6 +342,7 @@ function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]
     changed: v => views.push(v),
     diagnostics: (file, m) => markers.push([file, m]),
     tokensChanged: options.tokensChanged,
+    filesLost: options.filesLost,
     async connect(handlers) {
       if (options.refuse) throw new Error(options.refuse)
       await options.slowStart
@@ -344,11 +350,13 @@ function pretend(options: { caps?: object; backoff?: number[]; silent?: string[]
         killed: false,
         receive: (m: object) => handlers.message(JSON.stringify({ jsonrpc: '2.0', ...m })),
         exit: handlers.exit,
+        files: handlers.files,
       }
       runs.push(run)
       return {
         root: 'C:\\work\\app',
         pid: 42,
+        watching: options.watching,
         kill() { run.killed = true },
         send(text) {
           const m = JSON.parse(text)
@@ -1126,4 +1134,21 @@ test('a session runs on without files while its folder is open', async () => {
   allowed = false
   pool.update([])
   assert.equal(log.at(-1), 'stop /game now', 'disallowed: at once, open or not')
+})
+
+test('a watched folder\'s changes reach the server; a missed burst asks the host', async () => {
+  let lost = 0
+  const { session, sent, runs } = pretend({ watching: true, filesLost: () => lost++ })
+  await session.start()
+  assert.equal(session.watching, true)
+  const run = runs[0]!
+  run.receive({ id: 'r', method: 'client/registerCapability', params: { registrations: [{ id: 'w', method: 'workspace/didChangeWatchedFiles', registerOptions: { watchers: [{ globPattern: '**/*.cs' }] } }] } })
+  run.files!([{ file: 'Assets/New.cs', type: FILE_CREATED }, { file: 'Assets/New.cs.meta', type: FILE_CREATED }], false)
+  assert.deepEqual(sent.at(-1).params.changes, [{ uri: 'file:///c%3A/work/app/Assets/New.cs', type: FILE_CREATED }])
+  assert.equal(lost, 0)
+  run.files!([], true)
+  assert.equal(lost, 1)
+  await session.stop()
+  run.files!([{ file: 'Assets/Old.cs', type: FILE_DELETED }], true)
+  assert.equal(lost, 1, 'nothing after it stopped')
 })
