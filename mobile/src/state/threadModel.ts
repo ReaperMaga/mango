@@ -1,6 +1,7 @@
 import type { AgentId, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
 import { normalizeContext } from '~/agents/context'
+import { savedWorktree } from '~/agents/workdir'
 
 /**
  * Pure helpers about chats, ported 1:1 from the desktop's `app/stores/threads.ts` (where they are
@@ -78,7 +79,10 @@ export function normalizeLoaded(t: Thread): Thread {
   const links = Array.isArray(t.links)
     ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
     : []
-  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
+  // Older builds took an agent's `cd` into a folder of its project for a worktree: that chat works in the project.
+  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId && typeof t.projectPath === 'string'
+    ? savedWorktree(t.projectPath, t.worktree) ?? undefined
+    : undefined
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
   const context = normalizeContext(t.context)

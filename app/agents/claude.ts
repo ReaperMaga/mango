@@ -3,6 +3,7 @@ import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
 import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts'
+import { movedFrom, resumedFolder } from './workdir.ts'
 
 /**
  * Claude Code adapter.
@@ -31,7 +32,8 @@ import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts
  * Either is reported as a `workdir` event. Claude Code relocates the session's transcript to the
  * new folder's project, yet `--resume` still finds it from the old one and restores the
  * session's folder: the `cwd` of system/init then differs from the one we spawned in, which is
- * reported as `workdir` too.
+ * reported as `workdir` too. That `cwd` also follows the Bash tool's `cd`, so only a worktree
+ * counts (`resumedFolder` in workdir.ts), never a plain folder of the project.
  *
  * Permission modes: plan → plan, ask → default, edits → acceptEdits,
  * auto → bypassPermissions. With `--permission-prompt-tool stdio` the CLI asks
@@ -46,22 +48,6 @@ const MODES: Record<PermissionMode, string> = {
 }
 
 const MAX_OUTPUT = 20_000
-
-/** A path to compare: no trailing separator; a Windows path also in one case and with one kind of separator. */
-const comparable = (p: string) => {
-  const t = p.replace(/(?<=.)[\\/]+$/, '')
-  return /^[a-z]:/i.test(t) ? t.replace(/\//g, '\\').toLowerCase() : t
-}
-
-/**
- * Whether Claude Code's `cwd` is another folder than `spawned`, not just another spelling of it
- * (a trailing separator, a Windows drive letter's case, or macOS's /private/tmp for /tmp).
- */
-function movedFrom(spawned: string, cwd: string): boolean {
-  const a = comparable(spawned)
-  const b = comparable(cwd)
-  return a !== b && b !== `/private${a}`
-}
 
 interface ToolShape { tool: ToolKind; label?: string; target: string; summary?: string; diff?: DiffLine[] }
 
@@ -622,7 +608,11 @@ function run(options: AgentRunOptions): AgentRun {
       case 'init':
         if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
         // A resumed session that had moved into a worktree goes on there, wherever it was started.
-        if (options.sessionId && typeof m.cwd === 'string') moveTo(m.cwd, null)
+        // Its `cwd` also follows a `cd` of its shell: a plain folder inside the project is no worktree.
+        if (options.sessionId && typeof m.cwd === 'string') {
+          const folder = resumedFolder(workdir, m.cwd)
+          if (folder) moveTo(folder, null)
+        }
         onTurnActivity()
         break
       case 'task_started': {
