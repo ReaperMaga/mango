@@ -172,6 +172,11 @@ function applyTheme(monaco: MonacoApi) {
       { token: 'delimiter', foreground: bare(c('--fg-subtle', faint)) },
       { token: 'variable', foreground: bare(fg) },
       { token: 'markup.heading', foreground: bare(fn), fontStyle: 'bold' },
+      // What a language server says names are (`lsp/semanticTokens.ts`); `type`, `constant` and `variable` are above.
+      { token: 'function', foreground: bare(fn) },
+      { token: 'property', foreground: bare(fg) },
+      { token: 'namespace', foreground: bare(fg) },
+      { token: 'macro', foreground: bare(keyword) },
     ],
     colors: {
       'editor.background': c('--bg-canvas', dark ? '#141917' : '#fbfcfb'),

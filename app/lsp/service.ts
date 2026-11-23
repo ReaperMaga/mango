@@ -125,7 +125,14 @@ function create(monaco: MonacoApi): LanguageService {
     const b = byModel.get(model)
     return b?.session.ready && PROVIDES[feature](b.session.caps) ? { session: b.session, file: b.file, project: b.root } : null
   }
-  const ensureProviders = languageProviders(monaco, served)
+  const { ensure: ensureProviders, refreshTokens } = languageProviders(monaco, served)
+
+  let recolour: ReturnType<typeof setTimeout> | undefined
+  /** Ask for the open files' colours again: what a server knows of them changed. */
+  function recolourSoon() {
+    clearTimeout(recolour)
+    recolour = setTimeout(refreshTokens, 100)
+  }
 
   /** Monaco's worker checks files a server checks too: the server's word is enough. */
   function hushWorker(model: Monaco.editor.ITextModel) {
@@ -151,6 +158,7 @@ function create(monaco: MonacoApi): LanguageService {
       const id = poolKey(key)
       const name = store.servers?.find(s => s.id === key.server)?.name ?? key.server
       let ready = false
+      let busy = false
       const session: Session = new Session({
         name,
         profile: PROFILES[key.server],
@@ -158,6 +166,9 @@ function create(monaco: MonacoApi): LanguageService {
         changed(view) {
           if (view.state === 'stopped') delete store.sessions[id]
           else store.sessions[id] = view
+          // Loading a project ended: names it did not know before may be known now.
+          if (busy && !view.busy && view.state === 'ready') recolourSoon()
+          busy = !!view.busy
           if (ready === (view.state === 'ready')) return
           ready = view.state === 'ready'
           for (const b of byModel.values()) {
@@ -168,7 +179,9 @@ function create(monaco: MonacoApi): LanguageService {
             }
           }
           if (!ready && key.server === 'typescript') wakeWorker()
+          recolourSoon()
         },
+        tokensChanged: recolourSoon,
         diagnostics(file, markers) {
           for (const b of byModel.values()) {
             if (b.session === session && b.file === file && !b.model.isDisposed()) monaco.editor.setModelMarkers(b.model, MARKERS, markers)
@@ -186,6 +199,8 @@ function create(monaco: MonacoApi): LanguageService {
     b.session.close(b.file)
     if (disposing || b.model.isDisposed()) return
     monaco.editor.setModelMarkers(b.model, MARKERS, [])
+    // Its server may run on a while for other files: what it said of this one goes.
+    recolourSoon()
     if (b.server === 'typescript' && b.session.ready) wakeWorker()
   }
 
@@ -203,6 +218,8 @@ function create(monaco: MonacoApi): LanguageService {
     if (!session.ready) return
     ensureProviders(b.model.getLanguageId(), session.caps)
     hushWorker(b.model)
+    // Monaco may have asked before the file was bound, and heard nothing.
+    recolourSoon()
   }
 
   /** Bring sessions and documents in step with the open tabs. */
