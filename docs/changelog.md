@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.45
+
+### Fixes
+
+- Keep a chat in its project when its agent changes folders: a `cd` into a subfolder no longer counts as a worktree, which made Files, Unity detection and language servers work in that subfolder. Chats already caught by it go back to their project.
+
 ## 0.1.44
 
 ### New
