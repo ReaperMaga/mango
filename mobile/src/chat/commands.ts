@@ -6,10 +6,11 @@ import type { AgentCommand, AgentId } from '~/types/chat'
  * Keep both in step with the desktop.
  */
 
-/** Handled by Mango for every agent (`threads.send`: `/clear` and `/create-pr`). */
+/** Handled by Mango for every agent (`threads.send`: `/clear`, `/create-pr` and `/create-release`). */
 export const MANGO_COMMANDS: readonly AgentCommand[] = [
   { name: 'clear', description: 'Start a new conversation in this chat. The agent forgets the messages above.', mango: true },
   { name: 'create-pr', description: 'Commit, check, push and open a GitHub pull request for this branch', argumentHint: '[notes, e.g. draft]', mango: true },
+{ name: 'create-release', description: 'Version, tag, push and publish a GitHub release from the default branch', argumentHint: '[notes, e.g. minor]', mango: true },
 ]
 
 /** Stand-ins until the agent's CLI has listed its own (the desktop's fallback list). */

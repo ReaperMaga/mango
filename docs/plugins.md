@@ -263,7 +263,7 @@ mango.chat.slashCommands.register({
 })
 ```
 
-A name already taken by Mango (`/clear`, `/create-pr`) or by another plugin is refused with an error.
+A name already taken by Mango (`/clear`, `/create-pr`, `/create-release`) or by another plugin is refused with an error.
 
 Message actions are buttons on a message:
 

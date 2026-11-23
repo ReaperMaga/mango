@@ -18,6 +18,7 @@ import { demoThreads } from '~/utils/demoThreads'
 import { createdBy } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
+import { createReleasePrompt } from '~/utils/createRelease'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
@@ -1115,12 +1116,12 @@ export const useThreads = defineStore('threads', {
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist(t.id)
     },
 
-    /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
+    /** One turn for a message already in the chat, or Mango's own `/clear`, `/create-pr` and `/create-release`. */
     async _runTurn(id: string, text: string, attachments: Attachment[]) {
       const t = this.byId(id)
       if (!t) return
@@ -1167,8 +1168,8 @@ export const useThreads = defineStore('threads', {
       }
       if (useWorkspace().editorAutoSave) await this._saveFilesOf(id)
       if (!current()) return this._standDown(id)
-      // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-      const prompt = createPrPrompt(text) ?? text
+      // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
+      const prompt = createPrPrompt(text) ?? createReleasePrompt(text) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
       const handOver = t.history && !t.sessionId
       const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)

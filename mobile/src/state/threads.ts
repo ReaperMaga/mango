@@ -4,6 +4,7 @@ import { AGENTS, awaitsUser } from '~/types/chat'
 import { createdBy } from '~/utils/githubLinks'
 import { transcript } from '~/utils/transcript'
 import { createPrPrompt } from '~/utils/createPr'
+import { createReleasePrompt } from '~/utils/createRelease'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
 import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
@@ -661,13 +662,13 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
     get().edit(id, (d) => {
       d.messages.push(msg)
-      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
+      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? 'Create a pull request' : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       d.updatedAt = Date.now()
     })
     get().persist(id)
   },
 
-  /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
+  /** One turn for a message already in the chat, or Mango's own `/clear`, `/create-pr` and `/create-release`. */
   async _runTurn(id, text, attachments) {
     const t = get().byId(id)
     if (!t) return
@@ -705,8 +706,8 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
       if (get().byId(id)?.status !== 'queued') return
     }
-    // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-    const prompt = createPrPrompt(text) ?? text
+    // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
+    const prompt = createPrPrompt(text) ?? createReleasePrompt(text) ?? text
     // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
     const handOver = t.history && !t.sessionId
     await runAgentTurn(id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
