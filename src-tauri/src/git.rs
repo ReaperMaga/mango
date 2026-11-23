@@ -1931,47 +1931,44 @@ fn head_oid(root: &At) -> Option<String> {
 
 /// Commits reachable from `to` but not from `from`, merges left out.
 fn commits_between(root: &At, from: &str, to: &str) -> u64 {
-    git(root)
-        .read_only()
-        .args(["rev-list", "--count", "--no-merges"])
-        .arg(format!("{from}..{to}"))
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .and_then(|o| o.line().parse().ok())
-        .unwrap_or(0)
+    parse_count(commits_between_cmd(root, from, to).run().ok())
+}
+
+fn commits_between_cmd<'a>(root: &'a At, from: &str, to: &str) -> Git<'a> {
+    git(root).read_only().args(["rev-list", "--count", "--no-merges"]).arg(format!("{from}..{to}"))
+}
+
+fn parse_count(out: Option<Output>) -> u64 {
+    out.filter(Output::ok).and_then(|o| o.line().parse().ok()).unwrap_or(0)
 }
 
 fn diff_size(root: &At, from: &str, to: &str) -> DiffSize {
-    git(root)
-        .read_only()
-        .args(["diff", "--numstat", "--no-color", "--no-ext-diff"])
-        .arg(from)
-        .arg(to)
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .map(|o| parse_numstat(&o.text()))
-        .unwrap_or_default()
+    parse_diff_size(diff_size_cmd(root, from, to).run().ok())
+}
+
+fn diff_size_cmd<'a>(root: &'a At, from: &str, to: &str) -> Git<'a> {
+    git(root).read_only().args(["diff", "--numstat", "--no-color", "--no-ext-diff"]).arg(from).arg(to)
+}
+
+fn parse_diff_size(out: Option<Output>) -> DiffSize {
+    out.filter(Output::ok).map(|o| parse_numstat(&o.text())).unwrap_or_default()
 }
 
 /// Every remote-tracking ref and the commit it points at.
-fn remote_refs(root: &At) -> HashMap<String, String> {
-    git(root)
-        .read_only()
-        .args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .map(|o| {
-            o.text()
-                .lines()
-                .filter_map(|l| l.split_once(' '))
-                .filter(|(_, name)| !name.ends_with("/HEAD"))
-                .map(|(oid, name)| (name.to_string(), oid.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
+fn remote_refs_cmd(root: &At) -> Git<'_> {
+    git(root).read_only().args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
+}
+
+fn parse_remote_refs(out: &Output) -> HashMap<String, String> {
+    if !out.ok() {
+        return HashMap::new();
+    }
+    out.text()
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .filter(|(_, name)| !name.ends_with("/HEAD"))
+        .map(|(oid, name)| (name.to_string(), oid.to_string()))
+        .collect()
 }
 
 /// What a fetch changed among the remote-tracking branches.
@@ -2004,30 +2001,59 @@ fn describe_behind(status: &ParsedStatus) -> Option<String> {
     })
 }
 
+/// The fetch runs in one batch with the reads around it ([`run_all`]): in an environment that is
+/// one SSH call instead of five. Without a remote git refuses the fetch by itself.
 pub(crate) fn fetch(at: &At) -> Result<String, String> {
     let root = require_root(at)?;
-    if remotes(&root)?.is_empty() {
+    let [names, before, out, after, status]: [Output; 5] = run_all(vec![
+        remotes_cmd(&root),
+        remote_refs_cmd(&root),
+        git(&root).slow().arg("fetch"),
+        remote_refs_cmd(&root),
+        status_cmd(&root, false),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    if !names.ok() {
+        return Err(names.error("git remote"));
+    }
+    if parse_remotes(&names).is_empty() {
         return Err(NO_REMOTE.into());
     }
-    let before = remote_refs(&root);
-    let out = git(&root).slow().arg("fetch").run()?;
     if !out.ok() {
         return Err(explain_sync_failure(out.error("git fetch")));
     }
-    let title = describe_fetch(&before, &remote_refs(&root));
-    let behind = read_status(&root, false).ok().as_ref().and_then(describe_behind);
+    let title = describe_fetch(&parse_remote_refs(&before), &parse_remote_refs(&after));
+    let behind = status.ok().then(|| parse_status(&status.stdout)).as_ref().and_then(describe_behind);
     Ok(match behind {
         Some(line) => format!("{title}\n{line}"),
         None => title,
     })
 }
 
+/// Like [`fetch`], the pull goes in one batch with the reads around it. Git refuses it by itself
+/// in each case refused here (no remote, a detached HEAD, no upstream), leaving the repository as
+/// it was. Only when commits came in does a second batch read what they changed.
 pub(crate) fn pull(at: &At) -> Result<String, String> {
     let root = require_root(at)?;
-    if remotes(&root)?.is_empty() {
+    let [names, before, out, after]: [Output; 4] = run_all(vec![
+        remotes_cmd(&root),
+        status_cmd(&root, false),
+        git(&root).slow().arg("pull"),
+        status_cmd(&root, false),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    if !names.ok() {
+        return Err(names.error("git remote"));
+    }
+    if parse_remotes(&names).is_empty() {
         return Err(NO_REMOTE.into());
     }
-    let before = read_status(&root, false)?;
+    if !before.ok() {
+        return Err(before.error("git status"));
+    }
+    let before = parse_status(&before.stdout);
     let Some(branch) = before.branch else {
         return Err("HEAD is detached, so there is no branch to pull into. Switch to a branch first.".into());
     };
@@ -2036,24 +2062,32 @@ pub(crate) fn pull(at: &At) -> Result<String, String> {
             "{branch} isn't tracking a remote branch yet. Publish it first, then pull."
         ));
     };
-    let out = git(&root).slow().arg("pull").run()?;
+    let after = after.ok().then(|| parse_status(&after.stdout));
     if out.ok() {
-        let after = head_oid(&root);
-        return Ok(match (before.oid, after) {
+        return Ok(match (before.oid, after.and_then(|s| s.oid)) {
             (Some(from), Some(to)) if from == to => format!("{branch} is already up to date with {upstream}."),
             (Some(from), Some(to)) => {
-                let commits = commits_between(&root, &from, &upstream);
+                let (commits, size) = match run_all(vec![
+                    commits_between_cmd(&root, &from, &upstream),
+                    diff_size_cmd(&root, &from, &to),
+                ]) {
+                    Ok(outs) => {
+                        let mut outs = outs.into_iter();
+                        (parse_count(outs.next()), parse_diff_size(outs.next()))
+                    }
+                    Err(_) => (0, DiffSize::default()),
+                };
                 let title = if commits > 0 {
                     format!("Pulled {} into {branch}.", count(commits, "commit", "commits"))
                 } else {
                     format!("Updated {branch} from {upstream}.")
                 };
-                format!("{title}\n{}", describe_size(&diff_size(&root, &from, &to)))
+                format!("{title}\n{}", describe_size(&size))
             }
             _ => format!("Pulled {upstream} into {branch}."),
         });
     }
-    let conflicted: Vec<String> = read_status(&root, false)
+    let conflicted: Vec<String> = after
         .map(|s| s.files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect())
         .unwrap_or_default();
     if !conflicted.is_empty() {
@@ -3086,6 +3120,20 @@ mod tests {
         assert_eq!(list.current, None);
         assert!(list.local.iter().any(|b| b.name == "main") && !list.local.iter().any(|b| b.is_current));
         assert_eq!(list.remotes, ["origin"]);
+        // Pull refuses there with its own words (git refused it in the same batch).
+        assert!(pull(path).unwrap_err().contains("HEAD is detached"));
+
+        // A pull that conflicts names the files from the status read after it.
+        sh(&work, &["switch", "-q", "main"]);
+        sh(&work, &["config", "pull.rebase", "false"]);
+        sh(&other, &["pull", "-q"]);
+        std::fs::write(other.join("a.txt"), "one\ntheirs\n").unwrap();
+        sh(&other, &["commit", "-q", "-am", "theirs"]);
+        sh(&other, &["push", "-q"]);
+        std::fs::write(work.join("a.txt"), "one\nmine\n").unwrap();
+        sh(&work, &["commit", "-q", "-am", "mine"]);
+        let stopped = pull(path).unwrap_err();
+        assert!(stopped.starts_with("Pull stopped: merge conflicts in 1 file.\n  a.txt\n"), "{stopped}");
 
         let _ = std::fs::remove_dir_all(&base);
     }
