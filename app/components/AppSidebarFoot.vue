@@ -270,14 +270,14 @@ async function logout() {
 }
 .sf__plan { flex: none; }
 /* A narrow sidebar keeps the reading and drops the plan name (still in the tooltip and the menu). */
-@container sidebar-foot (max-width: 240px) { .sf__plan { display: none; } }
+@container sidebar-foot (max-width: 240px) { .sf__plan { display: none; } .sf__meter { width: 28px; } }
 .sf__line { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .sf__sub.is-high { color: var(--ripe-running-fg); }
 .sf__sub.is-full { color: var(--ripe-error-fg); }
 .sf__sub.is-waiting { color: var(--ripe-waiting-fg); }
 
 /* The one meter: neutral while there is room, the running hue from 80%, the error hue when used up. */
-.sf__meter { flex: none; display: block; width: 22px; height: 4px; border-radius: var(--radius-pill); background: var(--bg-active); overflow: hidden; }
+.sf__meter { flex: none; display: block; width: 40px; height: 4px; border-radius: var(--radius-pill); background: var(--bg-active); overflow: hidden; }
 .sf__meter i { display: block; width: 100%; height: 100%; border-radius: var(--radius-pill); background: var(--fg-muted); transform-origin: left center; transition: transform var(--dur-med) var(--ease-out); }
 .sf__sub.is-high .sf__meter i { background: var(--ripe-running); }
 .sf__sub.is-full .sf__meter i { background: var(--ripe-error); }
