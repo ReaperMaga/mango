@@ -2,6 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.46
+
+### Fixes
+
+- Keep a running chat's messages when another device saves it: opening a remote chat on the phone while it ran on the desktop stopped the phone from seeing new messages, and the desktop lost the run's messages when it ended.
+
+### Performance
+
+- Fetch and Update in remote projects take one SSH round trip instead of five or six, so they finish seconds sooner on a distant server.
+
 ## 0.1.45
 
 ### Fixes
