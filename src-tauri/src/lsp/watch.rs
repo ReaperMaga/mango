@@ -21,6 +21,8 @@ pub const DELETED: u8 = 3;
 const GATHER: Duration = Duration::from_millis(300);
 /// More files than this in one burst are not listed one by one: the page is told there were more.
 const MAX_BATCH: usize = 2000;
+/// How deep a new folder's insides are listed.
+const MAX_DEPTH: usize = 32;
 
 /// Folders whose insides change all the time and are no project's source, wherever they are.
 const SKIP_ANYWHERE: &[&str] = &[".git", ".hg", ".svn", ".plastic", ".vs", ".idea", "node_modules", "obj"];
@@ -148,6 +150,30 @@ impl Gathered {
         }
         for (path, kind) in kinds(&event) {
             self.note(root, path, kind);
+            // A folder made or moved in: what is in it already may have come before its own watch
+            // (Linux watches a new folder only once it is there), so its files are listed from disk.
+            if kind == CREATED && relative(root, path).is_some() && path.is_dir() {
+                self.inside(root, path, 0);
+            }
+        }
+    }
+
+    /// Every file and folder in `dir` as created; links are not followed.
+    fn inside(&mut self, root: &Path, dir: &Path, depth: usize) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        for entry in entries.flatten() {
+            if self.order.len() >= MAX_BATCH {
+                self.more = true;
+                return;
+            }
+            let path = entry.path();
+            if relative(root, &path).is_none() {
+                continue;
+            }
+            self.note(root, &path, CREATED);
+            if depth < MAX_DEPTH && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                self.inside(root, &path, depth + 1);
+            }
         }
     }
 
@@ -222,6 +248,20 @@ mod tests {
         let got: Vec<(&str, u8)> = batch.changes.iter().map(|c| (c.file.as_str(), c.kind)).collect();
         assert_eq!(got, [("a.cs", CREATED), ("b.cs", CHANGED), ("c.cs", DELETED), ("d.cs", CREATED)]);
         assert!(!batch.more);
+    }
+
+    #[test]
+    fn a_new_folder_brings_what_is_already_in_it() {
+        let scratch = Scratch::new("watch-folder");
+        let root = scratch.path();
+        scratch.write("Assets/Sub/Player.cs", "class P {}");
+        scratch.write("Assets/obj/Generated.cs", "");
+        let mut g = Gathered::default();
+        g.add(root, event(EventKind::Create(CreateKind::Folder), &[&root.join("Assets")]));
+        let mut got: Vec<(String, u8)> = g.batch(root).changes.into_iter().map(|c| (c.file, c.kind)).collect();
+        got.sort();
+        let want = [("Assets", CREATED), ("Assets/Sub", CREATED), ("Assets/Sub/Player.cs", CREATED)];
+        assert_eq!(got, want.map(|(f, k)| (f.to_string(), k)));
     }
 
     #[test]
