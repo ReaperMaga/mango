@@ -16,7 +16,8 @@ import { parseEnvPath } from '~/utils/envPath'
  *   a mark there so other computers drop it.
  * - pull (`syncEnv`): the environment lists every chat's revision; only the ones newer than
  *   `known` are fetched, and chats deleted there are dropped here. A chat running here is left alone.
- * When both changed, the environment's copy wins, unless the chat is running here.
+ * When both changed, the environment's copy wins, unless the chat is running here: then this
+ * copy wins and replaces it (`claim`).
  *
  * Chats are stored there with their place written as `env://@/…`: the server's id differs from
  * one computer to the next (a joined environment has its own), so each puts its own back in.
@@ -261,8 +262,10 @@ export function flushRemoteChats(): Promise<void> {
       const rev = nextRev(base)
       try {
         const answer = await call('chats_remote_put', { ...env, id, base, rev, data: toShared(json, env) })
+        // Refused while it runs here: it stays queued, and the pull below lets this copy win (`claim`).
+        const keep = answer === 'stale' && !!source?.busy(source.byId(id) ?? t)
         // Changed again while it was sent: it stays in the list for the next round.
-        if (JSON.stringify(source?.byId(id)) === json) done()
+        if (!keep && JSON.stringify(source?.byId(id)) === json) done()
         if (answer === 'ok') { state.known[id] = rev; sent.set(id, json); write() }
         else if (answer === 'gone') { if (!source?.busy(t)) source?.drop([id]) }
         else stale.set(envKey(env), env)
@@ -277,6 +280,17 @@ export function flushRemoteChats(): Promise<void> {
     else if (state.put.length) schedule()
   })().finally(() => { flushing = null })
   return flushing
+}
+
+/**
+ * A newer copy of a chat running here: this one wins. Its revision counts as seen, so the next
+ * send replaces it rather than being refused as stale for as long as the run goes on (which kept
+ * the other computers on the old copy, and then gave the old copy back here when the run ended).
+ */
+function claim(id: string, rev: number) {
+  state.known[id] = Math.max(rev, state.known[id] ?? 0)
+  sent.delete(id)
+  if (!state.put.includes(id)) state.put.push(id)
 }
 
 /**
@@ -309,7 +323,10 @@ export function syncEnv(env: EnvRemote): Promise<void> {
         continue
       }
       if (!local) fetch.push(id)
-      else if (rev > (state.known[id] ?? 0) && !s.busy(local)) fetch.push(id)
+      else if (rev > (state.known[id] ?? 0)) {
+        if (s.busy(local)) claim(id, rev)
+        else fetch.push(id)
+      }
     }
     if (drop.length) {
       for (const id of drop) sent.delete(id)
@@ -329,7 +346,9 @@ export function syncEnv(env: EnvRemote): Promise<void> {
         const t = parseShared(json, env)
         // Checked again: it may have started running, or been deleted, while this was fetched.
         const local = t && s.byId(t.id)
-        if (t && !(local && s.busy(local)) && !state.remove[t.id]) incoming.push(t)
+        if (!t || state.remove[t.id]) continue
+        if (local && s.busy(local)) claim(t.id, there.get(t.id) ?? 0)
+        else incoming.push(t)
       }
       for (const t of s.adopt(incoming)) {
         sent.set(t.id, JSON.stringify(t))
