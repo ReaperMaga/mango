@@ -2,8 +2,10 @@
 import { CircleAlert, RotateCcw } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useUsage } from '~/stores/usage'
+import { useEnvironments } from '~/stores/environments'
 import { AGENTS, type AgentId } from '~/types/chat'
 import { formatLocale } from '~/i18n'
+import { parseEnvPath } from '~/utils/envPath'
 import { useNow } from '~/utils/time'
 import { limitLabel } from '~/utils/usageSummary'
 
@@ -20,8 +22,11 @@ const usage = useUsage()
 const now = useNow(15_000)
 
 const ids = Object.keys(AGENTS) as AgentId[]
-/** Unknown until detection ran: then try anyway, the CLI's own error says what is wrong. */
-const installed = (id: AgentId) => ws.agents.find(a => a.id === id)?.installed ?? true
+/**
+ * Unknown until detection ran: then try anyway, the CLI's own error says what is wrong. A remote
+ * project's agents are the environment's: what is installed here does not apply.
+ */
+const installed = (id: AgentId) => usage.place !== 'local' || (ws.agents.find(a => a.id === id)?.installed ?? true)
 
 type Level = 'ok' | 'high' | 'full'
 const level = (percent: number): Level => (percent >= 100 ? 'full' : percent >= 80 ? 'high' : 'ok')
@@ -48,6 +53,15 @@ function whenText(at: number): string {
 }
 
 const needsSignIn = (error: string | null) => !!error && /sign(ed)? in|log ?in|auth/i.test(error)
+
+/** An environment's agents sign in on its page in Settings > Environments; this computer's where the parent says. */
+const envs = useEnvironments()
+function signIn() {
+  const loc = parseEnvPath(usage.place)
+  if (!loc) return emit('sign-in')
+  envs.select(loc.hostId, loc.instance)
+  envs.openView()
+}
 </script>
 
 <template>
@@ -83,7 +97,7 @@ const needsSignIn = (error: string | null) => !!error && /sign(ed)? in|log ?in|a
       <div v-else-if="usage.entries[id].error && !usage.entries[id].loading" class="use__msg use__msg--error" role="alert">
         <CircleAlert class="use__err-icon" aria-hidden="true" />
         <span>{{ usage.entries[id].error }}</span>
-        <UiButton v-if="needsSignIn(usage.entries[id].error)" variant="ghost" size="sm" @click="emit('sign-in')">{{ t('common.actions.signIn') }}</UiButton>
+        <UiButton v-if="needsSignIn(usage.entries[id].error)" variant="ghost" size="sm" @click="signIn">{{ t('common.actions.signIn') }}</UiButton>
       </div>
 
       <ul v-else-if="!usage.entries[id].usage" class="use__rows" aria-hidden="true">

@@ -198,6 +198,7 @@ export const shell = {
   usage: {
     title: 'Usage limits',
     lede: 'How much of each plan\'s allowance is used, as Claude Code and Codex report it. Checking spends none of it.',
+    ledeIn: 'How much of each plan\'s allowance is used, as Claude Code and Codex in {where} report it. Checking spends none of it.',
     plan: '{plan} plan',
     simulated: 'Simulated',
     simulatedTitle: 'The browser preview has no CLI to ask',

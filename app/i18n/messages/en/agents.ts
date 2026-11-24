@@ -85,6 +85,7 @@ export const agents = {
     limits: 'Usage limits and resets',
   },
   usage: {
+    in: 'In {where}',
     noReset: 'No early reset noticed. If a limit is reset before its time, a note appears under the agent\'s name here, and a dot on the gauge in the title bar.',
   },
   hosting: {

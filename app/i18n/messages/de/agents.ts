@@ -86,6 +86,7 @@ export const agents: Messages['agents'] = {
     limits: 'Nutzungslimits und Zurücksetzungen',
   },
   usage: {
+    in: 'In {where}',
     noReset: 'Keine vorzeitige Zurücksetzung bemerkt. Wird ein Limit vorzeitig zurückgesetzt, erscheint hier ein Hinweis unter dem Namen des Agenten und ein Punkt an der Anzeige in der Titelleiste.',
   },
   hosting: {

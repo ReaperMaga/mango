@@ -200,6 +200,7 @@ export const shell: Messages['shell'] = {
   usage: {
     title: 'Nutzungslimits',
     lede: 'Wie viel von jedem Tarif verbraucht ist, laut Claude Code und Codex. Das Prüfen verbraucht nichts davon.',
+    ledeIn: 'Wie viel von jedem Tarif verbraucht ist, laut Claude Code und Codex in {where}. Das Prüfen verbraucht nichts davon.',
     plan: 'Tarif {plan}',
     simulated: 'Simuliert',
     simulatedTitle: 'Die Browser-Vorschau hat kein CLI zum Nachfragen',
