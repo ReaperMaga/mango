@@ -139,14 +139,14 @@ function spawnFor(agent: AgentId, projectPath: string, onConnection?: (state: 'l
 }
 
 /**
- * The models the agent's CLI offers (no turn is run). Null in the browser preview,
- * which has no CLI, and when the adapter cannot list them.
+ * The models the agent's CLI offers where `cwd` runs (no turn is run): a remote project asks the CLI
+ * inside its environment, which may be signed in to another account or plan than this computer's.
+ * Null in the browser preview, which has no CLI, and when the adapter cannot list them.
  */
 export async function listAgentModels(agent: AgentId, cwd: string): Promise<AgentModel[] | null> {
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
-  // The list is kept per agent, not per project: ask the CLI on this computer, also for a remote project.
-  return adapter.listModels ? adapter.listModels(spawnFor(agent, parseEnvPath(cwd) ? '' : cwd)) : null
+  return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
 }
 
 /**
