@@ -3,16 +3,17 @@ import type { LinkedItem } from '~/types/chat'
 import type { GhJob, GhMergeMethod } from '~/types/ipc'
 import { linkFromItem } from '~/utils/githubLinks'
 import { backend } from '@/remote'
-import { validGhRef, type GhDetail } from '@/remote/github'
+import type { GhDetail } from '@/remote/github'
+import { READABLE, validRef } from '@/remote/forge'
 import { useThreads } from '@/state/threads'
 import { isJobUrl, tidyReference, REFERENCE_HINT } from '@/chat/pulls'
 
 /**
- * Pull requests and issues as GitHub reports them, for the pull request screen: the port of the
- * desktop's `app/stores/links.ts`. Which items belong to which chat is the chat's own business
- * (`Thread.links`, in the threads store); this keeps what was read about them. Not saved: it is
- * read again when shown. Links come from chat files (untrusted): only ones that pass `validGhRef`
- * are read, and jobs only by a github.com Actions link (`isJobUrl`).
+ * Pull requests, merge requests and issues as GitHub or GitLab reports them, for the pull request
+ * screen: the port of the desktop's `app/stores/links.ts`. Which items belong to which chat is the
+ * chat's own business (`Thread.links`, in the threads store); this keeps what was read about them.
+ * Not saved: it is read again when shown. Links come from chat files (untrusted): only ones that
+ * pass `validRef` are read, and jobs only by a github.com Actions or GitLab job link (`isJobUrl`).
  */
 
 export interface LinkDetail {
@@ -24,7 +25,7 @@ export interface LinkDetail {
   fetchedAt: number
 }
 
-/** A GitHub Actions job as last read, for the check log screen. */
+/** A GitHub Actions or GitLab CI job as last read, for the check log screen. */
 export interface JobDetail {
   job: GhJob | null
   loading: boolean
@@ -35,7 +36,7 @@ export interface JobDetail {
 /** What was read is good for this long before opening the item reads it again. */
 const FRESH_MS = 4 * 60_000
 
-type LinkRef = Pick<LinkedItem, 'key' | 'kind' | 'host' | 'owner' | 'repo' | 'number'>
+type LinkRef = Pick<LinkedItem, 'key' | 'kind' | 'host' | 'owner' | 'repo' | 'number' | 'provider'>
 
 /** The latest read started per link key: an older read that finishes later is dropped. */
 const reads = new Map<string, number>()
@@ -50,7 +51,7 @@ const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error 
 export interface LinksState {
   /** By link key (`LinkedItem.key`). */
   details: Record<string, LinkDetail>
-  /** GitHub Actions jobs, by link. */
+  /** GitHub Actions and GitLab CI jobs, by link. */
   jobs: Record<string, JobDetail>
 
   /**
@@ -88,8 +89,8 @@ export const useLinks = create<LinksState>()((set, get) => {
     jobs: {},
 
     async load(threadId, link, projectPath, force = false, quiet = false) {
-      if (!validGhRef(link)) {
-        put(link.key, { item: null, loading: false, quiet: false, error: 'Only pull requests and issues on github.com can be read here.', fetchedAt: 0 })
+      if (!validRef(link)) {
+        put(link.key, { item: null, loading: false, quiet: false, error: READABLE, fetchedAt: 0 })
         return
       }
       const had = get().details[link.key]
@@ -114,7 +115,7 @@ export const useLinks = create<LinksState>()((set, get) => {
 
     async merge(threadId, link, projectPath, method) {
       const headSha = get().details[link.key]?.item?.headSha
-      if (!headSha) throw new Error('Read the pull request again before merging it.')
+      if (!headSha) throw new Error(`Read the ${link.provider === 'gitlab' ? 'merge' : 'pull'} request again before merging it.`)
       try {
         await backend.ghMerge(projectPath, link, method, headSha)
       } catch (e) {
@@ -141,7 +142,7 @@ export const useLinks = create<LinksState>()((set, get) => {
     adopt(threadId, item) {
       // `linkFromItem` reads only the fields both shapes share; the description is not part of a link.
       const link = linkFromItem({ ...item, bodyHtml: '' }, 'user')
-      if (!validGhRef(link)) throw new Error('Only pull requests and issues on github.com can be linked here.')
+      if (!validRef(link)) throw new Error(READABLE)
       put(link.key, { item, loading: false, quiet: false, error: null, fetchedAt: Date.now() })
       if (threadId) useThreads.getState().link(threadId, link)
       return link
@@ -149,7 +150,8 @@ export const useLinks = create<LinksState>()((set, get) => {
 
     async loadJob(projectPath, url) {
       if (!isJobUrl(url)) {
-        putJob(url, { job: null, loading: false, error: 'Only GitHub Actions jobs on github.com have a log here.', fetchedAt: 0 })
+        putJob(url, { job: null, loading: false, error: 'Only GitHub Actions jobs on github.com and GitLab CI jobs have a log here.', fetchedAt: 0 })
+
         return
       }
       const had = get().jobs[url]

@@ -26,6 +26,9 @@ import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { messageOf, placeOf, projectName } from '@/screens/names'
+import { repoWebUrl } from '@/remote/forge'
+import type { GhRepoLink } from '~/types/ipc'
+import { forgeName, siteName } from '~/utils/forge'
 
 /**
  * A project: its chats in the desktop's list order (archived ones folded away), a new chat with
@@ -45,7 +48,7 @@ export default function ProjectScreen() {
   const [showArchived, setShowArchived] = useState(false)
   const [git, setGit] = useState<GitState | null>(null)
   const [gitError, setGitError] = useState<string | null>(null)
-  const [repo, setRepo] = useState<{ owner: string; repo: string } | null>(null)
+  const [repo, setRepo] = useState<GhRepoLink | null>(null)
   const [newChat, setNewChat] = useState(false)
   const [pickingMode, setPickingMode] = useState(false)
   const ownMode = usePrefs(st => st.projectModes[path])
@@ -55,7 +58,7 @@ export default function ProjectScreen() {
   const releases = useReleases(st => st.lists[path])
   const releaseLine = useMemo(() => {
     const data = releases?.data
-    return data ? releasesSummary(sortReleases(data.releases, data.runs), data.releases) : null
+    return data ? releasesSummary(sortReleases(data.releases, data.runs, data.provider), data.releases) : null
   }, [releases?.data])
 
   const readGit = useCallback(async () => {
@@ -69,7 +72,7 @@ export default function ProjectScreen() {
 
   const load = useCallback(async () => {
     if (!at || !useEnvs.getState().byId(at.hostId)) return
-    // The repository on GitHub, for its row (read from the git remotes, kept for the session).
+    // The repository on GitHub or the project on GitLab, for its row (read from the git remotes, kept for the session).
     void backend.ghRepo(path).then(setRepo, () => {})
     // Releases quietly beside it, for the row's line (a read under 30s old is kept).
     void useReleases.getState().load(path, { quiet: true })
@@ -121,24 +124,24 @@ export default function ProjectScreen() {
           ? (
               <ListRow
                 title="Releases"
-                subtitle={releaseLine?.text ?? (releases?.error ? 'Not available' : 'Reading GitHub…')}
+                subtitle={releaseLine?.text ?? (releases?.error ? 'Not available' : repo ? `Reading ${forgeName(repo.provider)}…` : 'Reading…')}
                 subtitleTone={releaseLine?.tone ?? 'subtle'}
                 leading={<Tag size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
                 onPress={() => router.push({ pathname: '/releases', params: { path } })}
               />
             )
           : null}
-        {git?.repo && repo
+        {git?.repo && repo && repoWebUrl(repo)
           ? (
               <ListRow
-                title="GitHub"
+                title={siteName(repo.provider, repo.host)}
                 subtitle={`${repo.owner}/${repo.repo}`}
                 subtitleMono
-                leading={<GithubMark size={20} color={t.colors.fgSubtle} />}
+                leading={repo.provider === 'gitlab' ? <GitlabMark size={20} color={t.colors.fgSubtle} /> : <GithubMark size={20} color={t.colors.fgSubtle} />}
                 accessory="none"
                 trailing={<ExternalLink size={16} strokeWidth={1.75} color={t.colors.fgFaint} />}
-                accessibilityHint="Opens the repository in the browser"
-                onPress={() => { Linking.openURL(`https://github.com/${repo.owner}/${repo.repo}`).catch(() => {}) }}
+                accessibilityHint={repo.provider === 'gitlab' ? 'Opens the project in the browser' : 'Opens the repository in the browser'}
+                onPress={() => { const url = repoWebUrl(repo); if (url) Linking.openURL(url).catch(() => {}) }}
               />
             )
           : null}
@@ -231,7 +234,17 @@ function GithubMark({ size, color }: { size: number; color: string }) {
   )
 }
 
+/** GitLab's mark, drawn as lucide's `gitlab` icon (lucide-react-native leaves brand icons out). */
+function GitlabMark({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="m22 13.29-3.33-10a.42.42 0 0 0-.14-.18.38.38 0 0 0-.22-.11.39.39 0 0 0-.23.07.42.42 0 0 0-.14.18l-2.26 6.67H8.32L6.1 3.26a.42.42 0 0 0-.1-.18.38.38 0 0 0-.26-.08.39.39 0 0 0-.23.07.42.42 0 0 0-.14.18L2 13.29a.74.74 0 0 0 .27.83L12 21l9.69-6.88a.71.71 0 0 0 .31-.83Z" />
+    </Svg>
+  )
+}
+
 const useStyles = makeStyles(() => ({
+
   archived: { gap: space[2] },
   title: { alignItems: 'center', maxWidth: 240 },
 }))

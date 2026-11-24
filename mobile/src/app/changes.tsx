@@ -8,7 +8,9 @@ import { Banner, Button, ButtonRow, EmptyState, ListRow, ListSection, Sheet, Spi
 import { ChangeRow } from '@/chat'
 import { backend } from '@/remote'
 import type { GitState } from '@/remote/types'
-import { ghWebUrl } from '@/remote/github'
+import { webUrl } from '@/remote/forge'
+import { useForgeProvider } from '@/screens/useForge'
+import { capital, forgeName, itemNoun, itemNumber, siteName } from '~/utils/forge'
 import type { LinkedItem } from '~/types/chat'
 import { useLinks } from '@/state/links'
 import { useThreads } from '@/state/threads'
@@ -20,7 +22,9 @@ import { messageOf, projectName } from '@/screens/names'
  * A project's changes, as the desktop's Changes view on a phone: the branch with how far it is
  * ahead or behind, the changed files (tap one for its diff), and the two actions a phone needs:
  * commit everything with a message, and push. From a branch it also opens a pull request (the
- * desktop's `openPullRequest`): push, then `gh pr create` in the environment, linked to the chat the
+ * desktop's `openPullRequest`): push, then `gh pr create` in the environment (on GitLab a merge
+ * request, through `glab api`), linked to the chat the
+
  * screen was opened from (`chat`), or to the chats working in this worktree. Git is read again after
  * each action and on focus.
  */
@@ -30,6 +34,8 @@ export default function ChangesScreen() {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const { path = '', chat: chatId = '' } = useLocalSearchParams<{ path: string; chat?: string }>()
+  const provider = useForgeProvider(path)
+  const request = itemNoun('pr', provider)
   const [git, setGit] = useState<GitState | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -94,7 +100,7 @@ export default function ChangesScreen() {
     }
   }
 
-  /** Push the branch, open its pull request on GitHub (or find the one already open), and link it. */
+  /** Push the branch, open its pull request on GitHub or merge request on GitLab (or find the one already open), and link it. */
   const openPullRequest = async () => {
     setOpening(true)
     setResult(null)
@@ -111,8 +117,8 @@ export default function ChangesScreen() {
       const link = links.adopt(users[0]?.id ?? null, item)
       for (const t of users.slice(1)) threads.link(t.id, link)
       haptic('success')
-      setOpened({ link, chat: users[0]?.id ?? null, web: ghWebUrl(link) })
-      setResult({ tone: 'info', text: `Pull request #${item.number} is open: ${item.title}${users.length ? (users.length === 1 && root ? '. It is linked to this chat.' : '. It is linked to the chats working here.') : ''}` })
+      setOpened({ link, chat: users[0]?.id ?? null, web: webUrl(link) })
+      setResult({ tone: 'info', text: `${capital(itemNoun('pr', item.provider))} ${itemNumber(item)} is open: ${item.title}${users.length ? (users.length === 1 && root ? '. It is linked to this chat.' : '. It is linked to the chats working here.') : ''}` })
     } catch (e) {
       haptic('warning')
       setResult({ tone: 'error', text: messageOf(e) })
@@ -179,7 +185,7 @@ export default function ChangesScreen() {
                           ? <Button label="Show it" size="sm" icon={GitPullRequestArrow} onPress={() => router.push({ pathname: '/pull', params: { chat: opened.chat!, key: opened.link.key } })} />
                           : null}
                         {opened.web
-                          ? <Button label="Open on GitHub" size="sm" variant={opened.chat ? 'ghost' : 'secondary'} onPress={() => { Linking.openURL(opened.web!).catch(() => {}) }} />
+                          ? <Button label={`Open on ${siteName(opened.link.provider ?? 'github', opened.link.host)}`} size="sm" variant={opened.chat ? 'ghost' : 'secondary'} onPress={() => { Linking.openURL(opened.web!).catch(() => {}) }} />
                           : null}
                       </ButtonRow>
                     )
@@ -190,10 +196,11 @@ export default function ChangesScreen() {
 
         {git.branch
           ? (
-              <ListSection footer={`Pushes ${git.branch} and opens a pull request into the repository's default branch on GitHub, or finds the one already open.`}>
+              <ListSection footer={`Pushes ${git.branch} and opens a ${request} into the ${provider === 'gitlab' ? 'project' : 'repository'}'s default branch on ${forgeName(provider)}, or finds the one already open.`}>
                 <ListRow
-                  title="Open a pull request"
-                  leading={opening ? <Spinner size={16} label="Opening the pull request" /> : <GitPullRequestArrow size={20} strokeWidth={1.75} color={t.colors.accentInk} />}
+                  title={`Open a ${request}`}
+                  leading={opening ? <Spinner size={16} label={`Opening the ${request}`} /> :
+ <GitPullRequestArrow size={20} strokeWidth={1.75} color={t.colors.accentInk} />}
                   accessory="none"
                   disabled={opening || pushing}
                   onPress={openPullRequest}

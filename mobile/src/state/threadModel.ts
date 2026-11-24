@@ -77,7 +77,10 @@ export function normalizeLoaded(t: Thread): Thread {
     }),
   }))
   const links = Array.isArray(t.links)
-    ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+    ? t.links
+      .filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+      // No provider (older builds) is GitHub; only GitLab is written out (as the desktop's `normalizeLoaded`).
+      .map(({ provider, ...l }) => (provider === 'gitlab' ? { ...l, provider } : l))
     : []
   // Older builds took an agent's `cd` into a folder of its project for a worktree: that chat works in the project.
   const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId && typeof t.projectPath === 'string'

@@ -8,7 +8,8 @@ import { makeStyles, space, useTheme } from '@/theme'
 import { Button, ButtonRow, Segmented, Sheet, Spinner, Text, haptic } from '@/ui'
 import type { GhDetail } from '@/remote/github'
 import { useLinks } from '@/state/links'
-import { MERGE_METHODS, defaultMethod, mergeQuestion, mergeStatus, mergeUnavailable, type MergeTone } from './pulls'
+import { MERGE_METHODS, defaultMethod, mergeMethodsOf, mergeQuestion, mergeStatus, mergeUnavailable, type MergeTone } from './pulls'
+import { forgeName, itemNoun, providerOf } from '~/utils/forge'
 
 const ICON: Record<Exclude<MergeTone, 'checking'>, ComponentType<LucideProps>> = {
   done: CircleCheck,
@@ -33,16 +34,18 @@ export interface PullMergeProps {
 }
 
 /**
- * Merging an open pull request (the desktop's `LinksMerge.vue`), docked under its screen: whether
- * GitHub would take it now, and the merge button. Merging asks once more first, in a sheet where the
- * method is picked among the ones the repository allows: it changes the base branch for everyone.
+ * Merging an open pull request or GitLab merge request (the desktop's `LinksMerge.vue`), docked under
+ * its screen: whether GitHub or GitLab would take it now, and the merge button. Merging asks once more
+ * first, in a sheet where the method is picked among the ones the repository allows (GitLab: merge or
+ * squash): it changes the base branch for everyone.
  */
 export function PullMerge({ threadId, link, item, projectPath }: PullMergeProps) {
   const t = useTheme()
   const s = useStyles()
   const status = mergeStatus(item)
   const unavailable = mergeUnavailable(item)
-  const allowed = item.mergeMethods
+  const allowed = mergeMethodsOf(item)
+  const provider = providerOf(item)
   const [method, setMethod] = useState<GhMergeMethod>(() => defaultMethod(item))
   const [asking, setAsking] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -91,14 +94,15 @@ export function PullMerge({ threadId, link, item, projectPath }: PullMergeProps)
               disabled={!status.ready}
               loading={busy}
               block
-              accessibilityHint={status.ready ? 'Asks before merging on GitHub' : status.title}
+              accessibilityHint={status.ready ? `Asks before merging on ${forgeName(provider)}` : status.title}
               onPress={() => { setError(null); haptic('select'); setAsking(true) }}
             />
           )}
 
       {error ? <Text variant="caption" tone="error" selectable accessibilityRole="alert">{error}</Text> : null}
 
-      <Sheet visible={asking} onClose={() => { if (!busy) setAsking(false) }} title="Merge pull request">
+      <Sheet visible={asking} onClose={() => { if (!busy) setAsking(false) }} title={`Merge ${itemNoun('pr', provider)}`}>
+
         <View style={s.sheet}>
           {allowed.length > 1
             ? (

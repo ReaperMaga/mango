@@ -18,14 +18,21 @@ export const RUN_BUSY_MS = 10_000
 /** The list while nothing builds, as long as it is on screen. */
 export const LIST_IDLE_MS = 120_000
 
-/** Opened in the browser only when on github.com (a link from GitHub's answer, never trusted further). */
-export function githubLink(url: string | null | undefined): string | null {
+/**
+ * Opened in the browser only when on the project's own server: github.com, or its GitLab server
+ * (`host`, which may carry a port; a self-managed one may serve plain http). A link from the forge's
+ * answer, never trusted further.
+ */
+export function githubLink(url: string | null | undefined, host: string = GITHUB_HOST): string | null {
   if (!url) return null
   try {
     const u = new URL(url)
-    return u.protocol === 'https:' && u.hostname.toLowerCase() === GITHUB_HOST ? u.toString() : null
+    const on = host.toLowerCase()
+    const ok = u.protocol === 'https:' || (u.protocol === 'http:' && on !== GITHUB_HOST)
+    return ok && u.host.toLowerCase() === on ? u.toString() : null
   } catch { return null }
 }
+
 
 /** "just now", "6 min ago", "3 hours ago", "2 days ago", "on 12 Mar". */
 export function agoWords(iso: string | null | undefined, now = Date.now()): string | null {
@@ -71,7 +78,10 @@ export function byline(e: ReleaseEntry, now = Date.now()): { who: string; what: 
   if (e.kind === 'release') {
     const r = e.release
     const who = r.author?.login.replace(/\[bot\]$/, '') ?? 'Someone'
-    return r.publishedAt ? { who, what: `published ${agoWords(r.publishedAt, now)}` } : { who, what: `drafted it ${agoWords(r.createdAt, now)}` }
+    if (r.publishedAt) return { who, what: `published ${agoWords(r.publishedAt, now)}` }
+    // GitLab has no drafts: a release without a publishing date is an upcoming one.
+    return r.draft ? { who, what: `drafted it ${agoWords(r.createdAt, now)}` } : { who, what: `made it ${agoWords(r.createdAt, now)}, for later` }
+
   }
   return { who: e.run.workflow || 'Release', what: `${e.why === 'trial' ? 'started by hand' : 'started by the tag'} ${agoWords(e.run.createdAt, now)}` }
 }

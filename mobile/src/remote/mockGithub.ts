@@ -24,6 +24,7 @@ export const MOCK_HEAD_134 = '5be1c2f0a9d84e3b7c6f1a2d3e4b5c6d7e8f9a0b'
 const job = (owner: string, repo: string, run: number, id: number) => `https://github.com/${owner}/${repo}/actions/runs/${run}/job/${id}`
 
 const BASE: Omit<GhDetail, 'kind' | 'owner' | 'repo' | 'number' | 'url' | 'title' | 'state' | 'body'> = {
+  provider: 'github',
   host: GITHUB_HOST,
   stateReason: null,
   author: { login: 'ana-dev', avatarUrl: null },

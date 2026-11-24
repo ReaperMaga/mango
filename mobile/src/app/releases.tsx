@@ -13,11 +13,12 @@ import { useReleases } from '@/state/releases'
 import { ScreenScroll } from '@/screens/Screen'
 import { useWatching } from '@/screens/useWatching'
 import { projectName } from '@/screens/names'
+import { forgeName, siteName } from '~/utils/forge'
 
 /**
- * A project's GitHub releases (the desktop's Releases tool window): builds under way first (a
- * release whose workflow runs, a draft whose build failed, a release workflow started by hand),
- * then every release, newest first. Read with gh inside the environment. While on screen it is read
+ * A project's GitHub or GitLab releases (the desktop's Releases tool window): builds under way first
+ * (a release whose workflow runs or pipeline runs, a draft whose build failed, a release workflow
+ * started by hand), then every release, newest first. Read with gh or glab inside the environment. While on screen it is read
  * again: every 15s while something builds, every two minutes otherwise.
  */
 export default function ReleasesScreen() {
@@ -29,7 +30,7 @@ export default function ReleasesScreen() {
   const { path = '' } = useLocalSearchParams<{ path: string }>()
   const list = useReleases(st => st.lists[path])
   const data = list?.data ?? null
-  const sorted = useMemo(() => (data ? sortReleases(data.releases, data.runs) : null), [data])
+  const sorted = useMemo(() => (data ? sortReleases(data.releases, data.runs, data.provider) : null), [data])
   const latestTag = useMemo(() => (data ? latestRelease(data.releases)?.tag ?? null : null), [data])
   const mark = sorted ? stripeMark(sorted) : null
 
@@ -46,7 +47,12 @@ export default function ReleasesScreen() {
     return () => clearTimeout(id)
   }, [watching, list, mark, load])
 
-  const web = data ? githubLink(`https://github.com/${data.owner}/${data.repo}/releases`) : null
+  const web = data
+    ? (data.provider === 'gitlab'
+        ? githubLink(`https://${data.host}/${data.owner}/${data.repo}/-/releases`, data.host)
+        : githubLink(`https://github.com/${data.owner}/${data.repo}/releases`))
+    : null
+  const forge = forgeName(data?.provider)
   const refreshing = !!(list?.loading && !list.quiet && data)
   const open = (e: ReleaseEntry) => router.push({ pathname: '/release', params: { path, key: e.key } })
   const canShowOlder = !!data && data.releases.length >= list!.count && list!.count < MAX_RELEASES
@@ -62,7 +68,7 @@ export default function ReleasesScreen() {
             </Text>
           </View>
         ),
-        headerRight: web ? () => <IconButton icon={ExternalLink} label="Releases on GitHub" onPress={() => Linking.openURL(web).catch(() => {})} /> : undefined,
+        headerRight: web ? () => <IconButton icon={ExternalLink} label={`Releases on ${siteName(data?.provider, data?.host)}`} onPress={() => Linking.openURL(web).catch(() => {})} /> : undefined,
       }}
     />
   )
@@ -106,7 +112,7 @@ export default function ReleasesScreen() {
               />
             )
           : (
-              <View style={s.skeleton} accessible accessibilityLabel="Reading from GitHub" accessibilityRole="progressbar">
+              <View style={s.skeleton} accessible accessibilityLabel={`Reading from ${list?.data?.provider ? forge : 'the repository'}`} accessibilityRole="progressbar">
                 {[70, 52, 84, 46, 76, 60, 68].map(w => <View key={w} style={[s.bone, { width: `${w}%` }]} />)}
               </View>
             )}
@@ -136,7 +142,8 @@ export default function ReleasesScreen() {
           : null}
 
         {!data.releases.length && !sorted?.inProgress.length
-          ? <EmptyState icon={Tag} title="No releases yet" body={`${data.owner}/${data.repo} has no releases on GitHub.`} />
+          ? <EmptyState icon={Tag} title="No releases yet" body={`${data.owner}/${data.repo} has no releases on ${forge}.`}
+ />
           : null}
 
         {canShowOlder

@@ -37,6 +37,9 @@ src/remote/          the environment: auth.ts (agent sign-in status: the desktop
                      shareLink.ts (envs/token.rs, join.rs), git.ts, sshBackend.ts (chats_remote.rs, git.rs, agent_proc.rs),
                      agentRun.ts (a run that reattaches after a dropped connection),
                      github.ts + releases.ts (gh inside the environment: pull requests, jobs, releases; ports of github.rs, releases.rs),
+                     gitlab.ts + gitlabItems.ts + gitlabReleases.ts (glab inside the environment: forge detection, merge requests, CI job traces,
+                     releases and pipelines; ports of gitlab.rs, gitlab_items.rs, gitlab_releases.rs), forge.ts (links on either forge),
+                     mockGitlab.ts (the preview's `scratch` project is on gitlab.com); `state/forges.ts`: each project's forge, for words and `/create-pr`
                      mockBackend.ts (its releases are the desktop preview's story, `~/composables/mockReleases`), chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
 src/attachments/     picking (Photos, camera, Files), previews, pictures fitted for the model, upload into the
                      environment (`~/.local/share/mango/attachments/<id>/`); input.ts: what a run gets (pure)

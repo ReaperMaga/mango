@@ -25,7 +25,8 @@ import { useAttachments, type AttachSource } from '@/screens/useAttachments'
 import { placeOf, projectName, reconnectingText } from '@/screens/names'
 import { useLinkDetails } from '@/screens/useLinkDetails'
 import { useLinks } from '@/state/links'
-import { validGhRef } from '@/remote/github'
+import { validRef } from '@/remote/forge'
+import { useForge } from '@/screens/useForge'
 
 /** How close to the end (pt) still counts as "at the bottom": new output then keeps it in view. */
 const STICK = 80
@@ -65,6 +66,8 @@ export default function ChatScreen() {
   const [linksOpen, setLinksOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
   const linkDetails = useLinkDetails(root?.id ?? id, root?.projectPath ?? null, links, linksOpen)
+  // The project's forge names the sheet ("Merge requests" on GitLab): read once it opens.
+  const linksForge = useForge(linksOpen ? root?.projectPath ?? null : null)
   const readOutput = useCallback((taskId: string) => readTaskOutput(id, taskId), [id])
   const files = useAttachments(thread?.projectPath ?? null)
   const [findOpen, setFindOpen] = useState(false)
@@ -145,7 +148,7 @@ export default function ChatScreen() {
   }
   // With one item the bar goes straight to it, as the desktop's tool window does.
   const onLinksBar = () => {
-    if (links.length === 1 && validGhRef(links[0]!)) openLink(links[0]!)
+    if (links.length === 1 && validRef(links[0]!)) openLink(links[0]!)
     else setLinksOpen(true)
   }
 
@@ -328,7 +331,9 @@ export default function ChatScreen() {
         visible={linksOpen}
         onClose={() => setLinksOpen(false)}
         links={links}
+        provider={linksForge?.provider ?? null}
         live={linkDetails.live}
+
         loading={linkDetails.loading}
         error={linkDetails.error}
         onOpen={l => openLink(l, true)}

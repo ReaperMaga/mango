@@ -7,6 +7,7 @@ import { makeStyles, space, useTheme } from '@/theme'
 import { Button, ListRow, ListSection, RipenessDot, Sheet, TextField, haptic } from '@/ui'
 import { useThreads } from '@/state/threads'
 import { usePrefs } from '@/state/prefs'
+import { knownProvider } from '@/state/forges'
 import { ConfirmBox } from './ConfirmBox'
 
 /** The statuses a person can pick, as the desktop's chat menu offers them; the others belong to runs. */
@@ -125,7 +126,7 @@ export function ThreadActions({ threadId, visible, onClose, onDeleted, onLinks, 
                 {onLinks
                   ? (
                       <ListRow
-                        title="Pull requests and issues"
+                        title={`${knownProvider(thread.projectPath) === 'gitlab' ? 'Merge requests' : 'Pull requests'} and issues`}
                         detail={thread.links?.length ? String(thread.links.length) : undefined}
                         leading={<GitPullRequest size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
                         onPress={onLinks}

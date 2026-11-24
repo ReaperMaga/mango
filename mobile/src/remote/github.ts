@@ -23,11 +23,12 @@ export const validGhRepo = (s: string): boolean => /^[A-Za-z0-9._-]{1,100}$/.tes
 
 const validNumber = (n: number): boolean => Number.isSafeInteger(n) && n > 0
 
-export type GhRef = Pick<LinkedItem, 'kind' | 'host' | 'owner' | 'repo' | 'number'>
+/** A linked item's whereabouts; `provider` absent is GitHub (links saved before GitLab support). */
+export type GhRef = Pick<LinkedItem, 'kind' | 'host' | 'owner' | 'repo' | 'number' | 'provider'>
 
 /** The item is on github.com and every part of it is well formed. */
 export function validGhRef(ref: GhRef): boolean {
-  return ref.host.toLowerCase() === GITHUB_HOST && validGhOwner(ref.owner) && validGhRepo(ref.repo) && validNumber(ref.number)
+  return ref.provider !== 'gitlab' && ref.host.toLowerCase() === GITHUB_HOST && validGhOwner(ref.owner) && validGhRepo(ref.repo) && validNumber(ref.number)
 }
 
 /**
@@ -413,6 +414,7 @@ export function detailFromJson(v: any, t: GhTarget): GhDetail {
   const url = someStr(node.url) ?? `https://${t.host}/${t.owner}/${t.repo}/${isPr ? 'pull' : 'issues'}/${t.number}`
   const pr = <T>(value: T): T | null => (isPr ? value : null)
   return {
+    provider: 'github',
     kind: isPr ? 'pr' : 'issue',
     url,
     host: t.host,
@@ -685,6 +687,7 @@ export function jobFromJson(v: any): GhJob {
       })
     : []
   return {
+    provider: 'github',
     id: num(v.id) ?? 0,
     name: str(v.name),
     workflow: someStr(v.workflow_name),

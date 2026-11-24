@@ -155,11 +155,37 @@ describe('references', () => {
   it('turns down anything else before asking the environment', () => {
     expect(tidyReference('')).toBeNull()
     expect(tidyReference('   ')).toBeNull()
-    expect(tidyReference('https://gitlab.com/acme/shop/-/merge_requests/1')).toBeNull()
+    expect(tidyReference('https://gitlab.com/acme/shop/-/pipelines/1')).toBeNull()
+    expect(tidyReference('https://gitlab.com/shop/-/merge_requests/1')).toBeNull()
+    expect(tidyReference('javascript:alert(1)//a/b/-/issues/1')).toBeNull()
+    expect(tidyReference('g/-x!1; id')).toBeNull()
     expect(tidyReference('https://github.com.evil.example/acme/shop/pull/7')).toBeNull()
     expect(tidyReference('https://github.com/acme/shop')).toBeNull()
     expect(tidyReference('#12; rm -rf ~')).toBeNull()
     expect(tidyReference('$(id)/shop#1')).toBeNull()
     expect(tidyReference('-o/shop#1')).toBeNull()
+  })
+})
+
+describe('on GitLab', () => {
+  it('opens GitLab CI jobs in the app, and takes GitLab references', () => {
+    expect(isJobUrl('https://gitlab.com/acme/apps/app/-/jobs/7')).toBe(true)
+    expect(isJobUrl('https://git.corp.io:8443/a/b/-/jobs/7?x=1')).toBe(true)
+    expect(isJobUrl('https://gitlab.com/app/-/jobs/7')).toBe(false)
+    expect(isJobUrl('https://gitlab.com/a/b/-/pipelines/7')).toBe(false)
+    expect(tidyReference('!12')).toBe('!12')
+    expect(tidyReference('acme/apps/app!12')).toBe('acme/apps/app!12')
+    expect(tidyReference('acme/apps/app#3')).toBe('acme/apps/app#3')
+    expect(tidyReference('https://gitlab.com/acme/apps/app/-/merge_requests/12/diffs?x=1')).toBe('https://gitlab.com/acme/apps/app/-/merge_requests/12/diffs')
+    expect(tidyReference('git.corp.io/a/b/-/work_items/4')).toBe('https://git.corp.io/a/b/-/work_items/4')
+  })
+
+  it('words merging a merge request', () => {
+    const mr = { ...pr, provider: 'gitlab' as const, number: 12, mergeMethods: ['merge', 'squash', 'rebase'] as ('merge' | 'squash' | 'rebase')[], defaultMergeMethod: 'rebase' as const }
+    expect(mergeQuestion(mr, 'squash')).toMatch(/^Squash and merge !12 into .* on GitLab\?/)
+    expect(defaultMethod(mr)).toBe('merge')
+    expect(mergeUnavailable({ ...mr, canMerge: false })).toMatch(/^The account glab is signed in with cannot merge merge requests in /)
+    expect(mergeStatus({ ...mr, state: 'draft' }).detail).toBe('Mark it ready on GitLab to merge it.')
+    expect(mergeStatus({ ...mr, state: 'open', mergeable: 'unknown', mergeState: 'unknown' }).detail).toBe('GitLab is still working it out.')
   })
 })

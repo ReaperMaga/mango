@@ -12,6 +12,7 @@ import { RUN_BUSY_MS, githubLink, rerunAction } from '@/chat/releases'
 import { readKey, useReleases } from '@/state/releases'
 import { ScreenScroll } from '@/screens/Screen'
 import { useWatching } from '@/screens/useWatching'
+import { forgeName, siteName } from '~/utils/forge'
 
 /** How long the armed "Cancel the run?" waits for its second tap. */
 const ARM_MS = 4000
@@ -19,7 +20,8 @@ const ARM_MS = 4000
 /**
  * One release, or a release build without a release yet (the desktop's Releases tool window with one
  * entry open): its build with its jobs (a job opens its log), files and notes. At the bottom, what can
- * be done to its run: re-run what failed, or cancel it (asked twice: it stops work on GitHub). While
+ * be done to its run: re-run what failed, or cancel it (asked twice: it stops work on GitHub or
+ * GitLab; a GitLab pipeline's run again is a new pipeline for the same tag). While
  * its build runs and the screen is in front, the run is read every 10s; when it ends, the list too.
  */
 export default function ReleaseScreen() {
@@ -31,7 +33,7 @@ export default function ReleaseScreen() {
   const list = useReleases(st => st.lists[path])
   const read = useReleases(st => st.runs[readKey(path, key)])
   const data = list?.data ?? null
-  const sorted = useMemo(() => (data ? sortReleases(data.releases, data.runs) : null), [data])
+  const sorted = useMemo(() => (data ? sortReleases(data.releases, data.runs, data.provider) : null), [data])
   const listed = sorted ? [...sorted.inProgress, ...sorted.releases].find(e => e.key === key) ?? null : null
   // A build without a release leaves the list once it ends; what was read of it still shows.
   const entry: ReleaseEntry | null = listed ?? (key.startsWith('run:') && read?.detail
@@ -95,10 +97,11 @@ export default function ReleaseScreen() {
     router.push({ pathname: '/check', params: { path, url: j.url, name: j.name, workflow } })
   }
 
-  const page = githubLink(entry?.kind === 'release' ? entry.release.url : run?.url)
+  const page = githubLink(entry?.kind === 'release' ? entry.release.url : run?.url, data?.host)
+  const forge = forgeName(data?.provider)
   const rerun = active ? null : rerunAction(run)
   const refreshing = !!(read?.loading && read.detail)
-  const title = entry?.kind === 'release' ? entry.release.tag : run ? `Run #${run.number}` : 'Release'
+  const title = entry?.kind === 'release' ? entry.release.tag : run ? `${data?.provider === 'gitlab' ? 'Pipeline' : 'Run'} #${run.number}` : 'Release'
 
   const header = (
     <Stack.Screen
@@ -109,7 +112,7 @@ export default function ReleaseScreen() {
             {data ? <Text variant="micro" tone="subtle" numberOfLines={1}>{data.owner}/{data.repo}</Text> : null}
           </View>
         ),
-        headerRight: page ? () => <IconButton icon={ExternalLink} label="Open on GitHub" onPress={() => Linking.openURL(page).catch(() => {})} /> : undefined,
+        headerRight: page ? () => <IconButton icon={ExternalLink} label={`Open on ${siteName(data?.provider, data?.host)}`} onPress={() => Linking.openURL(page).catch(() => {})} /> : undefined,
       }}
     />
   )
@@ -124,7 +127,7 @@ export default function ReleaseScreen() {
               <EmptyState
                 icon={Tag}
                 title={list?.error ? 'Could not read the releases' : 'Not in the list any more'}
-                body={list?.error ?? 'The release was deleted on GitHub, or its build finished without one.'}
+                body={list?.error ?? `The release was deleted on ${forge}, or its build finished without one.`}
                 action={<Button label="Go back" onPress={() => router.back()} />}
               />
             )}
@@ -141,6 +144,8 @@ export default function ReleaseScreen() {
           entry={entry}
           read={read}
           runs={data?.runs ?? []}
+          host={data?.host}
+          provider={data?.provider}
           latest={entry.kind === 'release' && entry.release.tag === latestTag}
           onOpenJob={openJob}
         />
@@ -150,12 +155,12 @@ export default function ReleaseScreen() {
         ? (
             <View style={[s.bar, { paddingBottom: Math.max(insets.bottom, space[3]) }]}>
               {actionError ? <Banner tone="error" message={actionError} onDismiss={() => setActionError(null)} /> : null}
-              {armed ? <Text variant="caption" tone="error" accessibilityLiveRegion="polite">Tap again to stop the run on GitHub.</Text> : null}
+              {armed ? <Text variant="caption" tone="error" accessibilityLiveRegion="polite">{`Tap again to stop the ${data?.provider === 'gitlab' ? 'pipeline' : 'run'} on ${forge}.`}</Text> : null}
               <ButtonRow>
                 {rerun
                   ? (
                       <Button
-                        label={rerun === 'rerun-failed' ? 'Re-run failed jobs' : 'Re-run'}
+                        label={data?.provider === 'gitlab' ? (rerun === 'rerun-failed' ? 'Retry' : 'Run again') : rerun === 'rerun-failed' ? 'Re-run failed jobs' : 'Re-run'}
                         icon={RotateCcw}
                         variant="primary"
                         block
@@ -168,7 +173,8 @@ export default function ReleaseScreen() {
                 {active
                   ? (
                       <Button
-                        label={armed ? 'Cancel the run?' : 'Cancel run'}
+                        label={data?.provider === 'gitlab' ? (armed ? 'Cancel the pipeline?' : 'Cancel pipeline') : armed ? 'Cancel the run?' : 'Cancel run'}
+
                         icon={CircleStop}
                         variant={armed ? 'danger' : 'secondary'}
                         block

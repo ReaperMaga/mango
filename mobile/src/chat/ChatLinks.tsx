@@ -5,7 +5,10 @@ import type { LinkedItem } from '~/types/chat'
 import type { Colors } from '@/theme'
 import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Button, ButtonRow, ListRow, ListSection, Sheet, Spinner, Text, TextField, haptic } from '@/ui'
-import { validGhRef, type GhState } from '@/remote/github'
+import type { ForgeProvider } from '~/types/ipc'
+import { capital, forgeName, itemNoun, itemNumber, providerOf, requestsNoun } from '~/utils/forge'
+import type { GhState } from '@/remote/github'
+import { validRef } from '@/remote/forge'
 import { linkState, type LinkIcon, type LinkTone } from './linkState'
 
 /** The state marks, as the desktop's `linkState.ts` picks them. */
@@ -37,7 +40,7 @@ export interface ChatLinksBarProps {
 }
 
 /**
- * A slim bar under the chat's header while it has linked pull requests or issues: each one's
+ * A slim bar under the chat's header while it has linked pull requests (GitLab: merge requests) or issues: each one's
  * state mark and number, in the ripeness colours, so a merged or failed item shows at a glance.
  * Tapping it opens the item when there is one (as the desktop's tool window does), else the list
  * (`ChatLinksSheet`).
@@ -49,31 +52,33 @@ export function ChatLinksBar({ links, onPress }: ChatLinksBarProps) {
   const shown = links.slice(0, BAR_ITEMS)
   const more = links.length - shown.length
   const said = links.map((l) => {
-    const look = linkState(l.kind, l.state)
+    const look = linkState(l.kind, l.state, null, providerOf(l))
     return `${look.noun} ${l.number}${l.state ? `, ${look.word.toLowerCase()}` : ''}`
   }).join('; ')
+  const one = links.length === 1 ? links[0]! : null
+  const requests = links.every(l => providerOf(l) === 'gitlab') ? 'gitlab' : 'github'
   return (
     <Pressable
       onPress={onPress}
       accessibilityRole="button"
       accessibilityLabel={`Linked: ${said}`}
-      accessibilityHint={links.length === 1 ? `Shows ${links[0]!.kind === 'pr' ? 'the pull request' : 'the issue'}` : 'Shows the pull requests and issues of this chat'}
+      accessibilityHint={one ? `Shows the ${itemNoun(one.kind, providerOf(one))}` : `Shows the ${requestsNoun(requests)} and issues of this chat`}
       style={({ pressed }) => [s.bar, pressed && s.pressed]}
     >
       {shown.map((l) => {
-        const look = linkState(l.kind, l.state)
+        const look = linkState(l.kind, l.state, null, providerOf(l))
         const Icon = LINK_ICONS[look.icon]
         return (
           <View key={l.key} style={s.item}>
             <Icon size={15} strokeWidth={1.75} color={t.colors[LINK_TONE_COLORS[look.tone]]} />
-            <Text variant="caption" tone="muted" tabular numberOfLines={1}>#{l.number}</Text>
+            <Text variant="caption" tone="muted" tabular numberOfLines={1}>{itemNumber(l)}</Text>
             {l.state ? <Text variant="caption" tone="subtle" numberOfLines={1}>{look.word}</Text> : null}
           </View>
         )
       })}
       {more ? <Text variant="caption" tone="subtle" tabular>+{more}</Text> : null}
       <View style={s.fill} />
-      <Text variant="caption" tone="subtle" numberOfLines={1}>{links.length === 1 ? (links[0]!.kind === 'pr' ? 'Pull request' : 'Issue') : 'Linked'}</Text>
+      <Text variant="caption" tone="subtle" numberOfLines={1}>{one ? capital(itemNoun(one.kind, providerOf(one))) : 'Linked'}</Text>
       <ChevronRight size={16} strokeWidth={2} color={t.colors.fgFaint} />
     </Pressable>
   )
@@ -83,9 +88,11 @@ export interface ChatLinksSheetProps {
   visible: boolean
   onClose: () => void
   links: LinkedItem[]
-  /** What GitHub said just now, by link key (newer than the title and state saved on the link). */
+  /** Where the chat's project lives, for the words ("Merge requests" on GitLab); null: unknown (then the links decide). */
+  provider?: ForgeProvider | null
+  /** What GitHub or GitLab said just now, by link key (newer than the title and state saved on the link). */
   live: Record<string, GhState>
-  /** Reading the latest from GitHub. */
+  /** Reading the latest from GitHub or GitLab. */
   loading: boolean
   /** Why the latest could not be read; the saved titles and states still show. */
   error: string | null
@@ -96,13 +103,16 @@ export interface ChatLinksSheetProps {
 }
 
 /**
- * The pull requests and issues linked to the chat (the desktop's Pull requests tool window list):
- * state, title, repository and number. Each opens its own screen; ones not on github.com are
- * listed but not opened. Below them, a field links one by hand.
+ * The pull requests (GitLab: merge requests) and issues linked to the chat (the desktop's Pull
+ * requests tool window list): state, title, repository and number. Each opens its own screen; ones
+ * on neither github.com nor a GitLab server are listed but not opened. Below them, a field links one by hand.
  */
-export function ChatLinksSheet({ visible, onClose, links, live, loading, error, onOpen, onLink }: ChatLinksSheetProps) {
+export function ChatLinksSheet({ visible, onClose, links, provider, live, loading, error, onOpen, onLink }: ChatLinksSheetProps) {
   const t = useTheme()
   const s = useStyles()
+  // The project's forge names things; without it, GitLab when every link is on GitLab.
+  const forge: ForgeProvider = provider ?? (links.length && links.every(l => providerOf(l) === 'gitlab') ? 'gitlab' : 'github')
+  const site = links.length && !links.every(l => providerOf(l) === forge) ? 'GitHub and GitLab' : forgeName(forge)
   const [adding, setAdding] = useState(false)
   const [reference, setReference] = useState('')
   const [busy, setBusy] = useState(false)
@@ -137,26 +147,27 @@ export function ChatLinksSheet({ visible, onClose, links, live, loading, error, 
     }
   }
 
-  const footer = error ?? (loading ? 'Reading the latest from GitHub…' : undefined)
+  const footer = error ?? (loading ? `Reading the latest from ${site}…` : undefined)
   return (
-    <Sheet visible={visible} onClose={onClose} title="Pull requests and issues" action={loading ? <Spinner size={16} label="Reading from GitHub" /> : undefined}>
+    <Sheet visible={visible} onClose={onClose} title={`${capital(requestsNoun(forge))} and issues`} action={loading ? <Spinner size={16} label={`Reading from ${site}`} /> : undefined}>
       <View style={s.body}>
         {links.length
           ? (
               <ListSection footer={footer}>
                 {links.map((l) => {
                   const now = live[l.key]
-                  const look = linkState(now?.kind ?? l.kind, now?.state ?? l.state, now?.stateReason)
+                  const look = linkState(now?.kind ?? l.kind, now?.state ?? l.state, now?.stateReason, providerOf(l))
                   const Icon = LINK_ICONS[look.icon]
-                  const readable = validGhRef(l)
-                  const title = now?.title ?? l.title ?? `${look.noun} #${l.number}`
+                  const readable = validRef(l)
+                  const num = itemNumber(l)
+                  const title = now?.title ?? l.title ?? `${look.noun} ${num}`
                   return (
                     <ListRow
                       key={l.key}
                       title={title}
-                      subtitle={`${look.word} · ${l.owner}/${l.repo} #${l.number}`}
+                      subtitle={`${look.word} · ${l.owner}/${l.repo} ${num}`}
                       leading={<Icon size={20} strokeWidth={1.75} color={t.colors[LINK_TONE_COLORS[look.tone]]} />}
-                      accessibilityHint={readable ? 'Shows its checks, description and actions' : 'Only github.com items open from here'}
+                      accessibilityHint={readable ? 'Shows its checks, description and actions' : 'Only github.com and GitLab items open from here'}
                       onPress={readable ? () => onOpen(l) : undefined}
                     />
                   )
@@ -165,7 +176,7 @@ export function ChatLinksSheet({ visible, onClose, links, live, loading, error, 
             )
           : (
               <Text variant="bodySm" tone="muted" style={s.empty}>
-                When the agent opens a pull request or an issue in this chat, it shows up here. Ask it to “open a pull request” when the work is done.
+                {`When the agent opens a ${itemNoun('pr', forge)} or an issue in this chat, it shows up here. Ask it to “open a ${itemNoun('pr', forge)}” when the work is done.`}
               </Text>
             )}
 
@@ -173,10 +184,10 @@ export function ChatLinksSheet({ visible, onClose, links, live, loading, error, 
           ? (
               <View style={s.add}>
                 <TextField
-                  label="Pull request or issue"
+                  label={`${capital(itemNoun('pr', forge))} or issue`}
                   value={reference}
                   onChangeText={(v) => { setReference(v); if (addError) setAddError(null) }}
-                  placeholder="Link, owner/repo#12 or #12"
+                  placeholder={forge === 'gitlab' ? 'Link, !12 or #12' : 'Link, owner/repo#12 or #12'}
                   autoCapitalize="none"
                   autoCorrect={false}
                   spellCheck={false}
@@ -185,7 +196,7 @@ export function ChatLinksSheet({ visible, onClose, links, live, loading, error, 
                   onSubmitEditing={submit}
                   autoFocus={!!links.length}
                   error={addError}
-                  hint="A number is looked up in this project's GitHub repository."
+                  hint={forge === 'gitlab' ? "A number is looked up in this project's GitLab project: !12 is a merge request, #12 an issue." : "A number is looked up in this project's GitHub repository."}
                 />
                 <ButtonRow>
                   <Button label="Link" variant="primary" icon={Link2} loading={busy} disabled={!reference.trim()} onPress={submit} />
@@ -196,7 +207,8 @@ export function ChatLinksSheet({ visible, onClose, links, live, loading, error, 
           : (
               <ListSection>
                 <ListRow
-                  title="Link a pull request or issue"
+                  title={`Link a ${itemNoun('pr', forge)} or issue`}
+
                   leading={<Link2 size={20} strokeWidth={1.75} color={t.colors.accentInk} />}
                   accessory="none"
                   onPress={() => setAdding(true)}

@@ -1,6 +1,7 @@
 import type { AgentId } from '~/types/chat'
 import type { AgentTransport, SpawnFn } from '~/agents/types'
 import { envPath } from '~/utils/envPath'
+import { providerOf } from '~/utils/forge'
 import type { RunResult, SshApi } from '@/ssh/types'
 import { startRemoteRun, type RemoteRun } from './agentRun'
 import { fromBase64, splitNul, utf8Decode } from './bytes'
@@ -18,16 +19,24 @@ import {
 import { AUTH_SCRIPT, parseAuthOutput } from './auth'
 import { IMAGE_READ, MAX_IMAGE_BYTES, checkedPicturePath, parsePicture } from './images'
 import {
-  GH_ENV, GITHUB_HOST, JOB_RUNNING, LOG_CAP, NO_REPO,
+  GH_ENV, GITHUB_HOST, JOB_RUNNING, LOG_CAP,
   createdTarget, detailFailure, ghDetailArgv, ghFailure, ghItemArgv, ghJobArgv, ghJobLogArgv, ghMergeArgv, ghPrCreateArgv,
   jobFailure, jobFromJson, jobLogFailure, mergeFailure, parseGhDetail, parseGhItem, parseJobUrl, parseReference, prCreateFailure,
-  projectRepo, splitLog, targetOf, targetOfRef, unknownFlag,
+  splitLog, targetOf, targetOfRef, unknownFlag,
   type GhDetail, type GhTarget,
 } from './github'
 import {
   MAX_RELEASES, NO_GITHUB, actionFailure, parseReleases, parseRunRead, parseRuns, readFailure, releasesArgv, runActionArgv, runReadArgv, runsArgv,
   type GhRepo,
 } from './releases'
+import { GITLAB_COM, GLAB_ENV, GLAB_HOSTS, NO_FORGE, fullPath, glabError, isGitlabHostIn, parseGlabHosts, pickForge, type Forge } from './gitlab'
+import {
+  createdMr, glDetailArgv, glDetailFromJson, glGraphqlAnswer, glJobArgvs, glJobFailure, glJobFromJson, glMergeArgv, glMergeFailure,
+  glMrDetailsArgv, glMrPostArgv, glStateArgv, glTargetOfRef, isGlJobUrl, mrDetailsFailure, mrPostFailure, parseGlJobUrl, parseGlState,
+  parseMrDetails, postedIid, route, schemaLacksField, splitTrace, targetUrl, unknownServer, type GlTarget,
+
+} from './gitlabItems'
+import * as glr from './gitlabReleases'
 import type {
   Env, EnvRemote, GitState, GitWorktree, GitWorktreeList, Instance, InstanceState, RemoteBackend, RemoteChatEntry, RemoteProject, RemotePut,
 } from './types'
@@ -51,6 +60,8 @@ const SLOW_TIMEOUT = 600_000
 const GH_TIMEOUT = 45_000
 /** `gh` with its environment, as one command of the batch (`runAll` passes no variables). */
 const ghBatch = (argv: readonly string[]) => ['env', ...GH_ENV.map(([k, v]) => `${k}=${v}`), ...argv]
+/** `glab` with its environment, as one command of the batch. */
+const glabBatch = (argv: readonly string[]) => ['env', ...GLAB_ENV.map(([k, v]) => `${k}=${v}`), ...argv]
 const MAX_IDS = 500
 
 export interface SshBackendDeps {
@@ -760,39 +771,106 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     return parseGhDetail(r.stdout, t, instance)
   }
 
-  /** Each project's GitHub repository, read once from its git remotes (they rarely change). */
-  const repos = new Map<string, GhRepo>()
+  /** Each project's forge, read once from its git remotes (they rarely change). */
+  const forges = new Map<string, Forge>()
+  /** Per instance: the GitLab servers its glab is configured for (host names only, from its config file). */
+  const glabHosts = new Map<string, string[]>()
+  const instanceKey = (projectPath: string) => { const { hostId, instance } = parseProjectPath(projectPath); return `${hostId}\0${instance}` }
 
-  /** The project's own repository on github.com, from its remotes in the folder (the desktop's `env_repo`). */
-  async function repoOf(projectPath: string): Promise<GhRepo> {
-    const known = repos.get(projectPath)
+  /**
+   * The project's forge, from its remotes in the folder and the servers glab knows there, in one
+   * round trip (the desktop's `project_forge`): a GitLab project or a github.com repository. Throws a message.
+   */
+  async function forgeOf(projectPath: string): Promise<Forge> {
+    const known = forges.get(projectPath)
     if (known) return known
-    const [o] = await runAll(placeOf(projectPath), [{ argv: gitRead(['remote', '-v']), cap: 1024 * 1024 }])
+    const [o, hosts] = await runAll(placeOf(projectPath), [
+      { argv: gitRead(['remote', '-v']), cap: 1024 * 1024 },
+      { argv: ['sh', '-c', GLAB_HOSTS], cap: 64 * 1024 },
+    ])
+    if (hosts && ok(hosts)) glabHosts.set(instanceKey(projectPath), parseGlabHosts(text(hosts)))
     let list: string | null = text(o!)
     if (!ok(o!)) {
-      if (!utf8Decode(o!.stderr).toLowerCase().includes('not a git repository')) throw new Error(`${NO_REPO} (${errorOf(o!, 'git remote')})`)
+      if (!utf8Decode(o!.stderr).toLowerCase().includes('not a git repository')) throw new Error(`${NO_FORGE} (${errorOf(o!, 'git remote')})`)
       list = null
     }
-    const repo = projectRepo(list)
-    repos.set(projectPath, repo)
-    return repo
+    const forge = pickForge(list, glabHosts.get(instanceKey(projectPath)) ?? [])
+    forges.set(projectPath, forge)
+    return forge
   }
 
-  /** `repoOf`, worded for releases. */
-  async function releaseRepo(projectPath: string): Promise<GhRepo> {
+  /** The servers the instance's glab knows, read once (one round trip the first time). */
+  async function knownHosts(projectPath: string): Promise<string[]> {
+    const key = instanceKey(projectPath)
+    const cached = glabHosts.get(key)
+    if (cached) return cached
+    const { hostId, instance } = parseProjectPath(projectPath)
+    const r = await runPlain(homeOf({ hostId, instance }), [], ['sh', '-c', GLAB_HOSTS], { timeoutMs: 30_000 })
+    const hosts = r.code === 0 ? parseGlabHosts(r.stdout) : []
+    glabHosts.set(key, hosts)
+    return hosts
+  }
+
+  /** glab is only asked about gitlab.com, a `gitlab.*` name, or a server it is configured for there. */
+  async function checkedGitlab(projectPath: string, host: string): Promise<void> {
+    if (isGitlabHostIn(host, [])) return
+    if (!isGitlabHostIn(host, await knownHosts(projectPath))) throw new Error(unknownServer(host, parseProjectPath(projectPath).instance))
+  }
+
+  /** The project's repository on github.com (the desktop's `env_repo`), or the reason there is none. */
+  async function repoOf(projectPath: string): Promise<GhRepo> {
+    const f = await forgeOf(projectPath)
+    if (f.provider !== 'github') throw new Error(`${NO_FORGE} (The project is on GitLab.)`)
+    return { owner: f.owner, repo: f.repo }
+  }
+
+  /** The project's forge, worded for releases. */
+  async function releaseForge(projectPath: string): Promise<Forge> {
     try {
-      return await repoOf(projectPath)
+      return await forgeOf(projectPath)
     } catch (e) {
       const m = messageOf(e)
-      throw new Error(m.startsWith(NO_REPO) ? NO_GITHUB : m)
+      throw new Error(m.startsWith(NO_FORGE) ? NO_GITHUB : m)
     }
   }
 
-  /** A run with its jobs, by a release's tag or by id: one round trip (`RUN_READ`). */
-  async function readRun(projectPath: string, what: { tag: string } | { id: number }) {
-    const repo = await releaseRepo(projectPath)
-    const argv = runReadArgv(repo, what)
+  /** Run glab from the agent's home (the folder may be gone; `glab api` needs no repository). */
+  async function glab(projectPath: string, argv: string[], timeoutMs = GH_TIMEOUT) {
     const { hostId, instance } = parseProjectPath(projectPath)
+    const r = await runPlain(homeOf({ hostId, instance }), GLAB_ENV, argv, { timeoutMs })
+    return { r, instance }
+  }
+
+  /** Hosts whose GraphQL schema lacks the paid tiers' fields: asked with the smaller query straight away. */
+  const leanSchema = new Set<string>()
+
+  /** One merge request or issue in full (the desktop's `gitlab_items::fetch`): the full query, the smaller one if the schema lacks fields. */
+  async function readGitlab(projectPath: string, t: GlTarget): Promise<GhDetail> {
+    await checkedGitlab(projectPath, t.forge.host)
+    const ask = async (full: boolean) => {
+      const { r, instance } = await glab(projectPath, glDetailArgv(t, full))
+      return glGraphqlAnswer(instance, t.forge.host, r.code, r.stdout, r.stderr)
+    }
+    let v = await ask(!leanSchema.has(t.forge.host))
+    if (schemaLacksField(v)) {
+      leanSchema.add(t.forge.host)
+      v = await ask(false)
+    }
+    return glDetailFromJson(v, t)
+  }
+
+  /** A run with its jobs, by a release's tag or by id: one round trip (`RUN_READ`, or GitLab's). */
+  async function readRun(projectPath: string, what: { tag: string } | { id: number }) {
+    const f = await releaseForge(projectPath)
+    const { hostId, instance } = parseProjectPath(projectPath)
+    if (f.provider === 'gitlab') {
+      await checkedGitlab(projectPath, f.host)
+      const r = await runPlain(homeOf({ hostId, instance }), GLAB_ENV, glr.runReadArgv(f, what), { timeoutMs: GH_TIMEOUT * 2 })
+      const name = 'tag' in what ? `pipeline for ${what.tag}` : `pipeline ${what.id}`
+      if (r.code !== 0) throw new Error(glr.readFailure(instance, f.host, name, r.code, r.stderr, r.stdout))
+      return glr.parseRunRead(f, r.stdout, instance, 'tag' in what ? what.tag : null)
+    }
+    const argv = runReadArgv({ owner: f.owner, repo: f.repo }, what)
     const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT * 2 })
     const name = 'tag' in what ? `workflow run for ${what.tag}` : `workflow run ${what.id}`
     if (r.code !== 0) throw new Error(readFailure(instance, name, r.code, r.stderr, r.stdout))
@@ -1146,8 +1224,17 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     },
 
     async ghItem(projectPath, ref) {
-      const argv = ghItemArgv(ref)
       const { hostId, instance } = parseProjectPath(projectPath)
+      if (providerOf(ref) === 'gitlab') {
+        const t = glTargetOfRef(ref)
+        await checkedGitlab(projectPath, t.forge.host)
+        const r = await runPlain(homeOf({ hostId, instance }), GLAB_ENV, glStateArgv(t), { timeoutMs: 30_000 })
+        const item = parseGlState(r.stdout, t)
+        if (item) return item
+        if (r.code !== 0) throw new Error(glabError(instance, t.forge.host, r.code, r.stderr, r.stdout))
+        throw new Error(`GitLab doesn't show ${fullPath(t.forge)}${t.kind === 'issue' ? '#' : '!'}${t.iid} to the account glab uses in ${instance}.`)
+      }
+      const argv = ghItemArgv(ref)
       // From the agent's home: the project folder may be gone, and gh needs no repository here.
       const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: 30_000 })
       if (r.code !== 0) throw new Error(ghFailure(instance, ref, r.code, r.stderr))
@@ -1157,11 +1244,33 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     },
 
     async ghDetail(projectPath, ref) {
+      if (providerOf(ref) === 'gitlab') return readGitlab(projectPath, glTargetOfRef(ref))
       return readDetail(projectPath, targetOfRef(ref))
     },
 
     async ghResolve(projectPath, reference) {
-      const parsed = parseReference(reference)
+      const s = reference.trim()
+      const { instance } = parseProjectPath(projectPath)
+      const isLink = /^https?:\/\//i.test(s)
+      const linkHost = isLink ? (s.split('://')[1]?.split(/[/?#]/)[0] ?? '').toLowerCase().replace(/^www\./, '') : ''
+      // Refused before anything is sent: neither in GitHub's form nor in GitLab's (read as if the
+      // project were on GitLab and the link's server known; both are checked for real below).
+      const asGitlab = (() => {
+        try { route(s, [linkHost], { provider: 'gitlab', host: GITLAB_COM, owner: 'g', repo: 'p' }, instance); return null } catch (e) { return e as Error }
+      })()
+      if (asGitlab) {
+        try { parseReference(s) } catch (e) { throw /!|\/-\//.test(s) ? asGitlab : e }
+      }
+      // A GitLab link on a server not named like one: is it one glab is signed in to there?
+      const known = isLink && /\/-\/(?:merge_requests|issues|work_items)\//.test(s) && !isGitlabHostIn(linkHost, []) ? await knownHosts(projectPath) : []
+      // Anything shorter than a link is the project's: its forge decides.
+      let project: Forge | null = null
+      if (!isLink) {
+        try { project = await forgeOf(projectPath) } catch { project = null }
+      }
+      const where = route(s, known, project, instance)
+      if (where.to === 'gitlab') return readGitlab(projectPath, where.target)
+      const parsed = parseReference(s)
       // A bare number is in the project's own repository, read from its remotes in the folder.
       const repo = parsed.kind === 'number' ? await repoOf(projectPath) : { owner: '', repo: '' }
       return readDetail(projectPath, targetOf(parsed, repo))
@@ -1169,25 +1278,39 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
 
     async ghRepo(projectPath) {
       try {
-        return await repoOf(projectPath)
+        const f = await forgeOf(projectPath)
+        return { provider: f.provider, host: f.host, owner: f.owner, repo: f.repo }
       } catch (e) {
-        // No GitHub remote (or no repository at all) is an answer; a failed connection is not.
-        if (messageOf(e).startsWith(NO_REPO) || messageOf(e).startsWith('This project\'s repository is on')) return null
+        // No known forge (or no repository at all) is an answer; a failed connection is not.
+        if (messageOf(e).startsWith(NO_FORGE) || messageOf(e).startsWith('This project\'s repository is on')) return null
         throw e
       }
     },
 
     async ghReleases(projectPath, count) {
-      const repo = await releaseRepo(projectPath)
+      const f = await releaseForge(projectPath)
       const { hostId, instance } = parseProjectPath(projectPath)
+      const home = homeOf({ hostId, instance })
+      if (f.provider === 'gitlab') {
+        await checkedGitlab(projectPath, f.host)
+        // The releases, recent pipelines and recent tag pipelines: one round trip.
+        const [list, recent, tags] = await runAll(home, glr.releasesArgvs(f, Math.min(count, glr.MAX_RELEASES)).map((argv, i) => (
+          { argv: glabBatch(argv), cap: i === 0 ? 16 * 1024 * 1024 : 8 * 1024 * 1024 }
+        )), GH_TIMEOUT * 2)
+        if (!ok(list!)) throw new Error(glr.readFailure(instance, f.host, `project ${fullPath(f)}`, list!.code, utf8Decode(list!.stderr), text(list!)))
+        // A project without CI/CD (or one whose pipelines the account may not see) still lists its releases.
+        const read = glr.parseGitlabReleases(f, text(list!), ok(recent!) ? text(recent!) : null, ok(tags!) ? text(tags!) : null, instance)
+        return { provider: 'gitlab', host: f.host, owner: f.owner, repo: f.repo, ...read }
+      }
+      const repo = { owner: f.owner, repo: f.repo }
       // The releases and the recent runs: one round trip.
-      const [list, runs] = await runAll(homeOf({ hostId, instance }), [
+      const [list, runs] = await runAll(home, [
         { argv: ghBatch(releasesArgv(repo, Math.min(count, MAX_RELEASES))), cap: 16 * 1024 * 1024 },
         { argv: ghBatch(runsArgv(repo)), cap: 8 * 1024 * 1024 },
       ], GH_TIMEOUT * 2)
       if (!ok(list!)) throw new Error(readFailure(instance, `repository ${repo.owner}/${repo.repo}`, list!.code, utf8Decode(list!.stderr), text(list!)))
       return {
-        host: GITHUB_HOST, owner: repo.owner, repo: repo.repo,
+        provider: 'github', host: GITHUB_HOST, owner: repo.owner, repo: repo.repo,
         releases: parseReleases(text(list!), instance),
         // A repository without Actions (or one gh may not read them in) still lists its releases.
         runs: ok(runs!) ? parseRuns(text(runs!)) : [],
@@ -1200,19 +1323,41 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
 
     async ghRun(projectPath, id) {
       const d = await readRun(projectPath, { id })
-      if (!d) throw new Error(`GitHub has no workflow run ${id}.`)
+      if (!d) throw new Error(`There is no run ${id}.`)
       return d
     },
 
     async ghRunAction(projectPath, id, action) {
-      const repo = await releaseRepo(projectPath)
-      const argv = runActionArgv(repo, id, action)
+      const f = await releaseForge(projectPath)
+      if (f.provider === 'gitlab') {
+        await checkedGitlab(projectPath, f.host)
+        let ref: string | null = null
+        if (action === 'rerun') {
+          // A new pipeline for the same branch or tag: its ref first.
+          const { r, instance } = await glab(projectPath, glr.pipelineArgv(f, id))
+          if (r.code !== 0) throw new Error(glr.readFailure(instance, f.host, `pipeline ${id}`, r.code, r.stderr, r.stdout))
+          ref = glr.parsePipelineRef(r.stdout, instance)
+        }
+        const { r, instance } = await glab(projectPath, glr.runActionArgv(f, id, action, ref))
+        if (r.code !== 0) throw new Error(glr.actionFailure(instance, f.host, id, action, r.code, r.stderr, r.stdout))
+        return
+      }
+      const argv = runActionArgv({ owner: f.owner, repo: f.repo }, id, action)
       const { hostId, instance } = parseProjectPath(projectPath)
       const r = await runPlain(homeOf({ hostId, instance }), GH_ENV, argv, { timeoutMs: GH_TIMEOUT })
       if (r.code !== 0) throw new Error(actionFailure(instance, id, action, r.code, r.stderr, r.stdout))
     },
 
     async ghMerge(projectPath, ref, method, headSha) {
+      if (providerOf(ref) === 'gitlab') {
+        const t = glTargetOfRef(ref)
+        if (ref.kind !== 'pr') throw new Error('Only merge requests can be merged; that is an issue.')
+        const argv = glMergeArgv(t, method, headSha)
+        await checkedGitlab(projectPath, t.forge.host)
+        const { r, instance } = await glab(projectPath, argv)
+        if (r.code !== 0) throw new Error(glMergeFailure(instance, t, r.code, r.stdout, r.stderr))
+        return
+      }
       const t = targetOfRef(ref)
       if (ref.kind !== 'pr') throw new Error('Only a pull request can be merged.')
       const argv = ghMergeArgv(t, method, headSha)
@@ -1222,9 +1367,31 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     },
 
     async ghJob(projectPath, url) {
-      const t = parseJobUrl(url)
       const { hostId, instance } = parseProjectPath(projectPath)
       const home = homeOf({ hostId, instance })
+      if (isGlJobUrl(url)) {
+        const t = parseGlJobUrl(url)
+        await checkedGitlab(projectPath, t.forge.host)
+        // The job and its log so far (GitLab has it while the job runs): one round trip.
+        const [jobArgv, traceArgv] = glJobArgvs(t)
+        const [meta, trace] = await runAll(home, [{ argv: glabBatch(jobArgv), cap: 4 * 1024 * 1024 }, { argv: glabBatch(traceArgv), cap: LOG_CAP }], GH_TIMEOUT * 2)
+        if (!ok(meta!)) throw new Error(glJobFailure(instance, t.forge.host, t.job, meta!.code, utf8Decode(meta!.stderr), text(meta!)))
+        let v: unknown
+        try { v = JSON.parse(text(meta!)) } catch { throw new Error(`The GitLab CLI in ${instance} answered with something unexpected.`) }
+        const job = glJobFromJson(v, url)
+        // Not started (queued, or a manual job nobody ran): there is no log yet.
+        if (job.startedAt === null) return job
+        // A capped log ends glab with a broken pipe; what came is still the log.
+        if (ok(trace!) || trace!.truncated) {
+          job.steps = splitTrace(text(trace!), job.state)
+          job.logReady = true
+          job.logTruncated = trace!.truncated
+        } else {
+          job.logError = glabError(instance, t.forge.host, trace!.code, utf8Decode(trace!.stderr), text(trace!))
+        }
+        return job
+      }
+      const t = parseJobUrl(url)
       const logCmd = (escapes: boolean): BatchCmd => ({ argv: ghBatch(ghJobLogArgv(t, escapes)), cap: LOG_CAP })
       // The job and, once it finished, its log: one round trip.
       const [meta, first] = await runAll(home, [{ argv: ghBatch(ghJobArgv(t)), cap: 4 * 1024 * 1024 }, logCmd(true)], GH_TIMEOUT * 2)
@@ -1252,8 +1419,41 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
     },
 
     async ghPrCreate(projectPath, base) {
-      const argv = ghPrCreateArgv(base)
       const p = placeOf(projectPath)
+      if (base !== null) safeRef(base)
+      // GitHub or GitLab, from the remotes (read once per project): a project on neither is GitHub's
+      // path, which words what went wrong.
+      const forge = await forgeOf(projectPath).catch(() => null)
+      if (forge?.provider === 'gitlab') {
+        // As the desktop does for a remote project: git reads the branch and its commits in the folder,
+        // then the REST API is told the rest (title and description from the commits, as `--fill` would).
+        const detailsArgv = glMrDetailsArgv(forge, base)
+        await checkedGitlab(projectPath, forge.host)
+        const read = await runPlain(p, [...GLAB_ENV, ...GIT_ENV], detailsArgv, { timeoutMs: GH_TIMEOUT })
+        if (read.code !== 0) throw new Error(mrDetailsFailure(p.instance, read.code, read.stderr))
+        const details = parseMrDetails(read.stdout, base)
+        const { r } = await glab(projectPath, glMrPostArgv(forge, details))
+        let target: GlTarget | null = null
+        const iid = r.code === 0 ? postedIid(r.stdout) : null
+        if (iid !== null) target = { forge, iid, kind: 'mr' }
+        else {
+          const said = `${r.stdout}\n${r.stderr}`
+          if (r.code !== 0 && !said.toLowerCase().includes('already exists')) {
+            throw new Error(mrPostFailure(p.instance, forge.host, details.branch, r.code, r.stderr, r.stdout))
+          }
+          target = createdMr(said, forge, await knownHosts(projectPath))
+          if (!target) {
+            const detail = tidyOutput(said)
+            throw new Error(`The GitLab CLI did not say where the merge request is.${detail ? `\n${detail}` : ''}`)
+          }
+        }
+        try {
+          return await readGitlab(projectPath, target)
+        } catch (e) {
+          throw new Error(`Opened ${targetUrl(target)}, but could not read it back: ${messageOf(e)}`)
+        }
+      }
+      const argv = ghPrCreateArgv(base)
       // gh in the project folder, through the login shell (it may need the profile, and git hooks may run).
       const r = await exec(p, true, [...GH_ENV, ...GIT_ENV], argv, { timeoutMs: 90_000 })
       const said = `${r.stdout}\n${r.stderr}`

@@ -109,7 +109,8 @@ describe('mock backend', () => {
     expect((await settle(b.ghResolve(shop, '#97'))).kind).toBe('issue')
     expect((await settle(b.ghResolve(shop, 'https://github.com/acme/shop-api/pull/128'))).state).toBe('merged')
     await expect(settle(b.ghResolve(shop, '#999'))).rejects.toThrow('There is no pull request or issue #999 in acme/shop-api.')
-    await expect(settle(b.ghResolve(shop, 'https://gitlab.com/a/b/pull/1'))).rejects.toThrow(/github\.com/)
+    await expect(settle(b.ghResolve(shop, 'https://gitlab.com/a/b/pull/1'))).rejects.toThrow(/merge request or issue link/)
+    await expect(settle(b.ghResolve(shop, 'https://ghe.example.com/a/b/pull/1'))).rejects.toThrow(/github\.com/)
     await expect(settle(b.ghDetail(shop, { ...ref, repo: 'shop-admin', number: 42 }))).rejects.toThrow(/not signed in/)
 
     const opened = await settle(b.ghPrCreate(shop, null))
@@ -117,5 +118,45 @@ describe('mock backend', () => {
     expect((await settle(b.ghPrCreate(shop, 'main'))).number).toBe(opened.number)
     await expect(settle(b.ghPrCreate('env://mock-forge/dev/home/agent/work/mango', null))).rejects.toThrow(/no commits/)
     await expect(settle(b.ghPrCreate(shop, '--force'))).rejects.toThrow(/not a valid branch name/)
+  })
+})
+
+describe('mock backend on GitLab', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('shows the scratch project as a GitLab one: merge request, pipeline job log, merging, releases', async () => {
+    vi.useFakeTimers({ now: Date.now() })
+    const settle = async <T>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {})
+      await vi.advanceTimersByTimeAsync(2000)
+      return p
+    }
+    const b = createMockBackend()
+    const scratch = 'env://mock-forge/sandbox/home/agent/work/scratch'
+    expect(await settle(b.ghRepo(scratch))).toEqual({ provider: 'gitlab', host: 'gitlab.com', owner: 'acme/labs', repo: 'scratch' })
+    expect(await settle(b.ghRepo('env://mock-forge/dev/home/agent/work/shop-api'))).toMatchObject({ provider: 'github' })
+
+    const ref = { provider: 'gitlab' as const, kind: 'pr' as const, host: 'gitlab.com', owner: 'acme/labs', repo: 'scratch', number: 12 }
+    const mr = await settle(b.ghDetail(scratch, ref))
+    expect(mr).toMatchObject({ provider: 'gitlab', state: 'open', mergeMethods: ['merge', 'squash'] })
+    expect((await settle(b.ghItem(scratch, ref))).title).toBe(mr.title)
+    const failing = await settle(b.ghJob(scratch, mr.checkRuns.find(c => c.state === 'failure')!.url!))
+    expect(failing).toMatchObject({ provider: 'gitlab', state: 'failure', logReady: true })
+    expect(failing.steps.map(s => s.name)).toContain('Executing "step_script" stage of the job script')
+    expect(failing.steps.flatMap(s => s.lines)).toContain('##[group]Install dependencies')
+
+    expect((await settle(b.ghResolve(scratch, '#5'))).kind).toBe('issue')
+    expect((await settle(b.ghResolve(scratch, '!12'))).number).toBe(12)
+    await expect(settle(b.ghMerge(scratch, ref, 'rebase', mr.headSha!))).rejects.toThrow(/rebasing/)
+    await settle(b.ghMerge(scratch, ref, 'squash', mr.headSha!))
+    expect((await settle(b.ghDetail(scratch, ref))).state).toBe('merged')
+
+    const rel = await settle(b.ghReleases(scratch, 30))
+    expect(rel).toMatchObject({ provider: 'gitlab', host: 'gitlab.com' })
+    expect(rel.releases[0]!.url).toMatch(/^https:\/\/gitlab\.com\/acme\/labs\/scratch\/-\/releases\//)
+    const run = await settle(b.ghTagRun(scratch, 'v0.4.0'))
+    expect(run?.run.state).toBe('pending')
+    await settle(b.ghRunAction(scratch, run!.run.id, 'cancel'))
+    expect((await settle(b.ghRun(scratch, run!.run.id))).run.state).toBe('cancelled')
   })
 })
