@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.3.0
+
+### New
+
+- Show a remote environment's usage limits in its projects.
+- Add German and Russian interface languages.
+
 ## 0.2.0
 
 ### New
