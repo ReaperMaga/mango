@@ -6,6 +6,7 @@ import type { ForgeProvider, GhRun, GhRunJob, GhRunState } from '~/types/ipc'
 import type { RunRead } from '~/stores/releases'
 import { openExternal } from '~/composables/useBackend'
 import { safeHtml } from '~/utils/safeHtml'
+import { formatLocale } from '~/i18n'
 import { capital } from '~/utils/forge'
 import { formatDuration, shortAgo, useNow } from '~/utils/time'
 import {
@@ -35,42 +36,70 @@ const gitlab = computed(() => props.provider === 'gitlab')
 const flowName = computed(() => (run.value && !(gitlab.value && run.value.workflow === 'Pipeline') ? `${run.value.workflow} · ` : ''))
 const emit = defineEmits<{ openJob: [job: GhRunJob] }>()
 
+const { t } = useI18n()
 const now = useNow(1000)
 const release = computed(() => (props.entry.kind === 'release' ? props.entry.release : null))
 /** The run as read with its jobs, else as the list knows it. */
 const run = computed<GhRun | null>(() => props.read?.detail?.run ?? props.entry.run)
 const jobs = computed(() => sortJobs(props.read?.detail?.jobs ?? []))
 const state = computed(() => entryState({ ...props.entry, run: run.value } as ReleaseEntry))
-const summary = computed(() => (jobs.value.length ? jobSummary(jobs.value) : null))
+const summary = computed(() => (jobs.value.length ? { tone: jobSummary(jobs.value).tone, text: summaryText(jobs.value) } : null))
+/** `jobSummary`'s line, in the interface's language. */
+function summaryText(all: GhRunJob[]): string {
+  const n = (...s: GhRunState[]) => all.filter(j => s.includes(j.state)).length
+  const [failedJobs, activeJobs, passed, skipped] = [n('failure'), n('pending', 'queued'), n('success'), n('skipped', 'neutral')]
+  if (activeJobs) {
+    return failedJobs
+      ? t('releases.summary.failedRunning', { failed: failedJobs, active: activeJobs })
+      : t('releases.summary.done', { finished: all.length - activeJobs, total: all.length })
+  }
+  if (failedJobs) return passed ? t('releases.summary.failedPassed', { failed: failedJobs, passed }) : t('releases.summary.failed', { failed: failedJobs })
+  if (n('cancelled')) return t('releases.summary.cancelled')
+  return skipped ? t('releases.summary.passedSkipped', { skipped }) : t('releases.summary.passed')
+}
+/** The toggle's words: the run's name, what its jobs add up to, and how long a finished run took. */
+const summaryLine = computed(() => {
+  const text = summary.value?.text ?? ''
+  const line = flowName.value ? `${flowName.value}${text}` : capital(text)
+  return took.value && !active.value ? t('releases.summary.took', { summary: line, took: took.value }) : line
+})
+const stateWord = computed(() => {
+  const r = release.value
+  if (state.value.mark !== 'tag' || !r) return t(`releases.state.${state.value.mark}`)
+  if (r.draft) return t('releases.draft')
+  if (!r.publishedAt) return t('releases.upcoming')
+  return r.prerelease ? t('releases.prerelease') : t('releases.state.published')
+})
 const active = computed(() => !!run.value && isActive(run.value.state))
 
 const title = computed(() => {
   const e = props.entry
   if (e.kind === 'release') return e.release.name
-  return e.why === 'trial' ? 'Trial build' : (e.run.headBranch ?? 'Release build')
+  return e.why === 'trial' ? t('releases.trialBuild') : (e.run.headBranch ?? t('releases.releaseBuild'))
 })
 
 const ago = (iso: string | null | undefined) => {
-  const t = iso ? Date.parse(iso) : Number.NaN
-  if (!Number.isFinite(t)) return null
-  const a = shortAgo(t, now.value)
-  if (a === 'now') return 'just now'
-  const m = /^(\d+)([mhd])$/.exec(a)
-  if (!m) return `on ${a}`
-  const n = Number(m[1])
-  const unit = m[2] === 'm' ? 'min' : m[2] === 'h' ? (n === 1 ? 'hour' : 'hours') : (n === 1 ? 'day' : 'days')
-  return `${n} ${unit} ago`
+  const at = iso ? Date.parse(iso) : Number.NaN
+  if (!Number.isFinite(at)) return null
+  const s = Math.max(0, Math.round((now.value - at) / 1000))
+  if (s < 45) return t('common.time.justNow')
+  const m = Math.round(s / 60)
+  if (m < 60) return t('common.time.minAgo', { n: m })
+  const h = Math.round(m / 60)
+  if (h < 24) return t('releases.hoursAgo', h)
+  const d = Math.round(h / 24)
+  return d < 7 ? t('common.time.daysAgo', d) : t('releases.onDate', { date: shortAgo(at, now.value) })
 }
 const byline = computed(() => {
   const r = release.value
   if (r) {
-    const who = r.author?.login.replace(/\[bot\]$/, '') ?? 'Someone'
-    if (r.publishedAt) return { who, what: `published ${ago(r.publishedAt)}` }
+    const who = r.author?.login.replace(/\[bot\]$/, '') ?? t('releases.someone')
+    if (r.publishedAt) return { who, key: 'published', ago: ago(r.publishedAt) }
     // GitLab has no drafts: a release without a date gone by is one set to come out later.
-    return { who, what: r.draft || !gitlab.value ? `drafted it ${ago(r.createdAt)}` : `created it ${ago(r.createdAt)}, to come out later` }
+    return { who, key: r.draft || !gitlab.value ? 'drafted' : 'created', ago: ago(r.createdAt) }
   }
   const e = props.entry as Extract<ReleaseEntry, { kind: 'run' }>
-  return { who: e.run.workflow, what: `${e.why === 'trial' ? 'started by hand' : 'started by the tag'} ${ago(e.run.createdAt)}` }
+  return { who: e.run.workflow, key: e.why, ago: ago(e.run.createdAt) }
 })
 const downloads = computed(() => (release.value ? totalDownloads(release.value.assets) : 0))
 
@@ -94,9 +123,9 @@ const eta = computed(() => {
   if (usual === null) return null
   const start = Date.parse(r.startedAt ?? r.createdAt)
   const minutes = Math.max(1, Math.round(usual / 60_000))
-  if (now.value - start > usual) return `Taking longer than usual (about ${minutes} min).`
-  const at = new Date(start + usual).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  return `Recent builds took about ${minutes} min: done around ${at}.`
+  if (now.value - start > usual) return t('releases.etaLonger', { minutes })
+  const at = new Date(start + usual).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' })
+  return t('releases.eta', { minutes, time: at })
 })
 const failed = computed(() => (active.value ? null : firstFailure(jobs.value)))
 
@@ -106,13 +135,12 @@ const listOpen = computed(() => listChoice.value ?? (!!summary.value && summary.
 watch(() => props.entry.key, () => { listChoice.value = null })
 
 const ICON = { failure: CircleX, cancelled: CircleSlash, pending: CircleDashed, queued: Clock, success: CircleCheck, neutral: CircleMinus, skipped: CircleSlash }
-const WORD = { failure: 'Failed', cancelled: 'Cancelled', pending: 'Running', queued: 'Waiting', success: 'Passed', neutral: 'Neutral', skipped: 'Skipped' }
+const word = (s: GhRunState) => (s === 'queued' ? t('releases.waiting') : t(`links.run.${s}`))
 const SUMMARY_ICON = { running: CircleDashed, done: CircleCheck, error: CircleX, idle: CircleSlash }
 const STATE_ICON = { running: CircleDashed, failed: CircleX, cancelled: CircleSlash, passed: CircleCheck, tag: Tag }
 
 function jobTook(j: GhRunJob): string | null {
-  if (j.state === 'queued') return 'Waiting'
-  if (j.state === 'skipped') return 'Skipped'
+  if (j.state === 'queued' || j.state === 'skipped') return word(j.state)
   if (!j.startedAt) return null
   const start = Date.parse(j.startedAt)
   const end = j.completedAt ? Date.parse(j.completedAt) : now.value
@@ -121,6 +149,8 @@ function jobTook(j: GhRunJob): string | null {
 const jobTone = (s: GhRunState) => (s === 'pending' ? 'running' : s === 'success' ? 'done' : s === 'failure' ? 'error' : 'idle')
 
 /* ---------- files and notes ---------- */
+/** `groupAssets`' groups: the platforms keep their names. */
+const platformLabel = (p: string) => (p === 'Updater' ? t('releases.platform.updater') : p === 'Other' ? t('releases.platform.other') : p)
 const assets = computed(() => (release.value ? groupAssets(release.value.assets) : null))
 /** GitLab's links and uploads from the server's root are read against the release's own server. */
 const body = computed(() => safeHtml(release.value?.bodyHtml ?? '', release.value?.url))
@@ -140,11 +170,11 @@ function download(url: string) { openExternal(url).catch(() => {}) }
     <div class="ri__top">
       <span class="ri__state" :class="`is-${state.tone}`">
         <component :is="STATE_ICON[state.mark]" :class="{ 'ri__turn': state.mark === 'running' }" aria-hidden="true" />
-        <span>{{ state.word }}</span>
+        <span>{{ stateWord }}</span>
       </span>
-      <span v-if="latest" class="ri__pill is-latest">Latest</span>
-      <span v-if="release?.prerelease" class="ri__pill is-pre">Pre-release</span>
-      <span v-if="release?.draft && state.word !== 'Draft'" class="ri__pill is-draft">Draft</span>
+      <span v-if="latest" class="ri__pill is-latest">{{ t('releases.latest') }}</span>
+      <span v-if="release?.prerelease" class="ri__pill is-pre">{{ t('releases.prerelease') }}</span>
+      <span v-if="release?.draft && state.word !== 'Draft'" class="ri__pill is-draft">{{ t('releases.draft') }}</span>
       <span class="ri__ref" :title="repo">{{ repo }}</span>
     </div>
 
@@ -152,33 +182,36 @@ function download(url: string) { openExternal(url).catch(() => {}) }
 
     <p class="ri__meta">
       <img v-if="release?.author?.avatarUrl" class="ri__avatar" :src="release.author.avatarUrl" alt="" referrerpolicy="no-referrer">
-      <span class="ri__by"><strong>{{ byline.who }}</strong> {{ byline.what }}</span>
-      <span v-if="downloads" class="ri__downloads tabular" :title="`${downloads} download${downloads === 1 ? '' : 's'}`">
+      <i18n-t :keypath="`releases.byline.${byline.key}`" tag="span" scope="global" class="ri__by">
+        <template #who><strong>{{ byline.who }}</strong></template>
+        <template #ago>{{ byline.ago }}</template>
+      </i18n-t>
+      <span v-if="downloads" class="ri__downloads tabular" :title="t('releases.downloads', downloads)">
         <Download aria-hidden="true" />{{ downloads }}
       </span>
     </p>
 
     <dl class="ri__facts">
       <div v-if="release" class="ri__fact">
-        <dt>Tag</dt>
+        <dt>{{ t('releases.fact.tag') }}</dt>
         <dd>
           <code class="ri__chip" :title="release.tag">{{ release.tag }}</code>
-          <span v-if="release.target" class="ri__soft">from {{ release.target }}</span>
+          <span v-if="release.target" class="ri__soft">{{ t('releases.from', { target: release.target }) }}</span>
         </dd>
       </div>
       <div v-else-if="run?.headBranch" class="ri__fact">
-        <dt>{{ entry.kind === 'run' && entry.why === 'trial' ? 'Branch' : 'Tag' }}</dt>
+        <dt>{{ entry.kind === 'run' && entry.why === 'trial' ? t('releases.fact.branch') : t('releases.fact.tag') }}</dt>
         <dd><code class="ri__chip" :title="run.headBranch">{{ run.headBranch }}</code></dd>
       </div>
       <div v-if="run?.headSha" class="ri__fact">
-        <dt>Commit</dt>
+        <dt>{{ t('releases.fact.commit') }}</dt>
         <dd>
           <code class="ri__chip" :title="run.headSha">{{ run.headSha.slice(0, 7) }}</code>
           <span v-if="run.title" class="ri__soft" :title="run.title">{{ run.title }}</span>
         </dd>
       </div>
       <div v-if="run" class="ri__fact">
-        <dt>{{ gitlab ? 'Pipeline' : 'Workflow' }}</dt>
+        <dt>{{ gitlab ? t('releases.fact.pipeline') : t('releases.fact.workflow') }}</dt>
         <dd>
           <button
             v-if="summary"
@@ -190,18 +223,18 @@ function download(url: string) { openExternal(url).catch(() => {}) }
             @click="listChoice = !listOpen"
           >
             <component :is="SUMMARY_ICON[summary.tone]" class="ri__toggle-icon" :class="{ 'ri__turn': summary.tone === 'running' }" aria-hidden="true" />
-            <span>{{ flowName }}{{ flowName ? summary.text : capital(summary.text) }}<template v-if="took && !active"> in {{ took }}</template></span>
+            <span>{{ summaryLine }}</span>
             <component :is="listOpen ? ChevronDown : ChevronRight" class="ri__chev" aria-hidden="true" />
           </button>
-          <span v-else class="ri__soft">{{ run.workflow }}<template v-if="read?.loading"> · reading…</template></span>
+          <span v-else class="ri__soft">{{ read?.loading ? t('releases.reading', { workflow: run.workflow }) : run.workflow }}</span>
         </dd>
       </div>
     </dl>
-    <ul v-if="summary && listOpen" id="ri-jobs" class="ri__jobs" aria-label="Jobs">
+    <ul v-if="summary && listOpen" id="ri-jobs" class="ri__jobs" :aria-label="t('releases.jobs')">
       <li v-for="j in jobs" :key="j.id">
-        <button type="button" class="ri__job" title="Show the log" @click="emit('openJob', j)">
+        <button type="button" class="ri__job" :title="t('releases.showLog')" @click="emit('openJob', j)">
           <component :is="ICON[j.state]" class="ri__job-icon" :class="[`is-${jobTone(j.state)}`, { 'ri__turn': j.state === 'pending' }]" aria-hidden="true" />
-          <span class="sr-only">{{ WORD[j.state] }}:</span>
+          <span class="sr-only">{{ word(j.state) }}:</span>
           <span class="ri__job-name">{{ j.name }}</span>
           <span class="ri__job-took tabular" :class="{ 'is-running': j.state === 'pending' }">{{ jobTook(j) }}</span>
           <ArrowRight class="ri__job-go" aria-hidden="true" />
@@ -209,50 +242,53 @@ function download(url: string) { openExternal(url).catch(() => {}) }
       </li>
     </ul>
     <p v-if="eta" class="ri__eta">{{ eta }}</p>
-    <p v-if="read?.error" class="ri__error selectable" role="alert">Could not read the run: {{ read.error }}</p>
+    <p v-if="read?.error" class="ri__error selectable" role="alert">{{ t('releases.runError', { error: read.error }) }}</p>
 
     <p v-if="failed && state.tone === 'error'" class="ri__error selectable">
-      <strong>{{ failed.name }}</strong> failed.<template v-if="release?.draft"> Nothing was published: the release is still a draft.</template>
-      {{ gitlab ? 'Retry starts the failed jobs again' : 'Re-running the failed jobs starts them again' }}; the ones that passed are kept.
+      <i18n-t keypath="releases.jobFailed" scope="global">
+        <template #job><strong>{{ failed.name }}</strong></template>
+      </i18n-t>
+      <template v-if="release?.draft">{{ ' ' }}{{ t('releases.stillDraft') }}</template>
+      {{ ' ' }}{{ t(`releases.rerunHint.${gitlab ? 'gitlab' : 'github'}`) }}
     </p>
 
     <template v-if="release">
       <h4 class="ri__sub">
-        Files
+        {{ t('releases.filesTitle') }}
         <span v-if="assets && assets.files" class="ri__count tabular">
-          {{ assets.files }} file{{ assets.files === 1 ? '' : 's' }}<template v-if="assets.signatures">, {{ assets.signatures }} signature{{ assets.signatures === 1 ? '' : 's' }}</template>
+          {{ t('releases.files', assets.files) }}<template v-if="assets.signatures">, {{ t('releases.signatures', assets.signatures) }}</template>
         </span>
       </h4>
-      <ul v-if="assets && assets.groups.length" class="ri__assets" aria-label="Files">
+      <ul v-if="assets && assets.groups.length" class="ri__assets" :aria-label="t('releases.filesTitle')">
         <template v-for="g in assets.groups" :key="g.platform">
-          <li class="ri__platform">{{ g.platform }}</li>
+          <li class="ri__platform">{{ platformLabel(g.platform) }}</li>
           <li v-for="r in g.rows" :key="r.asset.name">
             <button
               type="button"
               class="ri__asset"
-              :title="`Download ${r.asset.name}${r.asset.downloads ? ` (downloaded ${r.asset.downloads} time${r.asset.downloads === 1 ? '' : 's'})` : ''}`"
+              :title="r.asset.downloads ? t('releases.downloadCounted', { name: r.asset.name }, r.asset.downloads) : t('releases.download', { name: r.asset.name })"
               :disabled="r.asset.state !== 'uploaded' || undefined"
               @click="download(r.asset.url)"
             >
               <span class="ri__asset-name">{{ r.asset.name }}</span>
-              <CircleCheck v-if="r.signature" class="ri__sig" aria-label="signed for the updater" />
-              <span class="ri__size tabular">{{ r.asset.state !== 'uploaded' ? 'Uploading…' : r.asset.size ? formatSize(r.asset.size) : '' }}</span>
+              <CircleCheck v-if="r.signature" class="ri__sig" :aria-label="t('releases.signed')" />
+              <span class="ri__size tabular">{{ r.asset.state !== 'uploaded' ? t('releases.uploading') : r.asset.size ? formatSize(r.asset.size) : '' }}</span>
               <Download class="ri__asset-go" aria-hidden="true" />
             </button>
           </li>
         </template>
       </ul>
-      <p v-else class="ri__quiet">{{ active ? 'Files appear here as each build uploads them.' : 'No files.' }}</p>
+      <p v-else class="ri__quiet">{{ active ? t('releases.filesComing') : t('releases.noFiles') }}</p>
 
-      <h4 class="ri__sub">Notes</h4>
+      <h4 class="ri__sub">{{ t('releases.notes') }}</h4>
       <!-- eslint-disable-next-line vue/no-v-html -- sanitised by safeHtml: allow-listed tags, https links and pictures only -->
       <div v-if="body" class="ri__body selectable" @click="onBodyClick" v-html="body" />
-      <p v-else class="ri__quiet">{{ release.draft ? 'No notes yet.' : 'No notes.' }}</p>
+      <p v-else class="ri__quiet">{{ release.draft ? t('releases.noNotesYet') : t('releases.noNotes') }}</p>
     </template>
     <p v-else class="ri__quiet">
       {{ entry.kind === 'run' && entry.why === 'trial'
-        ? 'Started by hand: no release is made, and its files stay with the run on GitHub.'
-        : `Its release shows here as soon as the ${gitlab ? 'pipeline' : 'workflow'} makes it.` }}
+        ? t('releases.trialNote')
+        : t(`releases.soonNote.${gitlab ? 'gitlab' : 'github'}`) }}
     </p>
   </article>
 </template>

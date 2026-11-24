@@ -9,7 +9,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { openExternal } from '~/composables/useBackend'
 import { stateOf } from '~/utils/linkState'
 import { useForge } from '~/stores/forge'
-import { capital, itemNoun, itemNumber, providerOf, requestsNoun, siteName } from '~/utils/forge'
+import { itemNumber, providerOf, siteName } from '~/utils/forge'
 
 /**
  * The Pull requests tool window (Merge requests for a project on GitLab): the pull requests or merge
@@ -19,6 +19,7 @@ import { capital, itemNoun, itemNumber, providerOf, requestsNoun, siteName } fro
  * With no chat in front it browses the project's open ones: picking one opens it, linked to nothing.
  */
 
+const { t } = useI18n()
 const threads = useThreads()
 const links = useLinks()
 const git = useGit()
@@ -44,7 +45,8 @@ const projectPath = computed(() => chat.value?.projectPath ?? workspace.activePr
 const forge = useForge()
 watch(projectPath, p => forge.ensure(p), { immediate: true })
 const provider = computed(() => forge.providerOf(projectPath.value))
-const requests = computed(() => capital(requestsNoun(provider.value)))
+/** An item's noun, by its key under `links.noun` and `links.panel.back`. */
+const nounOf = (l: LinkedItem) => (l.kind === 'issue' ? 'issue' : providerOf(l) === 'gitlab' ? 'mergeRequest' : 'pullRequest')
 /** Where the item in front lives, for "Open on …". */
 const site = (l: LinkedItem) => siteName(providerOf(l), l.host)
 /** With no chat in front: the item opened from the project's open ones (linked to nothing). */
@@ -147,28 +149,28 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <LinksReviews v-if="reviewsPath" :path="reviewsPath" />
-  <section v-else class="lp" :aria-label="`${requests} and issues`" @keydown.esc="check && closeCheck()">
+  <section v-else class="lp" :aria-label="t(`links.panel.label.${provider}`)" @keydown.esc="check && closeCheck()">
     <header class="lp__head">
       <button
         v-if="check && current"
         ref="backButton"
         type="button"
         class="lp__back"
-        :aria-label="`Back to ${itemNoun(current.kind, current.provider)} ${itemNumber(current)}`"
-        :title="`Back to ${itemNoun(current.kind, current.provider)} ${itemNumber(current)} (Esc)`"
+        :aria-label="t(`links.panel.back.${nounOf(current)}`, { number: itemNumber(current) })"
+        :title="`${t(`links.panel.back.${nounOf(current)}`, { number: itemNumber(current) })} (Esc)`"
         @click="closeCheck"
       >
         <ArrowLeft aria-hidden="true" />
         <span class="lp__back-num tabular">{{ itemNumber(current) }}</span>
-        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? capital(itemNoun(current.kind, current.provider)) }}</span>
+        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? t(`links.noun.${nounOf(current)}`) }}</span>
       </button>
       <template v-else>
-        <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <UiIconButton v-else-if="current && !chat" :label="`All open ${requestsNoun(provider)} and issues`" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">{{ requests }}</h2>
+        <UiIconButton v-if="current && list.length > 1" :label="t('links.panel.allLinked')" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <UiIconButton v-else-if="current && !chat" :label="t(`links.panel.allOpen.${provider}`)" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <h2 class="lp__title" :title="chat ? t('links.panel.linkedTo', { title: chat.title }) : undefined">{{ t(`links.panel.title.${provider}`) }}</h2>
       </template>
       <div v-if="chat && list.length && !check" class="lp__tools">
-        <UiIconButton :label="`Link a ${itemNoun('pr', provider)} or issue`" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
+        <UiIconButton :label="t(`links.panel.link.${provider}`)" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
       </div>
     </header>
 
@@ -185,7 +187,7 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
     </div>
 
     <div v-if="!projectPath" class="lp__quiet">
-      <p>Open a project to see its pull requests and issues.</p>
+      <p>{{ t('links.panel.noProject') }}</p>
     </div>
 
     <LinksPicker
@@ -202,8 +204,8 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
         <LinksCheckLog :key="check.url" :check="check" />
       </div>
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />Open on {{ site(current) }}</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
+        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site: site(current) }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />{{ t('common.actions.refresh') }}</UiButton>
       </footer>
     </template>
 
@@ -213,13 +215,13 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
       </div>
       <LinksMerge v-if="mergeable && projectPath" :key="current.key" :link="current" :item="mergeable" :project-path="projectPath" />
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on {{ site(current) }}</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />Refresh</UiButton>
-        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" :title="`Remove it from this chat; nothing changes on ${site(current)}`" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
+        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site: site(current) }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />{{ t('common.actions.refresh') }}</UiButton>
+        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" :title="t('links.panel.unlinkHint', { site: site(current) })" @click="unlink(current)"><Unlink aria-hidden="true" />{{ t('links.panel.unlink') }}</UiButton>
       </footer>
     </template>
 
-    <ul v-else class="lp__scroll lp__list" aria-label="Linked to this chat">
+    <ul v-else class="lp__scroll lp__list" :aria-label="t('links.panel.linked')">
       <li v-for="l in list" :key="l.key" class="lp__row">
         <button type="button" class="lp__open" :title="l.url" @click="open(l)">
           <component :is="stateOf(l.kind, l.state, null, l.provider).icon" class="lp__icon" :class="`is-${stateOf(l.kind, l.state, null, l.provider).tone}`" aria-hidden="true" />
@@ -232,7 +234,7 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
             </span>
           </span>
         </button>
-        <UiIconButton class="lp__remove" size="sm" :label="`Unlink ${itemNumber(l)}`" @click="unlink(l)"><X /></UiIconButton>
+        <UiIconButton class="lp__remove" size="sm" :label="t('links.panel.unlinkItem', { number: itemNumber(l) })" @click="unlink(l)"><X /></UiIconButton>
       </li>
     </ul>
   </section>

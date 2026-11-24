@@ -18,6 +18,7 @@ import { forgeName, itemNumber, providerOf } from '~/utils/forge'
 const props = defineProps<{ link: LinkedItem; detail: LinkDetail | undefined }>()
 const emit = defineEmits<{ openCheck: [check: GhCheck] }>()
 
+const { t } = useI18n()
 const now = useNow()
 const item = computed(() => props.detail?.item ?? null)
 const provider = computed(() => providerOf(item.value ?? props.link))
@@ -27,10 +28,11 @@ const state = computed(() => stateOf(item.value?.kind ?? props.link.kind, item.v
 const title = computed(() => item.value?.title ?? props.link.title ?? number.value)
 /** GitLab's links and uploads from the server's root are read against the item's own server. */
 const body = computed(() => safeHtml(item.value?.bodyHtml ?? '', item.value?.url))
-const opened = computed(() => (item.value?.createdAt ? shortAgo(Date.parse(item.value.createdAt), now.value) : null))
+const opened = computed(() => {
+  const at = item.value?.createdAt ? Date.parse(item.value.createdAt) : Number.NaN
+  return { justNow: Math.round((now.value - at) / 1000) < 45, time: Number.isNaN(at) ? '' : shortAgo(at, now.value) }
+})
 
-const CHECKS = { success: 'Passed', failure: 'Failed', pending: 'Running' } as const
-const REVIEW = { approved: 'Approved', changes_requested: 'Changes requested', review_required: 'Required' } as const
 const checks = computed(() => item.value?.checks ?? null)
 const review = computed(() => item.value?.reviewDecision ?? null)
 
@@ -38,23 +40,22 @@ const review = computed(() => item.value?.reviewDecision ?? null)
 type CheckState = GhCheck['state']
 const ORDER: CheckState[] = ['failure', 'cancelled', 'pending', 'success', 'neutral', 'skipped']
 const CHECK_ICON = { failure: CircleX, cancelled: CircleSlash, pending: CircleDashed, success: CircleCheck, neutral: CircleMinus, skipped: CircleSlash }
-const CHECK_WORD = { failure: 'Failed', cancelled: 'Cancelled', pending: 'Running', success: 'Passed', neutral: 'Neutral', skipped: 'Skipped' }
 
 const runs = computed(() => [...(item.value?.checkRuns ?? [])].sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state)))
 /** One line for all of them: what failed first, then what runs, then what passed. */
 const summary = computed(() => {
   const all = runs.value
-  if (!all.length) return checks.value ? { tone: checks.value, text: CHECKS[checks.value] } : null
+  if (!all.length) return checks.value ? { tone: checks.value, text: t(`links.run.${checks.value}`) } : null
   const n = (s: CheckState) => all.filter(c => c.state === s).length
   const [failed, cancelled, running, passed, skipped] = [n('failure'), n('cancelled'), n('pending'), n('success'), n('skipped') + n('neutral')]
   if (!failed && !cancelled && !running) {
-    return { tone: 'success' as const, text: skipped ? `${passed} passed, ${skipped} skipped` : passed === 1 ? 'Passed' : `All ${passed} passed` }
+    return { tone: 'success' as const, text: skipped ? t('links.item.passedSkipped', { passed, skipped }) : t('links.item.allPassed', passed) }
   }
   const parts = [
-    failed && `${failed} failed`,
-    cancelled && `${cancelled} cancelled`,
-    running && `${running} running`,
-    passed && `${passed} passed`,
+    failed && t('links.item.nFailed', { n: failed }),
+    cancelled && t('links.item.nCancelled', { n: cancelled }),
+    running && t('links.item.nRunning', { n: running }),
+    passed && t('links.item.nPassed', { n: passed }),
   ].filter(Boolean)
   return { tone: failed || cancelled ? 'failure' as const : 'pending' as const, text: parts.join(', ') }
 })
@@ -80,7 +81,7 @@ function onBodyClick(e: MouseEvent) {
 </script>
 
 <template>
-  <article class="li" :aria-label="`${state.noun} ${number}`">
+  <article class="li" :aria-label="t('links.item.label', { noun: state.noun, number })">
     <div class="li__top">
       <span class="li__state" :class="`is-${state.tone}`">
         <component :is="state.icon" aria-hidden="true" />
@@ -93,8 +94,11 @@ function onBodyClick(e: MouseEvent) {
 
     <p v-if="item" class="li__meta">
       <img v-if="item.author?.avatarUrl" class="li__avatar" :src="item.author.avatarUrl" alt="" referrerpolicy="no-referrer">
-      <span><strong>{{ item.author?.login ?? 'Someone' }}</strong> opened {{ opened === 'now' ? 'just now' : `${opened} ago` }}</span>
-      <span v-if="item.comments" class="li__comments tabular" :title="`${item.comments} comment${item.comments === 1 ? '' : 's'}`">
+      <i18n-t :keypath="opened.justNow ? 'links.item.openedNow' : 'links.item.openedAgo'" tag="span" scope="global">
+        <template #who><strong>{{ item.author?.login ?? t('links.item.someone') }}</strong></template>
+        <template #time>{{ opened.time }}</template>
+      </i18n-t>
+      <span v-if="item.comments" class="li__comments tabular" :title="t('links.item.comments', item.comments)">
         <MessageSquare aria-hidden="true" />{{ item.comments }}
       </span>
     </p>
@@ -102,27 +106,27 @@ function onBodyClick(e: MouseEvent) {
     <div v-if="item?.kind === 'pr'" class="li__facts">
       <dl class="li__fact-list">
         <div v-if="item.headRef && item.baseRef" class="li__fact">
-          <dt>Branch</dt>
+          <dt>{{ t('links.item.branch') }}</dt>
           <dd class="li__branches">
             <code class="li__branch" :title="item.headRef">{{ item.headRef }}</code>
-            <ArrowRight class="li__into" aria-label="into" />
+            <ArrowRight class="li__into" :aria-label="t('links.item.into')" />
             <code class="li__branch" :title="item.baseRef">{{ item.baseRef }}</code>
           </dd>
         </div>
         <div v-if="item.changedFiles !== null" class="li__fact">
-          <dt>Changes</dt>
+          <dt>{{ t('links.item.changes') }}</dt>
           <dd class="tabular">
             <span class="li__add">+{{ item.additions }}</span>
             <span class="li__del">−{{ item.deletions }}</span>
-            <span class="li__files">in {{ item.changedFiles }} file{{ item.changedFiles === 1 ? '' : 's' }}</span>
+            <span class="li__files">{{ t('links.item.inFiles', item.changedFiles) }}</span>
           </dd>
         </div>
         <div v-if="review" class="li__fact">
-          <dt>{{ provider === 'gitlab' ? 'Approval' : 'Review' }}</dt>
-          <dd class="li__status"><span :class="`is-${review}`">{{ REVIEW[review] }}</span></dd>
+          <dt>{{ t(`links.item.review.${provider}`) }}</dt>
+          <dd class="li__status"><span :class="`is-${review}`">{{ t(`links.item.decision.${review}`) }}</span></dd>
         </div>
         <div v-if="summary" class="li__fact">
-          <dt>{{ provider === 'gitlab' ? 'Pipeline' : 'Checks' }}</dt>
+          <dt>{{ t(`links.item.checks.${provider}`) }}</dt>
           <dd class="li__status">
             <button
               v-if="runs.length"
@@ -141,20 +145,20 @@ function onBodyClick(e: MouseEvent) {
           </dd>
         </div>
       </dl>
-      <ul v-if="runs.length && listOpen" id="li-checks" class="li__checks" aria-label="Checks">
+      <ul v-if="runs.length && listOpen" id="li-checks" class="li__checks" :aria-label="t('links.item.checkList')">
         <li v-for="(c, i) in runs" :key="`${c.workflow}/${c.name}/${i}`">
           <button
             type="button"
             class="li__check"
             :disabled="!c.url || undefined"
-            :title="c.description ?? (isJobUrl(c.url) ? 'Show the log' : c.url ? `Open the details on ${forge}` : undefined)"
+            :title="c.description ?? (isJobUrl(c.url) ? t('links.item.showLog') : c.url ? t('links.item.openDetails', { forge }) : undefined)"
             @click="openCheck(c)"
           >
             <component :is="CHECK_ICON[c.state]" class="li__check-icon" :class="`is-${c.state}`" aria-hidden="true" />
-            <span class="sr-only">{{ CHECK_WORD[c.state] }}:</span>
+            <span class="sr-only">{{ t(`links.run.${c.state}`) }}:</span>
             <span class="li__check-name">{{ c.name }}</span>
             <span v-if="c.workflow || c.description" class="li__check-sub">{{ c.workflow ?? c.description }}</span>
-            <span v-if="c.required" class="li__check-req">Required</span>
+            <span v-if="c.required" class="li__check-req">{{ t('links.item.required') }}</span>
             <ChevronRight v-if="isJobUrl(c.url)" class="li__check-go" aria-hidden="true" />
             <ExternalLink v-else-if="c.url" class="li__check-go" aria-hidden="true" />
           </button>
@@ -162,24 +166,24 @@ function onBodyClick(e: MouseEvent) {
       </ul>
     </div>
 
-    <ul v-if="item?.labels.length" class="li__labels" aria-label="Labels">
+    <ul v-if="item?.labels.length" class="li__labels" :aria-label="t('links.item.labels')">
       <li v-for="l in item.labels" :key="l.name" class="li__label">
         <span class="li__label-dot" :style="{ background: labelColor(l.color) }" aria-hidden="true" />{{ l.name }}
       </li>
     </ul>
 
     <p v-if="detail?.error" class="li__error selectable" role="alert">
-      {{ item ? 'Could not refresh: ' : '' }}{{ detail.error }}
+      {{ item ? t('links.couldNotRefresh', { error: detail.error }) : detail.error }}
     </p>
     <LinksHostingButton :error="detail?.error" />
 
-    <div v-if="!item && detail?.loading" class="li__skeleton" aria-busy="true" :aria-label="`Reading from ${forge}`">
+    <div v-if="!item && detail?.loading" class="li__skeleton" aria-busy="true" :aria-label="t('links.reading', { forge })">
       <span v-for="w in [62, 88, 74, 40, 81, 56]" :key="w" :style="{ width: `${w}%` }" />
     </div>
     <template v-else-if="item">
       <!-- eslint-disable-next-line vue/no-v-html -- sanitised by safeHtml: allow-listed tags, https links and pictures only -->
       <div v-if="body" class="li__body selectable" @click="onBodyClick" v-html="body" />
-      <p v-else class="li__empty">No description.</p>
+      <p v-else class="li__empty">{{ t('links.item.noDescription') }}</p>
     </template>
 
   </article>

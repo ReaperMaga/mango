@@ -4,7 +4,7 @@ import type { LinkedItem } from '~/types/chat'
 import type { GhItem, GhMergeMethod } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { useLinks } from '~/stores/links'
-import { forgeName, itemNoun, itemNumber, providerOf } from '~/utils/forge'
+import { forgeName, itemNumber, providerOf } from '~/utils/forge'
 
 /**
  * Merging an open pull request (or GitLab merge request) from the Pull requests tool window: whether
@@ -13,17 +13,14 @@ import { forgeName, itemNoun, itemNumber, providerOf } from '~/utils/forge'
  * branch for everyone.
  */
 const props = defineProps<{ link: LinkedItem; item: GhItem; projectPath: string }>()
+const { t } = useI18n()
 const links = useLinks()
 
-const METHODS: Record<GhMergeMethod, { action: string; label: string; hint: string }> = {
-  squash: { action: 'Squash and merge', label: 'Squash and merge', hint: 'All commits become one' },
-  merge: { action: 'Merge', label: 'Create a merge commit', hint: 'Keeps every commit, adds a merge commit' },
-  rebase: { action: 'Rebase and merge', label: 'Rebase and merge', hint: 'Replays each commit onto the base' },
-}
+const METHODS: GhMergeMethod[] = ['squash', 'merge', 'rebase']
 
 const provider = computed(() => providerOf(props.item))
 const forge = computed(() => forgeName(provider.value))
-const allowed = computed(() => props.item.mergeMethods.filter(m => m in METHODS && (provider.value !== 'gitlab' || m !== 'rebase')))
+const allowed = computed(() => props.item.mergeMethods.filter(m => METHODS.includes(m) && (provider.value !== 'gitlab' || m !== 'rebase')))
 const pick = () => (props.item.defaultMergeMethod && allowed.value.includes(props.item.defaultMergeMethod)
   ? props.item.defaultMergeMethod
   : allowed.value[0] ?? 'squash')
@@ -31,8 +28,8 @@ const method = ref<GhMergeMethod>(pick())
 watch(allowed, () => { if (!allowed.value.includes(method.value)) method.value = pick() })
 
 const menu = computed<MenuItem[]>(() => allowed.value.map(m => ({
-  label: METHODS[m].label,
-  hint: METHODS[m].hint,
+  label: t(`links.merge.method.${m}`),
+  hint: t(`links.merge.hint.${m}`),
   checked: m === method.value,
   onSelect: () => { method.value = m },
 })))
@@ -44,23 +41,21 @@ type Tone = 'done' | 'running' | 'queued' | 'error' | 'idle' | 'checking'
  */
 const status = computed<{ tone: Tone; title: string; detail?: string; ready: boolean }>(() => {
   const it = props.item
-  const base = it.baseRef ?? 'the base branch'
+  const base = it.baseRef
   const running = it.checkRuns.some(c => c.state === 'pending') || (!it.checkRuns.length && it.checks === 'pending')
-  if (it.state === 'draft') return { tone: 'idle', title: 'Draft', detail: `Mark it ready on ${forge.value} to merge it.`, ready: false }
-  if (it.mergeable === 'conflicting' || it.mergeState === 'dirty') return { tone: 'error', title: `Conflicts with ${base}`, detail: 'Resolve them before merging.', ready: false }
-  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'checking', title: 'Checking whether it can merge', detail: `${forge.value} is still working it out.`, ready: false }
-  if (it.mergeState === 'blocked') return { tone: 'error', title: 'Blocked', detail: running ? 'Required checks have not passed yet.' : provider.value === 'gitlab' ? 'It needs approvals or a passing pipeline first.' : 'Branch protection wants approvals or passing checks.', ready: true }
+  if (it.state === 'draft') return { tone: 'idle', title: t('links.merge.draft'), detail: t('links.merge.draftDetail', { forge: forge.value }), ready: false }
+  if (it.mergeable === 'conflicting' || it.mergeState === 'dirty') return { tone: 'error', title: base ? t('links.merge.conflicts', { base }) : t('links.merge.conflictsBase'), detail: t('links.merge.conflictsDetail'), ready: false }
+  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'checking', title: t('links.merge.checking'), detail: t('links.merge.checkingDetail', { forge: forge.value }), ready: false }
+  if (it.mergeState === 'blocked') return { tone: 'error', title: t('links.merge.blocked'), detail: running ? t('links.merge.blockedRunning') : t(`links.merge.blockedDetail.${provider.value}`), ready: true }
   if (it.mergeState === 'behind') {
-    return provider.value === 'gitlab'
-      ? { tone: 'queued', title: `Behind ${base}`, detail: 'GitLab may want it rebased before it merges.', ready: true }
-      : { tone: 'queued', title: `Behind ${base}`, detail: 'It can still be merged.', ready: true }
+    return { tone: 'queued', title: base ? t('links.merge.behind', { base }) : t('links.merge.behindBase'), detail: t(`links.merge.behindDetail.${provider.value}`), ready: true }
   }
   if (it.mergeState === 'unstable') {
     return running
-      ? { tone: 'running', title: 'Checks are running', detail: 'It can be merged anyway.', ready: true }
-      : { tone: 'error', title: 'Some checks failed', detail: 'It can still be merged.', ready: true }
+      ? { tone: 'running', title: t('links.merge.running'), detail: t('links.merge.runningDetail'), ready: true }
+      : { tone: 'error', title: t('links.merge.failed'), detail: t('links.merge.failedDetail'), ready: true }
   }
-  return { tone: 'done', title: 'Ready to merge', detail: `Into ${base}.`, ready: true }
+  return { tone: 'done', title: t('links.merge.ready'), detail: base ? t('links.merge.readyDetail', { base }) : t('links.merge.readyDetailBase'), ready: true }
 })
 const ICON = { done: CircleCheck, running: CircleDashed, queued: CircleAlert, error: CircleX, idle: CircleAlert, checking: LoaderCircle }
 
@@ -95,7 +90,7 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
 </script>
 
 <template>
-  <section class="lm" aria-label="Merge">
+  <section class="lm" :aria-label="t('links.merge.label')">
     <div class="lm__bar">
       <p class="lm__status" :class="`is-${status.tone}`" role="status">
         <component :is="ICON[status.tone]" class="lm__icon" aria-hidden="true" />
@@ -111,19 +106,19 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
           type="button"
           class="lm__go"
           :disabled="!status.ready || undefined"
-          :title="status.ready ? METHODS[method].hint : status.title"
+          :title="status.ready ? t(`links.merge.hint.${method}`) : status.title"
           @click="ask"
         >
-          <GitMerge aria-hidden="true" />{{ METHODS[method].action }}
+          <GitMerge aria-hidden="true" />{{ t(`links.merge.action.${method}`) }}
         </button>
-        <UiMenu v-if="allowed.length > 1" :items="menu" placement="top-end" :width="280" label="Merge method">
+        <UiMenu v-if="allowed.length > 1" :items="menu" placement="top-end" :width="280" :label="t('links.merge.methodMenu')">
           <template #default="{ toggle, open: menuOpen }">
             <button
               type="button"
               class="lm__method"
               :class="{ 'is-open': menuOpen }"
-              aria-label="Choose the merge method"
-              title="Choose the merge method"
+              :aria-label="t('links.merge.chooseMethod')"
+              :title="t('links.merge.chooseMethod')"
               :aria-expanded="menuOpen"
               @click="toggle"
             ><ChevronDown aria-hidden="true" /></button>
@@ -132,8 +127,8 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
       </div>
     </div>
 
-    <p v-if="!item.canMerge" class="lm__note">The account {{ provider === 'gitlab' ? 'glab' : 'gh' }} is signed in with cannot merge {{ itemNoun('pr', provider) }}s in {{ item.owner }}/{{ item.repo }}.</p>
-    <p v-else-if="!allowed.length" class="lm__note">{{ forge }} did not say which merge methods this repository allows; merge it on {{ forge }}.</p>
+    <p v-if="!item.canMerge" class="lm__note">{{ t(`links.merge.cannot.${provider}`, { repo: `${item.owner}/${item.repo}` }) }}</p>
+    <p v-else-if="!allowed.length" class="lm__note">{{ t('links.merge.noMethods', { forge }) }}</p>
 
     <div
       v-else-if="asking"
@@ -143,12 +138,16 @@ watch(() => [props.item.headSha, method.value], () => { if (!busy.value) asking.
       @keydown.esc.stop.prevent="asking = false"
     >
       <p id="lm-ask-text">
-        {{ METHODS[method].label }} {{ itemNumber(item) }} into <code>{{ item.baseRef ?? 'the base branch' }}</code> on {{ forge }}?
-        <template v-if="failing"> {{ failing }} check{{ failing === 1 ? ' has' : 's have' }} not passed.</template>
+        <i18n-t :keypath="`links.merge.ask.${method}`" scope="global">
+          <template #number>{{ itemNumber(item) }}</template>
+          <template #base><code>{{ item.baseRef ?? t('links.merge.baseBranch') }}</code></template>
+          <template #forge>{{ forge }}</template>
+        </i18n-t>
+        <template v-if="failing">{{ ' ' }}{{ t('links.merge.notPassed', failing) }}</template>
       </p>
       <div class="lm__btns">
-        <UiButton size="sm" variant="ghost" :disabled="busy || undefined" @click="asking = false">Cancel</UiButton>
-        <UiButton ref="confirmBtn" size="sm" variant="primary" :loading="busy" @click="merge"><GitMerge v-if="!busy" aria-hidden="true" />{{ METHODS[method].action }}</UiButton>
+        <UiButton size="sm" variant="ghost" :disabled="busy || undefined" @click="asking = false">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton ref="confirmBtn" size="sm" variant="primary" :loading="busy" @click="merge"><GitMerge v-if="!busy" aria-hidden="true" />{{ t(`links.merge.action.${method}`) }}</UiButton>
       </div>
     </div>
 
