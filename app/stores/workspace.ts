@@ -1,3 +1,5 @@
+import { t } from '~/i18n'
+import { localePrefOf, type LocalePref } from '~/i18n/locales'
 import { defineStore } from 'pinia'
 import { toRaw } from 'vue'
 import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types/ipc'
@@ -243,7 +245,7 @@ let tabSeq = 0
  * alone. Every other pref is shared: a change in one window reaches the others (`syncShared`).
  */
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
-const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
+const SHARED_KEYS = ['locale', 'theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
   'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
   'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
 /** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
@@ -273,6 +275,7 @@ const initialState = () => {
       activeProjectPath: null as string | null,
       agents: [] as AgentInfo[],
 
+      locale: localePrefOf(prefs.locale),
       theme: (prefs.theme ?? 'dark') as Theme,
       scheme: (COLOR_SCHEMES.includes(prefs.scheme) || isPluginRef(prefs.scheme) ? prefs.scheme : 'mango') as SchemeId,
       textSize: (TEXT_SIZES.includes(prefs.textSize) ? prefs.textSize : 'default') as TextSize,
@@ -439,6 +442,7 @@ export const useWorkspace = defineStore('workspace', {
     persist() {
       try {
         const all: Record<string, unknown> = {
+          locale: this.locale,
           theme: this.theme,
           scheme: this.scheme,
           textSize: this.textSize,
@@ -720,7 +724,7 @@ export const useWorkspace = defineStore('workspace', {
       try {
         await useWindows().openProjectWindow(path)
       } catch (e) {
-        this.notify('Not opened in a new window', e instanceof Error ? e.message : String(e))
+        this.notify(t('shell.windows.notOpened'), e instanceof Error ? e.message : String(e))
       }
     },
 
@@ -872,6 +876,10 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /* ---------- theme ---------- */
+    setLocale(locale: LocalePref) {
+      this.locale = locale
+      this.persist()
+    },
     setTheme(theme: Theme) {
       this.theme = theme
       this.applyTheme()
@@ -1024,7 +1032,7 @@ export const useWorkspace = defineStore('workspace', {
     },
     /** Tell the user something that did not happen and why (one OK button). */
     notify(title: string, body: string) {
-      this.confirm = { title, body, label: 'OK', info: true, run: () => {} }
+      this.confirm = { title, body, label: t('shell.ok'), info: true, run: () => {} }
     },
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section

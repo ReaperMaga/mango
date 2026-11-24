@@ -1,0 +1,27 @@
+import type { Messages } from '../en/index.ts'
+
+export const notifications: Messages['notifications'] = {
+  description: 'Erfahre von einem Chat, während du in einem anderen Fenster bist, und lass Agenten in Ruhe arbeiten.',
+  enabled: 'Desktop-Mitteilungen',
+  enabledHint: 'Eine Systemmitteilung zeigen, wenn ein Chat dich braucht.',
+  when: 'Benachrichtigen, wenn',
+  needsYou: 'Ein Chat dich braucht',
+  needsYouHint: 'Eine Freigabe steht aus. Der Agent wartet, bis du antwortest.',
+  done: 'Ein Chat fertig ist',
+  doneHint: 'Der Agent ist fertig und hat eine Antwort für dich.',
+  failed: 'Ein Chat fehlschlägt',
+  failedHint: 'Der Durchgang brach mit einem Fehler ab, etwa einem Absturz oder fehlender Anmeldung.',
+  how: 'Wie',
+  backgroundOnly: 'Nur wenn Mango im Hintergrund ist',
+  backgroundOnlyHint: 'Still bleiben, solange das Fenster vorn ist. Auch wenn dies aus ist, wird der gerade sichtbare Chat nicht gemeldet.',
+  preview: 'Chat und Antwort zeigen',
+  previewHint: 'Aus: Die Mitteilung sagt nur, dass ein Chat fertig ist. So erscheint nichts aus deiner Arbeit auf einem geteilten Bildschirm.',
+  sound: 'Ton abspielen',
+  soundHint: 'Der Mitteilungston des Systems.',
+  test: 'Ausprobieren',
+  testHint: 'Jetzt eine Mitteilung zeigen, egal was oben eingeschaltet ist.',
+  testSend: 'Test senden',
+  testSent: 'Gesendet. Falls nichts erschienen ist, prüfe in den Systemeinstellungen, ob Mitteilungen für Mango erlaubt sind.',
+  testFailed: 'Die Mitteilung konnte nicht gezeigt werden.',
+  testInTab: 'Diese Seite ist in einem Browser-Tab offen, der Mangos Befehle nicht nutzen kann. Öffne Mango selbst (pnpm app) oder localhost:1420 in einem normalen Browser, um Mitteilungen zu testen.',
+}

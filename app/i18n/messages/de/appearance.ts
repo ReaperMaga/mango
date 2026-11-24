@@ -1,0 +1,68 @@
+import type { Messages } from '../en/index.ts'
+
+export const appearance: Messages['appearance'] = {
+  description: 'Wie Mango auf diesem Computer aussieht.',
+  color: 'Farbe',
+  theme: {
+    label: 'Design',
+    hint: 'System folgt der hellen oder dunklen Einstellung deines Computers.',
+    dark: 'Dunkel',
+    light: 'Hell',
+    system: 'System',
+  },
+  scheme: {
+    label: 'Farbschema',
+    hint: 'Tönt den Hintergrund und bestimmt die Akzentfarbe. Statusfarben bleiben gleich.',
+    from: 'Von {plugin}',
+    names: {
+      mango: 'Mango',
+      blue: 'Blau',
+      teal: 'Petrol',
+      green: 'Grün',
+      purple: 'Violett',
+      pink: 'Rosa',
+      red: 'Rot',
+      slate: 'Schiefer',
+      uchiha: 'Uchiha',
+      graphite: 'Graphit',
+      ink: 'Tinte',
+      cocoa: 'Kakao',
+      neon: 'Neon',
+      solar: 'Solar',
+    },
+  },
+  text: 'Text',
+  fontUi: {
+    label: 'Oberflächenschrift',
+    hint: 'Die Schrift von Menüs, Chats und Einstellungen.',
+    system: 'Systemschrift',
+  },
+  fontMono: {
+    label: 'Code-Schrift',
+    hint: 'Die Schrift von Code, Pfaden und Branches, Editor und Terminal.',
+    system: 'System-Monospace',
+  },
+  textSize: {
+    label: 'Textgröße',
+    hint: 'Skaliert den Text der Oberfläche. Das Terminal hat eine eigene Größe in den Terminal-Einstellungen.',
+    small: 'Klein',
+    default: 'Standard',
+    large: 'Groß',
+    xlarge: 'Sehr groß',
+  },
+  shape: 'Form und Bewegung',
+  corners: {
+    label: 'Ecken',
+    hint: 'Wie rund Schaltflächen, Bereiche und Menüs sind.',
+    sharp: 'Eckig',
+    default: 'Standard',
+    round: 'Rund',
+  },
+  motion: {
+    label: 'Animationen',
+    hint: 'Reduziert schaltet Übergänge aus. System folgt der Einstellung deines Computers.',
+    system: 'System',
+    full: 'Voll',
+    reduced: 'Reduziert',
+  },
+}
