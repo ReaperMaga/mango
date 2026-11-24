@@ -2,6 +2,17 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.2.0
+
+### New
+
+- Send PDFs and other files to agents in remote projects.
+- Support GitLab for merge requests, issues, pipelines and releases.
+
+### Fixes
+
+- Say the name is taken when renaming a folder onto an empty one on Windows.
+
 ## 0.1.48
 
 ### New
