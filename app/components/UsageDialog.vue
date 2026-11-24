@@ -2,6 +2,7 @@
 import { RefreshCw } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useUsage, useUsageUpdated } from '~/stores/usage'
+import { remotePlace } from '~/composables/envProjects'
 
 /**
  * Usage limits of every agent's plan: the 5-hour and weekly windows (and any per-model
@@ -10,6 +11,9 @@ import { useUsage, useUsageUpdated } from '~/stores/usage'
 const ws = useWorkspace()
 const usage = useUsage()
 const updated = useUsageUpdated()
+
+/** A remote project's agents run, and are signed in, in its environment: their plans are read there. */
+const where = computed(() => remotePlace(ws.activeProjectPath)?.where ?? null)
 
 const open = computed(() => ws.dialog === 'usage')
 const close = () => { if (ws.dialog === 'usage') ws.dialog = null }
@@ -25,7 +29,10 @@ function signIn() {
 
 <template>
   <UiDialog :open="open" title="Usage limits" :width="580" @close="close">
-    <p class="use__lede">How much of each plan's allowance is used, as Claude Code and Codex report it. Checking spends none of it.</p>
+    <p class="use__lede">
+      How much of each plan's allowance is used, as Claude Code and Codex<template v-if="where"> in <strong>{{ where }}</strong></template> report it.
+      Checking spends none of it.
+    </p>
 
     <UsageList @sign-in="signIn" />
 
@@ -47,5 +54,6 @@ function signIn() {
   font-size: var(--text-sm);
   color: var(--fg-subtle);
 }
+.use__lede strong { font-weight: 560; color: var(--fg-muted); }
 .use__updated { margin-right: auto; font-size: var(--text-xs); color: var(--fg-subtle); }
 </style>

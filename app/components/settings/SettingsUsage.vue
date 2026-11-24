@@ -3,6 +3,7 @@ import { RefreshCw } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useUsage, useUsageUpdated } from '~/stores/usage'
 import UsageList from '~/components/UsageList.vue'
+import { remotePlace } from '~/composables/envProjects'
 
 /** Settings > Agents > Usage: the plan limits and when each one resets. Reading spends no quota. */
 const ws = useWorkspace()
@@ -10,12 +11,17 @@ const usage = useUsage()
 const updated = useUsageUpdated()
 
 onMounted(() => { void usage.refreshReadable() })
+
+/** A remote project's agents are its environment's: their plans are read there. */
+const where = computed(() => remotePlace(ws.activeProjectPath)?.where ?? null)
 </script>
 
 <template>
   <div class="usage">
     <div class="usage__bar">
-      <span class="usage__updated" aria-live="polite">{{ updated }}</span>
+      <span class="usage__updated" aria-live="polite">
+        <template v-if="where">In {{ where }}<template v-if="updated"> · </template></template>{{ updated }}
+      </span>
       <UiButton size="sm" :loading="usage.loading" @click="usage.refreshReadable(true)">
         <RefreshCw v-if="!usage.loading" aria-hidden="true" />
         Refresh

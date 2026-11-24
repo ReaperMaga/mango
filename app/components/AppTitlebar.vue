@@ -36,6 +36,8 @@ onMounted(() => {
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
 onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
+/* A project in another place (this computer, or an environment) has other agents' accounts: read theirs. */
+watch(() => usage.place, (now, before) => { if (before !== undefined && now !== before) void usage.refreshReadable() })
 
 /* The maximize button shows Restore while the window is maximized. */
 const maximized = ref(false)

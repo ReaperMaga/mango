@@ -57,8 +57,12 @@ watch(() => ws.agents.filter(a => a.installed).map(a => a.id).join(), refreshAut
 const signedOut = (id: AgentId) => !remote.value && auth[id]?.loggedIn === false
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
-/** "Max", "Plus": what the usage read says, else what the sign-in says. */
-const planOf = (id: AgentId) => usage.entries[id].usage?.plan ?? (auth[id]?.plan ? cap(auth[id]!.plan!) : null)
+/**
+ * "Max", "Plus": what the usage read says, else what the sign-in says. A remote project's usage is
+ * read in its environment (`stores/usage`); this computer's sign-in says nothing about it.
+ */
+const localAuth = (id: AgentId) => (remote.value ? undefined : auth[id])
+const planOf = (id: AgentId) => usage.entries[id].usage?.plan ?? (localAuth(id)?.plan ? cap(localAuth(id)!.plan!) : null)
 
 /* ---------- the account button ---------- */
 
@@ -85,7 +89,7 @@ const accountTitle = computed(() => {
 function hintOf(id: AgentId): string | undefined {
   if (missing(id)) return 'Not installed'
   if (signedOut(id)) return 'Signed out'
-  return [planOf(id), auth[id]?.account].filter(Boolean).join(' · ') || undefined
+  return [planOf(id), localAuth(id)?.account].filter(Boolean).join(' · ') || undefined
 }
 
 function setDefault(id: AgentId) {
