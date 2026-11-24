@@ -734,6 +734,36 @@ pub async fn gh_open_items(app: AppHandle, path: String) -> Result<GhOpenItems, 
     blocking(move || open_items(project_repo(&app, &path)?)).await
 }
 
+/// The GitHub repository a project's git remotes name, for the link to it on GitHub.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRepoLink {
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+}
+
+/// The remote on GitHub (github.com or GHE.com) that `choose_remote` picks, if there is one.
+fn github_remote(list: &str) -> Option<GhRepoLink> {
+    let (host, owner, repo) = choose_remote(&parse_remotes(list))?;
+    (host == "github.com" || host.ends_with(".ghe.com")).then_some(GhRepoLink { host, owner, repo })
+}
+
+/// The GitHub repository of the project at `path` (which may be a remote project), read from its
+/// git remotes only: no `gh`, no network. None when it is no git repository or none of its
+/// remotes is on GitHub.
+#[tauri::command]
+pub async fn gh_repo_link(app: AppHandle, path: String) -> Result<Option<GhRepoLink>, String> {
+    blocking(move || {
+        let at = match crate::vcs::env_at(&app, &path) {
+            Some(env) => At::Env(Box::new(env?)),
+            None => At::local(path.trim()),
+        };
+        Ok(crate::git::remote_list(&at)?.as_deref().and_then(github_remote))
+    })
+    .await
+}
+
 /// The pull request a `gh pr create` printed: its link on success, or the one that already
 /// exists for the branch ("a pull request for branch … already exists: <link>").
 fn created_target(text: &str) -> Option<Target> {
@@ -1135,6 +1165,21 @@ mod tests {
 
     fn repo(host: &str, owner: &str, name: &str) -> Option<(String, String, String)> {
         Some((host.into(), owner.into(), name.into()))
+    }
+
+    #[test]
+    fn links_only_remotes_on_github() {
+        let link = |host: &str, owner: &str, repo: &str| GhRepoLink { host: host.into(), owner: owner.into(), repo: repo.into() };
+        assert_eq!(
+            github_remote("origin\tgit@github.com:acme/app.git (fetch)\norigin\tgit@github.com:acme/app.git (push)\n"),
+            Some(link("github.com", "acme", "app"))
+        );
+        assert_eq!(
+            github_remote("mirror\thttps://gitlab.com/acme/app.git (fetch)\nupstream\thttps://acme.ghe.com/team/app (fetch)\n"),
+            Some(link("acme.ghe.com", "team", "app"))
+        );
+        assert_eq!(github_remote("origin\thttps://gitlab.com/acme/app.git (fetch)\n"), None);
+        assert_eq!(github_remote(""), None);
     }
 
     #[test]

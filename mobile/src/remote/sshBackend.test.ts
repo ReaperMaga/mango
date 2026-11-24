@@ -409,6 +409,18 @@ describe('ssh backend', () => {
     expect(calls).toHaveLength(3)
   })
 
+  it('reads the GitHub repository for its link: null without a GitHub remote, once per project', async () => {
+    let remotes = 'origin\tgit@github.com:acme/shop.git (fetch)\n'
+    const { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }))
+    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual({ owner: 'acme', repo: 'shop' })
+    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual({ owner: 'acme', repo: 'shop' })
+    expect(calls).toHaveLength(1)
+    remotes = 'origin\thttps://gitlab.com/acme/other.git (fetch)\n'
+    expect(await b.ghRepo('env://h/dev/home/agent/work/other')).toBeNull()
+    remotes = ''
+    expect(await b.ghRepo('env://h/dev/home/agent/work/none')).toBeNull()
+  })
+
   it('reads a run, posts an action, and words a missing remote', async () => {
     const remotes = 'origin\thttps://github.com/acme/shop (fetch)\n'
     let { b, calls } = backendWith(c => c.includes('remote -v')

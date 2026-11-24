@@ -3,7 +3,7 @@ import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
-import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate, mockGhRepoLink } from '~/composables/mockGithub'
 import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
@@ -508,6 +508,7 @@ const mock = (() => {
       }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_open_items': await new Promise(r => setTimeout(r, 600)); return mockGhOpenItems(args.path)
+      case 'gh_repo_link': await new Promise(r => setTimeout(r, 150)); return mockGhRepoLink(args.path)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
       case 'gh_releases': await new Promise(r => setTimeout(r, 650)); return mockGhReleases(args.path, args.count)

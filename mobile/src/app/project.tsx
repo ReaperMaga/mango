@@ -1,9 +1,10 @@
 import type { PermissionMode } from '~/agents/types'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { View } from 'react-native'
+import { Linking, View } from 'react-native'
+import Svg, { Path } from 'react-native-svg'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, ShieldCheck, Plus, SquarePen, Tag } from 'lucide-react-native'
+import { ChevronDown, ChevronRight, ExternalLink, GitBranch, MessagesSquare, ShieldCheck, Plus, SquarePen, Tag } from 'lucide-react-native'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Button, EmptyState, IconButton, ListRow, ListSection, Text } from '@/ui'
 import { ThreadRow, useNow } from '@/chat'
@@ -44,6 +45,7 @@ export default function ProjectScreen() {
   const [showArchived, setShowArchived] = useState(false)
   const [git, setGit] = useState<GitState | null>(null)
   const [gitError, setGitError] = useState<string | null>(null)
+  const [repo, setRepo] = useState<{ owner: string; repo: string } | null>(null)
   const [newChat, setNewChat] = useState(false)
   const [pickingMode, setPickingMode] = useState(false)
   const ownMode = usePrefs(st => st.projectModes[path])
@@ -67,6 +69,8 @@ export default function ProjectScreen() {
 
   const load = useCallback(async () => {
     if (!at || !useEnvs.getState().byId(at.hostId)) return
+    // The repository on GitHub, for its row (read from the git remotes, kept for the session).
+    void backend.ghRepo(path).then(setRepo, () => {})
     // Releases quietly beside it, for the row's line (a read under 30s old is kept).
     void useReleases.getState().load(path, { quiet: true })
     await Promise.all([readGit(), syncEnv(at).catch(() => {})])
@@ -121,6 +125,20 @@ export default function ProjectScreen() {
                 subtitleTone={releaseLine?.tone ?? 'subtle'}
                 leading={<Tag size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
                 onPress={() => router.push({ pathname: '/releases', params: { path } })}
+              />
+            )
+          : null}
+        {git?.repo && repo
+          ? (
+              <ListRow
+                title="GitHub"
+                subtitle={`${repo.owner}/${repo.repo}`}
+                subtitleMono
+                leading={<GithubMark size={20} color={t.colors.fgSubtle} />}
+                accessory="none"
+                trailing={<ExternalLink size={16} strokeWidth={1.75} color={t.colors.fgFaint} />}
+                accessibilityHint="Opens the repository in the browser"
+                onPress={() => { Linking.openURL(`https://github.com/${repo.owner}/${repo.repo}`).catch(() => {}) }}
               />
             )
           : null}
@@ -200,6 +218,16 @@ export default function ProjectScreen() {
       />
       {actionsFor ? <ThreadActions threadId={actionsFor} visible onClose={() => setActionsFor(null)} /> : null}
     </ScreenScroll>
+  )
+}
+
+/** GitHub's mark, drawn as lucide's `github` icon (lucide-react-native leaves brand icons out). */
+function GithubMark({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+      <Path d="M9 18c-4.51 2-5-2-7-2" />
+    </Svg>
   )
 }
 

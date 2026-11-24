@@ -416,6 +416,13 @@ export interface GhListItem {
   updatedAt: string
 }
 
+/** The GitHub repository a project's git remotes name (`gh_repo_link`): `https://{host}/{owner}/{repo}`. */
+export interface GhRepoLink {
+  host: string
+  owner: string
+  repo: string
+}
+
 /** The open pull requests and issues of a project's GitHub repository (`gh_open_items`). */
 export interface GhOpenItems {
   host: string
@@ -1396,6 +1403,11 @@ export interface Commands {
    * remote project), most recently updated first, up to 30 of each: the list to pick one to link from.
    */
   gh_open_items: [{ path: string }, GhOpenItems]
+  /**
+   * The GitHub repository of a project (which may be a remote project), from its git remotes only
+   * (no gh, no network): null when it is no git repository or no remote is on GitHub.
+   */
+  gh_repo_link: [{ path: string }, GhRepoLink | null]
   /**
    * Merge a pull request on GitHub, only while its branch still points at `headSha` (otherwise it
    * fails and says the branch moved). The local checkout is not touched.

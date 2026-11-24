@@ -212,6 +212,11 @@ export interface RemoteBackend {
    * inside the project's environment against the repository its git remotes name (github.com only).
    */
 
+  /**
+   * The project's repository on github.com, from its git remotes in the folder (the desktop's
+   * `gh_repo_link`), for the link to it; null when the folder is no git repository or no remote is on github.com.
+   */
+  ghRepo(projectPath: string): Promise<{ owner: string; repo: string } | null>
   /** The project's GitHub releases, newest first, up to `count`, with the repository's recent workflow runs. */
   ghReleases(projectPath: string, count: number): Promise<Releases>
   /** The newest workflow run for a release's tag, with its jobs; null when no workflow ran for it. */

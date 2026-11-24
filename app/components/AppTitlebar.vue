@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, Github, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useUsage } from '~/stores/usage'
 import { useGit } from '~/stores/git'
 import { useWindows } from '~/stores/windows'
-import { appWindow, isTauri } from '~/composables/useBackend'
+import { appWindow, call, isTauri, openExternal } from '~/composables/useBackend'
 import { openFolderFlow } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
-import type { ProjectInfo } from '~/types/ipc'
+import type { GhRepoLink, ProjectInfo } from '~/types/ipc'
 import { isEnvPath } from '~/utils/envPath'
 
 const ws = useWorkspace()
@@ -71,6 +71,26 @@ const branch = computed(() => {
 })
 /* A worktree's status is read when it comes into view, so its branch is right from the start. */
 watch(workdir, (at) => { if (at && at !== ws.activeProjectPath && !git.status(at)) git.poll(at) }, { immediate: true })
+
+/*
+ * The project's repository on GitHub, read from its git remotes (no network) when the project comes
+ * into view and when the window comes back, so a remote added meanwhile shows up.
+ */
+const repoLinks = reactive<Record<string, GhRepoLink | null>>({})
+function readRepoLink() {
+  const path = ws.activeProjectPath
+  if (!path || !ws.activeProject?.isGit || document.visibilityState !== 'visible') return
+  call('gh_repo_link', { path }).then((link) => { repoLinks[path] = link }).catch(() => {})
+}
+watch(() => [ws.activeProjectPath, ws.activeProject?.isGit], readRepoLink, { immediate: true })
+onMounted(() => window.addEventListener('focus', readRepoLink))
+onBeforeUnmount(() => window.removeEventListener('focus', readRepoLink))
+const repoLink = computed(() => {
+  const link = ws.activeProject?.isGit && ws.activeProjectPath ? repoLinks[ws.activeProjectPath] : null
+  if (!link) return null
+  const name = `${link.owner}/${link.repo}`
+  return { url: `https://${link.host}/${name}`, label: `Open ${name} on ${link.host === 'github.com' ? 'GitHub' : link.host}` }
+})
 
 /* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
 const envs = useEnvironments()
@@ -240,6 +260,17 @@ const branchTitle = computed(() => {
           </button>
         </template>
       </GitBranchPopup>
+      <!-- The project's repository on GitHub, when one of its remotes is there. -->
+      <button
+        v-if="repoLink"
+        type="button"
+        class="tb__widget tb__repo"
+        :title="repoLink.label"
+        :aria-label="repoLink.label"
+        @click="openExternal(repoLink.url).catch(() => {})"
+      >
+        <Github aria-hidden="true" />
+      </button>
       <PluginStatusItems location="project" />
     </div>
 
@@ -341,6 +372,9 @@ const branchTitle = computed(() => {
   white-space: nowrap;
 }
 .tb__branch .tb__branch-path { direction: rtl; text-align: left; }
+.tb__repo { width: 28px; padding: 0; justify-content: center; flex: none; color: var(--fg-subtle); }
+.tb__repo:hover { color: var(--fg); }
+.tb__repo svg { width: 14px; height: 14px; stroke-width: 1.85; }
 .tb__sync { display: flex; gap: 6px; flex: none; color: var(--fg-muted); white-space: nowrap; }
 
 .tb__search {

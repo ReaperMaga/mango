@@ -181,6 +181,7 @@ pub fn run() {
             plastic::shelves::vcs_shelve_delete,
             github::gh_item,
             github::gh_open_items,
+            github::gh_repo_link,
             github::gh_merge,
             github::gh_pr_create,
             github::gh_job,

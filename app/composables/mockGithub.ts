@@ -1,4 +1,4 @@
-import type { GhCheck, GhItem, GhJob, GhJobStep, GhListItem, GhMergeMethod, GhOpenItems, GhRunState, GitStatus } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhJobStep, GhListItem, GhMergeMethod, GhOpenItems, GhRepoLink, GhRunState, GitStatus } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -227,6 +227,11 @@ export function mockGhPrCreate(path: string, base: string, status: GitStatus): G
 
 /** What the browser preview's "open" list holds, by key, so an item linked from it reads back the same. */
 const listed = new Map<string, { title: string; draft: boolean; head: string | null }>()
+
+/** `gh_repo_link` for the browser preview: every project is on github.com, under the same made-up owner as `mockGhOpenItems`. */
+export function mockGhRepoLink(path: string): GhRepoLink {
+  return { host: 'github.com', owner: 'you', repo: baseName(path || 'project') }
+}
 
 /** `gh_open_items` for the browser preview: a few made-up open pull requests (even numbers) and issues (odd). */
 export function mockGhOpenItems(path: string): GhOpenItems {

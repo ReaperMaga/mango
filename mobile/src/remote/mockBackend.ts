@@ -479,6 +479,12 @@ export function createMockBackend(): RemoteBackend {
       return github.detail(t, instance)
     },
 
+    async ghRepo(projectPath) {
+      await wait(100, 300)
+      // Every mock project with git is on github.com/acme.
+      return repoOf(projectPath) ? mockRepoOf(mainOf(projectPath).dir.split('/').pop() ?? parseProjectPath(projectPath).dir) : null
+    },
+
     async ghMerge(projectPath, ref, method, headSha) {
       const t = targetOfRef(ref)
       if (ref.kind !== 'pr') throw new Error('Only a pull request can be merged.')

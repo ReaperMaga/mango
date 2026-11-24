@@ -1167,6 +1167,16 @@ export function createSshBackend(deps: SshBackendDeps): RemoteBackend {
       return readDetail(projectPath, targetOf(parsed, repo))
     },
 
+    async ghRepo(projectPath) {
+      try {
+        return await repoOf(projectPath)
+      } catch (e) {
+        // No GitHub remote (or no repository at all) is an answer; a failed connection is not.
+        if (messageOf(e).startsWith(NO_REPO) || messageOf(e).startsWith('This project\'s repository is on')) return null
+        throw e
+      }
+    },
+
     async ghReleases(projectPath, count) {
       const repo = await releaseRepo(projectPath)
       const { hostId, instance } = parseProjectPath(projectPath)
