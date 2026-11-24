@@ -2,10 +2,11 @@
 import {
   ArrowRight, ChevronDown, ChevronRight, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX, Clock, Download, Tag,
 } from 'lucide-vue-next'
-import type { GhRun, GhRunJob, GhRunState } from '~/types/ipc'
+import type { ForgeProvider, GhRun, GhRunJob, GhRunState } from '~/types/ipc'
 import type { RunRead } from '~/stores/releases'
 import { openExternal } from '~/composables/useBackend'
 import { safeHtml } from '~/utils/safeHtml'
+import { capital } from '~/utils/forge'
 import { formatDuration, shortAgo, useNow } from '~/utils/time'
 import {
   entryState, firstFailure, formatSize, groupAssets, isActive, jobSummary, runDuration, sortJobs, totalDownloads, typicalDuration,
@@ -14,8 +15,9 @@ import {
 
 /**
  * One release in the Releases tool window, or a release workflow run that has no release: its state,
- * tag and commit, the workflow run that builds it with its jobs (a GitHub Actions job opens its log),
- * then its files by platform and its notes as GitHub renders them. Actions sit in the window's footer.
+ * tag and commit, the workflow run (GitLab: pipeline) that builds it with its jobs (a job opens its
+ * log), then its files by platform and its notes as GitHub or GitLab renders them. Actions sit in the
+ * window's footer.
  */
 const props = defineProps<{
   entry: ReleaseEntry
@@ -25,7 +27,12 @@ const props = defineProps<{
   runs: GhRun[]
   repo: string
   latest: boolean
+  /** Where it lives; GitHub unless said. */
+  provider?: ForgeProvider
 }>()
+const gitlab = computed(() => props.provider === 'gitlab')
+/** The run's name before its summary; a GitLab pipeline without a name of its own goes without ("Pipeline" is the label already). */
+const flowName = computed(() => (run.value && !(gitlab.value && run.value.workflow === 'Pipeline') ? `${run.value.workflow} · ` : ''))
 const emit = defineEmits<{ openJob: [job: GhRunJob] }>()
 
 const now = useNow(1000)
@@ -58,7 +65,9 @@ const byline = computed(() => {
   const r = release.value
   if (r) {
     const who = r.author?.login.replace(/\[bot\]$/, '') ?? 'Someone'
-    return r.publishedAt ? { who, what: `published ${ago(r.publishedAt)}` } : { who, what: `drafted it ${ago(r.createdAt)}` }
+    if (r.publishedAt) return { who, what: `published ${ago(r.publishedAt)}` }
+    // GitLab has no drafts: a release without a date gone by is one set to come out later.
+    return { who, what: r.draft || !gitlab.value ? `drafted it ${ago(r.createdAt)}` : `created it ${ago(r.createdAt)}, to come out later` }
   }
   const e = props.entry as Extract<ReleaseEntry, { kind: 'run' }>
   return { who: e.run.workflow, what: `${e.why === 'trial' ? 'started by hand' : 'started by the tag'} ${ago(e.run.createdAt)}` }
@@ -113,7 +122,8 @@ const jobTone = (s: GhRunState) => (s === 'pending' ? 'running' : s === 'success
 
 /* ---------- files and notes ---------- */
 const assets = computed(() => (release.value ? groupAssets(release.value.assets) : null))
-const body = computed(() => safeHtml(release.value?.bodyHtml ?? ''))
+/** GitLab's links and uploads from the server's root are read against the release's own server. */
+const body = computed(() => safeHtml(release.value?.bodyHtml ?? '', release.value?.url))
 
 /** Links in the notes open in the browser, never inside Mango's window. */
 function onBodyClick(e: MouseEvent) {
@@ -168,7 +178,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
         </dd>
       </div>
       <div v-if="run" class="ri__fact">
-        <dt>Workflow</dt>
+        <dt>{{ gitlab ? 'Pipeline' : 'Workflow' }}</dt>
         <dd>
           <button
             v-if="summary"
@@ -180,7 +190,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
             @click="listChoice = !listOpen"
           >
             <component :is="SUMMARY_ICON[summary.tone]" class="ri__toggle-icon" :class="{ 'ri__turn': summary.tone === 'running' }" aria-hidden="true" />
-            <span>{{ run.workflow }} · {{ summary.text }}<template v-if="took && !active"> in {{ took }}</template></span>
+            <span>{{ flowName }}{{ flowName ? summary.text : capital(summary.text) }}<template v-if="took && !active"> in {{ took }}</template></span>
             <component :is="listOpen ? ChevronDown : ChevronRight" class="ri__chev" aria-hidden="true" />
           </button>
           <span v-else class="ri__soft">{{ run.workflow }}<template v-if="read?.loading"> · reading…</template></span>
@@ -203,7 +213,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
 
     <p v-if="failed && state.tone === 'error'" class="ri__error selectable">
       <strong>{{ failed.name }}</strong> failed.<template v-if="release?.draft"> Nothing was published: the release is still a draft.</template>
-      Re-running the failed jobs starts them again; the ones that passed are kept.
+      {{ gitlab ? 'Retry starts the failed jobs again' : 'Re-running the failed jobs starts them again' }}; the ones that passed are kept.
     </p>
 
     <template v-if="release">
@@ -226,7 +236,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
             >
               <span class="ri__asset-name">{{ r.asset.name }}</span>
               <CircleCheck v-if="r.signature" class="ri__sig" aria-label="signed for the updater" />
-              <span class="ri__size tabular">{{ r.asset.state === 'uploaded' ? formatSize(r.asset.size) : 'Uploading…' }}</span>
+              <span class="ri__size tabular">{{ r.asset.state !== 'uploaded' ? 'Uploading…' : r.asset.size ? formatSize(r.asset.size) : '' }}</span>
               <Download class="ri__asset-go" aria-hidden="true" />
             </button>
           </li>
@@ -242,7 +252,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
     <p v-else class="ri__quiet">
       {{ entry.kind === 'run' && entry.why === 'trial'
         ? 'Started by hand: no release is made, and its files stay with the run on GitHub.'
-        : 'Its release shows here as soon as the workflow makes it.' }}
+        : `Its release shows here as soon as the ${gitlab ? 'pipeline' : 'workflow'} makes it.` }}
     </p>
   </article>
 </template>
@@ -404,7 +414,7 @@ function download(url: string) { openExternal(url).catch(() => {}) }
 .ri__asset-go { flex: none; width: 13px; height: 13px; stroke-width: 1.85; color: var(--fg-subtle); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
 .ri__asset:not(:disabled):hover .ri__asset-go, .ri__asset:focus-visible .ri__asset-go { opacity: 1; }
 
-/* The notes, as GitHub renders them: the chat's prose styles, a step smaller for a side panel. */
+/* The notes, as GitHub or GitLab renders them: the chat's prose styles, a step smaller for a side panel. */
 .ri__body { font-size: var(--text-sm); line-height: var(--leading-chat); color: var(--fg); overflow-wrap: anywhere; }
 .ri__body :deep(> *:first-child) { margin-top: 0; }
 .ri__body :deep(> *:last-child) { margin-bottom: 0; }

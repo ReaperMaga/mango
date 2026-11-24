@@ -17,6 +17,8 @@ import EnvShareDialog from './EnvShareDialog.vue'
 import EnvRenameDialog from './EnvRenameDialog.vue'
 import EnvResizeDialog from './EnvResizeDialog.vue'
 import EnvVersionPicker from './EnvVersionPicker.vue'
+import EnvGitlabServer from './EnvGitlabServer.vue'
+import { GITLAB_COM } from '~/utils/gitHosts'
 
 /**
  * One instance: its state and power actions, ways into it (project, shell,
@@ -165,6 +167,8 @@ interface Job {
   start: (cols: number, rows: number) => Promise<string>
   signIn?: boolean
   shell?: boolean
+  /** One line under the terminal while it runs. */
+  hint?: string
   rows: number
   after?: (code: number | null) => void
 }
@@ -217,6 +221,7 @@ const LOGINS: Array<{ tool: EnvLoginTool; name: string; agent?: 'claude' | 'code
   { tool: 'claude', name: 'Claude Code', agent: 'claude' },
   { tool: 'codex', name: 'Codex', agent: 'codex' },
   { tool: 'gh', name: 'GitHub CLI' },
+  { tool: 'glab', name: 'GitLab CLI' },
   { tool: 'tailscale', name: 'Tailscale' },
 ]
 
@@ -231,6 +236,40 @@ function login(tool: EnvLoginTool, name: string) {
     rows: 12,
     after: code => { if (code === 0 && tool === 'tailscale') envs.refreshInstances(props.hostId) },
   })
+}
+
+/**
+ * The GitLab CLI signs in to one server at a time: gitlab.com (a device code and a page, like
+ * GitHub), or a self-managed one, where glab asks in the terminal (a token works on any version).
+ */
+function loginGitlab(server: string) {
+  otherServer.value = false
+  const selfManaged = server !== GITLAB_COM
+  run({
+    title: `Signing in to ${server}…`,
+    doneTitle: `Signed in to ${server}`,
+    failedTitle: 'Sign-in didn\'t finish',
+    label: `GitLab CLI sign-in to ${server} in ${props.name}`,
+    start: (cols, rows) => envs.login(props.hostId, props.name, 'glab', cols, rows, server),
+    signIn: !selfManaged,
+    hint: selfManaged
+      ? `Choose Token, then paste a personal access token from ${server} with the api and write_repository scopes. glab prints where to make one.`
+      : undefined,
+    rows: 12,
+    after: (code) => { if (code === 0 && selfManaged) void envs.loadGitlabHosts() },
+  })
+}
+
+/** "Another server…": a GitLab server typed in place under the sign-in buttons. */
+const otherServer = ref(false)
+const gitlabItems = computed<MenuItem[]>(() => [
+  { label: GITLAB_COM, onSelect: () => loginGitlab(GITLAB_COM) },
+  ...(envs.gitlabHosts ?? []).map(h => ({ label: h, onSelect: () => loginGitlab(h) })),
+  { label: 'Another server…', divider: true, onSelect: () => { otherServer.value = true } },
+])
+function openGitlabMenu(toggle: () => void) {
+  void envs.loadGitlabHosts()
+  toggle()
 }
 
 function shell() {
@@ -259,12 +298,13 @@ function takeIntent() {
   delete envs.intents[key.value]
   if (intent === 'login-claude') login('claude', 'Claude Code')
   else if (intent === 'login-gh') login('gh', 'GitHub CLI')
+  else if (intent.startsWith('login-glab:')) loginGitlab(intent.slice('login-glab:'.length) || GITLAB_COM)
   else if (intent === 'open-project') projectOpen.value = true
   else if (intent === 'open-desktop') desktopShown.value = true
 }
 
 watch(inst, (i) => { if (i) takeIntent() })
-onMounted(() => { loadComponents(); takeIntent() })
+onMounted(() => { loadComponents(); takeIntent(); void envs.loadGitlabHosts() })
 onActivated(() => { loadComponents(); takeIntent() })
 
 /* ---------- presentation ---------- */
@@ -465,7 +505,9 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
           :shell="job.shell"
           @exit="onJobExit"
           @close="closeJob"
-        />
+        >
+          <template v-if="job.hint" #hint>{{ job.hint }}</template>
+        </EnvTerminal>
       </div>
 
       <EnvDesktop v-if="desktopShown && running" :host-id="hostId" :instance="name" @close="desktopShown = false" />
@@ -476,17 +518,38 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
         <p v-if="running" class="ip__desc">Each tool runs its own sign-in inside {{ name }}, in a terminal here. Mango never sees your credentials.</p>
         <p v-else class="ip__desc">{{ direct ? 'Once Mango can reach it, sign in to its tools here.' : 'Start the environment to sign in to its tools.' }}</p>
         <div class="ip__logins">
-          <UiButton
-            v-for="l in LOGINS"
-            :key="l.tool"
-            size="sm"
-            :disabled="!running || jobRunning || installed(l.tool) === false"
-            :title="installed(l.tool) === false ? `Install ${l.name} first` : busyTitle"
-            @click="login(l.tool, l.name)"
-          >
-            <UiAgentIcon v-if="l.agent" :agent="l.agent" class="ip__agent" />{{ l.name }}
-          </UiButton>
+          <template v-for="l in LOGINS" :key="l.tool">
+            <UiMenu v-if="l.tool === 'glab'" :items="gitlabItems" :width="240" label="GitLab server">
+              <template #default="{ toggle, open }">
+                <UiButton
+                  size="sm"
+                  :disabled="!running || jobRunning || installed(l.tool) === false"
+                  :title="installed(l.tool) === false ? `Install ${l.name} first` : busyTitle"
+                  :aria-expanded="open"
+                  aria-haspopup="menu"
+                  @click="openGitlabMenu(toggle)"
+                >
+                  {{ l.name }}<ChevronDown class="ip__more" />
+                </UiButton>
+              </template>
+            </UiMenu>
+            <UiButton
+              v-else
+              size="sm"
+              :disabled="!running || jobRunning || installed(l.tool) === false"
+              :title="installed(l.tool) === false ? `Install ${l.name} first` : busyTitle"
+              @click="login(l.tool, l.name)"
+            >
+              <UiAgentIcon v-if="l.agent" :agent="l.agent" class="ip__agent" />{{ l.name }}
+            </UiButton>
+          </template>
         </div>
+        <EnvGitlabServer
+          v-if="otherServer && running && !jobRunning"
+          class="ip__server"
+          @pick="loginGitlab"
+          @cancel="otherServer = false"
+        />
       </section>
 
       <!-- who else may use it (only its owner shares it) -->
@@ -755,6 +818,8 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
 .ip__desc { margin: 0; max-width: 70ch; font-size: var(--text-sm); color: var(--fg-subtle); text-wrap: pretty; }
 .ip__logins { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
 .ip__agent { width: 13px; height: 13px; }
+.ip__more { color: var(--fg-subtle); }
+.ip__server { margin-top: var(--space-2); }
 
 /* ---- components ---- */
 .comps { display: grid; margin: 0; padding: 0; list-style: none; }

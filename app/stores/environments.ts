@@ -36,6 +36,7 @@ export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; d
   { id: 'node', name: 'Node.js', description: 'Node.js and npm from nodejs.org.', requires: ['base'], versioned: true },
   { id: 'java', name: 'Java', description: 'A JDK through SDKMAN, any vendor.', requires: ['base'], versioned: true },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
+  { id: 'glab', name: 'GitLab CLI', description: 'Merge requests, issues and git sign-in on GitLab.', requires: ['base'] },
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
   { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'] },
@@ -67,7 +68,7 @@ export type EnvDialog =
  * after creating it, or asked for from elsewhere (the chat's place menu, the clone dialog);
  * for a server (keyed by its id) leading to the Incus setup after adding it.
  */
-export type EnvIntent = 'login-claude' | 'login-gh' | 'open-project' | 'open-desktop' | 'setup-incus'
+export type EnvIntent = 'login-claude' | 'login-gh' | `login-glab:${string}` | 'open-project' | 'open-desktop' | 'setup-incus'
 
 /** How a server is doing, for its row and its page: reachability first, then Incus. */
 export type HostTone = 'ready' | 'setup' | 'bad' | 'checking' | 'unknown'
@@ -188,6 +189,8 @@ export const useEnvironments = defineStore('environments', {
     dialog: null as EnvDialog | null,
     /** Per instance (see `instanceKey`) or server (its id): picked up by its page when it shows. */
     intents: {} as Record<string, EnvIntent>,
+    /** The self-managed GitLab servers Mango knows (`gitlab_hosts`), offered for a glab sign-in; null until read. */
+    gitlabHosts: null as string[] | null,
   }),
 
   getters: {
@@ -421,8 +424,17 @@ export const useEnvironments = defineStore('environments', {
     shell(hostId: string, instance: string, cwd: string | null, cols: number, rows: number) {
       return call('env_shell', { hostId, instance, cwd, cols, rows })
     },
-    login(hostId: string, instance: string, tool: EnvLoginTool, cols: number, rows: number) {
-      return call('env_login', { hostId, instance, tool, cols, rows })
+    /** `host`: the GitLab server a glab sign-in is for (gitlab.com when none). */
+    login(hostId: string, instance: string, tool: EnvLoginTool, cols: number, rows: number, host?: string | null) {
+      return call('env_login', { hostId, instance, tool, ...(host ? { host } : {}), cols, rows })
+    },
+    /** Read the GitLab servers again (a glab sign-in menu opening); an unreadable list counts as empty. */
+    async loadGitlabHosts() {
+      try {
+        this.gitlabHosts = await call('gitlab_hosts', {})
+      } catch {
+        this.gitlabHosts ??= []
+      }
     },
 
     /**

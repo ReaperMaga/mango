@@ -3,11 +3,12 @@ import { CircleAlert, GitFork, Server } from 'lucide-vue-next'
 import type { EnvRemote } from '~/types/ipc'
 import { ENV_WORK_DIR, useEnvironments } from '~/stores/environments'
 import { useWorkspace } from '~/stores/workspace'
+import { GITLAB_COM } from '~/utils/gitHosts'
 
 /**
  * Clone a git repository into a parent folder. git's own progress lines stream
  * in through `clone://progress`; the percentage drives a thin bar.
- * Where: on this computer, or inside an environment, where its own git (and GitHub CLI
+ * Where: on this computer, or inside an environment, where its own git (and GitHub or GitLab CLI
  * sign-in) does the cloning and reports no progress, only the outcome.
  */
 const ws = useWorkspace()
@@ -130,6 +131,7 @@ watch(open, async (isOpen) => {
   touched.value = false
   browsing.value = false
   reset()
+  void envs.loadGitlabHosts()
   if (!localParent.value) localParent.value = await call('default_projects_dir').catch(() => '')
 }, { immediate: true })
 
@@ -149,6 +151,49 @@ watch([browseDir, browseSelected], ([d, s]) => {
 function useFolder(path: string) {
   remoteParent.value = path
   browsing.value = false
+}
+
+/** The host a clone URL names: the https one with its port (glab's server name), else the bare name. */
+function urlHost(u: string): { name: string; host: string } | null {
+  let name: string
+  let host: string
+  if (/^[a-z+]+:\/\//i.test(u)) {
+    try {
+      const x = new URL(u)
+      name = x.hostname
+      host = /^https?:/i.test(u) ? x.host : x.hostname
+    } catch {
+      return null
+    }
+  } else {
+    const scp = /^[\w.-]+@([\w.-]+):/.exec(u)
+    if (!scp) return null
+    name = host = scp[1]!
+  }
+  const clean = (h: string) => h.toLowerCase().replace(/^www\./, '')
+  return { name: clean(name), host: clean(host) }
+}
+
+/**
+ * The GitLab server a clone URL points at, the way the backend tells (`is_gitlab_host_in` in
+ * gitlab.rs): gitlab.com, a gitlab.* name, or a server Mango knows. Null for anything else.
+ */
+const gitlabServer = computed(() => {
+  const h = parsed.value ? urlHost(parsed.value.url) : null
+  if (!h) return null
+  const known = envs.gitlabHosts ?? []
+  const listed = known.find(k => k === h.host) ?? known.find(k => k.split(':')[0] === h.name)
+  if (listed) return listed
+  if (h.name === GITLAB_COM || h.name.endsWith('.gitlab.com')) return GITLAB_COM
+  return h.name.startsWith('gitlab.') && h.name.split('.').length >= 3 ? h.host : null
+})
+
+/** Sign in to the GitLab CLI for that server inside the environment, for private repositories. */
+function signInGitLab() {
+  const w = where.value
+  if (!w || cloning.value || !gitlabServer.value) return
+  ws.dialog = null
+  envs.openInstance(w.hostId, w.instance, `login-glab:${gitlabServer.value}`)
 }
 
 /** Sign in to the GitHub CLI inside the environment (on its page in Settings), for private repositories. */
@@ -310,8 +355,9 @@ watch(error, async (e) => {
       </UiField>
 
       <p v-if="place" class="cl__note">
-        Cloned by git inside {{ place.label }}. Private repositories need the GitHub CLI signed in there.
-        <button type="button" class="cl__link" :disabled="cloning" @click="signInGitHub">Sign in to GitHub in {{ place.label }}…</button>
+        Cloned by git inside {{ place.label }}. Private repositories need the {{ gitlabServer ? 'GitLab' : 'GitHub' }} CLI signed in there.
+        <button v-if="gitlabServer" type="button" class="cl__link" :disabled="cloning" @click="signInGitLab">Sign in to {{ gitlabServer }} in {{ place.label }}…</button>
+        <button v-else type="button" class="cl__link" :disabled="cloning" @click="signInGitHub">Sign in to GitHub in {{ place.label }}…</button>
       </p>
 
       <UiField :label="where ? 'Destination in the environment' : 'Destination'" for="cl-parent" :error="touched ? parentError : null">

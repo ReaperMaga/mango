@@ -98,6 +98,11 @@ src-tauri/src/
   trash_bin.rs       moving to the system's trash, and never deleting for good instead (Windows: its own shell sink, the trash crate does delete for good there)
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
   releases.rs        `gh_releases`, `gh_tag_run`, `gh_run`, `gh_run_action`: releases and their workflow runs (re-run, cancel), through `gh` too
+  gitlab.rs          GitLab: which hosts are GitLab servers (gitlab.com, `gitlab.*`, the user's list in gitlab-hosts.json), the project's forge
+                     from its git remotes (`project_forge`, nested groups), running `glab`. The `gh_*` commands dispatch here by forge
+  gitlab_items.rs    merge requests (as `kind: 'pr'`), issues, merging, MR create and CI job logs through `glab` (GraphQL + REST)
+  gitlab_releases.rs GitLab releases and pipelines (as runs): retry, run again, cancel
+  hosting.rs         Settings > Git hosting: `gh` / `glab` sign-in status, sign in (in a PTY, host validated) and sign out
   browser.rs         browser tabs: native child webviews over the main window (`browser_*`), http(s) only
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   mcp.rs             the user's own MCP servers (`mcp_servers`, `mcp_servers_save`): mcp-servers.json, owner-only, checked on save
@@ -156,7 +161,11 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   through `chat_image`, which reads nothing but real raster images (the phone app runs the same script, `mobile/src/remote/images.ts`: keep them in step); never fetch a picture URL from the web (it can carry data out of the chat). A pull request's
   description (GitHub's rendered HTML) goes through `utils/safeHtml.ts` before `v-html`; keep its allow-list tight.
 - Pull requests and issues an agent creates are linked to the chat by `utils/githubLinks.ts` (`createdBy`), which only
-  trusts a `gh pr|issue create` command or a GitHub MCP create tool, never a link the agent merely mentions.
+  trusts a `gh pr|issue create` / `glab mr|issue create` command or a GitHub/GitLab MCP create tool, never a link the agent
+  merely mentions. GitLab link keys use `!N` for merge requests (their numbers are separate from issues'); GitHub keys never change.
+- GitLab (`gitlab*.rs`): `glab` owns the sign-in, like `gh`. A GitLab-shaped link on a host Mango does not know as GitLab is
+  refused before `glab` sees it, so a token never goes to a server the user did not name. Values reach `glab api` as `-f` raw
+  fields only (never `-F`, which reads `@file`). The phone ports these files in `mobile/src/remote/gitlab*.ts`: keep them in step.
 - The browser (`browser.rs`, `browser_mcp.rs`, `stores/browser.ts`): pages in it are untrusted. Its webviews load only http(s)
   (and about:blank) and never get Mango's IPC. The MCP server that hands agents the browser tools binds 127.0.0.1 only, and
   each chat's URL carries its own secret token. Each webview is a native view drawn over all HTML: every floating layer

@@ -122,16 +122,24 @@ export interface BackgroundTask {
 }
 
 /**
- * A pull request or issue linked to a chat: one the agent created during it (`gh pr create`,
- * a GitHub MCP tool), or one the user linked by hand. The details are read from GitHub when
- * shown; `title` and `state` keep the last ones seen so the list reads well offline.
+ * A pull request (GitLab: merge request) or issue linked to a chat: one the agent created during
+ * it (`gh pr create`, `glab mr create`, a GitHub or GitLab MCP tool), or one the user linked by
+ * hand. The details are read from GitHub or GitLab when shown; `title` and `state` keep the last ones seen so the list reads well offline.
  */
 export interface LinkedItem {
-  /** `host/owner/repo#number`, lower case: the same item however it was written. */
+  /**
+   * The item, lower case: the same item however it was written. GitHub `host/owner/repo#12` (pull
+   * requests and issues share numbers); GitLab `host/group/project!12` for a merge request and
+   * `host/group/project#12` for an issue (`utils/githubLinks.ts`, `itemKey`).
+   */
   key: string
+  /** Where it lives (`ForgeProvider`, written out so the phone app needs only this file); absent is GitHub, as in links saved before GitLab support. */
+  provider?: 'github' | 'gitlab'
+  /** A GitLab merge request is a 'pr'. */
   kind: 'pr' | 'issue'
   url: string
   host: string
+  /** On GitLab the whole namespace (`group/subgroup`). */
   owner: string
   repo: string
   number: number

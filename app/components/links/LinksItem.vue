@@ -7,10 +7,12 @@ import { openExternal } from '~/composables/useBackend'
 import { safeHtml } from '~/utils/safeHtml'
 import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
+import { forgeName, itemNumber, providerOf } from '~/utils/forge'
 
 /**
- * One pull request or issue in the Pull requests tool window: its state, title, who opened it,
- * branches, checks and labels, then the description as GitHub renders it, pictures included.
+ * One pull request (GitLab: merge request) or issue in the Pull requests tool window: its state,
+ * title, who opened it, branches, checks (a GitLab pipeline's jobs) and labels, then the description
+ * as GitHub or GitLab renders it, pictures included.
  * Its actions sit in the tool window's footer (LinksPanel), so a long description never hides them.
  */
 const props = defineProps<{ link: LinkedItem; detail: LinkDetail | undefined }>()
@@ -18,9 +20,13 @@ const emit = defineEmits<{ openCheck: [check: GhCheck] }>()
 
 const now = useNow()
 const item = computed(() => props.detail?.item ?? null)
-const state = computed(() => stateOf(item.value?.kind ?? props.link.kind, item.value?.state ?? props.link.state, item.value?.stateReason))
-const title = computed(() => item.value?.title ?? props.link.title ?? `#${props.link.number}`)
-const body = computed(() => safeHtml(item.value?.bodyHtml ?? ''))
+const provider = computed(() => providerOf(item.value ?? props.link))
+const forge = computed(() => forgeName(provider.value))
+const number = computed(() => itemNumber({ kind: item.value?.kind ?? props.link.kind, number: props.link.number, provider: provider.value }))
+const state = computed(() => stateOf(item.value?.kind ?? props.link.kind, item.value?.state ?? props.link.state, item.value?.stateReason, provider.value))
+const title = computed(() => item.value?.title ?? props.link.title ?? number.value)
+/** GitLab's links and uploads from the server's root are read against the item's own server. */
+const body = computed(() => safeHtml(item.value?.bodyHtml ?? '', item.value?.url))
 const opened = computed(() => (item.value?.createdAt ? shortAgo(Date.parse(item.value.createdAt), now.value) : null))
 
 const CHECKS = { success: 'Passed', failure: 'Failed', pending: 'Running' } as const
@@ -56,7 +62,7 @@ const summary = computed(() => {
 const listChoice = ref<boolean | null>(null)
 const listOpen = computed(() => listChoice.value ?? summary.value?.tone !== 'success')
 function toggleList() { listChoice.value = !listOpen.value }
-/** A GitHub Actions job opens its log here; any other check opens its details on its own site. */
+/** A GitHub Actions job or a GitLab pipeline job opens its log here; any other check opens its details on its own site. */
 function openCheck(c: GhCheck) {
   if (isJobUrl(c.url)) emit('openCheck', c)
   else if (c.url) openExternal(c.url).catch(() => {})
@@ -74,13 +80,13 @@ function onBodyClick(e: MouseEvent) {
 </script>
 
 <template>
-  <article class="li" :aria-label="`${state.noun} #${link.number}`">
+  <article class="li" :aria-label="`${state.noun} ${number}`">
     <div class="li__top">
       <span class="li__state" :class="`is-${state.tone}`">
         <component :is="state.icon" aria-hidden="true" />
         <span>{{ state.word }}</span>
       </span>
-      <span class="li__ref" :title="link.url">{{ link.owner }}/{{ link.repo }} #{{ link.number }}</span>
+      <span class="li__ref" :title="link.url">{{ link.owner }}/{{ link.repo }} {{ number }}</span>
     </div>
 
     <h3 class="li__title selectable">{{ title }}</h3>
@@ -112,11 +118,11 @@ function onBodyClick(e: MouseEvent) {
           </dd>
         </div>
         <div v-if="review" class="li__fact">
-          <dt>Review</dt>
+          <dt>{{ provider === 'gitlab' ? 'Approval' : 'Review' }}</dt>
           <dd class="li__status"><span :class="`is-${review}`">{{ REVIEW[review] }}</span></dd>
         </div>
         <div v-if="summary" class="li__fact">
-          <dt>Checks</dt>
+          <dt>{{ provider === 'gitlab' ? 'Pipeline' : 'Checks' }}</dt>
           <dd class="li__status">
             <button
               v-if="runs.length"
@@ -141,7 +147,7 @@ function onBodyClick(e: MouseEvent) {
             type="button"
             class="li__check"
             :disabled="!c.url || undefined"
-            :title="c.description ?? (isJobUrl(c.url) ? 'Show the log' : c.url ? 'Open the details on GitHub' : undefined)"
+            :title="c.description ?? (isJobUrl(c.url) ? 'Show the log' : c.url ? `Open the details on ${forge}` : undefined)"
             @click="openCheck(c)"
           >
             <component :is="CHECK_ICON[c.state]" class="li__check-icon" :class="`is-${c.state}`" aria-hidden="true" />
@@ -165,8 +171,9 @@ function onBodyClick(e: MouseEvent) {
     <p v-if="detail?.error" class="li__error selectable" role="alert">
       {{ item ? 'Could not refresh: ' : '' }}{{ detail.error }}
     </p>
+    <LinksHostingButton :error="detail?.error" />
 
-    <div v-if="!item && detail?.loading" class="li__skeleton" aria-busy="true" aria-label="Reading from GitHub">
+    <div v-if="!item && detail?.loading" class="li__skeleton" aria-busy="true" :aria-label="`Reading from ${forge}`">
       <span v-for="w in [62, 88, 74, 40, 81, 56]" :key="w" :style="{ width: `${w}%` }" />
     </div>
     <template v-else-if="item">
@@ -324,7 +331,7 @@ function onBodyClick(e: MouseEvent) {
 .li__empty { margin: var(--space-2) 0 0; font-size: var(--text-sm); color: var(--fg-faint); }
 
 
-/* The description, as GitHub renders it: the chat's prose styles, a step smaller for a side panel. */
+/* The description, as GitHub or GitLab renders it: the chat's prose styles, a step smaller for a side panel. */
 .li__body { margin-top: var(--space-2); font-size: var(--text-sm); line-height: var(--leading-chat); color: var(--fg); overflow-wrap: anywhere; }
 .li__body :deep(> *:first-child) { margin-top: 0; }
 .li__body :deep(> *:last-child) { margin-bottom: 0; }

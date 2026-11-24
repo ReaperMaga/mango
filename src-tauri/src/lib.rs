@@ -14,6 +14,10 @@ mod file_ops;
 mod files;
 mod git;
 mod github;
+mod gitlab;
+mod gitlab_items;
+mod hosting;
+mod gitlab_releases;
 mod images;
 mod lsp;
 mod mcp;
@@ -186,6 +190,11 @@ pub fn run() {
             github::gh_merge,
             github::gh_pr_create,
             github::gh_job,
+            gitlab::gitlab_hosts,
+            gitlab::gitlab_hosts_save,
+            hosting::hosting_status,
+            hosting::hosting_login,
+            hosting::hosting_logout,
             releases::gh_releases,
             releases::gh_tag_run,
             releases::gh_run,

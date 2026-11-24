@@ -7,16 +7,19 @@ import { useWorkspace } from '~/stores/workspace'
 import { useReleases, PAGE } from '~/stores/releases'
 import { useLinks } from '~/stores/links'
 import { openExternal } from '~/composables/useBackend'
+import { useForge } from '~/stores/forge'
+import { forgeName, siteName } from '~/utils/forge'
 import { formatDuration, shortAgo, useNow } from '~/utils/time'
 import {
   entryState, groupAssets, isActive, isBad, latestRelease, totalDownloads, type ReleaseEntry,
 } from '~/utils/releaseRuns'
 
 /**
- * The Releases tool window: the project's GitHub releases, newest first, with the builds that run
- * (and drafts whose build failed) on top. A release opens to its workflow run, files and notes; a job
- * of the run opens its log (LinksCheckLog, as in the Pull requests window). Read through the GitHub
- * CLI; useReleaseWatch keeps the list current, this keeps the open entry's run current.
+ * The Releases tool window: the project's GitHub or GitLab releases, newest first, with the builds
+ * that run (and drafts whose build failed) on top. A release opens to its workflow run (GitLab: its
+ * pipeline), files and notes; a job of the run opens its log (LinksCheckLog, as in the Pull requests
+ * window). Read through the GitHub or GitLab CLI; useReleaseWatch keeps the list current, this keeps
+ * the open entry's run current.
  */
 
 const ws = useWorkspace()
@@ -32,6 +35,17 @@ const sorted = computed(() => releases.sorted(path.value))
 const latestTag = computed(() => (data.value ? latestRelease(data.value.releases)?.tag ?? null : null))
 const repoName = computed(() => (data.value ? `${data.value.owner}/${data.value.repo}` : ''))
 const webBase = computed(() => (data.value ? `https://${data.value.host}/${data.value.owner}/${data.value.repo}` : null))
+/** GitHub or GitLab: from the list once read, from the project's remotes before. */
+const forge = useForge()
+watch(path, p => forge.ensure(p), { immediate: true })
+const provider = computed(() => data.value?.provider ?? forge.providerOf(path.value))
+const gitlab = computed(() => provider.value === 'gitlab')
+const site = computed(() => siteName(provider.value, data.value?.host))
+/** The releases pages: GitLab keeps them under `/-/`. */
+const releasesUrl = computed(() => (webBase.value ? `${webBase.value}${gitlab.value ? '/-' : ''}/releases` : null))
+/** What the run is called, and its actions: GitLab retries a pipeline's failed jobs, or runs the ref again. */
+const runWord = computed(() => (gitlab.value ? 'pipeline' : 'run'))
+const rerunLabel = (failed: boolean) => (gitlab.value ? (failed ? 'Retry' : 'Run again') : (failed ? 'Re-run failed jobs' : 'Re-run'))
 
 /* ---------- the open entry ---------- */
 const focusedKey = computed(() => (releases.focused && releases.focused.path === path.value ? releases.focused.key : null))
@@ -209,13 +223,13 @@ const backLabel = computed(() => {
         <h2 class="rp__title" :title="repoName || undefined">Releases</h2>
         <div v-if="path" class="rp__tools">
           <UiIconButton label="Read again" :class="{ 'rp__spinning': refreshing }" :disabled="refreshing || undefined" @click="refresh"><RefreshCw /></UiIconButton>
-          <UiIconButton v-if="webBase && !entry" label="Releases on GitHub" @click="openExternal(`${webBase}/releases`)"><ExternalLink /></UiIconButton>
+          <UiIconButton v-if="releasesUrl && !entry" :label="`Releases on ${site}`" @click="openExternal(releasesUrl)"><ExternalLink /></UiIconButton>
         </div>
       </template>
     </header>
 
-    <div v-if="plastic" class="rp__quiet"><p>Unity VCS projects have no GitHub releases.</p></div>
-    <div v-else-if="!path" class="rp__quiet"><p>Open a project to see its GitHub releases.</p></div>
+    <div v-if="plastic" class="rp__quiet"><p>Unity VCS projects have no GitHub or GitLab releases.</p></div>
+    <div v-else-if="!path" class="rp__quiet"><p>Open a project to see its releases.</p></div>
 
     <!-- A job's log -->
     <template v-else-if="releases.job && entry">
@@ -223,7 +237,7 @@ const backLabel = computed(() => {
         <LinksCheckLog :key="releases.job.url" :check="releases.job" />
       </div>
       <footer class="rp__foot">
-        <UiButton size="sm" @click="openExternal(jobDetail?.job?.url || releases.job.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+        <UiButton size="sm" @click="openExternal(jobDetail?.job?.url || releases.job.url)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
         <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
       </footer>
     </template>
@@ -231,27 +245,27 @@ const backLabel = computed(() => {
     <!-- One release -->
     <template v-else-if="entry && data">
       <div class="rp__scroll">
-        <ReleasesItem :key="entry.key" :entry="entry" :read="read" :runs="data.runs" :repo="repoName" :latest="entry.kind === 'release' && entry.release.tag === latestTag" @open-job="openJob" />
+        <ReleasesItem :key="entry.key" :entry="entry" :read="read" :runs="data.runs" :repo="repoName" :provider="provider" :latest="entry.kind === 'release' && entry.release.tag === latestTag" @open-job="openJob" />
       </div>
       <p v-if="actionError" class="rp__action-error selectable" role="alert">{{ actionError }}</p>
       <footer class="rp__foot">
         <template v-if="runBad && run">
           <UiButton size="sm" :loading="acting === 'rerun-failed' || acting === 'rerun'" @click="act(run.state === 'failure' ? 'rerun-failed' : 'rerun')">
-            <RotateCcw v-if="!acting" aria-hidden="true" />{{ run.state === 'failure' ? 'Re-run failed jobs' : 'Re-run' }}
+            <RotateCcw v-if="!acting" aria-hidden="true" />{{ rerunLabel(run.state === 'failure') }}
           </UiButton>
-          <UiButton v-if="pageUrl" size="sm" variant="ghost" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+          <UiButton v-if="pageUrl" size="sm" variant="ghost" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
         </template>
-        <UiButton v-else-if="pageUrl" size="sm" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+        <UiButton v-else-if="pageUrl" size="sm" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
         <UiButton
           v-if="runActive"
           size="sm"
           :variant="confirmCancel ? 'danger' : 'ghost'"
           class="rp__push"
           :loading="acting === 'cancel'"
-          :title="confirmCancel ? 'Click again to stop the run on GitHub' : 'Stop the run on GitHub'"
+          :title="confirmCancel ? `Click again to stop the ${runWord} on ${site}` : `Stop the ${runWord} on ${site}`"
           @click="cancelRun"
         >
-          <CircleStop v-if="acting !== 'cancel'" aria-hidden="true" />{{ confirmCancel ? 'Cancel the run?' : 'Cancel run' }}
+          <CircleStop v-if="acting !== 'cancel'" aria-hidden="true" />{{ confirmCancel ? `Cancel the ${runWord}?` : `Cancel ${runWord}` }}
         </UiButton>
       </footer>
     </template>
@@ -259,19 +273,21 @@ const backLabel = computed(() => {
     <!-- Nothing read yet -->
     <div v-else-if="!data && list?.error" class="rp__quiet">
       <p class="selectable">{{ list.error }}</p>
+      <LinksHostingButton :error="list.error" />
       <UiButton size="sm" variant="ghost" @click="refresh"><RefreshCw aria-hidden="true" />Try again</UiButton>
     </div>
-    <div v-else-if="!data" class="rp__skeleton" aria-busy="true" aria-label="Reading from GitHub">
+    <div v-else-if="!data" class="rp__skeleton" aria-busy="true" :aria-label="`Reading from ${forgeName(provider)}`">
       <span v-for="w in [58, 74, 49, 66, 54]" :key="w"><i /><b :style="{ width: `${w}%` }" /></span>
     </div>
 
     <!-- No releases -->
     <div v-else-if="empty" class="rp__empty">
       <h3>No releases yet</h3>
-      <p>When you publish a release on GitHub it shows here, with its files and notes. If a workflow builds it from a tag, you can watch that run here too.</p>
+      <p v-if="gitlab">When you publish a release on {{ site }} it shows here, with its files and notes. If a pipeline builds it from a tag, you can watch that pipeline here too.</p>
+      <p v-else>When you publish a release on {{ site }} it shows here, with its files and notes. If a workflow builds it from a tag, you can watch that run here too.</p>
       <pre class="rp__cmd selectable"><span class="rp__prompt" aria-hidden="true">$ </span>git tag v1.0.0 &amp;&amp; git push origin v1.0.0</pre>
-      <p>Or start one on GitHub, or ask an agent to cut it.</p>
-      <UiButton v-if="webBase" size="sm" @click="openExternal(`${webBase}/releases/new`)"><ExternalLink aria-hidden="true" />New release on GitHub</UiButton>
+      <p>Or start one on {{ site }}, or ask an agent to cut it.</p>
+      <UiButton v-if="releasesUrl" size="sm" @click="openExternal(`${releasesUrl}/new`)"><ExternalLink aria-hidden="true" />New release on {{ site }}</UiButton>
     </div>
 
     <!-- The list -->
@@ -299,6 +315,7 @@ const backLabel = computed(() => {
                     <span v-if="e.kind === 'release' && e.release.tag === latestTag" class="rp__pill is-latest">Latest</span>
                     <span v-if="e.kind === 'release' && e.release.prerelease" class="rp__pill is-pre">Pre-release</span>
                     <span v-if="e.kind === 'release' && e.release.draft" class="rp__pill is-draft">Draft</span>
+                    <span v-else-if="e.kind === 'release' && !e.release.publishedAt" class="rp__pill is-pre" title="Its release date is still to come">Upcoming</span>
                   </span>
                   <span class="rp__sub">
                     <span v-if="group === 'inProgress'" class="rp__word" :class="`is-${entryState(e).tone}`">{{ entryState(e).word }}</span>

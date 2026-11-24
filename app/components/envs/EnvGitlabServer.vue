@@ -1,0 +1,68 @@
+<script setup lang="ts">
+import { GITHUB_COM, normalizeHost } from '~/utils/gitHosts'
+
+/**
+ * A self-managed GitLab server typed in place, for a glab sign-in inside an environment
+ * (the sign-in menus offer gitlab.com and the servers Mango knows; this is "Another server…").
+ * Emits the name cleaned up the way the backend stores it; the backend checks it again.
+ */
+const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
+const emit = defineEmits<{ pick: [host: string]; cancel: [] }>()
+
+const id = useId()
+const value = ref('')
+const touched = ref(false)
+const input = ref<HTMLInputElement | null>(null)
+
+const problem = computed(() => {
+  if (!value.value.trim()) return 'Type the server\'s name.'
+  const host = normalizeHost(value.value)
+  if (!host) return 'Type a server name like gitlab.example.com.'
+  if (host === GITHUB_COM) return 'github.com is GitHub: sign in to the GitHub CLI for it.'
+  return null
+})
+
+function submit() {
+  touched.value = true
+  const host = normalizeHost(value.value)
+  if (problem.value || !host) return
+  emit('pick', host)
+}
+
+onMounted(() => input.value?.focus())
+</script>
+
+<template>
+  <form class="gls" :class="{ 'gls--compact': props.compact }" novalidate @submit.prevent="submit" @keydown.esc.stop="emit('cancel')">
+    <UiField
+      label="GitLab server"
+      :for="id"
+      :error="touched ? problem : null"
+      hint="glab asks how to sign in: a personal access token with the api and write_repository scopes works on every server."
+    >
+      <div class="gls__row">
+        <input
+          :id="id"
+          ref="input"
+          v-model="value"
+          class="input gls__input"
+          type="text"
+          placeholder="gitlab.example.com"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          :aria-invalid="(touched && !!problem) || undefined"
+        >
+        <UiButton type="submit">Sign in</UiButton>
+        <UiButton variant="ghost" @click="emit('cancel')">Cancel</UiButton>
+      </div>
+    </UiField>
+  </form>
+</template>
+
+<style scoped>
+.gls { max-width: 520px; }
+.gls__row { display: flex; align-items: center; gap: var(--space-2); }
+.gls__row .gls__input { flex: 1; min-width: 0; height: 30px; }
+.gls--compact { max-width: none; }
+</style>

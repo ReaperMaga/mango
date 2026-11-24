@@ -1,16 +1,24 @@
-import type { GhAsset, GhRelease, GhRun, GhRunJob, GhRunState } from '~/types/ipc'
+import type { ForgeProvider, GhAsset, GhRelease, GhRun, GhRunJob, GhRunState } from '~/types/ipc'
 
 /**
- * The Releases tool window's reading of GitHub: which workflow runs belong to which release, what a
- * run's jobs add up to, about how long a build takes, and a release's files sorted by platform.
- * Plain functions, so they run in Node tests (tests/releaseRuns.test.ts).
+ * The Releases tool window's reading of GitHub or GitLab: which workflow runs (GitLab: pipelines)
+ * belong to which release, what a run's jobs add up to, about how long a build takes, and a release's
+ * files sorted by platform. Plain functions, so they run in Node tests (tests/releaseRuns.test.ts).
  */
 
 export const isActive = (s: GhRunState) => s === 'pending' || s === 'queued'
 export const isBad = (s: GhRunState) => s === 'failure' || s === 'cancelled'
 
-/** Events that build a release: pushing its tag, publishing it, or starting the workflow by hand. */
+/** GitHub events that build a release: pushing its tag, or publishing it. */
 const TAG_EVENTS = new Set(['push', 'release'])
+
+/**
+ * Whether a run on `tag` builds it. On GitHub only a tag push or a published release does; on GitLab
+ * every pipeline whose ref is the tag (the tag push, one started by hand in the web page or again
+ * through the API, a trigger), since a merge request pipeline never runs on a tag.
+ */
+const buildsTag = (r: GhRun, provider: ForgeProvider) =>
+  provider === 'gitlab' ? r.event !== 'merge_request_event' : TAG_EVENTS.has(r.event)
 
 /** A tag that names a version (`v1.2.3`, `1.2`, `app-v0.2.0-beta.1`). */
 const VERSION_TAG = /\d+\.\d+/
@@ -18,20 +26,20 @@ const VERSION_TAG = /\d+\.\d+/
 const newestFirst = (a: GhRun, b: GhRun) => b.createdAt.localeCompare(a.createdAt)
 
 /** The runs for a release's tag, newest first. */
-export function runsForTag(runs: GhRun[], tag: string): GhRun[] {
-  return runs.filter(r => r.headBranch === tag && TAG_EVENTS.has(r.event)).sort(newestFirst)
+export function runsForTag(runs: GhRun[], tag: string, provider: ForgeProvider = 'github'): GhRun[] {
+  return runs.filter(r => r.headBranch === tag && buildsTag(r, provider)).sort(newestFirst)
 }
 
 /** The workflows that build releases: the ones that ran for a release's tag. */
-export function releaseWorkflows(releases: GhRelease[], runs: GhRun[]): Set<number> {
+export function releaseWorkflows(releases: GhRelease[], runs: GhRun[], provider: ForgeProvider = 'github'): Set<number> {
   const tags = new Set(releases.map(r => r.tag))
-  return new Set(runs.filter(r => r.headBranch && tags.has(r.headBranch) && TAG_EVENTS.has(r.event)).map(r => r.workflowId))
+  return new Set(runs.filter(r => r.headBranch && tags.has(r.headBranch) && buildsTag(r, provider)).map(r => r.workflowId))
 }
 
 /** A row of the window: a release (with its newest run), or a run that has no release (yet). */
 export type ReleaseEntry =
   | { kind: 'release'; key: string; release: GhRelease; run: GhRun | null }
-  /** `trial`: the release workflow started by hand; `tag`: a tag push whose release is not made yet. */
+  /** `trial`: the release workflow started by hand (GitHub only); `tag`: a tag's build whose release is not made yet. */
   | { kind: 'run'; key: string; run: GhRun; why: 'trial' | 'tag' }
 
 export const releaseKey = (tag: string) => `tag:${tag}`
@@ -44,13 +52,13 @@ export interface SortedReleases {
   releases: ReleaseEntry[]
 }
 
-export function sortReleases(releases: GhRelease[], runs: GhRun[]): SortedReleases {
+export function sortReleases(releases: GhRelease[], runs: GhRun[], provider: ForgeProvider = 'github'): SortedReleases {
   const tags = new Set(releases.map(r => r.tag))
-  const flows = releaseWorkflows(releases, runs)
+  const flows = releaseWorkflows(releases, runs, provider)
   const inProgress: ReleaseEntry[] = []
   const rest: ReleaseEntry[] = []
   for (const release of releases) {
-    const run = runsForTag(runs, release.tag)[0] ?? null
+    const run = runsForTag(runs, release.tag, provider)[0] ?? null
     const entry: ReleaseEntry = { kind: 'release', key: releaseKey(release.tag), release, run }
     const building = !!run && (isActive(run.state) || (release.draft && isBad(run.state)))
     ;(building ? inProgress : rest).push(entry)
@@ -58,8 +66,8 @@ export function sortReleases(releases: GhRelease[], runs: GhRun[]): SortedReleas
   for (const run of runs) {
     if (!isActive(run.state) || !flows.has(run.workflowId)) continue
     if (run.headBranch && tags.has(run.headBranch)) continue
-    if (run.event === 'workflow_dispatch') inProgress.push({ kind: 'run', key: runKey(run.id), run, why: 'trial' })
-    else if (run.event === 'push' && run.headBranch && VERSION_TAG.test(run.headBranch)) {
+    if (provider === 'github' && run.event === 'workflow_dispatch') inProgress.push({ kind: 'run', key: runKey(run.id), run, why: 'trial' })
+    else if ((provider === 'gitlab' ? buildsTag(run, provider) : run.event === 'push') && run.headBranch && VERSION_TAG.test(run.headBranch)) {
       inProgress.push({ kind: 'run', key: runKey(run.id), run, why: 'tag' })
     }
   }
@@ -202,6 +210,8 @@ export function entryState(e: ReleaseEntry): { tone: Tone | 'queued'; word: stri
   if (run && unreleased && run.state === 'cancelled') return { tone: 'idle', word: 'Build cancelled', mark: 'cancelled' }
   if (e.kind === 'run') return { tone: 'done', word: 'Built', mark: 'passed' }
   if (e.release.draft) return { tone: 'idle', word: 'Draft', mark: 'tag' }
+  // A GitLab release dated in the future: not out yet, and not a draft either.
+  if (!e.release.publishedAt) return { tone: 'queued', word: 'Upcoming', mark: 'tag' }
   if (e.release.prerelease) return { tone: 'queued', word: 'Pre-release', mark: 'tag' }
   return { tone: 'done', word: 'Published', mark: 'tag' }
 }

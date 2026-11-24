@@ -1,5 +1,6 @@
 //! The Releases tool window: a project's GitHub releases and the GitHub Actions runs that build
-//! them, read through the GitHub CLI (`gh`) like the pull requests in `github.rs`. `gh` owns the
+//! them, read through the GitHub CLI (`gh`) like the pull requests in `github.rs`. A project on a
+//! GitLab server gets the same from its releases and pipelines (`gitlab_releases.rs`). `gh` owns the
 //! sign-in; Mango never sees a token. Which run belongs to which release is worked out by the
 //! frontend (`app/utils/releaseRuns.ts`) from what is read here.
 
@@ -10,6 +11,8 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::git::blocking;
+use crate::gitlab::{Forge, Provider};
+use crate::gitlab_releases;
 use crate::github::{gh, project_repo, run_json, run_ok, run_state, some_text, text, GhAuthor, NO_REPO};
 
 /// How many releases the window lists at most ("Show older" asks for more, up to this).
@@ -102,6 +105,8 @@ pub struct GhRunDetail {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GhReleases {
+    /// "github", or "gitlab" for a project on a GitLab server (`gitlab_releases.rs`).
+    pub provider: &'static str,
     pub host: String,
     pub owner: String,
     pub repo: String,
@@ -238,7 +243,7 @@ fn releases(r: Repo, count: u32) -> Result<GhReleases, String> {
     let releases = list.as_array().map(|a| a.iter().filter_map(release_from_json).collect()).unwrap_or_default();
     // A repository without Actions (or one gh may not read them in) still lists its releases.
     let runs = runs.map(|v| runs_from_json(&v)).unwrap_or_default();
-    Ok(GhReleases { host: r.host, owner: r.owner, repo: r.repo, releases, runs })
+    Ok(GhReleases { provider: Provider::GitHub.id(), host: r.host, owner: r.owner, repo: r.repo, releases, runs })
 }
 
 fn jobs_of(r: &Repo, run: GhRun) -> Result<GhRunDetail, String> {
@@ -290,6 +295,12 @@ fn run_action(r: Repo, id: u64, action: &str) -> Result<(), String> {
     })
 }
 
+/// The project's GitLab project when its git remotes say it lives on a GitLab server; anything else
+/// (including a remote that names no known forge, which `gh` may still resolve) goes to GitHub.
+fn gitlab_of(app: &AppHandle, path: &str) -> Option<Forge> {
+    crate::gitlab::project_forge(app, path).ok().flatten().filter(|f| f.provider == Provider::GitLab)
+}
+
 fn check_id(id: u64) -> Result<u64, String> {
     if id == 0 { Err("That is not a workflow run.".into()) } else { Ok(id) }
 }
@@ -298,25 +309,47 @@ fn check_id(id: u64) -> Result<u64, String> {
 /// to `count`, with the repository's recent workflow runs.
 #[tauri::command]
 pub async fn gh_releases(app: AppHandle, path: String, count: u32) -> Result<GhReleases, String> {
-    blocking(move || releases(repo_of(&app, &path)?, count)).await
+    blocking(move || match gitlab_of(&app, &path) {
+        Some(f) => gitlab_releases::releases(f, count),
+        None => releases(repo_of(&app, &path)?, count),
+    })
+    .await
 }
 
 /// The newest workflow run for a release's tag, with its jobs; none when no workflow ran for it.
 #[tauri::command]
 pub async fn gh_tag_run(app: AppHandle, path: String, tag: String) -> Result<Option<GhRunDetail>, String> {
-    blocking(move || tag_run(repo_of(&app, &path)?, &tag)).await
+    blocking(move || match gitlab_of(&app, &path) {
+        Some(f) => gitlab_releases::tag_run(f, &tag),
+        None => tag_run(repo_of(&app, &path)?, &tag),
+    })
+    .await
 }
 
 /// A workflow run by id, with its jobs.
 #[tauri::command]
 pub async fn gh_run(app: AppHandle, path: String, id: u64) -> Result<GhRunDetail, String> {
-    blocking(move || run_detail(repo_of(&app, &path)?, check_id(id)?)).await
+    blocking(move || {
+        let id = check_id(id)?;
+        match gitlab_of(&app, &path) {
+            Some(f) => gitlab_releases::run_detail(f, id),
+            None => run_detail(repo_of(&app, &path)?, id),
+        }
+    })
+    .await
 }
 
 /// Re-run a run's failed jobs (`rerun-failed`), the whole run (`rerun`), or cancel it (`cancel`).
 #[tauri::command]
 pub async fn gh_run_action(app: AppHandle, path: String, id: u64, action: String) -> Result<(), String> {
-    blocking(move || run_action(repo_of(&app, &path)?, check_id(id)?, &action)).await
+    blocking(move || {
+        let id = check_id(id)?;
+        match gitlab_of(&app, &path) {
+            Some(f) => gitlab_releases::run_action(f, id, &action),
+            None => run_action(repo_of(&app, &path)?, id, &action),
+        }
+    })
+    .await
 }
 
 #[cfg(test)]

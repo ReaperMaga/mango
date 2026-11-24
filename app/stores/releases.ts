@@ -5,7 +5,7 @@ import type { OpenCheck } from '~/stores/links'
 import { sortReleases, stripeMark, type SortedReleases } from '~/utils/releaseRuns'
 
 /**
- * GitHub releases and the workflow runs that build them, for the Releases tool window and the mark
+ * GitHub or GitLab releases and the workflow runs (pipelines) that build them, for the Releases tool window and the mark
  * on its stripe button. Kept per project path; not saved, read again when shown. Which run belongs
  * to which release is worked out in `utils/releaseRuns.ts`.
  */
@@ -24,7 +24,7 @@ export interface ReleaseList {
 /** A release's newest run (or a run by id) with its jobs, as last read. */
 export interface RunRead {
   detail: GhRunDetail | null
-  /** No workflow ran for the release's tag. */
+  /** No workflow (pipeline) ran for the release's tag. */
   none: boolean
   loading: boolean
   error: string | null
@@ -63,7 +63,7 @@ export const useReleases = defineStore('releases', {
   getters: {
     sorted: state => (path: string | null): SortedReleases | null => {
       const data = path ? state.lists[path]?.data : null
-      return data ? sortReleases(data.releases, data.runs) : null
+      return data ? sortReleases(data.releases, data.runs, data.provider) : null
     },
     /** The stripe button's corner mark for a project. */
     mark(): (path: string | null) => 'running' | 'failed' | null {
@@ -133,7 +133,7 @@ export const useReleases = defineStore('releases', {
       } finally {
         delete this.acting[runId]
       }
-      // GitHub takes a moment to show the new state.
+      // The forge takes a moment to show the new state.
       await new Promise(r => setTimeout(r, 1500))
       await Promise.all([this.loadRun(path, key), this.load(path, { force: true, quiet: true })])
     },

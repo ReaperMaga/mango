@@ -93,7 +93,7 @@ function retry() {
 
 /* ---------- sign-in in the browser ----------
  * A CLI signing in inside an environment can't open a browser there. Mango opens the sign-in page
- * here as soon as the CLI prints it, shows the one-time code a device sign-in asks for (GitHub,
+ * here as soon as the CLI prints it, shows the one-time code a device sign-in asks for (GitHub, GitLab,
  * Codex), takes the code Claude Code wants pasted back, and answers GitHub's "Press Enter" for the
  * user. The terminal stays available under "Show output" for anything else the CLI asks.
  */
@@ -123,7 +123,7 @@ function resetSignIn() {
  * The sign-in pages of the tools Mango signs in to. CLIs print other links too (GitHub's notices
  * link to its changelog), so only these are opened or offered as "the sign-in page".
  */
-const SIGN_IN_PAGE = /^https:\/\/(github\.com\/login\/(device|oauth)|([a-z0-9-]+\.)?claude\.(ai|com)\/(.*\/)?oauth|([a-z0-9-]+\.)?anthropic\.com\/(.*\/)?oauth|auth\.openai\.com\/|login\.tailscale\.com\/)/i
+const SIGN_IN_PAGE = /^https:\/\/(github\.com\/login\/(device|oauth)|gitlab\.com\/oauth\/device\b|([a-z0-9-]+\.)?claude\.(ai|com)\/(.*\/)?oauth|([a-z0-9-]+\.)?anthropic\.com\/(.*\/)?oauth|auth\.openai\.com\/|login\.tailscale\.com\/)/i
 
 function onLink(url: string) {
   if (props.signIn && !SIGN_IN_PAGE.test(url)) return
@@ -140,6 +140,8 @@ const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[@-_
 const ANSWERS: Array<[RegExp, string]> = [
   [/press enter to open/i, '\r'],
   [/authenticate git with your github credentials\?/i, 'Y\r'],
+  // glab, already signed in to that server: the user asked to sign in again.
+  [/do you want to re-authenticate\?/i, 'y'],
 ]
 
 function onOutput(data: string) {
@@ -153,8 +155,11 @@ function onOutput(data: string) {
   }
   if (!deviceCode.value && /one-time code|device code|enter (this|the) code|user code/i.test(outputText)) {
     const codes = outputText.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4,5}\b/g)
-    if (codes?.length) {
-      deviceCode.value = codes[codes.length - 1]!
+    // GitLab's codes may have no dash: then the word after "one-time code:".
+    const said = [...outputText.matchAll(/one-time code:\s*([A-Za-z0-9][A-Za-z0-9-]{3,15})\b/gi)].pop()?.[1]
+    const code = codes?.length ? codes[codes.length - 1]! : said
+    if (code) {
+      deviceCode.value = code
       copyToClipboard(deviceCode.value).then(() => { codeCopied.value = true }).catch(() => {})
     }
   }

@@ -1,38 +1,51 @@
-import type { GhListItem } from '~/types/ipc'
+import type { ForgeProvider, GhListItem } from '~/types/ipc'
 
 /**
- * Picking a pull request or issue to link (LinksPicker): the repository's open ones, filtered as
+ * Picking a pull request (GitLab: merge request) or issue to link (LinksPicker): the repository's open ones, filtered as
  * the user types, and the reference typed itself when it names one the list does not hold (a
  * closed one, another repository's). Plain functions, so they run in Node tests.
  */
 
-/** A link (`https://host/owner/repo/pull/12`) or `owner/repo#12`: names one item without the list. */
-const FULL_REF = /^(?:https?:\/\/[^\s/]+\/[\w.-]+\/[\w.-]+\/(?:pull|pulls|issues)\/\d+\S*|[\w.-]+\/[\w.-]+#\d+)$/i
+/**
+ * A link or a reference with its repository: names one item without the list. GitHub
+ * `https://host/owner/repo/pull/12` or `owner/repo#12`; GitLab `https://host/group/project/-/merge_requests/12`
+ * (or `/-/issues/12`, `/-/work_items/12`) or `group/sub/project!12`.
+ */
+const FULL_REF = /^(?:https?:\/\/[^\s/]+\/[\w.-]+\/[\w.-]+\/(?:pull|pulls|issues)\/\d+\S*|https?:\/\/[^\s/]+\/(?:[\w.-]+\/){2,}-\/(?:merge_requests|issues|work_items)\/\d+\S*|[\w.-]+(?:\/[\w.-]+)+[#!]\d+)$/i
 
-/** `#12` or `12`. */
-const NUMBER = /^#?(\d{1,10})$/
+/** `#12`, `!12` (a GitLab merge request) or `12`. */
+const NUMBER = /^([#!]?)(\d{1,10})$/
 
 export function isFullReference(query: string): boolean {
   return FULL_REF.test(query.trim())
 }
 
-/** The number typed (`#12`, `12`), or null. */
+/** The number typed (`#12`, `!12`, `12`), or null. */
 export function typedNumber(query: string): number | null {
   const m = NUMBER.exec(query.trim())
-  const n = m ? Number(m[1]) : 0
+  const n = m ? Number(m[2]) : 0
   return n > 0 ? n : null
 }
 
-/** Lower-case words of a query, without `#` marks. */
-function words(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).map(w => w.replace(/^#/, '')).filter(Boolean)
+/** The mark typed before a number: `#`, `!`, or null for a bare number. */
+function typedMark(query: string): '#' | '!' | null {
+  const m = NUMBER.exec(query.trim())
+  return m?.[1] === '#' ? '#' : m?.[1] === '!' ? '!' : null
 }
 
-/** The link of an item without what may follow its number (`/files`, `#issuecomment-…`). */
-const bare = (url: string) => url.toLowerCase().replace(/^http:/, 'https:').replace(/^(https:\/\/[^/]+\/[^/]+\/[^/]+\/)pulls\//, '$1pull/').replace(/^(.+?\/\d+).*$/, '$1')
+/** Lower-case words of a query, without `#` or `!` marks. */
+function words(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).map(w => w.replace(/^[#!]/, '')).filter(Boolean)
+}
+
+/** The link of an item without what may follow its number (`/files`, `/diffs`, `#issuecomment-…`). */
+const bare = (url: string) => url.toLowerCase().replace(/^http:/, 'https:')
+  .replace(/^(https:\/\/[^/]+\/[^/]+\/[^/]+\/)pulls\//, '$1pull/')
+  .replace(/\/-\/work_items\/(\d)/, '/-/issues/$1')
+  .replace(/^(.+?\/(?:pull|issues|merge_requests)\/\d+).*$/, '$1')
 
 export interface PickerRows {
-  /** The query itself, to look up on GitHub, when it names an item the list does not hold. */
+  /** The query itself, to look up on GitHub or GitLab, when it names an item the list does not hold. */
   reference: string | null
   /** Items that match, best first. */
   items: GhListItem[]
@@ -43,7 +56,7 @@ export interface PickerRows {
  * number first and then those whose number starts with it; for a link, that item; otherwise the
  * items whose title, branch or number holds every word typed.
  */
-export function pickerRows(items: GhListItem[], query: string): PickerRows {
+export function pickerRows(items: GhListItem[], query: string, provider: ForgeProvider = 'github'): PickerRows {
   const q = query.trim()
   if (!q) return { reference: null, items }
   if (isFullReference(q)) {
@@ -54,9 +67,15 @@ export function pickerRows(items: GhListItem[], query: string): PickerRows {
   const n = typedNumber(q)
   if (n !== null) {
     const digits = String(n)
-    const exact = items.filter(i => i.number === n)
-    const rest = items.filter(i => i.number !== n && String(i.number).startsWith(digits))
-    return { reference: exact.length ? null : `#${n}`, items: [...exact, ...rest] }
+    // GitLab numbers merge requests (`!12`) and issues (`#12`) apart: a mark picks one kind; a bare number shows both.
+    const mark = typedMark(q)
+    const kind = provider !== 'gitlab' || !mark ? null : mark === '!' ? 'pr' : 'issue'
+    const pool = kind ? items.filter(i => i.kind === kind) : items
+    const exact = pool.filter(i => i.number === n)
+    const rest = pool.filter(i => i.number !== n && String(i.number).startsWith(digits))
+    // GitLab reads a bare number as a merge request, else an issue: it goes as typed.
+    const sign = provider === 'gitlab' ? (mark ?? '') : '#'
+    return { reference: exact.length ? null : `${sign}${n}`, items: [...exact, ...rest] }
   }
   const want = words(q)
   return {

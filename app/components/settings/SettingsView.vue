@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Bell, Bot, FilePen, Folder, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bell, Bot, FilePen, Folder, GitPullRequest, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
@@ -9,6 +9,7 @@ import SettingsChangelog from './SettingsChangelog.vue'
 import SettingsEditor from './SettingsEditor.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
+import SettingsHosting from './SettingsHosting.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
 import SettingsMcp from './SettingsMcp.vue'
 import SettingsNotifications from './SettingsNotifications.vue'
@@ -60,6 +61,7 @@ const groups: Array<{ label: string; items: Item[] }> = [
     label: 'Technical',
     items: [
       { id: 'environments', label: 'Environments', icon: Server },
+      { id: 'hosting', label: 'Git hosting', icon: GitPullRequest },
       { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
       { id: 'mcp', label: 'MCP servers', icon: Plug },
       { id: 'plugins', label: 'Plugins', icon: Puzzle },
@@ -302,6 +304,10 @@ onBeforeUnmount(() => {
               <!-- Agents stays mounted while Settings is open, so a sign-in in progress survives a look at another section. -->
               <Transition name="page">
                 <SettingsAgents v-show="section === 'agents'" :active="open && section === 'agents'" />
+              </Transition>
+              <!-- Git hosting too: an install or a sign-in running there survives a look elsewhere. -->
+              <Transition name="page">
+                <SettingsHosting v-show="section === 'hosting'" :active="open && section === 'hosting'" />
               </Transition>
               <Transition name="page">
                 <SettingsTerminal v-if="section === 'terminal'" />

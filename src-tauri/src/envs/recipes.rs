@@ -39,6 +39,10 @@
 //! SDKMAN for the agent user, with its current JDK on every login shell's PATH
 //! (`/etc/profile.d/mango-java.sh`). `env_versions` lists what can be picked, read on this computer
 //! from nodejs.org's index and SDKMAN's API (Linux x64 builds).
+//!
+//! The GitLab CLI (`glab`) has no apt repository: it is one pinned release's .deb (amd64 or
+//! arm64), checked against the SHA-256 that release's checksums.txt lists, hard-coded in `GLAB`.
+//! To move to a newer glab, change `glab_v` and both sums together.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -51,7 +55,7 @@ use super::{hosts, ssh, valid_instance, valid_java_version, valid_master_path, v
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvComponent {
-    /// "base" | "claude" | "codex" | "gh" | "node" | "java" | "chromium" | "desktop" | "docker" | "tailscale"
+    /// "base" | "claude" | "codex" | "gh" | "glab" | "node" | "java" | "chromium" | "desktop" | "docker" | "tailscale"
     pub id: String,
     pub name: String,
     pub description: String,
@@ -105,6 +109,14 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "gh, from GitHub's apt repository.",
         requires: &["base"],
         script: GH,
+        version_var: None,
+    },
+    Recipe {
+        id: "glab",
+        name: "GitLab CLI",
+        description: "glab, GitLab's own release package (checked against its SHA-256): merge requests, issues and git sign-in on gitlab.com and your own GitLab servers.",
+        requires: &["base"],
+        script: GLAB,
         version_var: None,
     },
     Recipe {
@@ -363,6 +375,31 @@ apt_get update
 APT_FRESH=1
 apt_get install gh
 gh --version | head -n 1
+"##;
+
+/// glab has no apt repository: its release's .deb, pinned with the SHA-256 sums from that
+/// release's checksums.txt. An update brings it to this version; newer ones need a new Mango.
+const GLAB: &str = r##"say "GitLab CLI (glab, from GitLab's release packages)"
+glab_v=1.131.0
+case "$(dpkg --print-architecture)" in
+  amd64) glab_sum=e9e841f4bc62dfb0d6c30ada0aa70e22d9bb4879eba7571ef54998912cebe9ed ;;
+  arm64) glab_sum=ee85fd31636c25bdcea896c4383cf8ea54347666b89a4edcd1c477889be5abdf ;;
+  *) fail "Mango installs glab on amd64 and arm64 only, not $(dpkg --print-architecture)." ;;
+esac
+if [ "$(dpkg-query -W -f='${Version}' glab 2>/dev/null || true)" = "$glab_v" ]; then
+  echo "glab $glab_v is up to date."
+else
+  glab_file="glab_${glab_v}_linux_$(dpkg --print-architecture).deb"
+  glab_tmp=$(mktemp -d)
+  chmod 0755 "$glab_tmp"
+  curl -fsSL "https://gitlab.com/gitlab-org/cli/-/releases/v$glab_v/downloads/$glab_file" -o "$glab_tmp/$glab_file"
+  chmod 0644 "$glab_tmp/$glab_file"
+  echo "$glab_sum  $glab_tmp/$glab_file" | sha256sum -c --quiet \
+    || { rm -rf "$glab_tmp"; fail "$glab_file does not match its published checksum. Nothing was changed."; }
+  apt_install "$glab_tmp/$glab_file"
+  rm -rf "$glab_tmp"
+fi
+glab --version | head -n 1
 "##;
 
 const CLAUDE: &str = r##"say "Claude Code (install or update)"
@@ -722,6 +759,7 @@ if [ -d /home/agent/.sdkman/candidates/java/current ]; then
   [ -n "$j" ] || row java installed
 fi
 command -v gh >/dev/null 2>&1 && row gh "$(gh --version 2>/dev/null | first)"
+command -v glab >/dev/null 2>&1 && row glab "$(GLAB_CHECK_UPDATE=false glab --version 2>/dev/null | first)"
 if [ -x /usr/local/bin/mango-chromium-mcp ]; then
   v=$(/usr/local/lib/mango/chromium --version 2>/dev/null | first)
   row chromium "${v:-installed}"
@@ -1006,6 +1044,7 @@ mod tests {
         assert_eq!(order(&["claude"]), ["base", "claude"]);
         assert_eq!(order(&["tailscale", "claude", "base", "claude"]), ["base", "claude", "tailscale"]);
         assert_eq!(order(&["desktop", "gh", "node", "codex"]), ["base", "node", "gh", "codex", "desktop"]);
+        assert_eq!(order(&["claude", "glab", "gh"]), ["base", "gh", "glab", "claude"]);
         assert!(order(&[]).is_empty());
         let e = resolve(&ids(&["claude", "rm -rf"])).err().unwrap();
         assert!(e.contains("rm -rf"), "{e}");
@@ -1060,6 +1099,23 @@ mod tests {
         assert_eq!(remote[8], "1");
         assert!(remote[2].contains("security.nesting=true security.syscalls.intercept.mknod=true"));
         assert!(!install_plan(&host(None), "dev", &ids(&["node"]), &Versions::new()).unwrap().nesting);
+    }
+
+    #[test]
+    fn glab_installs_a_pinned_checked_package() {
+        assert_eq!(order(&["glab"]), ["base", "glab"]);
+        let p = install_plan(&host(None), "dev", &ids(&["glab"]), &Versions::new()).unwrap();
+        assert!(p.script.contains("glab_v=1.131.0\n"));
+        assert!(p.script.contains("https://gitlab.com/gitlab-org/cli/-/releases/v$glab_v/downloads/$glab_file"));
+        // One sum per architecture, each a full SHA-256, checked before anything is installed.
+        for arch in ["amd64", "arm64"] {
+            let line = p.script.lines().find(|l| l.trim_start().starts_with(&format!("{arch}) glab_sum="))).expect(arch);
+            let sum = line.split('=').nth(1).unwrap().trim_end_matches(" ;;");
+            assert!(sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit()), "{line}");
+        }
+        assert!(p.script.find("sha256sum -c --quiet").unwrap() < p.script.find("apt_install \"$glab_tmp/$glab_file\"").unwrap());
+        assert!(p.script.find("useradd").unwrap() < p.script.find("glab_v=").unwrap());
+        assert!(!p.nesting && !p.tailscale);
     }
 
     fn picked(v: &[(&str, &str)]) -> Versions {
@@ -1262,6 +1318,12 @@ Available Java Versions for Linux 64bit
         assert_eq!(get("codex").version.as_deref(), Some("0.46.0"));
         assert_eq!(get("node").version.as_deref(), Some("22.11.0"));
         assert_eq!(get("gh").version.as_deref(), Some("2.62.0"));
+        assert!(!get("glab").installed);
+        let c = parse_probe("glab\tglab 1.131.0 (3f2a9c1e)\n");
+        let glab = c.iter().find(|x| x.id == "glab").unwrap();
+        assert_eq!(glab.version.as_deref(), Some("1.131.0"));
+        assert!(glab.installed && !glab.versioned);
+        assert_eq!(glab.requires, ["base"]);
         assert_eq!(get("desktop").version.as_deref(), Some("4.18.3"));
         assert_eq!(get("chromium").version.as_deref(), Some("143.0.7499.4"));
         assert_eq!(get("chromium").requires, ["base", "node"]);

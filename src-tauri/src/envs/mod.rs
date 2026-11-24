@@ -261,6 +261,16 @@ pub fn valid_java_version(s: &str) -> Result<(), String> {
     ok.then_some(()).ok_or_else(|| format!("\"{s}\" is not an SDKMAN Java identifier. They look like 21.0.5-tem."))
 }
 
+/// The GitLab server a `glab` sign-in is for: gitlab.com when none is given, else a host name
+/// (optionally with a port), normalised the way Settings > Git hosting stores it.
+pub fn valid_gitlab_host(s: Option<&str>) -> Result<String, String> {
+    match s.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(crate::gitlab::GITLAB_COM.to_string()),
+        Some(h) => crate::gitlab::normalize_host(h)
+            .ok_or_else(|| format!("\"{h}\" is not a GitLab server name. Type it like gitlab.example.com.")),
+    }
+}
+
 /// An environment variable name for an agent run.
 pub fn valid_env_key(s: &str) -> bool {
     !s.is_empty()
@@ -309,6 +319,13 @@ mod tests {
         assert!(valid_remote("a:b").is_err());
         assert!(valid_env_key("CLAUDE_CODE_X"));
         assert!(!valid_env_key("A=B"));
+        assert_eq!(valid_gitlab_host(None).unwrap(), "gitlab.com");
+        assert_eq!(valid_gitlab_host(Some("  ")).unwrap(), "gitlab.com");
+        assert_eq!(valid_gitlab_host(Some("https://GitLab.Corp.io/x")).unwrap(), "gitlab.corp.io");
+        assert_eq!(valid_gitlab_host(Some("git.corp.io:8443")).unwrap(), "git.corp.io:8443");
+        for bad in ["localhost", "a.io;id", "$(id).io", "-x.io", "a.io:0", "a b.io", "'a.io"] {
+            assert!(valid_gitlab_host(Some(bad)).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

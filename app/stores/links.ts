@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { GhCheck, GhItem, GhJob, GhMergeMethod, GhOpenItems } from '~/types/ipc'
+import type { ForgeProvider, GhCheck, GhItem, GhJob, GhMergeMethod, GhOpenItems } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
@@ -7,7 +7,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { linkFromItem } from '~/utils/githubLinks'
 
 /**
- * Pull requests and issues as GitHub reports them, for the Pull requests tool window. Which items
+ * Pull requests (GitLab: merge requests) and issues as GitHub or GitLab reports them, for the Pull requests tool window. Which items
  * belong to which chat is the chat's own business (`Thread.links`, in the threads store); this
  * keeps what was read about them. Not saved: it is read again when shown.
  */
@@ -23,7 +23,7 @@ export interface LinkDetail {
   bodyAt: number
 }
 
-/** A GitHub Actions job as last read, for the check log view. */
+/** A GitHub Actions job or GitLab pipeline job as last read, for the check log view. */
 export interface JobDetail {
   job: GhJob | null
   loading: boolean
@@ -43,15 +43,23 @@ export interface OpenList {
 export interface OpenCheck {
   /** The pull request's link key: the log closes when another item opens. */
   linkKey: string
-  /** Its details link, a GitHub Actions job (see `isJobUrl`). */
+  /** Its details link, a GitHub Actions job or GitLab pipeline job (see `isJobUrl`). */
   url: string
   name: string
   workflow: string | null
 }
 
-/** A check's details link that `gh_job` can read: a GitHub Actions job. */
+/** A GitHub Actions job's page. */
+const GITHUB_JOB = /^https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/
+/** A GitLab pipeline job's page: the project's path (any depth of groups), then `/-/jobs/123`. */
+const GITLAB_JOB = /^https?:\/\/[^/]+\/(?:[\w.-]+\/){2,}-\/jobs\/\d+(?:[?#].*)?$/
+
+/** A check's details link that `gh_job` can read: a GitHub Actions job or a GitLab pipeline job. */
 export const isJobUrl = (url: string | null | undefined): url is string =>
-  !!url && /^https:\/\/[^/]+\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+  !!url && (GITHUB_JOB.test(url) || GITLAB_JOB.test(url))
+
+/** The forge a job link is on, by its shape. */
+export const jobProvider = (url: string): ForgeProvider => (GITLAB_JOB.test(url) ? 'gitlab' : 'github')
 
 /** The open list is listed again when it is older than this. */
 const OPEN_FRESH_MS = 60_000
@@ -74,7 +82,7 @@ export const useLinks = defineStore('links', {
     details: {} as Record<string, LinkDetail>,
     /** The item the tool window has open; null shows the chat's list. */
     focused: null as string | null,
-    /** GitHub Actions jobs, by link. */
+    /** GitHub Actions and GitLab pipeline jobs, by link. */
     jobs: {} as Record<string, JobDetail>,
     /** The check whose log is open over its pull request; null shows the pull request. */
     check: null as OpenCheck | null,
@@ -84,7 +92,7 @@ export const useLinks = defineStore('links', {
 
   actions: {
     /**
-     * Read an item from GitHub, unless what we have is recent (or `force`). A `quiet` read keeps
+     * Read an item from GitHub or GitLab, unless what we have is recent (or `force`). A `quiet` read keeps
      * the description already shown while its pictures are still good: GitHub signs picture links
      * afresh on every read, and swapping them in would reload every picture each time.
      */
@@ -114,12 +122,12 @@ export const useLinks = defineStore('links', {
     },
 
     /**
-     * Merge a pull request on GitHub as it was last read (GitHub refuses if its branch moved since),
+     * Merge a pull request (merge request) as it was last read (the forge refuses if its branch moved since),
      * then read it again. Rejects with a message to show.
      */
     async merge(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, method: GhMergeMethod) {
       const headSha = this.details[link.key]?.item?.headSha
-      if (!headSha) throw new Error('Read the pull request again before merging it.')
+      if (!headSha) throw new Error(`Read the ${this.details[link.key]?.item?.provider === 'gitlab' ? 'merge' : 'pull'} request again before merging it.`)
       try {
         await call('gh_merge', { path: projectPath, reference: link.url, method, headSha })
       } catch (e) {
@@ -177,7 +185,7 @@ export const useLinks = defineStore('links', {
       }
     },
 
-    /** Show a check's log over the pull request `linkKey`. Only GitHub Actions jobs have one here. */
+    /** Show a check's log over the pull request `linkKey`. Only GitHub Actions and GitLab pipeline jobs have one here. */
     openCheck(linkKey: string, check: GhCheck) {
       if (!isJobUrl(check.url)) return
       this.check = { linkKey, url: check.url, name: check.name, workflow: check.workflow }

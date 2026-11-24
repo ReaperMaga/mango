@@ -1,15 +1,17 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight, Circle, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX } from 'lucide-vue-next'
 import type { GhJobStep, GhRunState } from '~/types/ipc'
-import { useLinks, type OpenCheck } from '~/stores/links'
+import { jobProvider, useLinks, type OpenCheck } from '~/stores/links'
+import { forgeName } from '~/utils/forge'
 import { parseStepLog, type LogEntry, type LogLine, type LogSpan } from '~/utils/actionsLog'
 import { formatDuration, useNow } from '~/utils/time'
 
 /**
- * A GitHub Actions job's log in the Pull requests tool window, laid out like GitHub's own job page:
- * the job's steps in order, each opening to its log, where `##[group]` sections fold and errors stand
- * out. A failed step opens by itself and the first error scrolls into view. While the job runs, its
- * steps update every few seconds; GitHub hands out the log once the job has finished.
+ * A GitHub Actions job's (or GitLab pipeline job's) log in the Pull requests tool window, laid out
+ * like GitHub's own job page: the job's steps in order (GitLab: its sections), each opening to its
+ * log, where `##[group]` sections fold and errors stand out. A failed step opens by itself and the
+ * first error scrolls into view. While the job runs, its steps update every few seconds; the forge
+ * hands out the log once the job has finished.
  */
 const props = defineProps<{ check: OpenCheck }>()
 
@@ -19,6 +21,8 @@ const detail = computed(() => links.jobs[props.check.url])
 const job = computed(() => detail.value?.job ?? null)
 const running = (s: GhRunState) => s === 'pending' || s === 'queued'
 const finished = computed(() => !!job.value && !running(job.value.state))
+/** Where the job runs, known from its link before it is read. */
+const forge = computed(() => forgeName(job.value?.provider ?? jobProvider(props.check.url)))
 
 /* ---------- reading, and keeping a running job current ---------- */
 const POLL_MS = 5_000
@@ -127,8 +131,9 @@ watch(() => job.value?.logReady, async (ready) => {
     <p v-if="detail?.error" class="cl__error selectable" role="alert">
       {{ job ? 'Could not refresh: ' : '' }}{{ detail.error }}
     </p>
+    <LinksHostingButton :error="detail?.error" />
 
-    <div v-if="!job && detail?.loading !== false && !detail?.error" class="cl__skeleton" aria-label="Reading from GitHub">
+    <div v-if="!job && detail?.loading !== false && !detail?.error" class="cl__skeleton" :aria-label="`Reading from ${forge}`">
       <span v-for="w in [44, 70, 58, 66, 38, 52]" :key="w" :style="{ width: `${w}%` }" />
     </div>
 
@@ -157,7 +162,7 @@ watch(() => job.value?.logReady, async (ready) => {
 
           <div v-if="stepOpen(s)" class="cl__log selectable" :style="{ '--gutter': gutter(s) }">
             <p v-if="s.omitted" class="cl__omitted">
-              {{ s.omitted.toLocaleString() }} earlier line{{ s.omitted === 1 ? ' is' : 's are' }} left out. GitHub has the whole log.
+              {{ s.omitted.toLocaleString() }} earlier line{{ s.omitted === 1 ? ' is' : 's are' }} left out. {{ forge }} has the whole log.
             </p>
             <template v-for="e in parsed.get(s.number) ?? []" :key="e.kind === 'line' ? e.line.n : e.head.n">
               <div v-if="e.kind === 'line'" class="cl__line" :class="e.line.level && `is-${e.line.level}`">
@@ -184,7 +189,7 @@ watch(() => job.value?.logReady, async (ready) => {
         </li>
       </ol>
 
-      <p v-if="job.logTruncated" class="cl__note">The log was too long to read whole: its end is missing here. GitHub has all of it.</p>
+      <p v-if="job.logTruncated" class="cl__note">The log was too long to read whole: its end is missing here. {{ forge }} has all of it.</p>
     </template>
   </article>
 </template>

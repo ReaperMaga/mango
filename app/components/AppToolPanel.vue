@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
+import { useForge } from '~/stores/forge'
 import { holdOverlay } from '~/composables/useOverlay'
 import { pluginToolWindow } from '~/plugin-host/registry'
 import { isPluginRef } from '~/plugin-host/ids'
@@ -15,7 +16,11 @@ const ws = useWorkspace()
 const LABELS: Record<string, string> = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests', releases: 'Releases' }
 /** A plugin's tool window, while its plugin runs (see `plugin-host/`). */
 const pluginWin = computed(() => pluginToolWindow(ws.toolPanel))
-const label = computed(() => pluginWin.value?.title ?? LABELS[ws.toolPanel ?? 'files'] ?? 'Tool window')
+/** The Pull requests window is Merge requests for a project on GitLab. */
+const forge = useForge()
+const label = computed(() => pluginWin.value?.title
+  ?? (ws.toolPanel === 'links' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'Merge requests' : null)
+  ?? LABELS[ws.toolPanel ?? 'files'] ?? 'Tool window')
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false

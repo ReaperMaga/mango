@@ -8,6 +8,8 @@ import { instanceKey, shareDay, shareExpired, useEnvironments } from '~/stores/e
 import { useWorkspace } from '~/stores/workspace'
 import { copyToClipboard } from '~/utils/agentCli'
 import EnvTerminal from '~/components/envs/EnvTerminal.vue'
+import EnvGitlabServer from '~/components/envs/EnvGitlabServer.vue'
+import { GITLAB_COM } from '~/utils/gitHosts'
 
 /**
  * The Environment tool window: where the active project runs. On this computer, its folder and a
@@ -87,6 +89,8 @@ interface Job {
   label: string
   start: (cols: number, rows: number) => Promise<string>
   signIn?: boolean
+  /** One line under the terminal while it runs. */
+  hint?: string
   after?: (code: number | null) => void
 }
 const job = ref<Job | null>(null)
@@ -140,12 +144,49 @@ function login(tool: EnvLoginTool, name: string) {
     after: (code) => { if (code === 0 && tool === 'tailscale') envs.refreshInstances(p.hostId) },
   })
 }
-const loginItems = computed<MenuItem[]>(() => LOGINS.map(l => ({
-  label: l.name,
-  hint: installed(l.tool) === false ? 'Not installed' : undefined,
-  disabled: installed(l.tool) === false,
-  onSelect: () => login(l.tool, l.name),
-})))
+/** glab signs in to one GitLab server at a time: gitlab.com, one Mango knows, or one typed in place. */
+function loginGitlab(server: string) {
+  const p = place.value
+  if (!p) return
+  otherServer.value = false
+  const selfManaged = server !== GITLAB_COM
+  run({
+    title: `Signing in to ${server}…`,
+    doneTitle: `Signed in to ${server}`,
+    failedTitle: 'Sign-in didn\'t finish',
+    label: `GitLab CLI sign-in to ${server} in ${p.label}`,
+    start: (cols, rows) => envs.login(p.hostId, p.instance, 'glab', cols, rows, server),
+    signIn: !selfManaged,
+    hint: selfManaged
+      ? `Choose Token, then paste a personal access token from ${server} with the api and write_repository scopes.`
+      : undefined,
+    after: (code) => { if (code === 0 && selfManaged) void envs.loadGitlabHosts() },
+  })
+}
+const otherServer = ref(false)
+const loginItems = computed<MenuItem[]>(() => {
+  const items: MenuItem[] = LOGINS.map(l => ({
+    label: l.name,
+    hint: installed(l.tool) === false ? 'Not installed' : undefined,
+    disabled: installed(l.tool) === false,
+    onSelect: () => login(l.tool, l.name),
+  }))
+  const noGlab = installed('glab') === false
+  const servers = [GITLAB_COM, ...(envs.gitlabHosts ?? [])]
+  servers.forEach((h, i) => items.push({
+    label: h,
+    group: i === 0 ? 'GitLab CLI' : undefined,
+    hint: noGlab && i === 0 ? 'Not installed' : undefined,
+    disabled: noGlab,
+    onSelect: () => loginGitlab(h),
+  }))
+  items.push({ label: 'Another GitLab server…', disabled: noGlab, onSelect: () => { otherServer.value = true } })
+  return items
+})
+function openLogins(toggle: () => void) {
+  void envs.loadGitlabHosts()
+  toggle()
+}
 
 /* ---------- ways in ---------- */
 
@@ -154,6 +195,7 @@ const settings = (intent?: 'open-desktop') => { if (place.value) envs.openInstan
 /* Started here, after the job slot exists: a new project drops the old one's terminal. */
 watch(path, (p) => {
   job.value = null
+  otherServer.value = false
   void catchUp(p)
 }, { immediate: true })
 
@@ -240,12 +282,19 @@ function openInEnv() {
           </UiButton>
           <UiMenu :items="loginItems" :width="220" label="Sign in">
             <template #default="{ toggle, open }">
-              <UiButton size="sm" :disabled="!running || jobRunning" :title="busyTitle" :aria-expanded="open" aria-haspopup="menu" @click="toggle">
+              <UiButton size="sm" :disabled="!running || jobRunning" :title="busyTitle" :aria-expanded="open" aria-haspopup="menu" @click="openLogins(toggle)">
                 <KeyRound />Sign in…
               </UiButton>
             </template>
           </UiMenu>
         </div>
+
+        <EnvGitlabServer
+          v-if="otherServer && running && !jobRunning"
+          compact
+          @pick="loginGitlab"
+          @cancel="otherServer = false"
+        />
 
         <div v-if="job" class="te__job">
           <EnvTerminal
@@ -259,7 +308,9 @@ function openInEnv() {
             :sign-in="job.signIn"
             @exit="onJobExit"
             @close="closeJob"
-          />
+          >
+            <template v-if="job.hint" #hint>{{ job.hint }}</template>
+          </EnvTerminal>
         </div>
 
         <dl v-if="inst || direct" class="te__facts">

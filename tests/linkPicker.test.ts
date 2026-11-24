@@ -73,3 +73,33 @@ test('highlight marks every word, keeping case', () => {
   assert.equal(numberMatch(75, '8'), 0)
   assert.equal(numberMatch(75, 'branch'), 0)
 })
+
+const glItem = (number: number, title: string, kind: 'pr' | 'issue'): GhListItem => ({
+  kind, number, title, headRef: null, state: 'open', author: null, updatedAt: '2026-11-21T00:00:00Z',
+  url: `https://gitlab.com/acme/backend/api/-/${kind === 'pr' ? 'merge_requests' : 'issues'}/${number}`,
+})
+const gl = [glItem(12, 'Merge twelve', 'pr'), glItem(12, 'Issue twelve', 'issue'), glItem(7, 'Seven', 'pr')]
+
+test('GitLab: ! picks merge requests, # issues, a bare number both', () => {
+  assert.deepEqual(pickerRows(gl, '!12', 'gitlab').items.map(i => i.title), ['Merge twelve'])
+  assert.deepEqual(pickerRows(gl, '#12', 'gitlab').items.map(i => i.title), ['Issue twelve'])
+  assert.deepEqual(pickerRows(gl, '12', 'gitlab').items.map(i => i.title), ['Merge twelve', 'Issue twelve'])
+  // Not in the list: looked up as typed (a bare number is a merge request first, then an issue).
+  assert.equal(pickerRows(gl, '!7', 'gitlab').reference, null)
+  assert.equal(pickerRows(gl, '#7', 'gitlab').reference, '#7')
+  assert.equal(pickerRows(gl, '30', 'gitlab').reference, '30')
+  // On GitHub `!` means nothing special.
+  assert.equal(pickerRows(open, '!12').reference, null)
+})
+
+test('GitLab links and references name one item', () => {
+  assert.equal(isFullReference('https://gitlab.com/acme/backend/api/-/merge_requests/12/diffs'), true)
+  assert.equal(isFullReference('https://gitlab.com/acme/api/-/work_items/3'), true)
+  assert.equal(isFullReference('acme/backend/api!12'), true)
+  assert.equal(isFullReference('acme/backend/api#12'), true)
+  assert.equal(typedNumber('!12'), 12)
+  const hit = pickerRows(gl, 'https://gitlab.com/acme/backend/api/-/merge_requests/12/diffs', 'gitlab')
+  assert.deepEqual(hit, { reference: null, items: [gl[0]] })
+  // The issue with the same number is another item.
+  assert.deepEqual(pickerRows(gl, 'https://gitlab.com/acme/backend/api/-/work_items/12', 'gitlab').items, [gl[1]])
+})
