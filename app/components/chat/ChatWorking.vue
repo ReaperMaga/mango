@@ -5,6 +5,7 @@ import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { parseEnvPath } from '~/utils/envPath'
+import { toolLabel } from '~/utils/chatTexts'
 
 /**
  * The live "the agent is at work" row under the conversation: what it is
@@ -13,50 +14,51 @@ import { parseEnvPath } from '~/utils/envPath'
  */
 const props = defineProps<{ thread: Thread }>()
 
+const { t } = useI18n()
 const agent = computed(() => AGENTS[props.thread.agent].name)
 const threads = useThreads()
 const ws = useWorkspace()
 /** Answered already, and only background tasks keep the run open (they are listed above the composer). */
 const waitingOn = computed(() => {
   const live = threads.live[props.thread.id]
-  return live?.idle ? live.tasks.filter(t => t.status === 'running').length : 0
+  return live?.idle ? live.tasks.filter(x => x.status === 'running').length : 0
 })
 
 /** The run's environment lost its connection: the agent goes on there while Mango reconnects. */
 const reconnecting = computed(() => {
   if (!threads.live[props.thread.id]?.reconnecting) return null
-  const t = threads.rootOf(props.thread.id) ?? props.thread
-  return parseEnvPath(t.projectPath)?.instance ?? 'the environment'
+  const root = threads.rootOf(props.thread.id) ?? props.thread
+  return { name: parseEnvPath(root.projectPath)?.instance }
 })
 
 const activity = computed(() => {
-  const t = props.thread
-  if (reconnecting.value) return `Reconnecting to ${reconnecting.value}`
-  if (t.status === 'queued' && t.awaitingWorktree) {
+  const chat = props.thread
+  if (reconnecting.value) return reconnecting.value.name ? t('chat.working.reconnecting', { name: reconnecting.value.name }) : t('chat.working.reconnectingEnv')
+  if (chat.status === 'queued' && chat.awaitingWorktree) {
     // Unity VCS downloads the branch's files into the new workspace first: minutes on a big project.
-    const terms = vcsTerms(ws.openProjects.find(p => p.path === t.projectPath)?.vcs)
-    return terms.pathBranches ? `Making a ${terms.worktree} and downloading its files` : `Making a ${terms.worktree}`
+    const terms = vcsTerms(ws.openProjects.find(p => p.path === chat.projectPath)?.vcs)
+    return terms.pathBranches ? t('chat.working.makingFiles', { term: t('chat.terms.workspace') }) : t('chat.working.making', { term: t('chat.terms.worktree') })
   }
-  if (t.status === 'queued') return `Starting ${agent.value}`
-  if (t.status === 'waiting') return `Waiting for your ${waitingFor(t)}`
-  if (waitingOn.value) return `Waiting for ${waitingOn.value} background task${waitingOn.value === 1 ? '' : 's'}`
-  const last = t.messages[t.messages.length - 1]
+  if (chat.status === 'queued') return t('chat.working.starting', { agent: agent.value })
+  if (chat.status === 'waiting') return t(`chat.working.waitingFor.${waitingFor(chat)}`)
+  if (waitingOn.value) return t('chat.working.waitingTasks', waitingOn.value)
+  const last = chat.messages[chat.messages.length - 1]
   const part = last?.role === 'agent' ? last.parts[last.parts.length - 1] : undefined
-  if (!part) return `${agent.value} is starting up`
-  if (part.type === 'thinking' && part.seconds === 0) return 'Thinking'
-  if (part.type === 'text') return 'Writing'
+  if (!part) return t('chat.working.startingUp', { agent: agent.value })
+  if (part.type === 'thinking' && part.seconds === 0) return t('chat.working.thinking')
+  if (part.type === 'text') return t('chat.working.writing')
   if (part.type === 'tool' && part.status === 'running') {
     switch (part.tool) {
-      case 'read': return 'Reading files'
-      case 'edit': return 'Editing a file'
-      case 'write': return 'Creating a file'
-      case 'bash': return 'Running a command'
-      case 'search': return 'Searching the project'
-      case 'web': return 'Looking something up online'
-      default: return part.label ? `${part.label} ${part.target}`.trim() : 'Using a tool'
+      case 'read': return t('chat.working.read')
+      case 'edit': return t('chat.working.edit')
+      case 'write': return t('chat.working.write')
+      case 'bash': return t('chat.working.bash')
+      case 'search': return t('chat.working.search')
+      case 'web': return t('chat.working.web')
+      default: return part.label ? `${toolLabel(part.label)} ${part.target}`.trim() : t('chat.working.other')
     }
   }
-  return 'Working'
+  return t('chat.working.working')
 })
 
 /** The turn started when the user's message was sent. */
@@ -77,9 +79,9 @@ const elapsed = computed(() => formatDuration(Math.max(0, now.value - startedAt.
   <div class="wk" :class="[`wk--${thread.status}`, { 'wk--reconnecting': reconnecting }]" role="status" aria-live="polite">
     <UiRipenessDot :status="thread.status" :size="13" />
     <span class="wk__label">{{ activity }}<span class="wk__dots" aria-hidden="true"><i /><i /><i /></span></span>
-    <span v-if="reconnecting" class="wk__note">the agent keeps working there</span>
+    <span v-if="reconnecting" class="wk__note">{{ t('chat.working.goesOn') }}</span>
     <span class="wk__time tabular">{{ elapsed }}</span>
-    <span v-if="thread.status !== 'waiting'" class="wk__hint"><kbd>Esc</kbd> to stop</span>
+    <i18n-t v-if="thread.status !== 'waiting'" keypath="chat.working.toStop" tag="span" scope="global" class="wk__hint"><template #key><kbd>Esc</kbd></template></i18n-t>
   </div>
 </template>
 

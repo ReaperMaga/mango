@@ -2,6 +2,7 @@
 import { ChevronRight } from 'lucide-vue-next'
 
 const props = defineProps<{ text: string; seconds: number; live?: boolean }>()
+const { t } = useI18n()
 const open = ref(false)
 </script>
 
@@ -9,8 +10,8 @@ const open = ref(false)
   <div class="th" :class="{ 'is-open': open }">
     <button type="button" class="th__head" :aria-expanded="props.text ? open : undefined" :disabled="!props.text" @click="open = !open">
       <ChevronRight v-if="props.text" class="th__caret" />
-      <span v-if="props.live" class="th__live">Thinking…</span>
-      <span v-else>Thought for {{ props.seconds }}s</span>
+      <span v-if="props.live" class="th__live">{{ t('chat.thinking.live') }}</span>
+      <span v-else>{{ t('chat.thinking.done', { n: props.seconds }) }}</span>
     </button>
     <UiReveal>
       <p v-if="props.text && (open || props.live)" class="th__body selectable">{{ props.text }}</p>

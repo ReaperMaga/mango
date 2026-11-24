@@ -11,17 +11,8 @@ type Step = Extract<Part, { type: 'thinking' } | { type: 'tool' }>
  * end of a turn, the newest step stays visible under the summary.
  */
 const props = defineProps<{ steps: Step[]; live?: boolean }>()
+const { t } = useI18n()
 const open = ref(false)
-
-const nouns: Record<ToolKind, [verb: string, one: string, many: string]> = {
-  bash: ['ran', 'command', 'commands'],
-  read: ['read', 'file', 'files'],
-  edit: ['edited', 'file', 'files'],
-  write: ['created', 'file', 'files'],
-  search: ['ran', 'search', 'searches'],
-  web: ['fetched', 'page', 'pages'],
-  other: ['used', 'tool', 'tools'],
-}
 
 const summary = computed(() => {
   // Phrases in order of first appearance; each tool kind counted on its own.
@@ -34,10 +25,8 @@ const summary = computed(() => {
     if (s.type === 'thinking') seconds += s.seconds
   }
   const bits = [...counts].map(([key, n]) => {
-    if (key === 'thinking') return seconds > 0 ? `thought for ${formatDuration(seconds * 1000)}` : 'thought'
-    if (key === 'browser') return n === 1 ? 'used the browser' : `used the browser ${n} times`
-    const [verb, one, many] = nouns[key]
-    return `${verb} ${n} ${n === 1 ? one : many}`
+    if (key === 'thinking') return seconds > 0 ? t('chat.steps.thoughtFor', { time: formatDuration(seconds * 1000) }) : t('chat.steps.thought')
+    return t(`chat.steps.${key}`, n)
   })
   const text = bits.join(', ')
   return text.charAt(0).toUpperCase() + text.slice(1)
@@ -53,7 +42,7 @@ const visible = computed<Step[]>(() => (open.value ? props.steps : props.live ? 
     <button type="button" class="steps__head" :aria-expanded="open" @click="open = !open">
       <ChevronRight class="steps__caret" aria-hidden="true" />
       <span class="steps__sum">{{ summary }}</span>
-      <span v-if="failed" class="steps__failed">· {{ failed }} failed</span>
+      <span v-if="failed" class="steps__failed">· {{ t('chat.steps.failed', { n: failed }) }}</span>
     </button>
     <UiReveal>
       <div v-if="visible.length" class="steps__body">

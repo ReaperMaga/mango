@@ -2,6 +2,7 @@ import { Laptop, Server, ServerOff, Settings2 } from 'lucide-vue-next'
 import type { EnvRemote } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { instanceKey, useEnvironments } from '~/stores/environments'
+import { t } from '~/i18n'
 import { envLabels, envState, refreshEnv, remotePlace, samePlace } from '~/composables/envProjects'
 
 /**
@@ -12,7 +13,7 @@ import { envLabels, envState, refreshEnv, remotePlace, samePlace } from '~/compo
  */
 export function whereItems(current: EnvRemote | null, pick: (where: EnvRemote | null) => void, manage: () => void): MenuItem[] {
   const envs = useEnvironments()
-  const items: MenuItem[] = [{ label: 'This computer', icon: Laptop, checked: !current, onSelect: () => pick(null) }]
+  const items: MenuItem[] = [{ label: t('chat.place.thisComputer'), icon: Laptop, checked: !current, onSelect: () => pick(null) }]
 
   for (const server of envs.servers) {
     const id = server.id
@@ -20,13 +21,13 @@ export function whereItems(current: EnvRemote | null, pick: (where: EnvRemote | 
     const list = envs.instances[id]
     const head = { group: server.name, divider: true }
     if (!list) {
-      if (envs.probing[id] || envs.loadingInstances[id] || !probe) items.push({ ...head, label: 'Checking…', icon: Server, disabled: true })
-      else if (!probe.reachable) items.push({ ...head, label: 'Can\'t reach this server', icon: ServerOff, disabled: true })
-      else items.push({ ...head, label: 'Incus isn\'t ready here', icon: ServerOff, disabled: true })
+      if (envs.probing[id] || envs.loadingInstances[id] || !probe) items.push({ ...head, label: t('chat.place.checking'), icon: Server, disabled: true })
+      else if (!probe.reachable) items.push({ ...head, label: t('chat.place.unreachable'), icon: ServerOff, disabled: true })
+      else items.push({ ...head, label: t('chat.place.notReady'), icon: ServerOff, disabled: true })
       continue
     }
     if (!list.length) {
-      items.push({ ...head, label: 'No environments yet', icon: ServerOff, disabled: true })
+      items.push({ ...head, label: t('chat.place.none'), icon: ServerOff, disabled: true })
       continue
     }
     list.forEach((inst, i) => {
@@ -49,23 +50,23 @@ export function whereItems(current: EnvRemote | null, pick: (where: EnvRemote | 
     const where = { hostId: host.id, instance: host.direct!.instance }
     const state = envState(host.id, where.instance)
     items.push({
-      ...(i === 0 ? { group: 'Shared with you', divider: true } : {}),
+      ...(i === 0 ? { group: t('chat.place.shared'), divider: true } : {}),
       label: host.name,
       icon: Server,
-      hint: state.tone === 'bad' ? state.label : `From ${host.direct!.sharedFrom}`,
+      hint: state.tone === 'bad' ? state.label : t('chat.place.from', { name: host.direct!.sharedFrom }),
       disabled: state.tone === 'bad',
       checked: samePlace(current, where),
       onSelect: () => pick(where),
     })
   })
 
-  items.push({ label: 'Manage environments…', icon: Settings2, divider: true, onSelect: manage })
+  items.push({ label: t('chat.place.manage'), icon: Settings2, divider: true, onSelect: manage })
   return items
 }
 
 /** The short label of a place: "This computer", or an environment's name with where it is ("on forge", "shared"). */
 export function whereLabel(where: EnvRemote | null): { label: string; sub: string | null } {
-  if (!where) return { label: 'This computer', sub: null }
+  if (!where) return { label: t('chat.place.thisComputer'), sub: null }
   const l = envLabels(where.hostId, where.instance)
   return { label: l.label, sub: l.sub }
 }

@@ -27,6 +27,7 @@ const emit = defineEmits<{
   hover: [index: number]
 }>()
 
+const { t } = useI18n()
 const list = ref<HTMLElement | null>(null)
 useOverlay(() => props.matches.length > 0)
 const pos = ref<{ left: number; top?: number; bottom?: number; width: number; maxHeight: number }>({ left: 0, bottom: 0, width: 480, maxHeight: 300 })
@@ -91,7 +92,7 @@ defineExpose({ optionId })
       }"
       @mousedown.prevent
     >
-      <ul v-if="matches.length" :id="id" class="cmdm__list" role="listbox" :aria-label="`${agentName} commands`">
+      <ul v-if="matches.length" :id="id" class="cmdm__list" role="listbox" :aria-label="t('chat.commands.list', { agent: agentName })">
         <li
           v-for="(m, i) in matches"
           :id="optionId(i)"
@@ -107,11 +108,11 @@ defineExpose({ optionId })
           <span class="cmdm__name">/<template v-for="(p, pi) in parts(m)" :key="pi"><mark v-if="p.hit">{{ p.text }}</mark><template v-else>{{ p.text }}</template></template></span>
           <span v-if="m.command.argumentHint" class="cmdm__args">{{ m.command.argumentHint }}</span>
           <span class="cmdm__desc">{{ m.command.description }}</span>
-          <span v-if="m.command.mango" class="cmdm__tag" :title="m.command.plugin ? `From the ${m.command.plugin} plugin` : undefined">{{ m.command.plugin ?? 'Mango' }}</span>
+          <span v-if="m.command.mango" class="cmdm__tag" :title="m.command.plugin ? t('chat.commands.fromPlugin', { plugin: m.command.plugin }) : undefined">{{ m.command.plugin ?? 'Mango' }}</span>
         </li>
       </ul>
       <p v-else class="cmdm__empty">
-        No {{ agentName }} command matches /{{ query }}. Enter sends it as plain text.
+        {{ t('chat.commands.none', { agent: agentName, query }) }}
       </p>
     </div>
   </Teleport>

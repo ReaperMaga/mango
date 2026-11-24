@@ -7,13 +7,13 @@ import { useModels } from '~/stores/models'
 import { useCommands } from '~/stores/commands'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import { AGENTS, effortLabel, type AgentId, type Attachment, type ContextUsage, type Thread } from '~/types/chat'
+import { AGENTS, EFFORT_LABELS, type AgentId, type Attachment, type ContextUsage, type Thread } from '~/types/chat'
 import { call, isTauri, pickFiles } from '~/composables/useBackend'
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeThumb, pastedName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { openImage } from '~/utils/imageViewer'
 import ChatCommandMenu, { type CommandMatch } from '~/components/chat/ChatCommandMenu.vue'
-import ChatRunMenu, { PERMISSION_MODES } from '~/components/chat/ChatRunMenu.vue'
+import ChatRunMenu from '~/components/chat/ChatRunMenu.vue'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 
 /**
@@ -53,6 +53,7 @@ const emit = defineEmits<{
   'update:mode': [mode: Thread['mode']]
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const text = defineModel<string>('text', { default: '' })
 const ta = ref<HTMLTextAreaElement | null>(null)
@@ -228,7 +229,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
   if (!jobs.length) return
   attachError.value = null
   const room = Math.max(0, MAX_ATTACHMENTS - attachments.value.length - pending.value.length)
-  if (jobs.length > room) attachError.value = `A message can carry up to ${MAX_ATTACHMENTS} attachments.`
+  if (jobs.length > room) attachError.value = t('chat.composer.tooMany', { n: MAX_ATTACHMENTS })
   await Promise.all(jobs.slice(0, room).map(async (job) => {
     const key = ++pendingKey
     pending.value = [...pending.value, { key, name: job.name }]
@@ -237,7 +238,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
       const a = await job.store()
       attachments.value = [...attachments.value, a]
     } catch (e) {
-      attachError.value = `Could not attach ${job.name}. ${errText(e)}`
+      attachError.value = t('chat.composer.attachFailed', { name: job.name, error: errText(e) })
     } finally {
       pending.value = pending.value.filter(p => p.key !== key)
       armFiles()
@@ -252,7 +253,7 @@ const fromFile = (file: File, index: number) => {
   return {
     name,
     store: async (): Promise<Attachment> => {
-      if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`It is ${formatSize(file.size)}; the limit is ${formatSize(MAX_ATTACHMENT_BYTES)}.`)
+      if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(t('chat.composer.tooBig', { size: formatSize(file.size), limit: formatSize(MAX_ATTACHMENT_BYTES) }))
       const data = await blobToBase64(file)
       const info = await call('attachment_save', { name, data })
       return { ...info, thumb: await makeThumb(info.mime, data) }
@@ -416,16 +417,16 @@ const { phase: dictationPhase, error: dictationError } = dictation
 const listening = computed(() => dictationPhase.value === 'recording' || dictationPhase.value === 'starting')
 const dictationShortcut = computed(() => `${modLabel()}+Shift+Space`)
 const micLabel = computed(() => {
-  if (listening.value) return 'Stop and transcribe'
-  if (dictationPhase.value === 'transcribing') return 'Transcribing…'
-  return voice.ready ? 'Dictate' : 'Set up voice input'
+  if (listening.value) return t('chat.composer.stopTranscribe')
+  if (dictationPhase.value === 'transcribing') return t('chat.composer.transcribing')
+  return voice.ready ? t('chat.composer.dictate') : t('chat.composer.setUpVoice')
 })
 const elapsed = computed(() => {
   const s = dictation.seconds.value
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 })
 /** Five bars, each lit once the level passes its step. */
-const bars = computed(() => [0.08, 0.2, 0.35, 0.55, 0.75].map(t => dictation.level.value > t))
+const bars = computed(() => [0.08, 0.2, 0.35, 0.55, 0.75].map(step => dictation.level.value > step))
 
 async function toggleDictation() {
   if (dictationPhase.value === 'idle') {
@@ -480,30 +481,31 @@ const fallbackEffort = computed(() => models.find(props.agent, props.model, wher
  */
 const effortText = computed(() => {
   const level = props.effort ?? fallbackEffort.value
-  return level ? effortLabel(level) : 'Default'
+  if (!level) return t('chat.effort.default')
+  return EFFORT_LABELS[level] ? t(`chat.effort.levels.${level}`) : level
 })
 const effortTitle = computed(() => {
-  if (props.effort) return `Effort: ${effortText.value}`
-  const usual = `${AGENTS[props.agent].name}'s default`
-  return fallbackEffort.value ? `Effort: ${effortText.value} (${usual})` : `Effort: ${usual}`
+  if (props.effort) return t('chat.effort.is', { level: effortText.value })
+  const agent = AGENTS[props.agent].name
+  return fallbackEffort.value ? t('chat.effort.isDefaultLevel', { level: effortText.value, agent }) : t('chat.effort.isDefault', { agent })
 })
 const runTitle = computed(() => [
   `${AGENTS[props.agent].name}: ${models.label(props.agent, props.model, where.value)}`,
   ...(efforts.value.length ? [effortTitle.value] : []),
-  `Permissions: ${PERMISSION_MODES[props.mode].label}`,
+  t('chat.composer.permissions', { mode: t(`general.modes.${props.mode}.label`) }),
 ].join('\n'))
 
 const ph = computed(() => props.placeholder ?? (props.busy
   ? ws.followUp === 'steer'
-    ? `Steer ${AGENTS[props.agent].name}: it reads your message at its next step…`
-    : `Write the next message: it is sent when ${AGENTS[props.agent].name} is done…`
-  : `Ask ${AGENTS[props.agent].name} to build, fix or explain, or type / for commands…`))
+    ? t('chat.composer.steerPlaceholder', { agent: AGENTS[props.agent].name })
+    : t('chat.composer.queuePlaceholder', { agent: AGENTS[props.agent].name })
+  : t('chat.composer.placeholder', { agent: AGENTS[props.agent].name })))
 const sendKeyName = computed(() => (ws.sendKey === 'enter' ? 'Enter' : `${modLabel()}+Enter`))
 const sendTitle = computed(() => (props.busy
   ? ws.followUp === 'steer'
-    ? `Steer: ${AGENTS[props.agent].name} reads it at its next step (${sendKeyName.value})`
-    : `Queue it: sent when ${AGENTS[props.agent].name} is done (${sendKeyName.value})`
-  : `Send (${sendKeyName.value})`))
+    ? t('chat.composer.steerTitle', { agent: AGENTS[props.agent].name, key: sendKeyName.value })
+    : t('chat.composer.queueTitle', { agent: AGENTS[props.agent].name, key: sendKeyName.value })
+  : t('chat.composer.sendTitle', { key: sendKeyName.value })))
 </script>
 
 <template>
@@ -515,7 +517,7 @@ const sendTitle = computed(() => (props.busy
     @click.self="ta?.focus()"
   >
     <Transition :css="false" @enter="(el, done) => slideFiles(el, true, done)" @leave="(el, done) => slideFiles(el, false, done)">
-      <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">
+      <ul v-if="attachments.length || pending.length" class="cp__files" :aria-label="t('chat.attachments')">
         <li
           v-for="a in attachments"
           :key="a.id"
@@ -523,7 +525,7 @@ const sendTitle = computed(() => (props.busy
           :class="{ 'cp__file--image': a.thumb }"
           :title="`${a.name} · ${formatSize(a.size)}`"
         >
-          <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
+          <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="t('chat.view', { name: a.name })" @click="viewAttachment(a.id)">
             <img class="cp__thumb" :src="a.thumb" alt="">
           </button>
           <template v-else>
@@ -533,20 +535,20 @@ const sendTitle = computed(() => (props.busy
               <span class="cp__file-size tabular">{{ formatSize(a.size) }}</span>
             </span>
           </template>
-          <button type="button" class="cp__file-x" :aria-label="`Remove ${a.name}`" @click="removeAttachment(a.id)">
+          <button type="button" class="cp__file-x" :aria-label="t('chat.composer.remove', { name: a.name })" @click="removeAttachment(a.id)">
             <X />
           </button>
         </li>
-        <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="`Attaching ${p.name}…`">
+        <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="t('chat.composer.attachingName', { name: p.name })">
           <span class="cp__spin" aria-hidden="true" />
           <span class="cp__file-meta">
             <span class="cp__file-name">{{ p.name }}</span>
-            <span class="cp__file-size">Attaching…</span>
+            <span class="cp__file-size">{{ t('chat.composer.attaching') }}</span>
           </span>
         </li>
       </ul>
     </Transition>
-    <p v-if="dropping" class="cp__drop" aria-hidden="true">Drop files to attach</p>
+    <p v-if="dropping" class="cp__drop" aria-hidden="true">{{ t('chat.composer.drop') }}</p>
     <input ref="fileInput" type="file" multiple hidden @change="onFileInput">
     <textarea
       ref="ta"
@@ -598,7 +600,7 @@ const sendTitle = computed(() => (props.busy
             <span class="cp__chip-text">{{ models.label(agent, model, where) }}</span>
             <span class="cp__run-more cp__mode-text">
               <template v-if="efforts.length && (effort || fallbackEffort)"><span class="cp__dot" aria-hidden="true">·</span>{{ effortText }}</template>
-              <span class="cp__dot" aria-hidden="true">·</span><span :class="{ 'cp__auto': mode === 'auto' }">{{ PERMISSION_MODES[mode].label }}</span>
+              <span class="cp__dot" aria-hidden="true">·</span><span :class="{ 'cp__auto': mode === 'auto' }">{{ t(`general.modes.${mode}.label`) }}</span>
             </span>
             <ChevronDown />
           </button>
@@ -609,13 +611,13 @@ const sendTitle = computed(() => (props.busy
       <div class="cp__voice" role="status" aria-live="polite">
         <template v-if="listening">
           <span class="cp__rec" aria-hidden="true" />
-          <span class="cp__time tabular" aria-label="Recording">{{ elapsed }}</span>
+          <span class="cp__time tabular" :aria-label="t('chat.composer.recording')">{{ elapsed }}</span>
           <span class="cp__meter" aria-hidden="true">
             <span v-for="(on, i) in bars" :key="i" class="cp__level" :class="{ 'is-on': on }" />
           </span>
         </template>
         <span v-else-if="dictationPhase === 'transcribing'" class="cp__voice-text">
-          <span class="cp__spin" aria-hidden="true" />Transcribing…
+          <span class="cp__spin" aria-hidden="true" />{{ t('chat.composer.transcribing') }}
         </span>
         <span v-else-if="dictationError" class="cp__voice-text cp__voice-text--error" :title="dictationError">
           {{ dictationError }}
@@ -636,13 +638,13 @@ const sendTitle = computed(() => (props.busy
         v-if="listening"
         class="cp__keep"
         size="sm"
-        label="Discard recording"
+        :label="t('chat.composer.discard')"
         shortcut="Esc"
         @click="dictation.cancel()"
       >
         <X />
       </UiIconButton>
-      <UiIconButton v-else size="sm" label="Attach files or paste an image" @click="pick"><Paperclip /></UiIconButton>
+      <UiIconButton v-else size="sm" :label="t('chat.composer.attach')" @click="pick"><Paperclip /></UiIconButton>
       <button
         type="button"
         class="cp__mic"
@@ -660,8 +662,8 @@ const sendTitle = computed(() => (props.busy
         v-if="busy"
         type="button"
         class="cp__send cp__send--stop"
-        aria-label="Stop"
-        title="Stop (Esc)"
+        :aria-label="t('chat.stop')"
+        :title="t('chat.composer.stopTitle')"
         @click="emit('stop')"
       >
         <Square />
@@ -671,7 +673,7 @@ const sendTitle = computed(() => (props.busy
         type="submit"
         class="cp__send"
         :disabled="!canSend"
-        :aria-label="busy ? 'Add to the queue' : 'Send'"
+        :aria-label="busy ? t('chat.composer.queue') : t('chat.composer.send')"
         :title="sendTitle"
       >
         <ArrowUp />
