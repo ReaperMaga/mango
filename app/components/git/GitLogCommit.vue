@@ -17,10 +17,18 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ jump: [hash: string]; back: [] }>()
 
+const { t } = useI18n()
 const log = useGitLog()
 const threads = useThreads()
 
-const STATUS: Record<string, string> = { A: 'Added', M: 'Modified', D: 'Deleted', R: 'Renamed', C: 'Copied', T: 'Type changed' }
+const statusNames = computed<Record<string, string>>(() => ({
+  A: t('git.state.added'),
+  M: t('git.state.modified'),
+  D: t('git.state.deleted'),
+  R: t('git.state.renamed'),
+  C: t('git.state.copied'),
+  T: t('git.state.typeChanged'),
+}))
 
 const detail = shallowRef<GitCommitDetail | null>(null)
 const error = ref('')
@@ -110,45 +118,45 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
 
 <template>
   <div class="commit" :class="{ 'is-stale': loading && detail }" :aria-busy="loading || undefined">
-    <UiButton v-if="back" size="sm" variant="ghost" class="commit__back" @click="emit('back')"><ArrowLeft />Log</UiButton>
+    <UiButton v-if="back" size="sm" variant="ghost" class="commit__back" @click="emit('back')"><ArrowLeft />{{ t('git.commit.backToLog') }}</UiButton>
 
     <div v-if="error" class="commit__error" role="alert">
-      <p class="commit__error-title">Could not read this commit</p>
+      <p class="commit__error-title">{{ t('git.commit.couldNotRead') }}</p>
       <p class="commit__error-text selectable">{{ error }}</p>
-      <UiButton size="sm" @click="load">Try again</UiButton>
+      <UiButton size="sm" @click="load">{{ t('common.actions.retry') }}</UiButton>
     </div>
-    <p v-else-if="!detail" class="commit__quiet">Reading the commit…</p>
+    <p v-else-if="!detail" class="commit__quiet">{{ t('git.commit.reading') }}</p>
     <template v-else>
       <div class="commit__head">
-        <h2 class="commit__subject selectable">{{ detail.subject || '(no message)' }}</h2>
+        <h2 class="commit__subject selectable">{{ detail.subject || t('git.noMessage') }}</h2>
         <GitLogRefs v-if="shownRefs.length" :refs="shownRefs" wrap />
         <p v-if="detail.body" class="commit__body selectable">{{ detail.body }}</p>
         <dl class="commit__facts">
-          <dt>Author</dt>
+          <dt>{{ t('git.log.author') }}</dt>
           <dd class="selectable" :title="`${detail.author} <${detail.authorEmail}>, ${fullDateTime(detail.time)}`">
             {{ detail.author }}<span class="commit__soft">, {{ fullDateTime(detail.time) }}</span>
           </dd>
           <template v-if="!sameCommitter">
-            <dt>Committer</dt>
+            <dt>{{ t('git.commit.committer') }}</dt>
             <dd class="selectable" :title="`${detail.committer}, ${fullDateTime(detail.commitTime)}`">
               {{ detail.committer }}<span class="commit__soft">, {{ fullDateTime(detail.commitTime) }}</span>
             </dd>
           </template>
-          <dt>Commit</dt>
+          <dt>{{ t('git.log.commit') }}</dt>
           <dd class="commit__line">
             <span class="commit__hash selectable" :title="detail.hash">{{ detail.hash }}</span>
-            <UiIconButton size="sm" label="Copy hash" @click="log.copy(detail.hash, 'hash')"><Copy /></UiIconButton>
+            <UiIconButton size="sm" :label="t('git.commit.copyHash')" @click="log.copy(detail.hash, 'hash')"><Copy /></UiIconButton>
           </dd>
-          <dt>{{ detail.parents.length > 1 ? 'Parents' : 'Parent' }}</dt>
+          <dt>{{ t('git.commit.parents', detail.parents.length || 1) }}</dt>
           <dd class="commit__line">
-            <button v-for="p in detail.parents" :key="p" type="button" class="commit__parent" :title="`Go to ${p.slice(0, 7)} in the log`" @click="emit('jump', p)">{{ p.slice(0, 7) }}</button>
-            <span v-if="!detail.parents.length" class="commit__soft">None, the first commit</span>
+            <button v-for="p in detail.parents" :key="p" type="button" class="commit__parent" :title="t('git.commit.goToParent', { commit: p.slice(0, 7) })" @click="emit('jump', p)">{{ p.slice(0, 7) }}</button>
+            <span v-if="!detail.parents.length" class="commit__soft">{{ t('git.commit.first') }}</span>
           </dd>
         </dl>
       </div>
 
       <h3 class="commit__count tabular">
-        {{ detail.files.length }} {{ detail.files.length === 1 ? 'file' : 'files' }} changed
+        {{ t('git.commit.filesChanged', detail.files.length) }}
         <span v-if="total.add" class="commit__add">+{{ total.add }}</span>
         <span v-if="total.del" class="commit__del">−{{ total.del }}</span>
       </h3>
@@ -158,7 +166,7 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
         class="commit__files"
         role="listbox"
         tabindex="0"
-        aria-label="Changed files; Enter opens the diff"
+        :aria-label="t('git.commit.files')"
         :aria-activedescendant="activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined"
         @keydown="onFilesKey"
       >
@@ -170,16 +178,16 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
           :class="{ 'is-selected': f.path === active }"
           role="option"
           :aria-selected="f.path === active"
-          :title="`${f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}\nClick to open the diff`"
+          :title="`${f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}\n${t('git.commit.clickToOpen')}`"
           @click="openDiff(f)"
         >
-          <span class="commit__status" :class="`is-${f.status[0]}`" :title="STATUS[f.status.charAt(0)] ?? f.status">{{ f.status[0] }}</span>
+          <span class="commit__status" :class="`is-${f.status[0]}`" :title="statusNames[f.status.charAt(0)] ?? f.status">{{ f.status[0] }}</span>
           <span class="commit__path">
             <!-- The bdi keeps "docs/" reading left to right inside the box that truncates from the left. -->
             <span v-if="dirOf(f.path)" class="commit__dir"><bdi>{{ dirOf(f.path) }}</bdi></span>
             <span class="commit__name">{{ nameOf(f.path) }}</span>
           </span>
-          <span v-if="f.additions === null" class="commit__binary">binary</span>
+          <span v-if="f.additions === null" class="commit__binary">{{ t('git.commit.binary') }}</span>
           <span v-else class="commit__counts tabular">
             <span v-if="f.additions" class="commit__add">+{{ f.additions }}</span>
             <span v-if="f.deletions" class="commit__del">−{{ f.deletions }}</span>
@@ -187,7 +195,7 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
         </div>
       </div>
       <p v-else class="commit__quiet">
-        {{ detail.parents.length > 1 ? 'A merge with no changes of its own against its first parent.' : 'This commit changed no files.' }}
+        {{ detail.parents.length > 1 ? t('git.commit.emptyMerge') : t('git.commit.empty') }}
       </p>
     </template>
   </div>

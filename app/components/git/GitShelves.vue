@@ -6,11 +6,13 @@
  */
 import { Archive, ArchiveRestore, ChevronRight, Trash2, X } from 'lucide-vue-next'
 import type { VcsShelve } from '~/types/ipc'
+import { formatLocale } from '~/i18n'
 import { useGit } from '~/stores/git'
 import { shortAgo, useNow } from '~/utils/time'
 
 const props = defineProps<{ path: string }>()
 
+const { t } = useI18n()
 const git = useGit()
 const now = useNow()
 const repo = computed(() => git.repo(props.path))
@@ -18,8 +20,6 @@ const shelves = computed(() => repo.value?.shelves ?? [])
 const open = computed(() => repo.value?.shelvesOpen ?? false)
 const busy = computed(() => !!git.busy)
 const working = computed(() => git.isBusy(props.path, 'shelve'))
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 /* ---------- what a shelve takes: what the checkin would ---------- */
 
@@ -32,12 +32,12 @@ const isPrivate = (f: { index: string | null; worktree: string | null }) => f.wo
 const privates = computed(() => chosen.value.filter(isPrivate).length)
 const taken = computed(() => chosen.value.length - privates.value)
 const scope = computed(() => {
-  if (!files.value.length) return 'No pending changes to shelve.'
-  if (!taken.value) return "Only new files are pending; Unity VCS can't shelve them until they're under version control."
+  if (!files.value.length) return t('git.shelves.nothing')
+  if (!taken.value) return t('git.shelves.onlyNew')
   const what = picked.value.length
-    ? `Takes the ${plural(taken.value, 'staged change')}.`
-    : `Takes ${taken.value === 1 ? 'the 1 change' : `all ${taken.value} changes`}.`
-  return privates.value ? `${what} ${plural(privates.value, 'new file')} stay${privates.value === 1 ? 's' : ''} in the workspace.` : what
+    ? t('git.shelves.takesStaged', taken.value)
+    : t('git.shelves.takesAll', taken.value)
+  return privates.value ? `${what} ${t('git.shelves.newStay', privates.value)}` : what
 })
 
 /* ---------- the shelve form ---------- */
@@ -91,53 +91,53 @@ function remove(s: VcsShelve) {
   confirming.value = null
   void git.deleteShelve(props.path, s.id)
 }
-const subject = (s: VcsShelve) => s.comment.split('\n')[0]?.trim() || '(no comment)'
+const subject = (s: VcsShelve) => s.comment.split('\n')[0]?.trim() || t('git.shelves.noComment')
 const tooltip = (s: VcsShelve) =>
-  `sh:${s.id} · ${s.comment.trim() || '(no comment)'}\n${[s.branch, s.owner, new Date(s.time).toLocaleString()].filter(Boolean).join(' · ')}`
+  `sh:${s.id} · ${s.comment.trim() || t('git.shelves.noComment')}\n${[s.branch, s.owner, new Date(s.time).toLocaleString(formatLocale())].filter(Boolean).join(' · ')}`
 
 defineExpose({ start })
 </script>
 
 <template>
-  <section ref="root" class="gp__sec gs" aria-label="Shelves">
+  <section ref="root" class="gp__sec gs" :aria-label="t('git.shelves.title')">
     <div class="gp__sec-head">
       <button type="button" class="gp__sec-toggle" :aria-expanded="open" @click="git.toggleShelves(path)">
         <ChevronRight class="gp__caret" :class="{ 'is-open': open }" aria-hidden="true" />
-        <span>Shelves</span>
+        <span>{{ t('git.shelves.title') }}</span>
         <span v-if="repo?.shelves?.length" class="gp__count tabular">{{ repo.shelves.length }}</span>
       </button>
       <div class="gp__sec-actions">
-        <UiIconButton size="sm" label="Shelve changes…" :active="shelving" :disabled="busy && !shelving" @click="shelving ? cancel() : start()">
+        <UiIconButton size="sm" :label="t('git.shelves.shelveItem')" :active="shelving" :disabled="busy && !shelving" @click="shelving ? cancel() : start()">
           <Archive />
         </UiIconButton>
       </div>
     </div>
 
-    <form v-if="shelving" class="gs__form" aria-label="Shelve changes" @submit.prevent="submit" @keydown.esc.stop.prevent="cancel">
+    <form v-if="shelving" class="gs__form" :aria-label="t('git.shelves.form')" @submit.prevent="submit" @keydown.esc.stop.prevent="cancel">
       <input
         ref="input"
         v-model="comment"
         class="gs__input"
         type="text"
-        placeholder="Shelve comment"
-        aria-label="Shelve comment"
+        :placeholder="t('git.shelves.comment')"
+        :aria-label="t('git.shelves.comment')"
         spellcheck="true"
       >
       <label class="gs__undo">
         <SettingsSwitch v-model="undo" labelledby="gs-undo-label" />
-        <span id="gs-undo-label">Undo them in the workspace</span>
+        <span id="gs-undo-label">{{ t('git.shelves.undo') }}</span>
       </label>
       <p class="gs__scope" :class="{ 'is-warn': files.length > 0 && !taken }">{{ scope }}</p>
       <div class="gs__btns">
-        <UiButton size="sm" variant="ghost" @click="cancel">Cancel</UiButton>
+        <UiButton size="sm" variant="ghost" @click="cancel">{{ t('common.actions.cancel') }}</UiButton>
         <UiButton
           size="sm"
           type="submit"
           :loading="working"
           :disabled="!canShelve"
-          :title="undo ? 'Shelve, then undo those changes so the workspace is clean' : 'Shelve, and keep the changes in the workspace'"
+          :title="undo ? t('git.shelves.undoTitle') : t('git.shelves.keepTitle')"
         >
-          {{ undo ? 'Shelve and undo' : 'Shelve' }}
+          {{ undo ? t('git.shelves.shelveUndo') : t('git.shelves.shelve') }}
         </UiButton>
       </div>
     </form>
@@ -155,19 +155,19 @@ defineExpose({ start })
               </span>
             </div>
             <div v-if="confirming !== s.id" class="gs__actions">
-              <UiIconButton size="sm" :label="`Apply sh:${s.id} to the workspace`" :disabled="busy" @click="apply(s)"><ArchiveRestore /></UiIconButton>
-              <UiIconButton size="sm" :label="`Delete sh:${s.id}…`" :disabled="busy" @click="confirming = s.id"><Trash2 /></UiIconButton>
+              <UiIconButton size="sm" :label="t('git.shelves.apply', { id: `sh:${s.id}` })" :disabled="busy" @click="apply(s)"><ArchiveRestore /></UiIconButton>
+              <UiIconButton size="sm" :label="t('git.shelves.deleteItem', { id: `sh:${s.id}` })" :disabled="busy" @click="confirming = s.id"><Trash2 /></UiIconButton>
             </div>
           </div>
-          <div v-if="confirming === s.id" class="gs__confirm" role="alertdialog" :aria-label="`Delete sh:${s.id}`" @keydown.esc.stop.prevent="confirming = null">
-            <span class="gs__ask">Delete sh:{{ s.id }} from the server? Its changes can't be recovered.</span>
-            <button type="button" class="gs__yes" :disabled="busy" @click="remove(s)">Delete</button>
-            <UiIconButton size="sm" label="Keep this shelve" @click="confirming = null"><X /></UiIconButton>
+          <div v-if="confirming === s.id" class="gs__confirm" role="alertdialog" :aria-label="t('git.shelves.delete', { id: `sh:${s.id}` })" @keydown.esc.stop.prevent="confirming = null">
+            <span class="gs__ask">{{ t('git.shelves.deleteAsk', { id: `sh:${s.id}` }) }}</span>
+            <button type="button" class="gs__yes" :disabled="busy" @click="remove(s)">{{ t('common.actions.delete') }}</button>
+            <UiIconButton size="sm" :label="t('git.shelves.keep')" @click="confirming = null"><X /></UiIconButton>
           </div>
         </li>
       </ul>
       <p v-else-if="repo?.shelvesError" class="gs__quiet is-error selectable">{{ repo.shelvesError }}</p>
-      <p v-else class="gs__quiet">{{ repo?.shelves === null ? 'Reading shelves…' : 'No shelves. Shelve changes to park them on the server and bring them back later.' }}</p>
+      <p v-else class="gs__quiet">{{ repo?.shelves === null ? t('git.shelves.reading') : t('git.shelves.empty') }}</p>
     </template>
   </section>
 </template>

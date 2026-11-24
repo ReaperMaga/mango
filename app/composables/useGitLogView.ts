@@ -1,5 +1,6 @@
 import type { Ref } from 'vue'
 import type { GitGraphCommit } from '~/types/ipc'
+import { formatLocale, t } from '~/i18n'
 import { call } from '~/composables/useBackend'
 import { gitLogError, useGitLog } from '~/stores/gitLog'
 import { useGit } from '~/stores/git'
@@ -212,7 +213,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     } catch (e) {
       if (mine === token) {
         more.value = false
-        notice.value = `Could not read more history: ${gitLogError(e)}`
+        notice.value = t('git.log.moreFailed', { error: gitLogError(e) })
       }
       return false
     } finally {
@@ -267,7 +268,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
       full = (await resolve(folder, target))?.hash
       if (folder !== path()) return
       if (!full) {
-        notice.value = `No commit ${target} in this repository.`
+        notice.value = t('git.log.noCommit', { target })
         return
       }
       at = index.value.get(full) ?? -1
@@ -289,8 +290,8 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     shownHash.value = full ?? null
     if (!sideBySide.value) detailOpen.value = true
     notice.value = refFilter.value || flat.value
-      ? `${full?.slice(0, 7)} is not in this view of the log, so only its details are shown.`
-      : `${full?.slice(0, 7)} is further back than ${JUMP_CAP.toLocaleString()} commits, so only its details are shown.`
+      ? t('git.log.notInView', { commit: full?.slice(0, 7) })
+      : t('git.log.tooFar', { commit: full?.slice(0, 7), n: JUMP_CAP.toLocaleString(formatLocale()) })
   }
 
   async function setRefFilter(name: string | null) {
@@ -305,7 +306,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     const commit = await resolve(folder, name)
     if (folder !== path()) return
     if (!commit) {
-      notice.value = `Could not find ${name}.`
+      notice.value = t('git.log.refNotFound', { name })
       return
     }
     const onCurrent = refFilter.value === CURRENT_BRANCH && (name === branch.value || name === CURRENT_BRANCH)

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import type { GhItem, GitAhead, GitBranches, GitBranchList, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
+import { t } from '~/i18n'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useFiles } from '~/stores/files'
@@ -59,7 +60,7 @@ const parseKey = (key: string) => {
 }
 
 /** Tauri rejects with the Rust error string; the browser mock throws Errors. */
-const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
+const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || t('git.somethingWrong')
 
 const newRepo = (): GitRepoState => ({
   status: null, loading: false, error: null, branches: null, log: [], logHead: undefined, historyOpen: false, message: '', expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null, shelves: null, shelvesOpen: false, shelvesError: null,
@@ -451,7 +452,8 @@ export const useGit = defineStore('git', {
           await call('git_stage', { path, files: conflicts ? files.filter(f => !f.conflicted).map(f => f.path) : [] })
         }
         const hash = await call('git_commit', { path, message, amend })
-        return `${amend ? 'Amended' : vcsTerms(repo.status?.vcs).committed} ${hash}`
+        if (amend) return t('git.result.amended', { id: hash })
+        return t(repo.status?.vcs === 'plastic' ? 'git.result.checkedIn' : 'git.result.committed', { id: hash })
       })
       if (ok) {
         repo.message = ''
@@ -482,22 +484,22 @@ export const useGit = defineStore('git', {
     async deleteShelve(path: string, id: number) {
       const ok = await this.run(path, 'shelve', async () => {
         await call('vcs_shelve_delete', { path, id })
-        return `Deleted sh:${id}.`
+        return t('git.result.deleted', { id: `sh:${id}` })
       })
       await this.loadShelves(path)
       return ok
     },
 
     fetch(path: string) {
-      return this.run(path, 'fetch', async () => (await call('git_fetch', { path })) || 'Fetched. Nothing new on the remote.')
+      return this.run(path, 'fetch', async () => (await call('git_fetch', { path })) || t('git.result.fetched'))
     },
     /** Git pull; for Unity VCS, `cm update`. */
     pull(path: string) {
-      return this.run(path, 'pull', async () => (await call('git_pull', { path })) || 'Already up to date.')
+      return this.run(path, 'pull', async () => (await call('git_pull', { path })) || t('git.result.upToDate'))
     },
     /** Push; publishes the branch (sets its upstream) when it has none. */
     push(path: string) {
-      return this.run(path, 'push', async () => (await call('git_push', { path })) || 'Pushed.')
+      return this.run(path, 'push', async () => (await call('git_push', { path })) || t('git.result.pushed'))
     },
     async checkout(path: string, branch: string, create = false) {
       const ok = await this.run(path, 'checkout', () => call('git_checkout', { path, branch, create }))
@@ -511,14 +513,14 @@ export const useGit = defineStore('git', {
     lock(path: string, files: string[]) {
       return this.run(path, 'lock', async () => {
         const note = await call('vcs_lock', { path, files })
-        return note || `Locked ${lockedNames(files)}.`
+        return note || (files.length === 1 ? t('git.result.locked', { name: fileName(files[0]!) }) : t('git.result.lockedFiles', files.length))
       })
     },
     /** Unity VCS: release the user's own locks on files; the files stay as they are. */
     unlock(path: string, files: string[]) {
       return this.run(path, 'lock', async () => {
         await call('vcs_unlock', { path, files })
-        return `Released the lock on ${lockedNames(files)}.`
+        return files.length === 1 ? t('git.result.released', { name: fileName(files[0]!) }) : t('git.result.releasedFiles', files.length)
       })
     },
     init(path: string) {
@@ -532,7 +534,7 @@ export const useGit = defineStore('git', {
     mergeWorktree(path: string, main: string, branch: string) {
       return this.run(path, 'merge', async () => {
         try {
-          return (await call('git_merge', { path: main, branch })) || `Merged ${branch}.`
+          return (await call('git_merge', { path: main, branch })) || t('git.result.merged', { branch })
         } finally {
           const project = useWorkspace().activeProjectPath
           await Promise.all([...new Set([main, project])].filter((p): p is string => !!p && p !== path).map(p => this.refresh(p)))
@@ -549,19 +551,14 @@ export const useGit = defineStore('git', {
       await this.run(path, 'pr', async () => {
         await call('git_push', { path })
         item = await call('gh_pr_create', { path, base })
-        return `Pull request #${item.number} is open: ${item.title}\n${item.url}`
+        return `${t('git.result.prOpen', { number: item.number, title: item.title })}\n${item.url}`
       })
       return item
     },
   },
 })
 
-/** "Farm.unity" / "3 files", for a lock result. */
-function lockedNames(files: string[]): string {
-  if (files.length !== 1) return `${files.length} files`
-  const f = files[0]!
-  return f.slice(f.lastIndexOf('/') + 1)
-}
+const fileName = (f: string) => f.slice(f.lastIndexOf('/') + 1)
 
 /**
  * Re-read a project's repository (the active one by default). Call it when
