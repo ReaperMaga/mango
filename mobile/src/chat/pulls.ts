@@ -1,10 +1,12 @@
 import type { GhCheck, GhJob, GhMergeMethod, GhRunState } from '~/types/ipc'
 import { GITHUB_HOST, type GhDetail } from '@/remote/github'
+import { forgeName, itemNoun, itemNumber, providerOf } from '~/utils/forge'
 
 /**
  * What the pull request screen works out from a read: the desktop's `LinksItem.vue`, `LinksMerge.vue`,
  * `LinksPanel.vue` and `LinksCheckLog.vue` logic, as plain TypeScript (tested in `pulls.test.ts`).
- * The wording is the desktop's.
+ * The wording is the desktop's, for GitHub's pull requests and GitLab's merge requests alike
+ * (`~/utils/forge`: "Merge request", `!12`, a GitLab pipeline's jobs as checks).
  */
 
 /* ---------- checks ---------- */
@@ -61,9 +63,13 @@ export function checkSummary(item: Pick<GhDetail, 'checkRuns' | 'checks'>): Chec
   return { tone: failed || cancelled ? 'failure' : 'pending', text: parts.join(', ') }
 }
 
-/** A check's details link that `ghJob` can read: a GitHub Actions job on github.com. */
+/**
+ * A check's details link that `ghJob` can read: a GitHub Actions job on github.com, or a GitLab CI
+ * job (`https://host/group/project/-/jobs/12`; the backend checks the server is a known GitLab one).
+ */
 export const isJobUrl = (url: string | null | undefined): url is string =>
-  !!url && /^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+  !!url && (/^https:\/\/github\.com\/[^/]+\/[^/]+\/actions\/runs\/\d+\/job\/\d+(?:[?#].*)?$/.test(url)
+    || /^https?:\/\/[A-Za-z0-9.:-]+\/(?:[\w.-]+\/){2,}-\/jobs\/\d+(?:[/?#].*)?$/.test(url))
 
 /**
  * Where tapping a check that is not an Actions job goes: its details link, only when that is an
@@ -91,11 +97,17 @@ export const MERGE_METHODS: Record<GhMergeMethod, { action: string; label: strin
   rebase: { action: 'Rebase and merge', label: 'Rebase and merge', short: 'Rebase', hint: 'Replays each commit onto the base' },
 }
 
+/** The merge methods offered: what the repository allows (GitLab merges or squashes; rebasing is a project setting there). */
+export function mergeMethodsOf(item: Pick<GhDetail, 'mergeMethods'> & Partial<Pick<GhDetail, 'provider'>>): GhMergeMethod[] {
+  return item.mergeMethods.filter(m => m in MERGE_METHODS && (providerOf(item) !== 'gitlab' || m !== 'rebase'))
+}
+
 /** The method picked first: the repository's default when it is allowed, else the first allowed. */
-export function defaultMethod(item: Pick<GhDetail, 'mergeMethods' | 'defaultMergeMethod'>): GhMergeMethod {
-  return item.defaultMergeMethod && item.mergeMethods.includes(item.defaultMergeMethod)
+export function defaultMethod(item: Pick<GhDetail, 'mergeMethods' | 'defaultMergeMethod'> & Partial<Pick<GhDetail, 'provider'>>): GhMergeMethod {
+  const allowed = mergeMethodsOf(item)
+  return item.defaultMergeMethod && allowed.includes(item.defaultMergeMethod)
     ? item.defaultMergeMethod
-    : item.mergeMethods[0] ?? 'squash'
+    : allowed[0] ?? 'squash'
 }
 
 export type MergeTone = 'done' | 'running' | 'queued' | 'error' | 'idle' | 'checking'
@@ -108,16 +120,21 @@ export interface MergeStatus {
   ready: boolean
 }
 
-type MergeFacts = Pick<GhDetail, 'state' | 'baseRef' | 'checkRuns' | 'checks' | 'mergeable' | 'mergeState'>
+type MergeFacts = Pick<GhDetail, 'state' | 'baseRef' | 'checkRuns' | 'checks' | 'mergeable' | 'mergeState'> & Partial<Pick<GhDetail, 'provider'>>
 
-/** What GitHub says about merging it now: a short title, the detail under it, and whether it may be pressed. */
+/** What GitHub or GitLab says about merging it now: a short title, the detail under it, and whether it may be pressed. */
 export function mergeStatus(it: MergeFacts): MergeStatus {
   const base = it.baseRef ?? 'the base branch'
+  const gitlab = providerOf(it) === 'gitlab'
+  const forge = forgeName(providerOf(it))
   const running = it.checkRuns.some(c => c.state === 'pending') || (!it.checkRuns.length && it.checks === 'pending')
-  if (it.state === 'draft') return { tone: 'idle', title: 'Draft', detail: 'Mark it ready for review on GitHub to merge it.', ready: false }
+  if (it.state === 'draft') return { tone: 'idle', title: 'Draft', detail: gitlab ? 'Mark it ready on GitLab to merge it.' : 'Mark it ready for review on GitHub to merge it.', ready: false }
   if (it.mergeable === 'conflicting' || it.mergeState === 'dirty') return { tone: 'error', title: `Conflicts with ${base}`, detail: 'Resolve them before merging.', ready: false }
-  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'checking', title: 'Checking whether it can merge', detail: 'GitHub is still working it out.', ready: false }
-  if (it.mergeState === 'blocked') return { tone: 'error', title: 'Blocked', detail: running ? 'Required checks have not passed yet.' : 'Branch protection wants approvals or passing checks.', ready: true }
+  if (!it.mergeState || it.mergeState === 'unknown' || it.mergeable === 'unknown') return { tone: 'checking', title: 'Checking whether it can merge', detail: `${forge} is still working it out.`, ready: false }
+  if (it.mergeState === 'blocked') {
+    const why = running ? 'Required checks have not passed yet.' : gitlab ? 'It needs approvals or a passing pipeline first.' : 'Branch protection wants approvals or passing checks.'
+    return { tone: 'error', title: 'Blocked', detail: why, ready: true }
+  }
   if (it.mergeState === 'behind') return { tone: 'queued', title: `Behind ${base}`, detail: 'It can still be merged.', ready: true }
   if (it.mergeState === 'unstable') {
     return running
@@ -131,17 +148,20 @@ export function mergeStatus(it: MergeFacts): MergeStatus {
 export const failingChecks = (runs: readonly GhCheck[]): number =>
   runs.filter(c => c.state === 'failure' || c.state === 'cancelled').length
 
-/** The merge question: "Squash and merge #42 into main on GitHub? 2 checks have not passed." */
-export function mergeQuestion(item: Pick<GhDetail, 'number' | 'baseRef' | 'checkRuns'>, method: GhMergeMethod): string {
+/** The merge question: "Squash and merge #42 into main on GitHub? 2 checks have not passed." (GitLab: `!42`, "on GitLab"). */
+export function mergeQuestion(item: Pick<GhDetail, 'number' | 'baseRef' | 'checkRuns'> & Partial<Pick<GhDetail, 'provider'>>, method: GhMergeMethod): string {
   const failing = failingChecks(item.checkRuns)
   const more = failing ? ` ${failing} check${failing === 1 ? ' has' : 's have'} not passed.` : ''
-  return `${MERGE_METHODS[method].label} #${item.number} into ${item.baseRef ?? 'the base branch'} on GitHub?${more}`
+  const num = itemNumber({ kind: 'pr', number: item.number, provider: providerOf(item) })
+  return `${MERGE_METHODS[method].label} ${num} into ${item.baseRef ?? 'the base branch'} on ${forgeName(providerOf(item))}?${more}`
 }
 
 /** Why the merge controls are missing, when the account or the repository rules them out. */
-export function mergeUnavailable(item: Pick<GhDetail, 'canMerge' | 'mergeMethods' | 'owner' | 'repo'>): string | null {
-  if (!item.canMerge) return `The account gh is signed in with cannot merge pull requests in ${item.owner}/${item.repo}.`
-  if (!item.mergeMethods.length) return 'GitHub did not say which merge methods this repository allows; merge it on GitHub.'
+export function mergeUnavailable(item: Pick<GhDetail, 'canMerge' | 'mergeMethods' | 'owner' | 'repo'> & Partial<Pick<GhDetail, 'provider'>>): string | null {
+  const p = providerOf(item)
+  const forge = forgeName(p)
+  if (!item.canMerge) return `The account ${p === 'gitlab' ? 'glab' : 'gh'} is signed in with cannot merge ${itemNoun('pr', p)}s in ${item.owner}/${item.repo}.`
+  if (!mergeMethodsOf(item).length) return `${forge} did not say which merge methods this repository allows; merge it on ${forge}.`
   return null
 }
 
@@ -186,22 +206,30 @@ export function jobWantsMore(job: Pick<GhJob, 'state' | 'logReady' | 'completedA
 /* ---------- linking by hand ---------- */
 
 /**
- * What the person typed, tidied for `ghResolve`: a github.com link, `owner/repo#12`, `#12` or `12`.
- * Null when it is none of these (the field then says so rather than asking the environment).
+ * What the person typed, tidied for `ghResolve`: a github.com link, a GitLab merge request or issue
+ * link (any server: the environment's glab must know it), `owner/repo#12`, `group/sub/project!12`,
+ * `#12`, `!12` or `12`. Null when it is none of these (the field then says so rather than asking).
  */
 export function tidyReference(input: string): string | null {
   const s = input.trim()
   if (!s || s.length > 300 || /\s/.test(s)) return null
-  if (/^#?\d{1,9}$/.test(s)) return s
+  if (/^[#!]?\d{1,9}$/.test(s)) return s
   if (/^[A-Za-z0-9][A-Za-z0-9-]{0,38}\/[A-Za-z0-9._-]{1,100}#\d{1,9}$/.test(s)) return s
+  if (/^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)+[#!]\d{1,9}$/.test(s)) return s
   let url: URL
   try { url = new URL(/^https?:\/\//i.test(s) ? s : `https://${s}`) } catch { return null }
-  if (url.hostname.toLowerCase() !== GITHUB_HOST && url.hostname.toLowerCase() !== `www.${GITHUB_HOST}`) return null
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+  const host = url.host.toLowerCase().replace(/^www\./, '')
+  if (/^(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*){2,}\/-\/(?:merge_requests|issues|work_items)\/\d+(?:\/.*)?$/.test(url.pathname)) {
+    return `https://${host}${url.pathname}`
+  }
+  if (host !== GITHUB_HOST) return null
   return /^\/[^/]+\/[^/]+\/(?:pull|issues)\/\d+(?:\/.*)?$/.test(url.pathname) ? `https://${GITHUB_HOST}${url.pathname}` : null
 }
 
 /** A reference `tidyReference` turned down: what to say under the field. */
-export const REFERENCE_HINT = 'Paste a github.com link to a pull request or issue, or type owner/repo#12 or #12.'
+export const REFERENCE_HINT = 'Paste a github.com or GitLab link to a pull request, merge request or issue, or type owner/repo#12, #12 or !12.'
+
 
 /* ---------- times ---------- */
 

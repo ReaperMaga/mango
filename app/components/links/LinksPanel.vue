@@ -8,10 +8,13 @@ import { useGit } from '~/stores/git'
 import { useWorkspace } from '~/stores/workspace'
 import { openExternal } from '~/composables/useBackend'
 import { stateOf } from '~/utils/linkState'
+import { useForge } from '~/stores/forge'
+import { capital, itemNoun, itemNumber, providerOf, requestsNoun, siteName } from '~/utils/forge'
 
 /**
- * The Pull requests tool window: the pull requests and issues linked to the chat in front of
- * the user. The agent links the ones it opens (`gh pr create`); the user can link others by
+ * The Pull requests tool window (Merge requests for a project on GitLab): the pull requests or merge
+ * requests and issues linked to the chat in front of the user. The agent links the ones it opens
+ * (`gh pr create`, `glab mr create`); the user can link others by
  * hand. With one linked item it opens straight away, with several the list comes first.
  * With no chat in front it browses the project's open ones: picking one opens it, linked to nothing.
  */
@@ -21,7 +24,7 @@ const links = useLinks()
 const git = useGit()
 const workspace = useWorkspace()
 
-/** A Unity VCS workspace in view has code reviews, not GitHub pull requests: LinksReviews takes the window. */
+/** A Unity VCS workspace in view has code reviews, not pull requests: LinksReviews takes the window. */
 const reviewsPath = computed(() => {
   const dir = threads.workdir
   if (!dir) return null
@@ -37,6 +40,13 @@ const chat = computed(() => {
 const list = computed<LinkedItem[]>(() => chat.value?.links ?? [])
 /** Where items are read from: the chat's project, or with no chat the project in view. */
 const projectPath = computed(() => chat.value?.projectPath ?? workspace.activeProjectPath ?? null)
+/** The project's forge, for the words: GitHub's pull requests or GitLab's merge requests. */
+const forge = useForge()
+watch(projectPath, p => forge.ensure(p), { immediate: true })
+const provider = computed(() => forge.providerOf(projectPath.value))
+const requests = computed(() => capital(requestsNoun(provider.value)))
+/** Where the item in front lives, for "Open on …". */
+const site = (l: LinkedItem) => siteName(providerOf(l), l.host)
 /** With no chat in front: the item opened from the project's open ones (linked to nothing). */
 const browsed = ref<LinkedItem | null>(null)
 // Another project: what was opened from the last one does not follow.
@@ -64,7 +74,7 @@ const mergeable = computed(() => {
 })
 
 /* ---------- keeping an open pull request current ---------- */
-/** While checks run or GitHub works out mergeability, look often; otherwise now and then. */
+/** While checks run or the forge works out mergeability, look often; otherwise now and then. */
 const POLL_BUSY_MS = 10_000
 const POLL_IDLE_MS = 60_000
 let poller: ReturnType<typeof setTimeout> | undefined
@@ -137,28 +147,28 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <LinksReviews v-if="reviewsPath" :path="reviewsPath" />
-  <section v-else class="lp" aria-label="Pull requests and issues" @keydown.esc="check && closeCheck()">
+  <section v-else class="lp" :aria-label="`${requests} and issues`" @keydown.esc="check && closeCheck()">
     <header class="lp__head">
       <button
         v-if="check && current"
         ref="backButton"
         type="button"
         class="lp__back"
-        :aria-label="`Back to pull request #${current.number}`"
-        :title="`Back to pull request #${current.number} (Esc)`"
+        :aria-label="`Back to ${itemNoun(current.kind, current.provider)} ${itemNumber(current)}`"
+        :title="`Back to ${itemNoun(current.kind, current.provider)} ${itemNumber(current)} (Esc)`"
         @click="closeCheck"
       >
         <ArrowLeft aria-hidden="true" />
-        <span class="lp__back-num tabular">#{{ current.number }}</span>
-        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? 'Pull request' }}</span>
+        <span class="lp__back-num tabular">{{ itemNumber(current) }}</span>
+        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? capital(itemNoun(current.kind, current.provider)) }}</span>
       </button>
       <template v-else>
         <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <UiIconButton v-else-if="current && !chat" label="All open pull requests and issues" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
+        <UiIconButton v-else-if="current && !chat" :label="`All open ${requestsNoun(provider)} and issues`" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">{{ requests }}</h2>
       </template>
       <div v-if="chat && list.length && !check" class="lp__tools">
-        <UiIconButton label="Link a pull request or issue" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
+        <UiIconButton :label="`Link a ${itemNoun('pr', provider)} or issue`" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
       </div>
     </header>
 
@@ -192,7 +202,7 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
         <LinksCheckLog :key="check.url" :check="check" />
       </div>
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />Open on {{ site(current) }}</UiButton>
         <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
       </footer>
     </template>
@@ -203,26 +213,26 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
       </div>
       <LinksMerge v-if="mergeable && projectPath" :key="current.key" :link="current" :item="mergeable" :project-path="projectPath" />
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
+        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on {{ site(current) }}</UiButton>
         <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />Refresh</UiButton>
-        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" title="Remove it from this chat; nothing changes on GitHub" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
+        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" :title="`Remove it from this chat; nothing changes on ${site(current)}`" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
       </footer>
     </template>
 
     <ul v-else class="lp__scroll lp__list" aria-label="Linked to this chat">
       <li v-for="l in list" :key="l.key" class="lp__row">
         <button type="button" class="lp__open" :title="l.url" @click="open(l)">
-          <component :is="stateOf(l.kind, l.state).icon" class="lp__icon" :class="`is-${stateOf(l.kind, l.state).tone}`" aria-hidden="true" />
+          <component :is="stateOf(l.kind, l.state, null, l.provider).icon" class="lp__icon" :class="`is-${stateOf(l.kind, l.state, null, l.provider).tone}`" aria-hidden="true" />
           <span class="lp__text">
-            <span class="lp__name">{{ l.title ?? `${l.owner}/${l.repo} #${l.number}` }}</span>
+            <span class="lp__name">{{ l.title ?? `${l.owner}/${l.repo} ${itemNumber(l)}` }}</span>
             <span class="lp__sub">
-              <span :class="`is-${stateOf(l.kind, l.state).tone}`">{{ stateOf(l.kind, l.state).word }}</span>
-              <span class="tabular">#{{ l.number }}</span>
+              <span :class="`is-${stateOf(l.kind, l.state, null, l.provider).tone}`">{{ stateOf(l.kind, l.state, null, l.provider).word }}</span>
+              <span class="tabular">{{ itemNumber(l) }}</span>
               <span class="lp__repo">{{ l.owner }}/{{ l.repo }}</span>
             </span>
           </span>
         </button>
-        <UiIconButton class="lp__remove" size="sm" :label="`Unlink #${l.number}`" @click="unlink(l)"><X /></UiIconButton>
+        <UiIconButton class="lp__remove" size="sm" :label="`Unlink ${itemNumber(l)}`" @click="unlink(l)"><X /></UiIconButton>
       </li>
     </ul>
   </section>

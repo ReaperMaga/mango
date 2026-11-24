@@ -3,6 +3,7 @@ import type { GhState } from './github'
 import { demoThreads } from '~/utils/demoThreads'
 import { MOCK_SHOT_PATH } from './mockPictures'
 import { MOCK_GITHUB_ITEMS } from './mockGithub'
+import { itemKey } from '~/utils/githubLinks'
 
 /**
  * The chats the web preview's environments hold before anyone writes one: a few per project, each
@@ -60,6 +61,25 @@ function mockLink(kind: LinkedItem['kind'], owner: string, repo: string, number:
     ...(state ? { state } : {}),
     source,
     linkedAt: Date.UTC(2026, 10, 12),
+  }
+}
+
+/** A link to the preview's GitLab project (`mockGitlab.ts`): a merge request is `!12`, an issue `#5`. */
+function mockGitlabLink(kind: LinkedItem['kind'], number: number, source: LinkedItem['source'], title?: string, state?: LinkedItem['state']): LinkedItem {
+  const [host, owner, repo] = ['gitlab.com', 'acme/labs', 'scratch']
+  return {
+    key: itemKey(host, owner, repo, number, kind, 'gitlab'),
+    provider: 'gitlab',
+    kind,
+    url: `https://${host}/${owner}/${repo}/-/${kind === 'pr' ? 'merge_requests' : 'issues'}/${number}`,
+    host,
+    owner,
+    repo,
+    number,
+    ...(title ? { title } : {}),
+    ...(state ? { state } : {}),
+    source,
+    linkedAt: Date.UTC(2026, 10, 20),
   }
 }
 
@@ -156,6 +176,31 @@ const SEEDS: Record<string, Seed[]> = {
   ],
   scratch: [
     {
+      slug: 'bun-store',
+      title: 'Use bun:sqlite for the bench store',
+      agent: 'claude',
+      model: 'sonnet',
+      effort: null,
+      status: 'done',
+      seen: false,
+      branch: 'feat/bun-sqlite',
+      links: [
+        mockGitlabLink('pr', 12, 'agent', 'Use bun:sqlite for the bench store', 'open'),
+        mockGitlabLink('issue', 5, 'user', 'Compare SQLite drivers for the bench', 'open'),
+      ],
+      created: 5 * 60,
+      updated: 30,
+      turns: [[
+        'Switch the bench store to bun:sqlite and open a merge request.',
+        [
+          { type: 'tool', tool: 'edit', target: 'bench/store.ts', status: 'ok', summary: '+48 −31' },
+          { type: 'tool', tool: 'bash', target: 'git push -u origin feat/bun-sqlite && glab mr create --fill --yes --target-branch main', status: 'ok', summary: 'merge request !12', output: 'Creating merge request for feat/bun-sqlite into main in acme/labs/scratch\n\n!12 Use bun:sqlite for the bench store (feat/bun-sqlite)\n https://gitlab.com/acme/labs/scratch/-/merge_requests/12' },
+          { type: 'text', text: 'Opened !12 into `main`. Its pipeline runs `lint` and `bench`; the bench asserts the read budget from #5.' },
+        ],
+      ]],
+    },
+    {
+
       slug: 'bun-sqlite',
       title: 'Try bun:sqlite against better-sqlite3',
       agent: 'claude',

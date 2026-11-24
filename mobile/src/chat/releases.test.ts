@@ -72,3 +72,12 @@ describe('releases screen words', () => {
     expect(rerunAction(null)).toBeNull()
   })
 })
+
+describe('links on a GitLab server', () => {
+  it('open only from the project\'s own server', () => {
+    expect(githubLink('https://git.corp.io:8443/a/b/-/releases/v1', 'git.corp.io:8443')).toBe('https://git.corp.io:8443/a/b/-/releases/v1')
+    expect(githubLink('http://git.corp.io/a/b/-/releases/v1', 'git.corp.io')).toBe('http://git.corp.io/a/b/-/releases/v1')
+    expect(githubLink('https://evil.example/x', 'git.corp.io')).toBeNull()
+    expect(githubLink('javascript:alert(1)', 'git.corp.io')).toBeNull()
+  })
+})

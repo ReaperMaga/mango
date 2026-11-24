@@ -6,11 +6,14 @@ import { useLinks } from '~/stores/links'
 import { itemKey } from '~/utils/githubLinks'
 import { stateOf } from '~/utils/linkState'
 import { highlight, numberMatch, pickerRows } from '~/utils/linkPicker'
+import { useForge } from '~/stores/forge'
+import { itemNoun, itemSigil, requestsNoun } from '~/utils/forge'
 
 /**
- * Picking a pull request or issue to link to a chat: one field over the project's open pull requests
- * and issues. Typing filters them (a number, a title, a branch); a link, `owner/repo#12` or a number
- * the list lacks is offered as itself. Enter links the highlighted row.
+ * Picking a pull request (GitLab: merge request) or issue to link to a chat: one field over the
+ * project's open ones. Typing filters them (a number, a title, a branch); a link, `owner/repo#12`
+ * (GitLab `group/project!12`) or a number the list lacks is offered as itself. Enter links the
+ * highlighted row.
  *
  * Without a chat it only browses: the row chosen is read and handed back (`pick`), linked to nothing.
  */
@@ -49,14 +52,20 @@ onMounted(() => {
 watch(() => props.projectPath, p => void links.loadOpen(p))
 
 const state = computed(() => links.open[props.projectPath])
+/** GitHub's pull requests or GitLab's merge requests: from the list once read, from the remotes before. */
+const forge = useForge()
+watch(() => props.projectPath, p => forge.ensure(p), { immediate: true })
+const provider = computed(() => state.value?.list?.provider ?? forge.providerOf(props.projectPath))
+const noun = computed(() => itemNoun('pr', provider.value))
+const sigil = (kind: GhListItem['kind']) => itemSigil(kind, provider.value)
 const repoName = computed(() => (state.value?.list ? `${state.value.list.owner}/${state.value.list.repo}` : null))
 const available = computed<GhListItem[]>(() => {
   const list = state.value?.list
   if (!list) return []
   const taken = new Set(props.linked)
-  return list.items.filter(i => !taken.has(itemKey(list.host, list.owner, list.repo, i.number)))
+  return list.items.filter(i => !taken.has(itemKey(list.host, list.owner, list.repo, i.number, i.kind, list.provider)))
 })
-const rows = computed(() => pickerRows(available.value, query.value))
+const rows = computed(() => pickerRows(available.value, query.value, provider.value))
 
 /** What each row links, in order: the typed reference first when there is one. */
 type Row = { kind: 'reference'; reference: string } | { kind: 'item'; item: GhListItem }
@@ -112,9 +121,13 @@ function onKey(e: KeyboardEvent) {
 }
 
 const isBusy = (row: Row) => busy.value === (row.kind === 'reference' ? row.reference : row.item.url)
+/** `#12`, `!12` or `12`: a number looked up in the project's own repository. */
+const isNumberRef = (reference: string) => /^[#!]?[0-9]+$/.test(reference)
 const refLabel = (reference: string) => {
   const verb = browsing.value ? 'Open' : 'Link'
-  return reference.startsWith('#') ? `${verb} ${reference}` : `${verb} this one`
+  if (!isNumberRef(reference)) return `${verb} this one`
+  // A bare number on GitLab: a merge request with that number, else the issue.
+  return `${verb} ${/^[0-9]/.test(reference) ? `number ${reference}` : reference}`
 }
 </script>
 
@@ -129,24 +142,27 @@ const refLabel = (reference: string) => {
           class="pick__input"
           type="text"
           role="combobox"
-          :aria-label="browsing ? 'Find a pull request or issue' : 'Pull request or issue to link'"
+          :aria-label="browsing ? `Find a ${noun} or issue` : `${noun.charAt(0).toUpperCase()}${noun.slice(1)} or issue to link`"
           aria-autocomplete="list"
           :aria-expanded="options.length > 0"
           :aria-controls="listId"
           :aria-activedescendant="options.length ? optionId(active) : undefined"
           :aria-invalid="!!error || undefined"
           :aria-describedby="error ? `${listId}-error` : undefined"
-          :placeholder="browsing ? 'Search by title, branch or #12, or paste a link' : 'Paste a link, or type #12 or a title'"
+          :placeholder="provider === 'gitlab'
+            ? (browsing ? 'Search by title, branch, !12 or #12, or paste a link' : 'Paste a link, or type !12, #12 or a title')
+            : (browsing ? 'Search by title, branch or #12, or paste a link' : 'Paste a link, or type #12 or a title')"
           spellcheck="false"
           autocomplete="off"
           @keydown="onKey"
         >
       </div>
       <p v-if="error" :id="`${listId}-error`" class="pick__error selectable" role="alert">{{ error }}</p>
+      <LinksHostingButton class="pick__hosting" :error="error" />
     </div>
 
     <div class="pick__scroll">
-      <div v-if="firstLoad" class="pick__skeleton" aria-label="Reading open pull requests and issues" role="status">
+      <div v-if="firstLoad" class="pick__skeleton" :aria-label="`Reading open ${requestsNoun(provider)} and issues`" role="status">
         <span v-for="n in 4" :key="n" class="pick__ghost"><span /><span /></span>
       </div>
 
@@ -167,7 +183,7 @@ const refLabel = (reference: string) => {
           </UiIconButton>
         </div>
 
-        <ul v-if="options.length" :id="listId" class="pick__list" role="listbox" aria-label="Open pull requests and issues">
+        <ul v-if="options.length" :id="listId" class="pick__list" role="listbox" :aria-label="`Open ${requestsNoun(provider)} and issues`">
           <li
             v-for="(row, i) in options"
             :id="optionId(i)"
@@ -185,16 +201,16 @@ const refLabel = (reference: string) => {
               <Link2 class="pick__icon" aria-hidden="true" />
               <span class="pick__text">
                 <span class="pick__name">{{ refLabel(row.reference) }}</span>
-                <span class="pick__sub"><span class="pick__ell">{{ row.reference.startsWith('#') ? `Looked up in ${repoName ?? 'this project’s repository'}` : row.reference }}</span></span>
+                <span class="pick__sub"><span class="pick__ell">{{ isNumberRef(row.reference) ? `Looked up in ${repoName ?? 'this project’s repository'}` : row.reference }}</span></span>
               </span>
             </template>
             <template v-else>
-              <component :is="stateOf(row.item.kind, row.item.state).icon" class="pick__icon" :class="`is-${stateOf(row.item.kind, row.item.state).tone}`" aria-hidden="true" />
+              <component :is="stateOf(row.item.kind, row.item.state, null, provider).icon" class="pick__icon" :class="`is-${stateOf(row.item.kind, row.item.state, null, provider).tone}`" aria-hidden="true" />
               <span class="pick__text">
                 <span class="pick__name"><template v-for="(seg, s) in highlight(row.item.title, query)" :key="s"><mark v-if="seg.hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template></span>
                 <span class="pick__sub">
-                  <span class="pick__state" :class="`is-${stateOf(row.item.kind, row.item.state).tone}`">{{ stateOf(row.item.kind, row.item.state).word }}</span>
-                  <span class="tabular">#<mark v-if="numberMatch(row.item.number, query)">{{ String(row.item.number).slice(0, numberMatch(row.item.number, query)) }}</mark>{{ String(row.item.number).slice(numberMatch(row.item.number, query)) }}</span>
+                  <span class="pick__state" :class="`is-${stateOf(row.item.kind, row.item.state, null, provider).tone}`">{{ stateOf(row.item.kind, row.item.state, null, provider).word }}</span>
+                  <span class="tabular">{{ sigil(row.item.kind) }}<mark v-if="numberMatch(row.item.number, query)">{{ String(row.item.number).slice(0, numberMatch(row.item.number, query)) }}</mark>{{ String(row.item.number).slice(numberMatch(row.item.number, query)) }}</span>
                   <span class="pick__ell">{{ row.item.kind === 'pr' ? row.item.headRef : 'Issue' }}</span>
                 </span>
               </span>
@@ -209,13 +225,14 @@ const refLabel = (reference: string) => {
         <p v-else-if="listError" class="pick__note selectable">
           Could not list the open ones: {{ listError }}
           <span class="pick__note-hint">A full link still works.</span>
+          <LinksHostingButton class="pick__hosting" :error="listError" />
         </p>
         <p v-else-if="searching" class="pick__note">Nothing open matches. Paste its link, or type its number to {{ browsing ? 'open' : 'link' }} a closed one.</p>
         <p v-else-if="state?.list" class="pick__note">Nothing open in {{ repoName }}. Paste a link, or type a number to {{ browsing ? 'open' : 'link' }} a closed one.</p>
       </template>
     </div>
 
-    <p v-if="fill" class="pick__foot"><MessageSquare aria-hidden="true" />{{ browsing ? 'Open a chat to link one to it.' : 'The agent links the pull requests it opens on its own.' }}</p>
+    <p v-if="fill" class="pick__foot"><MessageSquare aria-hidden="true" />{{ browsing ? 'Open a chat to link one to it.' : `The agent links the ${requestsNoun(provider)} it opens on its own.` }}</p>
   </div>
 </template>
 
@@ -301,6 +318,7 @@ mark { background: none; color: var(--fg); font-weight: 650; }
 
 .pick__note { margin: 0; padding: var(--space-2) var(--space-4); font-size: var(--text-sm); color: var(--fg-subtle); max-width: 52ch; overflow-wrap: anywhere; }
 .pick__note-hint { display: block; margin-top: 2px; color: var(--fg-faint); }
+.pick__hosting { margin-top: var(--space-2); }
 
 .pick__skeleton { display: grid; gap: 2px; padding: var(--space-2) var(--space-2) 0; }
 .pick__ghost { display: grid; gap: 6px; padding: 8px var(--space-2) 8px calc(var(--space-2) + 23px); }

@@ -1,7 +1,10 @@
 /**
  * A GitHub Actions step log, read the way GitHub's own log view reads it: `##[group]` … `##[endgroup]`
  * fold into one line, `##[error]`, `##[warning]`, `##[notice]`, `##[debug]` and `[command]` lines are
- * marked, and ANSI colour codes become classes. The text is untrusted: it only ever becomes text nodes.
+ * marked, and ANSI colour codes become classes. A GitLab job's log reads the same way: its sections
+ * come as steps (their markers already taken out), its lines are plain with ANSI colours, and a line
+ * a progress bar redrew with carriage returns shows as it ended. The text is untrusted: it only ever
+ * becomes text nodes.
  */
 
 export type LogLevel = 'error' | 'warning' | 'notice' | 'debug' | 'command' | null
@@ -95,12 +98,24 @@ export function ansiSpans(text: string): LogSpan[] {
 
 const MARKER = /^##\[(group|endgroup|error|warning|notice|debug|command|section)\]/
 
+/**
+ * What a terminal would show of a line written over itself with carriage returns (progress bars,
+ * GitLab's `\r\x1b[0K`): its last part that holds any text.
+ */
+function lastWritten(line: string): string {
+  if (!line.includes('\r')) return line
+  const parts = line.split('\r')
+  for (let i = parts.length - 1; i >= 0; i--) if (parts[i]!.replace(ESCAPES, '').trim()) return parts[i]!
+  return ''
+}
+
 /** A step's lines as GitHub shows them: groups folded under their first line, levels marked. */
 export function parseStepLog(lines: string[], firstNumber = 1): LogEntry[] {
   const entries: LogEntry[] = []
   let group: Extract<LogEntry, { kind: 'group' }> | null = null
   let n = firstNumber - 1
-  for (const raw of lines) {
+  for (const written of lines) {
+    const raw = lastWritten(written)
     n++
     const marker = MARKER.exec(raw)
     let text = marker ? raw.slice(marker[0].length) : raw

@@ -12,6 +12,7 @@ import { LINK_ICONS, LINK_TONE_COLORS } from './ChatLinks'
 import { linkState } from './linkState'
 import { CHECK_WORD, REVIEW_WORD, checkLink, checkSummary, isJobUrl, labelColor, sortChecks } from './pulls'
 import { shortAgo, useNow } from './time'
+import { forgeName, itemNumber, providerOf } from '~/utils/forge'
 
 /** A check's or job's state mark. */
 export const RUN_ICONS: Record<GhRunState, ComponentType<LucideProps>> = {
@@ -51,23 +52,26 @@ const REVIEW_TONE = { approved: 'done', changes_requested: 'error', review_requi
 export interface PullDetailProps {
   link: LinkedItem
   detail: LinkDetail | undefined
-  /** A GitHub Actions job: its log opens in the app. */
+  /** A GitHub Actions or GitLab CI job: its log opens in the app. */
   onOpenCheck: (check: GhCheck) => void
 }
 
 /**
- * One pull request or issue (the desktop's `LinksItem.vue`): its state, title, who opened it,
- * branches, changes, review, checks and labels, then the description. The description is GitHub's
- * Markdown drawn by `ChatMarkdown`: no HTML, http(s) links only, no pictures fetched from the web.
+ * One pull request, merge request or issue (the desktop's `LinksItem.vue`): its state, title, who
+ * opened it, branches, changes, review (GitLab: approval), checks (GitLab: the pipeline's jobs) and
+ * labels, then the description. The description is GitHub's or GitLab's Markdown drawn by
+ * `ChatMarkdown`: no HTML, http(s) links only, no pictures fetched from the web.
  */
 export function PullDetail({ link, detail, onOpenCheck }: PullDetailProps) {
   const t = useTheme()
   const s = useStyles()
   const now = useNow()
   const item = detail?.item ?? null
-  const look = linkState(item?.kind ?? link.kind, item?.state ?? link.state, item?.stateReason)
+  const provider = providerOf(item ?? link)
+  const gitlab = provider === 'gitlab'
+  const look = linkState(item?.kind ?? link.kind, item?.state ?? link.state, item?.stateReason, provider)
   const StateIcon = LINK_ICONS[look.icon]
-  const title = item?.title ?? link.title ?? `#${link.number}`
+  const title = item?.title ?? link.title ?? itemNumber({ kind: item?.kind ?? link.kind, number: link.number, provider })
   const opened = item?.createdAt ? shortAgo(Date.parse(item.createdAt), now) : null
 
   const runs = item ? sortChecks(item.checkRuns) : []
@@ -116,7 +120,7 @@ export function PullDetail({ link, detail, onOpenCheck }: PullDetailProps) {
 
       {!item && detail?.loading
         ? (
-            <View style={s.skeleton} accessible accessibilityLabel="Reading from GitHub" accessibilityRole="progressbar">
+            <View style={s.skeleton} accessible accessibilityLabel={`Reading from ${forgeName(provider)}`} accessibilityRole="progressbar">
               {[62, 88, 74, 40, 81, 56].map(w => <View key={w} style={[s.bone, { width: `${w}%` }]} />)}
             </View>
           )
@@ -150,7 +154,7 @@ export function PullDetail({ link, detail, onOpenCheck }: PullDetailProps) {
                 : null}
               {item.reviewDecision
                 ? (
-                    <Fact label="Review" first={!(item.headRef && item.baseRef) && item.changedFiles === null}>
+                    <Fact label={gitlab ? 'Approval' : 'Review'} first={!(item.headRef && item.baseRef) && item.changedFiles === null}>
                       <Text variant="bodySm" tone={REVIEW_TONE[item.reviewDecision]}>{REVIEW_WORD[item.reviewDecision]}</Text>
                     </Fact>
                   )
@@ -161,14 +165,15 @@ export function PullDetail({ link, detail, onOpenCheck }: PullDetailProps) {
 
       {summary
         ? (
-            <ListSection title="Checks">
+            <ListSection title={gitlab ? 'Pipeline' : 'Checks'}>
               {runs.length
                 ? (
                     <Pressable
                       key="summary"
                       onPress={() => setListChoice(!listOpen)}
                       accessibilityRole="button"
-                      accessibilityLabel={`Checks: ${summary.text}`}
+                      accessibilityLabel={`${gitlab ? 'Pipeline' : 'Checks'}: ${summary.text}`}
+
                       accessibilityState={{ expanded: listOpen }}
                       style={({ pressed }) => [s.summary, pressed && s.pressed]}
                     >

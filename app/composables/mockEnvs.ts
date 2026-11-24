@@ -2,6 +2,8 @@ import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvDirListing, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
   EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
+import { GITLAB_COM, normalizeHost } from '~/utils/gitHosts'
+import { mockGitlabHosts, mockGitlabHostsSave } from '~/composables/mockHosting'
 
 /**
  * Remote environments for the browser preview (no Tauri): the `env_*` commands from
@@ -42,6 +44,7 @@ const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version' | 'versioned'> &
   { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'], latest: '2.4.1' },
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'], latest: '0.98.0' },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'], latest: '2.83.1' },
+  { id: 'glab', name: 'GitLab CLI', description: "glab, GitLab's own release package: merge requests, issues and git sign-in on gitlab.com and your own GitLab servers.", requires: ['base'], latest: '1.131.0' },
   { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'], latest: '143.0.7499.4' },
   { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can view in Mango.', requires: ['base'], latest: 'xfce 4.20' },
   { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose. A container restarts once to allow it.', requires: ['base'], latest: '29.0.2' },
@@ -116,7 +119,7 @@ const hosts: MockHost[] = [
       {
         name: 'dev', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
         addr: '10.88.0.12', tsIp: '100.101.7.33', cpus: 4, memory: '8GiB', disk: '40GiB', createdAt: now - 12 * DAY,
-        installed: { ...all(['base', 'node', 'claude', 'codex', 'gh', 'tailscale']), claude: '2.3.9' },
+        installed: { ...all(['base', 'node', 'claude', 'codex', 'gh', 'glab', 'tailscale']), claude: '2.3.9' },
         sshd: true,
         shares: [
           { id: 'sh-sam', label: 'Sam', via: 'public', endpoint: 'forge.lan:22101', createdAt: now - 2 * DAY, expiresAt: now + 5 * DAY },
@@ -440,6 +443,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
       else if (cid === 'claude') steps.push([450, dim('curl -fsSL https://claude.ai/install.sh | bash')], [600, `Installing Claude Code to ${AGENT_HOME}/.local/bin`])
       else if (cid === 'codex') steps.push([450, dim('curl -fsSL https://chatgpt.com/codex/install.sh | sh')], [600, `Installed codex to ${AGENT_HOME}/.local/bin/codex`])
       else if (cid === 'gh') steps.push([450, dim('apt-get install -y gh')], [500, 'Setting up gh (2.83.1) ...'])
+      else if (cid === 'glab') steps.push([450, dim('curl -fsSL https://gitlab.com/gitlab-org/cli/-/releases/v1.131.0/downloads/glab_1.131.0_linux_amd64.deb')], [400, 'glab_1.131.0_linux_amd64.deb: OK'], [500, 'Setting up glab (1.131.0) ...'])
       else if (cid === 'chromium') steps.push([450, dim('npm install -g @playwright/mcp@latest')], [800, 'Downloading Chromium 143.0.7499.4 (playwright build)'], [400, 'Claude Code has the chromium MCP server.'])
       else if (cid === 'desktop') steps.push([500, dim('apt-get install -y xfce4 tigervnc-standalone-server novnc chromium')], [900, 'Setting up xfce4 (4.20) ...'], [400, 'noVNC listening on 127.0.0.1:6080'])
       else if (cid === 'docker') steps.push([450, dim('apt-get install -y docker-ce docker-compose-plugin')], [600, 'Setting up docker-ce (5:29.0.2-1~ubuntu.24.04~noble) ...'], [300, 'The agent user can run docker (in new shells and chats).'])
@@ -709,6 +713,9 @@ export function createMockEnvs(ctx: MockEnvContext) {
           const c = CATALOG.find(x => x.id === tool)
           throw new Error(`${c?.name ?? tool} is not installed in ${i.name}. Install it first.`)
         }
+        // Only glab takes a server, checked like the backend's `valid_gitlab_host`.
+        const server = tool === 'glab' ? (args.host ? normalizeHost(String(args.host)) : GITLAB_COM) : null
+        if (tool === 'glab' && !server) throw new Error(`"${args.host}" is not a GitLab server name. Type it like gitlab.example.com.`)
         await latency(200)
         const id = ctx.newPty()
         const code = `${rid(4)}-${rid(4)}`.toUpperCase()
@@ -732,6 +739,29 @@ export function createMockEnvs(ctx: MockEnvContext) {
             [2400, ok('Authentication complete.')],
             [300, ok(`Logged in as you ${dim('(simulated)')}`)],
           ],
+          glab: server === GITLAB_COM
+            ? [
+                [0, dim('$ glab auth login --hostname gitlab.com --device --git-protocol https --setup-git-credential-helper')],
+                [500, `First copy your one-time code: ${rid(8).toUpperCase()}`],
+                [200, 'Then open this URL on any device to authorize: https://gitlab.com/oauth/device'],
+                [200, 'Waiting for authorization...'],
+                [2400, ok('Configured Git to authenticate with glab for gitlab.com.')],
+                [300, ok(`Logged in as you ${dim('(simulated)')}`)],
+              ]
+            : [
+                [0, `Signing in to ${server}. Choose Token and paste a personal access token with the api and write_repository scopes.`],
+                [400, dim(`$ glab auth login --hostname ${server} --git-protocol https --setup-git-credential-helper`)],
+                [300, '? How would you like to sign in?  > Token   Web   Device'],
+                [400, 'The minimum required scopes are \'api\' and \'write_repository\'.'],
+                [100, `Generate a personal access token at https://${server}/-/user_settings/personal_access_tokens?scopes=api,write_repository`],
+                [300, 'Paste your authentication token: ********'],
+                [2600, () => {
+                  // Like the backend, a self-managed server signed in to joins the list Mango knows.
+                  mockGitlabHostsSave([...mockGitlabHosts(), server!])
+                  out(id, ok(`Configured Git to authenticate with glab for ${server}.`))
+                  out(id, ok(`Logged in as you ${dim('(simulated)')}`))
+                }],
+              ],
           tailscale: [
             [0, dim(`$ sudo tailscale up${h.host.tailscale?.tags.length ? ` --advertise-tags=${h.host.tailscale.tags.join(',')}` : ''}`)],
             [700, 'To authenticate, visit:'],

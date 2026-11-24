@@ -9,6 +9,7 @@ import { BATCH, COMMIT, DIFF_CAP, UNTRACKED_DIFF, batchArgs, gitRead, parseBatch
 import { ATTACH, FETCH, LIST, PROJECTS, PUT, REMOVE, parseFetch, parseList, parseProjects, validAttachmentName } from './sshBackend'
 import { readFileSync } from 'node:fs'
 import type { Env } from './types'
+import { GLAB_HOSTS, parseGlabHosts } from './gitlab'
 
 /**
  * The remote scripts themselves, run by this computer's `sh`/`bash` against scratch folders
@@ -230,5 +231,33 @@ describe('projects script', () => {
       [`env://h1/dev${home}/work/shop`, 'shop', 'main'],
     ])
     expect(() => parseProjects('MANGO-ERR:nobase64\n', env, 'dev')).toThrow(/base64/)
+  })
+})
+
+describe('glab hosts script', () => {
+  it('prints the servers glab is configured for, and none of their tokens', () => {
+    const dir = tmp('glab')
+    mkdirSync(join(dir, 'glab-cli'))
+    writeFileSync(join(dir, 'glab-cli', 'config.yml'), [
+      'git_protocol: ssh',
+      'hosts:',
+      '    gitlab.com:',
+      '        api_protocol: https',
+      '        token: glpat-SECRET',
+      '    "git.corp.io:8443":',
+      '        token: glpat-OTHER',
+      '    git.corp.io:',
+      '        api_host: git.corp.io',
+      '# a comment',
+      'no_prompt: false',
+      '',
+    ].join('\n'))
+    const r = spawnSync('sh', ['-c', GLAB_HOSTS], { env: { ...process.env, GLAB_CONFIG_DIR: join(dir, 'glab-cli') }, encoding: 'utf8' })
+    expect(r.status).toBe(0)
+    expect(r.stdout).not.toContain('glpat')
+    expect(parseGlabHosts(r.stdout)).toEqual(['git.corp.io:8443', 'git.corp.io'])
+    // No config: nothing, and no failure.
+    const none = spawnSync('sh', ['-c', GLAB_HOSTS], { env: { ...process.env, GLAB_CONFIG_DIR: join(dir, 'none') }, encoding: 'utf8' })
+    expect([none.status, none.stdout]).toEqual([0, ''])
   })
 })

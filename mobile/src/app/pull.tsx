@@ -9,15 +9,17 @@ import { Button, ButtonRow, EmptyState, IconButton, ListRow, ListSection, Sheet,
 import { PullDetail } from '@/chat/PullDetail'
 import { PullMerge } from '@/chat/PullMerge'
 import { pollDelay, pollWait } from '@/chat/pulls'
-import { ghWebUrl, validGhRef } from '@/remote/github'
+import { validRef, webUrl } from '@/remote/forge'
+import { capital, forgeName, itemNoun, itemNumber, providerOf, siteName } from '~/utils/forge'
 import { useLinks } from '@/state/links'
 import { useThreads } from '@/state/threads'
 import { ScreenScroll } from '@/screens/Screen'
 
 /**
- * A pull request or issue linked to a chat (the desktop's Pull requests tool window with one item
- * open): what GitHub says about it, its checks (an Actions job opens its log), the description, and
- * for an open pull request, merging. While on screen and the app is in front it is read again:
+ * A pull request (GitLab: merge request) or issue linked to a chat (the desktop's Pull requests tool
+ * window with one item open): what GitHub or GitLab says about it, its checks (an Actions job or a
+ * GitLab pipeline job opens its log), the description, and for an open one, merging. While on screen
+ * and the app is in front it is read again:
  * every 10s while checks run or mergeability is unknown, every minute otherwise, never once merged
  * or closed.
  */
@@ -35,7 +37,7 @@ export default function PullScreen() {
   const [menu, setMenu] = useState(false)
   const [armed, setArmed] = useState(false)
 
-  const readable = !!link && validGhRef(link)
+  const readable = !!link && validRef(link)
   const projectPath = chat?.projectPath ?? null
   const threadId = chat?.id ?? chatId
 
@@ -66,8 +68,12 @@ export default function PullScreen() {
   }, [focused, inFront, detail, delay, load])
 
   const item = detail?.item ?? null
-  const web = link ? ghWebUrl(link) : null
-  const noun = (item?.kind ?? link?.kind) === 'issue' ? 'Issue' : 'Pull request'
+  const web = link ? webUrl(link) : null
+  const provider = providerOf(link)
+  const noun = capital(itemNoun(item?.kind ?? link?.kind ?? 'pr', provider))
+  const num = link ? itemNumber({ kind: item?.kind ?? link.kind, number: link.number, provider }) : ''
+  const forge = forgeName(provider)
+  const site = siteName(provider, link?.host)
   const refreshing = !!(detail?.loading && !detail.quiet && item)
   const mergeable = item?.kind === 'pr' && (item.state === 'open' || item.state === 'draft') ? item : null
 
@@ -89,14 +95,14 @@ export default function PullScreen() {
       options={{
         headerTitle: () => (
           <View style={s.title} accessibilityRole="header">
-            <Text variant="label" numberOfLines={1} tabular>{link ? `${noun} #${link.number}` : noun}</Text>
+            <Text variant="label" numberOfLines={1} tabular>{link ? `${noun} ${num}` : noun}</Text>
             {link ? <Text variant="micro" tone="subtle" numberOfLines={1}>{link.owner}/{link.repo}</Text> : null}
           </View>
         ),
         headerRight: link
           ? () => (
               <View style={s.headerButtons}>
-                {web ? <IconButton icon={ExternalLink} label="Open on GitHub" onPress={openWeb} /> : null}
+                {web ? <IconButton icon={ExternalLink} label={`Open on ${site}`} onPress={openWeb} /> : null}
                 <IconButton icon={Ellipsis} label="More actions" onPress={() => { setArmed(false); setMenu(true) }} />
               </View>
             )
@@ -123,7 +129,7 @@ export default function PullScreen() {
     return (
       <View style={s.screen}>
         {header}
-        <EmptyState icon={GitPullRequest} title="Not on github.com" body="Only pull requests and issues on github.com can be read here." />
+        <EmptyState icon={GitPullRequest} title="Not readable here" body="Only pull requests, merge requests and issues on github.com or a GitLab server can be read here." />
       </View>
     )
   }
@@ -143,15 +149,15 @@ export default function PullScreen() {
           )
         : null}
 
-      <Sheet visible={menu} onClose={() => setMenu(false)} title={`${noun} #${link.number}`}>
+      <Sheet visible={menu} onClose={() => setMenu(false)} title={`${noun} ${num}`}>
         <View style={s.menu}>
           <ListSection>
             {web
-              ? <ListRow title="Open on GitHub" leading={<ExternalLink size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />} accessory="none" onPress={() => { setMenu(false); openWeb() }} />
+              ? <ListRow title={`Open on ${site}`} leading={<ExternalLink size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />} accessory="none" onPress={() => { setMenu(false); openWeb() }} />
               : null}
             <ListRow title="Refresh" leading={<RefreshCw size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />} accessory="none" onPress={() => { setMenu(false); load(true) }} />
           </ListSection>
-          <ListSection footer="Removes it from this chat; nothing changes on GitHub.">
+          <ListSection footer={`Removes it from this chat; nothing changes on ${forge}.`}>
             <ListRow
               title="Unlink"
               destructive
@@ -163,8 +169,9 @@ export default function PullScreen() {
           {armed
             ? (
                 <View style={s.confirm} accessibilityLiveRegion="polite">
-                  <Text variant="label" tone="error">Unlink #{link.number} from this chat?</Text>
-                  <Text variant="bodySm" tone="muted">It leaves this chat's list on every computer. The {noun.toLowerCase()} stays as it is on GitHub, and can be linked again.</Text>
+                  <Text variant="label" tone="error">Unlink {num} from this chat?</Text>
+                  <Text variant="bodySm" tone="muted">It leaves this chat's list on every computer. The {noun.toLowerCase()} stays as it is on {forge}, and can be linked again.</Text>
+
                   <ButtonRow>
                     <Button label="Keep it" variant="ghost" size="sm" onPress={() => setArmed(false)} />
                     <Button label="Unlink" variant="danger" size="sm" onPress={unlink} />

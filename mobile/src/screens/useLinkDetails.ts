@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
 import type { LinkedItem } from '~/types/chat'
 import { backend } from '@/remote'
-import { validGhRef, type GhState } from '@/remote/github'
+import type { GhState } from '@/remote/github'
+import { validRef } from '@/remote/forge'
 import { useThreads } from '@/state/threads'
 
 /**
- * The latest title and state of a chat's linked pull requests and issues, read through gh in the
+ * The latest title and state of a chat's linked pull requests and issues, read through gh or glab in the
  * chat's environment each time the list opens (`open`). What comes back is also kept on the
- * chat's links, so the list reads well offline next time. A missing or signed-out gh is an
+ * chat's links, so the list reads well offline next time. A missing or signed-out CLI is an
  * `error` to show, never a failure of the list itself.
  */
 export function useLinkDetails(threadId: string, projectPath: string | null, links: LinkedItem[], open: boolean) {
@@ -18,7 +19,7 @@ export function useLinkDetails(threadId: string, projectPath: string | null, lin
 
   useEffect(() => {
     if (!open || !projectPath) return
-    const readable = links.filter(validGhRef)
+    const readable = links.filter(validRef)
     if (!readable.length) return
     let alive = true
     setLoading(true)

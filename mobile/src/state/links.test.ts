@@ -25,6 +25,7 @@ const link: LinkedItem = {
   owner: 'acme', repo: 'shop', number: 42, title: 'Old title', state: 'open', source: 'agent', linkedAt: 1,
 }
 const detail = (over: Partial<GhDetail> = {}): GhDetail => ({
+  provider: 'github',
   kind: 'pr', url: link.url, host: 'github.com', owner: 'acme', repo: 'shop', number: 42, title: 'Add cart', state: 'open',
   stateReason: null, author: null, createdAt: '', updatedAt: '', body: '', labels: [], comments: 0, headRef: 'cart', baseRef: 'main',
   additions: 1, deletions: 0, changedFiles: 1, reviewDecision: null, checks: null, checkRuns: [], headSha: 'abc', mergeable: 'mergeable',
@@ -105,7 +106,7 @@ describe('links store', () => {
   })
 
   it('links by reference, turning down nonsense before asking', async () => {
-    await expect(useLinks.getState().linkByReference('c1', 'rm -rf ~')).rejects.toThrow('github.com link')
+    await expect(useLinks.getState().linkByReference('c1', 'rm -rf ~')).rejects.toThrow('github.com or GitLab link')
     expect(remote.ghResolve).not.toHaveBeenCalled()
     remote.ghResolve.mockResolvedValue(detail({ number: 7, url: 'https://github.com/acme/shop/pull/7' }))
     const made = await useLinks.getState().linkByReference('c1', ' #7 ')

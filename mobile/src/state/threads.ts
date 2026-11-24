@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread, ThreadStatus } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
-import { createdBy } from '~/utils/githubLinks'
+import { createdBy, linkFromRef } from '~/utils/githubLinks'
 import { transcript } from '~/utils/transcript'
 import { createPrPrompt } from '~/utils/createPr'
 import { createReleasePrompt } from '~/utils/createRelease'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
+import { forgeOfProject, knownProvider } from '@/state/forges'
 import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
 import { answerQuestion as answerRun, interruptRun, isRunning, readAgentContext, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
@@ -662,7 +663,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
     get().edit(id, (d) => {
       d.messages.push(msg)
-      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? 'Create a pull request' : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
+      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? (knownProvider(d.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       d.updatedAt = Date.now()
     })
     get().persist(id)
@@ -707,7 +708,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       if (get().byId(id)?.status !== 'queued') return
     }
     // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
-    const prompt = createPrPrompt(text) ?? createReleasePrompt(text) ?? text
+    // On GitLab the instructions are GitLab's (`glab`, merge requests, pipelines), as on the desktop.
+    const own = createPrPrompt(text) !== null || createReleasePrompt(text) !== null
+    const forge = own ? (await forgeOfProject(t.projectPath))?.provider ?? 'github' : 'github'
+    const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
     // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
     const handOver = t.history && !t.sessionId
     await runAgentTurn(id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
@@ -876,11 +880,11 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     return t
   },
 
-  /** A tool call finished: when it created a pull request or issue, link it to the chat. */
+  /** A tool call finished: when it created a pull request, merge request or issue, link it to the chat. */
   _linkCreated(id, part) {
     const root = get().rootOf(id)
     if (!root) return
-    for (const ref of createdBy(part)) get().link(root.id, { ...ref, source: 'agent', linkedAt: Date.now() })
+    for (const ref of createdBy(part)) get().link(root.id, linkFromRef(ref, 'agent'))
   },
 
   _taskStart(id, task) {

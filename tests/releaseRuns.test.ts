@@ -130,3 +130,25 @@ test('sizes read like a file manager', () => {
   assert.equal(formatSize(94_263_800), '89.9 MB')
   assert.equal(formatSize(300 * 1024 * 1024), '300 MB')
 })
+
+test('GitLab: any pipeline on the tag builds it, but a merge request pipeline never does', () => {
+  const releases = [release('v2'), release('v1')]
+  const runs = [
+    run({ headBranch: 'v2', event: 'web', workflowId: 0, workflow: 'Pipeline', createdAt: '2026-11-21T00:00:00Z' }),
+    run({ headBranch: 'v1', event: 'merge_request_event', workflowId: 0 }),
+    run({ headBranch: 'v3.0.0', event: 'api', workflowId: 0, state: 'pending' }),
+    run({ headBranch: 'main', event: 'push', workflowId: 0, state: 'pending' }),
+  ]
+  const s = sortReleases(releases, runs, 'gitlab')
+  assert.equal(s.releases[0]!.run?.event, 'web')
+  assert.equal(s.releases[1]!.run, null)
+  // The tag's pipeline before its release exists; a branch pipeline is not a release build.
+  assert.deepEqual(s.inProgress.map(e => e.kind === 'run' && e.run.headBranch), ['v3.0.0'])
+  // GitHub keeps to tag pushes and published releases.
+  assert.equal(sortReleases(releases, runs).releases[0]!.run, null)
+})
+
+test('a GitLab release dated in the future is upcoming', () => {
+  const e = { kind: 'release' as const, key: 'tag:v9', release: release('v9', { publishedAt: null }), run: null }
+  assert.deepEqual(entryState(e), { tone: 'queued', word: 'Upcoming', mark: 'tag' })
+})

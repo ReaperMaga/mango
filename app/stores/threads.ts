@@ -15,10 +15,11 @@ import { isBrowserTab, parseBrowserTab } from '~/utils/browserTabs'
 import { isTerminalTab, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { useBrowser } from '~/stores/browser'
 import { demoThreads } from '~/utils/demoThreads'
-import { createdBy } from '~/utils/githubLinks'
+import { createdBy, linkFromRef } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
 import { createReleasePrompt } from '~/utils/createRelease'
+import { useForge } from '~/stores/forge'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
@@ -1117,7 +1118,7 @@ export const useThreads = defineStore('threads', {
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? (useForge().providerOf(t.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist(t.id)
     },
@@ -1170,7 +1171,9 @@ export const useThreads = defineStore('threads', {
       if (useWorkspace().editorAutoSave) await this._saveFilesOf(id)
       if (!current()) return this._standDown(id)
       // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
-      const prompt = createPrPrompt(text) ?? createReleasePrompt(text) ?? text
+      // GitHub's `gh` or GitLab's `glab`, by where the project's repository lives (read with the titlebar's button).
+      const forge = useForge().providerOf(t.projectPath)
+      const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
       const handOver = t.history && !t.sessionId
       const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
@@ -1280,7 +1283,7 @@ export const useThreads = defineStore('threads', {
       this.persist(t.id)
     },
 
-    /** What GitHub said about an item, on every chat that links it. */
+    /** What GitHub or GitLab said about an item, on every chat that links it. */
     _updateLinks(key: string, patch: Partial<Pick<LinkedItem, 'title' | 'state' | 'url' | 'kind'>>) {
       let changed = false
       for (const t of this.threads) {
@@ -1294,14 +1297,14 @@ export const useThreads = defineStore('threads', {
     },
 
     /**
-     * A tool call finished: when it created a pull request or issue, link it to the chat. If the
+     * A tool call finished: when it created a pull request, merge request or issue, link it to the chat. If the
      * chat is the one in front of the user, the new item opens in the Pull requests tool window.
      */
     _linkCreated(id: string, part: Extract<Part, { type: 'tool' }>) {
       const root = this.rootOf(id)
       if (!root) return
       for (const ref of createdBy(part)) {
-        const fresh = this.link(root.id, { ...ref, source: 'agent', linkedAt: Date.now() })
+        const fresh = this.link(root.id, linkFromRef(ref, 'agent'))
         const links = useLinks()
         void links.load(ref, root.projectPath, true)
         if (fresh && this.activePane.threadId === root.id) links.show(ref.key)
@@ -1481,7 +1484,10 @@ function normalizeLoaded(t: Thread): Thread {
     }),
   }))
   const links = Array.isArray(t.links)
-    ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+    ? t.links
+      .filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+      // No provider (older builds) is GitHub; only GitLab is written out.
+      .map(({ provider, ...l }) => (provider === 'gitlab' ? { ...l, provider } : l))
     : []
   // Older builds took an agent's `cd` into a folder of its project for a worktree: that chat works in the project.
   const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId && typeof t.projectPath === 'string'

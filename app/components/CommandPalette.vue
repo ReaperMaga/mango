@@ -11,6 +11,7 @@ import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
 import { useGitLog } from '~/stores/gitLog'
 import { useWindows } from '~/stores/windows'
+import { useForge } from '~/stores/forge'
 import { AGENTS, hasUnreadResult } from '~/types/chat'
 import { openLocalFolder } from '~/composables/useShortcuts'
 import type { ThreadStatus } from '~/types/chat'
@@ -28,6 +29,7 @@ import { iconComponent } from '~/plugin-host/icons'
 const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
+const forge = useForge()
 const wts = useWorktrees()
 const win = useWindows()
 useOverlay(() => ws.paletteOpen)
@@ -122,7 +124,7 @@ const actions = computed<Item[]>(() => {
   items.push(
     { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: ws.keyParts('open-folder'), keywords: 'project directory', run: openFolderFlow },
     { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
-    { id: 'clone', group: 'Actions', label: 'Clone repository…', detail: whereDetail, icon: GitFork, keywords: 'git github remote', run: () => { ws.dialog = 'clone' } },
+    { id: 'clone', group: 'Actions', label: 'Clone repository…', detail: whereDetail, icon: GitFork, keywords: 'git github gitlab remote', run: () => { ws.dialog = 'clone' } },
   )
   // Straight into a known, usable environment: open a folder there (and make it the place for the next one).
   if (where) {
@@ -160,8 +162,8 @@ const actions = computed<Item[]>(() => {
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
       { id: 'git-log.show', group: 'Actions', label: 'Show Git log', icon: GitGraph, keys: ws.keyParts('git-log'), keywords: 'git log history commits graph branches', run: () => useGitLog().open() },
       { id: 'git-log.go-to-commit', group: 'Actions', label: 'Go to commit…', detail: 'Git log', icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
-      { id: 'toggle-links', group: 'Actions', label: ws.toolPanel === 'links' ? 'Hide pull requests' : 'Show pull requests', icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr issue github linked link', run: () => ws.toggleLinks() },
-      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? 'Hide releases' : 'Show releases', icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github tags versions builds actions workflow runs assets download', run: () => ws.toggleReleases() }]),
+      { id: 'toggle-links', group: 'Actions', label: `${ws.toolPanel === 'links' ? 'Hide' : 'Show'} ${forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'merge' : 'pull'} requests`, icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() },
+      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? 'Hide releases' : 'Show releases', icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }

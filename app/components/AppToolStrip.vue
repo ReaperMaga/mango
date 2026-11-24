@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { CircleDashed, Files, GitBranch, GitPullRequest, Laptop, Server, SquareTerminal, Tag, X } from 'lucide-vue-next'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
+import { useForge } from '~/stores/forge'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { read, reg, shown } from '~/plugin-host/registry'
@@ -71,10 +72,14 @@ function togglePanelTab(ref: string) {
 }
 const terminalShowing = computed(() => ws.terminalOpen && !ws.activePanelTab)
 
+/** "Merge requests" for a project on GitLab (read with the titlebar's repository button). */
+const forge = useForge()
+const requestsLabel = computed(() => (forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'Merge requests' : 'Pull requests'))
+
 const tools = computed(() => [
   { id: 'files' as ToolView, label: 'Files', icon: Files, keys: ws.keyLabel('files'), count: 0, counts: '' },
   { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changed file' },
-  { id: 'links' as ToolView, label: 'Pull requests', icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linked item' },
+  { id: 'links' as ToolView, label: requestsLabel.value, icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linked item' },
   ...(releaseWatch.path.value
     ? [{ id: 'releases' as ToolView, label: 'Releases', icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: '', mark: releaseMark.value }]
     : []),

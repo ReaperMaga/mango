@@ -8,6 +8,7 @@ import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type Thread } from 
 import { isBusy } from '~/stores/threads'
 import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
+import { itemNumber } from '~/utils/forge'
 import type { MenuItem } from '~/types/ui'
 import { holdOverlay } from '~/composables/useOverlay'
 import { worktreeName } from '~/utils/worktrees'
@@ -193,18 +194,18 @@ onBeforeUnmount(() => onDragEnd())
 
 /** Status first when it says something; otherwise who the chat is with. */
 /**
- * The pull request (or, without one, the issue) a chat is linked to, for the mark on its row:
+ * The pull request or merge request (or, without one, the issue) a chat is linked to, for the mark on its row:
  * the newest one, plus how many others there are.
  */
 function linkMark(t: Thread) {
   const links = t.links
   if (!links?.length) return null
   const main = [...links].reverse().find(l => l.kind === 'pr') ?? links[links.length - 1]!
-  const state = stateOf(main.kind, main.state)
+  const state = stateOf(main.kind, main.state, null, main.provider)
   const others = links.length - 1
-  const what = `${main.kind === 'pr' ? 'Pull request' : 'Issue'} #${main.number}${main.state ? `, ${state.word.toLowerCase()}` : ''}`
+  const what = `${state.noun} ${itemNumber(main)}${main.state ? `, ${state.word.toLowerCase()}` : ''}`
   return {
-    number: main.number,
+    number: itemNumber(main),
     icon: state.icon,
     tone: state.tone,
     others,
@@ -477,7 +478,7 @@ function endResize() {
                     <FolderGit2 aria-hidden="true" /><span class="sr-only">, {{ termOf(t) }} made on the first message</span>
                   </span>
                   <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
-                    #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
+                    {{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
                     <span class="sr-only">, {{ m.label }}</span>
                   </span>
                 </span>

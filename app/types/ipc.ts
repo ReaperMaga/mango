@@ -118,6 +118,40 @@ export interface SetupTool {
   helpUrl: string
 }
 
+/* ---------- git hosting: the GitHub CLI and the GitLab CLI (Settings > Git hosting) ---------- */
+
+export type HostingToolId = 'gh' | 'glab'
+
+/** One account a forge CLI holds for one host. Tokens never reach the frontend. */
+export interface HostingAccount {
+  host: string
+  /** The user name, when the CLI reports one. */
+  user: string | null
+  /** The CLI could use it just now. */
+  ok: boolean
+  /** The account the CLI uses on this host (gh can hold several per host). */
+  active: boolean
+  /** The token comes from an environment variable (GH_TOKEN, GITLAB_TOKEN): signing out cannot remove it. */
+  fromEnv: boolean
+  /** What went wrong, as the CLI says it (tokens removed). */
+  error: string | null
+}
+
+export interface HostingCli {
+  id: HostingToolId
+  name: string
+  installed: boolean
+  /** The version number, e.g. "2.101.0". */
+  version: string | null
+  path: string | null
+  accounts: HostingAccount[]
+  /** The sign-in state could not be read (accounts are then empty). */
+  error: string | null
+  /** How Mango would install it here (`setup_install`); null when it can't (send the user to `helpUrl`). */
+  install: { command: string; via: string } | null
+  helpUrl: string
+}
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -403,6 +437,13 @@ export interface PlasticReviews {
   more: boolean
 }
 
+/**
+ * The forge a repository lives on. The `gh_*` commands serve both: for a project on GitHub they run `gh`,
+ * for one on a GitLab server (gitlab.com or a self-managed one) `glab`. GitLab merge requests come back as
+ * `kind: 'pr'` and pipelines as runs; on GitLab `owner` is the whole namespace (`group/subgroup`).
+ */
+export type ForgeProvider = 'github' | 'gitlab'
+
 /** One open pull request or issue as `gh_open_items` lists it. */
 export interface GhListItem {
   kind: 'pr' | 'issue'
@@ -418,6 +459,7 @@ export interface GhListItem {
 
 /** The GitHub repository a project's git remotes name (`gh_repo_link`): `https://{host}/{owner}/{repo}`. */
 export interface GhRepoLink {
+  provider: ForgeProvider
   host: string
   owner: string
   repo: string
@@ -425,6 +467,7 @@ export interface GhRepoLink {
 
 /** The open pull requests and issues of a project's GitHub repository (`gh_open_items`). */
 export interface GhOpenItems {
+  provider: ForgeProvider
   host: string
   owner: string
   repo: string
@@ -434,6 +477,7 @@ export interface GhOpenItems {
 
 /** One pull request or issue as `gh_item` reads it. */
 export interface GhItem {
+  provider: ForgeProvider
   kind: 'pr' | 'issue'
   url: string
   host: string
@@ -512,6 +556,7 @@ export interface GhJobStep {
 
 /** A GitHub Actions job as `gh_job` reads it. */
 export interface GhJob {
+  provider: ForgeProvider
   id: number
   name: string
   workflow: string | null
@@ -602,6 +647,7 @@ export interface GhRunDetail {
 
 /** A repository's releases, newest first, and its recent workflow runs (`gh_releases`). */
 export interface GhReleases {
+  provider: ForgeProvider
   host: string
   owner: string
   repo: string
@@ -963,7 +1009,7 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId
@@ -1044,7 +1090,7 @@ export interface EnvDesktop { url: string }
 export interface EnvRemote { hostId: string; instance: string }
 
 /** What `env_login` can sign in to inside an instance (each CLI's own flow, in a terminal). */
-export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'tailscale'
+export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'glab' | 'tailscale'
 
 /** One chat as saved in the chat history (`chats_save`): the chat itself is JSON. */
 export interface ChatRow { id: string; projectPath: string; updatedAt: number; data: string }
@@ -1244,8 +1290,22 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
+
+  /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
+  hosting_status: [Record<string, never>, HostingCli[]]
+  /**
+   * Run `tool`'s own sign-in for `host` in a PTY (the backend builds the command). Returns the pty id;
+   * output and the exit code arrive as `pty://data` / `pty://exit`.
+   */
+  hosting_login: [{ tool: HostingToolId; host: string; cols: number; rows: number }, string]
+  /** Sign `tool` out of `host`; for gh, of `user` there (it can hold several accounts per host). */
+  hosting_logout: [{ tool: HostingToolId; host: string; user: string | null }, void]
+  /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
+  gitlab_hosts: [Record<string, never>, string[]]
+  /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */
+  gitlab_hosts_save: [{ hosts: string[] }, string[]]
 
   /** The language servers Mango knows, and which are installed on this computer. */
   lsp_servers: [{ roots?: string[] }, LspServer[]]
@@ -1657,7 +1717,8 @@ export interface Commands {
   /** A login shell as the agent user inside the instance; returns the pty id. */
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
-  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; cols: number; rows: number }, string]
+  /** `host`: the GitLab server a `glab` sign-in is for (gitlab.com when none; a new one joins `gitlab_hosts`). Other tools ignore it. */
+  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; host?: string | null; cols: number; rows: number }, string]
   /**
    * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
    * `git init` in a new or empty folder when `gitInit`); returns its absolute path.

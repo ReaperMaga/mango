@@ -4,7 +4,8 @@ import type { Part } from '~/types/chat'
 import { openImage } from '~/utils/imageViewer'
 import { useThreads } from '~/stores/threads'
 import { useLinks } from '~/stores/links'
-import { createdBy, type ItemRef } from '~/utils/githubLinks'
+import { createdBy, linkFromRef, type ItemRef } from '~/utils/githubLinks'
+import { itemNoun, itemNumber } from '~/utils/forge'
 
 type ToolPart = Extract<Part, { type: 'tool' }>
 const props = defineProps<{ part: ToolPart }>()
@@ -27,13 +28,13 @@ const open = ref(props.part.status === 'error')
 const threads = useThreads()
 const child = computed(() => (props.part.childId ? threads.byId(props.part.childId) : null))
 
-/** A pull request or issue this call opened: linked to the chat, shown in the Pull requests tool window. */
+/** A pull request, merge request or issue this call opened: linked to the chat, shown in the Pull requests tool window. */
 const created = computed(() => createdBy(props.part))
 const links = useLinks()
 function showCreated(item: ItemRef) {
   // Chats from before linking existed get the link now. The pane was focused on mousedown.
   const chat = threads.activeThread
-  if (chat) threads.link(chat.id, { ...item, source: 'agent', linkedAt: Date.now() })
+  if (chat) threads.link(chat.id, linkFromRef(item, 'agent'))
   links.show(item.key)
 }
 </script>
@@ -63,11 +64,11 @@ function showCreated(item: ItemRef) {
       :key="it.key"
       type="button"
       class="tool__open"
-      :title="`Show ${it.kind === 'pr' ? 'pull request' : 'issue'} #${it.number} beside the chat`"
+      :title="`Show ${itemNoun(it.kind, it.provider)} ${itemNumber(it)} beside the chat`"
       @click="showCreated(it)"
     >
       <GitPullRequest v-if="it.kind === 'pr'" aria-hidden="true" /><CircleDot v-else aria-hidden="true" />
-      <span class="tabular">#{{ it.number }}</span>
+      <span class="tabular">{{ itemNumber(it) }}</span>
     </button>
     <button v-if="child" type="button" class="tool__open" :title="`Open the sub-agent's chat: ${child.title}`" @click="threads.show(child.id)">
       <span>Open</span><ArrowUpRight aria-hidden="true" />

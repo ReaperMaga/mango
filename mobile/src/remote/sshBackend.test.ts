@@ -365,7 +365,7 @@ describe('ssh backend', () => {
       __typename: 'PullRequest', title: 'Fix', number: 12, state: 'OPEN', isDraft: false, body: '## Hi', headRefOid: H,
     } } } })
     const { b, calls } = backendWith((command) => {
-      if (command.includes(' remote -v')) return { code: 0, stdout: batchOut([{ code: 0, stdout: 'origin\tgit@github.com:acme/shop.git (fetch)\norigin\tgit@github.com:acme/shop.git (push)\n' }]), stderr: '' }
+      if (command.includes(' remote -v')) return { code: 0, stdout: batchOut([{ code: 0, stdout: 'origin\tgit@github.com:acme/shop.git (fetch)\norigin\tgit@github.com:acme/shop.git (push)\n' }, { code: 0 }]), stderr: '' }
       return { code: 0, stdout: answer, stderr: '' }
     })
     const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop', number: 12 }
@@ -384,8 +384,9 @@ describe('ssh backend', () => {
     expect(calls[2]!.command).toContain(' -f owner=acme -f name=shop -F number=12 ')
     await b.ghResolve('env://h/dev/home/agent/work/shop', 'https://github.com/other/repo/pull/3')
     expect(calls).toHaveLength(4)
-    // Refused before anything is sent.
-    await expect(b.ghResolve('env://h/dev/x', 'https://gitlab.com/a/b/pull/1')).rejects.toThrow(/github\.com/)
+    // Refused before anything is sent (gitlab.com is GitLab's, where this is no link to an item).
+    await expect(b.ghResolve('env://h/dev/x', 'https://gitlab.com/a/b/pull/1')).rejects.toThrow(/merge request or issue link/)
+    await expect(b.ghResolve('env://h/dev/x', 'https://ghe.example.com/a/b/pull/1')).rejects.toThrow(/github\.com/)
     await expect(b.ghResolve('env://h/dev/x', 'a;rm/b#1')).rejects.toThrow(/Paste a pull request/)
     await expect(b.ghDetail('env://h/dev/x', { ...ref, owner: 'a;rm' })).rejects.toThrow(/github\.com/)
     expect(calls).toHaveLength(4)
@@ -396,7 +397,7 @@ describe('ssh backend', () => {
     const rel = [{ id: 1, tag_name: 'v1', name: 'One', html_url: 'https://github.com/acme/shop/releases/tag/v1', body: 'hi', assets: [] }]
     const runs = { workflow_runs: [{ id: 5, name: 'Release', event: 'push', head_branch: 'v1', status: 'completed', conclusion: 'success', html_url: 'https://github.com/acme/shop/actions/runs/5' }] }
     const { b, calls } = backendWith(c => c.includes('remote -v')
-      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }, { code: 0 }]), stderr: '' }
       : { code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(rel) }, { code: 0, stdout: JSON.stringify(runs) }]), stderr: '' })
     const p = 'env://h/dev/home/agent/work/shop'
     const r = await b.ghReleases(p, 30)
@@ -409,14 +410,17 @@ describe('ssh backend', () => {
     expect(calls).toHaveLength(3)
   })
 
-  it('reads the GitHub repository for its link: null without a GitHub remote, once per project', async () => {
+  it('reads the GitHub repository for its link: null without a GitHub or GitLab remote, once per project', async () => {
     let remotes = 'origin\tgit@github.com:acme/shop.git (fetch)\n'
-    const { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }))
-    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual({ owner: 'acme', repo: 'shop' })
-    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual({ owner: 'acme', repo: 'shop' })
+    const { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: remotes }, { code: 0 }]), stderr: '' }))
+    const shop = { provider: 'github', host: 'github.com', owner: 'acme', repo: 'shop' }
+    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual(shop)
+    expect(await b.ghRepo('env://h/dev/home/agent/work/shop')).toEqual(shop)
     expect(calls).toHaveLength(1)
-    remotes = 'origin\thttps://gitlab.com/acme/other.git (fetch)\n'
+    remotes = 'origin\thttps://bitbucket.org/acme/other.git (fetch)\n'
     expect(await b.ghRepo('env://h/dev/home/agent/work/other')).toBeNull()
+    remotes = 'origin\thttps://acme.ghe.com/acme/other.git (fetch)\n'
+    expect(await b.ghRepo('env://h/dev/home/agent/work/ghe')).toBeNull()
     remotes = ''
     expect(await b.ghRepo('env://h/dev/home/agent/work/none')).toBeNull()
   })
@@ -424,7 +428,7 @@ describe('ssh backend', () => {
   it('reads a run, posts an action, and words a missing remote', async () => {
     const remotes = 'origin\thttps://github.com/acme/shop (fetch)\n'
     let { b, calls } = backendWith(c => c.includes('remote -v')
-      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }]), stderr: '' }
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: remotes }, { code: 0 }]), stderr: '' }
       : c.includes('mango-run-read')
         ? { code: 0, stdout: '', stderr: '' }
         : { code: 1, stdout: '', stderr: 'gh: Conflict (HTTP 409)' })
@@ -437,7 +441,7 @@ describe('ssh backend', () => {
     await expect(b.ghTagRun(p, '--x')).rejects.toThrow()
     expect(calls).toHaveLength(3)
 
-    ;({ b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: '' }]), stderr: '' })))
+    ;({ b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: '' }, { code: 0 }]), stderr: '' })))
     await expect(b.ghReleases(p, 30)).rejects.toThrow('This project has no GitHub remote, so it has no releases to show.')
   })
 
@@ -491,16 +495,155 @@ describe('ssh backend', () => {
 
   it('opens a pull request in the project folder through the login shell, then reads it back', async () => {
     const answer = JSON.stringify({ data: { repository: { issueOrPullRequest: { __typename: 'PullRequest', title: 'Feat y', number: 7, state: 'OPEN' } } } })
-    const { b, calls } = backendWith((_c, n) => n === 1
-      ? { code: 1, stdout: '', stderr: 'MANGO-BRANCH:feat/y\na pull request for branch "feat/y" into branch "main" already exists:\nhttps://github.com/acme/shop/pull/7\n' }
-      : { code: 0, stdout: answer, stderr: '' })
+    const { b, calls } = backendWith(c => c.includes(' remote -v')
+      ? { code: 0, stdout: batchOut([{ code: 0, stdout: 'origin\tgit@github.com:acme/shop.git (fetch)\n' }, { code: 0 }]), stderr: '' }
+      : c.includes(' mango-pr ')
+        ? { code: 1, stdout: '', stderr: 'MANGO-BRANCH:feat/y\na pull request for branch "feat/y" into branch "main" already exists:\nhttps://github.com/acme/shop/pull/7\n' }
+        : { code: 0, stdout: answer, stderr: '' })
     const d = await b.ghPrCreate('env://h/dev/home/agent/work/shop', 'main')
     expect(d).toMatchObject({ number: 7, owner: 'acme', repo: 'shop', title: 'Feat y' })
-    expect(calls[0]!.command).toContain(' bash -lc ')
-    expect(calls[0]!.command).toContain(' mango /home/agent/work/shop sh -c ')
-    expect(calls[0]!.command.endsWith(' mango-pr main')).toBe(true)
-    expect(calls[1]!.command).toContain(' -F number=7 ')
+    // The project's forge first (once per project), from its remotes.
+    expect(calls[0]!.command).toContain(' remote -v')
+    expect(calls[1]!.command).toContain(' bash -lc ')
+    expect(calls[1]!.command).toContain(' mango /home/agent/work/shop sh -c ')
+    expect(calls[1]!.command.endsWith(' mango-pr main')).toBe(true)
+    expect(calls[2]!.command).toContain(' -F number=7 ')
     await expect(b.ghPrCreate('env://h/dev/home/agent/work/shop', '-x')).rejects.toThrow(/not a valid branch name/)
+    expect(calls).toHaveLength(3)
+  })
+})
+
+describe('ssh backend on GitLab', () => {
+  const P = 'env://h/dev/home/agent/work/app'
+  const glRemotes = 'origin\tgit@gitlab.com:acme/apps/app.git (fetch)\norigin\tgit@gitlab.com:acme/apps/app.git (push)\n'
+  const remoteAnswer = (remotes: string, hosts = '') => ({ code: 0, stdout: batchOut([{ code: 0, stdout: remotes }, { code: 0, stdout: hosts }]), stderr: '' })
+  const mr = (over: object = {}) => JSON.stringify({ data: { project: {
+    squashOption: { option: 'DEFAULT_OFF' },
+    mergeRequest: {
+      iid: '12', title: 'feat: x', webUrl: 'https://gitlab.com/acme/apps/app/-/merge_requests/12', state: 'opened', draft: false,
+      description: '## Hi', sourceBranch: 'feat/x', targetBranch: 'main', diffHeadSha: H, detailedMergeStatus: 'MERGEABLE',
+      userPermissions: { canMerge: true }, headPipeline: { status: 'FAILED', jobs: { nodes: [
+        { id: 'gid://gitlab/Ci::Build/7', name: 'test', status: 'FAILED', webPath: '/acme/apps/app/-/jobs/7', allowFailure: false, stage: { name: 'test' } },
+      ] } },
+      ...over,
+    },
+  } } })
+
+  it('tells the project is on GitLab from its remotes and the servers glab knows, in one round trip', async () => {
+    let remotes = glRemotes
+    let hosts = ''
+    const { b, calls } = backendWith(() => remoteAnswer(remotes, hosts))
+    expect(await b.ghRepo(P)).toEqual({ provider: 'gitlab', host: 'gitlab.com', owner: 'acme/apps', repo: 'app' })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.command).toContain(' remote -v')
+    expect(calls[0]!.command).toContain('glab-cli')
+    // A self-managed server is GitLab when glab in the instance is configured for it.
+    remotes = 'origin\thttps://git.corp.io/team/app.git (fetch)\n'
+    hosts = 'git.corp.io\n'
+    expect(await b.ghRepo('env://h/dev/home/agent/work/corp')).toEqual({ provider: 'gitlab', host: 'git.corp.io', owner: 'team', repo: 'app' })
+    hosts = ''
+    expect(await b.ghRepo('env://h/dev/home/agent/work/other')).toBeNull()
+  })
+
+  it('reads a merge request with glab, then the smaller query when the server lacks the paid fields', async () => {
+    const lacking = JSON.stringify({ errors: [{ message: "Field 'approvalsLeft' doesn't exist on type 'MergeRequest'" }] })
+    const { b, calls } = backendWith((c, n) => (n === 1 ? { code: 1, stdout: lacking, stderr: 'glab: GraphQL error' } : { code: 0, stdout: mr(), stderr: '' }))
+    const ref = { provider: 'gitlab' as const, kind: 'pr' as const, host: 'gitlab.com', owner: 'acme/apps', repo: 'app', number: 12 }
+    const d = await b.ghDetail(P, ref)
+    expect(d).toMatchObject({ provider: 'gitlab', kind: 'pr', number: 12, body: '## Hi', state: 'open', mergeState: 'clean', checks: 'failure', canMerge: true })
+    expect(d.checkRuns[0]!.url).toBe('https://gitlab.com/acme/apps/app/-/jobs/7')
     expect(calls).toHaveLength(2)
+    expect(calls[0]!.command).toContain(' GLAB_NO_PROMPT=1 ')
+    expect(calls[0]!.command).toContain(' glab api --hostname gitlab.com graphql -f fullPath=acme/apps/app -f iid=12 ')
+    expect(calls[0]!.command).toContain('approvalsLeft')
+    expect(calls[1]!.command).not.toContain('approvalsLeft')
+    // The server is remembered as lacking them.
+    await b.ghDetail(P, ref)
+    expect(calls).toHaveLength(3)
+    expect(calls[2]!.command).not.toContain('approvalsLeft')
+  })
+
+  it('asks glab only about servers it knows: a link to another is refused after reading its hosts once', async () => {
+    const { b, calls } = backendWith(c => (c.includes('glab-cli') ? { code: 0, stdout: 'gitlab.example.com\n', stderr: '' } : { code: 0, stdout: mr(), stderr: '' }))
+    const evil = { provider: 'gitlab' as const, kind: 'pr' as const, host: 'evil.example.com', owner: 'a', repo: 'b', number: 1 }
+    await expect(b.ghDetail(P, evil)).rejects.toThrow(/not a GitLab server the GitLab CLI in dev is signed in to/)
+    expect(calls).toHaveLength(1)
+    await expect(b.ghResolve(P, 'https://evil.example.com/a/b/-/merge_requests/1')).rejects.toThrow(/not a GitLab server/)
+    expect(calls).toHaveLength(1)
+    await b.ghResolve(P, 'https://gitlab.example.com/acme/apps/app/-/merge_requests/12')
+    expect(calls).toHaveLength(2)
+    expect(calls[1]!.command).toContain(' --hostname gitlab.example.com graphql ')
+    // Malformed: nothing is sent.
+    await expect(b.ghResolve(P, 'g/-x!1')).rejects.toThrow(/merge request or issue link/)
+    expect(calls).toHaveLength(2)
+  })
+
+  it('resolves !12 and a bare number in the project, and merges with the sha', async () => {
+    const { b, calls } = backendWith(c => (c.includes(' remote -v') ? remoteAnswer(glRemotes) : c.includes('/merge ') || c.includes('/merge\'')
+      ? { code: 1, stdout: '{"message":"SHA does not match HEAD of source branch"}', stderr: 'glab: 409 Conflict (HTTP 409)' }
+      : { code: 0, stdout: mr(), stderr: '' }))
+    expect((await b.ghResolve(P, '!12')).number).toBe(12)
+    expect(calls[1]!.command).toContain(' -f fullPath=acme/apps/app -f iid=12 ')
+    expect(calls[1]!.command).not.toContain('issue(iid')
+    await b.ghResolve(P, '12')
+    expect(calls[2]!.command).toContain('issue(iid: $iid)')
+    const ref = { provider: 'gitlab' as const, kind: 'pr' as const, host: 'gitlab.com', owner: 'acme/apps', repo: 'app', number: 12 }
+    await expect(b.ghMerge(P, ref, 'squash', H)).rejects.toThrow(/new commits/)
+    expect(calls[3]!.command).toContain(` glab api --hostname gitlab.com projects/acme%2Fapps%2Fapp/merge_requests/12/merge --method PUT -f sha=${H} -f squash=true`)
+    await expect(b.ghMerge(P, ref, 'rebase', H)).rejects.toThrow(/rebasing/)
+    expect(calls).toHaveLength(4)
+  })
+
+  it('reads a job and its trace in one round trip, the sections as steps', async () => {
+    const job = { id: 7, name: 'test', stage: 'test', status: 'failed', web_url: 'https://gitlab.com/acme/apps/app/-/jobs/7', started_at: '2026-11-16T20:29:33Z', finished_at: '2026-11-16T20:30:00Z' }
+    const log = 'Running with gitlab-runner\nsection_start:1763324976:step_script\r\x1b[0KExecuting script\nboom\nsection_end:1763324980:step_script\r\x1b[0K\nERROR: Job failed\n'
+    const { b, calls } = backendWith(() => ({ code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(job) }, { code: 0, stdout: log }]), stderr: '' }))
+    const j = await b.ghJob(P, 'https://gitlab.com/acme/apps/app/-/jobs/7')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]!.command).toContain(' projects/acme%2Fapps%2Fapp/jobs/7 ')
+    expect(calls[0]!.command).toContain(' projects/acme%2Fapps%2Fapp/jobs/7/trace')
+    expect(j).toMatchObject({ provider: 'gitlab', state: 'failure', logReady: true })
+    expect(j.steps.map(s => [s.name, s.state])).toEqual([['Runner', 'success'], ['Executing script', 'failure'], ['Result', 'failure']])
+    expect(j.steps[1]!.lines).toEqual(['boom'])
+  })
+
+  it('opens a merge request through the REST API from the branch\'s commits, then reads it back', async () => {
+    const details = 'MANGO-BRANCH:feat/x\nMANGO-BASE:main\nfeat: x\x1fWhy it matters\x1e\n'
+    const { b, calls } = backendWith(c => (c.includes(' remote -v') ? remoteAnswer(glRemotes)
+      : c.includes(' mango-mr ') ? { code: 0, stdout: details, stderr: '' }
+        : c.includes(' --method POST') ? { code: 0, stdout: '{"iid":12}', stderr: '' }
+          : { code: 0, stdout: mr(), stderr: '' }))
+    const d = await b.ghPrCreate(P, null)
+    expect(d).toMatchObject({ provider: 'gitlab', number: 12 })
+    expect(calls[1]!.command).toContain(' mango /home/agent/work/app sh -c ')
+    expect(calls[1]!.command).toContain(" mango-mr '' gitlab.com projects/acme%2Fapps%2Fapp")
+    expect(calls[2]!.command).toContain(' glab api --hostname gitlab.com projects/acme%2Fapps%2Fapp/merge_requests --method POST -f source_branch=feat/x -f target_branch=main -f \'title=feat: x\' -f \'description=Why it matters\'')
+    expect(calls[3]!.command).toContain(' -f iid=12 ')
+  })
+
+  it('finds the merge request already open for the branch', async () => {
+    const { b } = backendWith(c => (c.includes(' remote -v') ? remoteAnswer(glRemotes)
+      : c.includes(' mango-mr ') ? { code: 0, stdout: 'MANGO-BRANCH:feat/x\nMANGO-BASE:main\nfeat: x\x1f\x1e\n', stderr: '' }
+        : c.includes(' --method POST') ? { code: 1, stdout: '{"message":["Another open merge request already exists for this source branch: !12"]}', stderr: 'glab: 409 Conflict (HTTP 409)' }
+          : { code: 0, stdout: mr(), stderr: '' }))
+    expect((await b.ghPrCreate(P, 'main')).number).toBe(12)
+  })
+
+  it('lists releases and pipelines in one round trip, and re-runs a pipeline as a new one for its ref', async () => {
+    const rel = [{ tag_name: 'v1', name: 'One', description: 'hi', released_at: '2026-01-01T00:00:00Z', commit: { id: 'abc', title: 'chore(release): v1' }, assets: { links: [] } }]
+    const pipes = [{ id: 5, iid: 2, status: 'success', source: 'push', ref: 'v1', sha: 'abc', web_url: 'https://gitlab.com/acme/apps/app/-/pipelines/5' }]
+    const { b, calls } = backendWith(c => (c.includes(' remote -v') ? remoteAnswer(glRemotes)
+      : c.includes('releases?per_page') ? { code: 0, stdout: batchOut([{ code: 0, stdout: JSON.stringify(rel) }, { code: 1, stderr: 'glab: 403 Forbidden' }, { code: 0, stdout: JSON.stringify(pipes) }]), stderr: '' }
+        : c.includes('--method POST') ? { code: 0, stdout: '{}', stderr: '' }
+          : { code: 0, stdout: JSON.stringify(pipes[0]), stderr: '' }))
+    const r = await b.ghReleases(P, 30)
+    expect(r).toMatchObject({ provider: 'gitlab', host: 'gitlab.com', owner: 'acme/apps', repo: 'app', releases: [{ tag: 'v1', body: 'hi' }], runs: [{ id: 5, title: 'chore(release): v1' }] })
+    expect(calls[1]!.command).toContain(" 'projects/acme%2Fapps%2Fapp/releases?per_page=30' ")
+    expect(calls[1]!.command).toContain(" 'projects/acme%2Fapps%2Fapp/pipelines?scope=tags&per_page=50'")
+    await b.ghRunAction(P, 5, 'rerun')
+    expect(calls[2]!.command).toContain(' projects/acme%2Fapps%2Fapp/pipelines/5')
+    expect(calls[3]!.command).toContain(' projects/acme%2Fapps%2Fapp/pipeline -f ref=v1 --method POST')
+    await b.ghRunAction(P, 5, 'rerun-failed')
+    expect(calls[4]!.command).toContain(' projects/acme%2Fapps%2Fapp/pipelines/5/retry --method POST')
   })
 })

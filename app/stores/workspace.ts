@@ -126,7 +126,7 @@ export interface ConfirmAsk { title: string; body: string; label: string; danger
 export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
 /** Built-in sections, plus `plugin:<pluginId>.<pageId>` for a settings page a plugin registered (Settings > Plugins when it is gone). */
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'editor' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
+export type SettingsSection = 'agents' | 'environments' | 'hosting' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'editor' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 

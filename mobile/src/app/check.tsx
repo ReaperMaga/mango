@@ -13,13 +13,15 @@ import { firstErrorRow, logRows, parseSteps, type LogRow } from '@/chat/checkLog
 import { formatDuration, useNow } from '@/chat/time'
 import { useLinks } from '@/state/links'
 import { useThreads } from '@/state/threads'
+import { forgeName, siteName } from '~/utils/forge'
 
 /**
  * A GitHub Actions job's log (the desktop's `LinksCheckLog.vue`), laid out like GitHub's job page:
  * its steps in order, each opening to its log, where `##[group]` sections fold and errors stand out.
- * A failed step opens by itself and the first error comes into view. While the job runs, and for two
- * minutes after (GitHub hands out the log once the job has finished), it is read every 5s. The log is
- * untrusted text: it only ever becomes Text, with ANSI colours from the terminal palette.
+ * A GitLab CI job reads the same, its trace's sections as the steps (`gitlabItems.ts`). A failed step
+ * opens by itself and the first error comes into view. While the job runs, and for two minutes after
+ * (GitHub hands out the log once the job has finished; GitLab has it as it goes), it is read every 5s.
+ * The log is untrusted text: it only ever becomes Text, with ANSI colours from the terminal palette.
  */
 export default function CheckScreen() {
   const t = useTheme()
@@ -32,6 +34,9 @@ export default function CheckScreen() {
   const detail = useLinks(st => st.jobs[url])
   const job = detail?.job ?? null
   const valid = isJobUrl(url)
+  const provider = job?.provider ?? (url.includes('/-/jobs/') ? 'gitlab' : 'github')
+  const forge = forgeName(provider)
+  const site = siteName(provider, (() => { try { return new URL(url).host } catch { return null } })())
   const now = useNow(1000)
   const [focused, setFocused] = useState(true)
   const [inFront, setInFront] = useState(AppState.currentState === 'active')
@@ -91,7 +96,7 @@ export default function CheckScreen() {
           </View>
         ),
         headerRight: valid
-          ? () => <IconButton icon={ExternalLink} label="Open on GitHub" onPress={() => { Linking.openURL(url).catch(() => {}) }} />
+          ? () => <IconButton icon={ExternalLink} label={`Open on ${site}`} onPress={() => { Linking.openURL(url).catch(() => {}) }} />
           : undefined,
       }}
     />
@@ -104,7 +109,7 @@ export default function CheckScreen() {
         <EmptyState
           icon={ScrollText}
           title={valid ? 'This chat is gone' : 'No log here'}
-          body={valid ? 'It was deleted, here or on another computer.' : 'Only GitHub Actions jobs on github.com have a log in the app.'}
+          body={valid ? 'It was deleted, here or on another computer.' : 'Only GitHub Actions jobs on github.com and GitLab CI jobs have a log in the app.'}
         />
       </View>
     )
@@ -130,13 +135,13 @@ export default function CheckScreen() {
       {detail?.error ? <Banner tone="error" message={`${job ? 'Could not refresh: ' : ''}${detail.error}`} /> : null}
       {!job && !detail?.error
         ? (
-            <View style={s.skeleton} accessible accessibilityRole="progressbar" accessibilityLabel="Reading from GitHub">
+            <View style={s.skeleton} accessible accessibilityRole="progressbar" accessibilityLabel={`Reading from ${forge}`}>
               {[44, 70, 58, 66, 38, 52].map(w => <View key={w} style={[s.bone, { width: `${w}%` }]} />)}
             </View>
           )
         : null}
       {job && !finished
-        ? <Text variant="caption" tone="subtle">The job is still running. Its steps update here as they go; the log follows once it finishes.</Text>
+        ? <Text variant="caption" tone="subtle">{provider === 'gitlab' ? 'The job is still running. Its log updates here as it goes.' : 'The job is still running. Its steps update here as they go; the log follows once it finishes.'}</Text>
         : job?.logError ? <Text variant="caption" tone="subtle">{job.logError}</Text> : null}
     </View>
   )
@@ -151,7 +156,7 @@ export default function CheckScreen() {
         renderItem={({ item }) => <Row row={item} now={now} onToggleStep={toggleStep} onToggleGroup={toggleGroup} />}
         ListHeaderComponent={top}
         ListFooterComponent={job?.logTruncated
-          ? <Text variant="caption" tone="subtle" style={s.foot}>The log was too long to read whole: its end is missing here. GitHub has all of it.</Text>
+          ? <Text variant="caption" tone="subtle" style={s.foot}>{`The log was too long to read whole: its end is missing here. ${forge} has all of it.`}</Text>
           : undefined}
         contentContainerStyle={[s.content, { paddingBottom: (Platform.OS === 'ios' ? 0 : insets.bottom) + space[8] }]}
         contentInsetAdjustmentBehavior="automatic"
@@ -217,7 +222,8 @@ const Row = memo(function Row({ row, now, onToggleStep, onToggleGroup }: {
     case 'omitted':
       return (
         <View style={[s.well, s.omitted]}>
-          <Text variant="caption" tone="subtle">{row.count.toLocaleString()} earlier line{row.count === 1 ? ' is' : 's are'} left out. GitHub has the whole log.</Text>
+          <Text variant="caption" tone="subtle">{row.count.toLocaleString()} earlier line{row.count === 1 ? ' is' : 's are'} left out. The job's page has the whole log.</Text>
+
         </View>
       )
     case 'group': {

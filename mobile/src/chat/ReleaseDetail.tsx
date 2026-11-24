@@ -1,7 +1,7 @@
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { Linking, Pressable, StyleSheet, View } from 'react-native'
 import { ChevronDown, ChevronUp, CircleCheck, CircleDashed, CircleSlash, CircleX, Download, ExternalLink, FileSignature, Tag, type LucideProps } from 'lucide-react-native'
-import type { GhRun, GhRunJob } from '~/types/ipc'
+import type { ForgeProvider, GhRun, GhRunJob } from '~/types/ipc'
 import {
   entryState, firstFailure, formatSize, groupAssets, isActive, jobSummary, sortJobs, totalDownloads,
   type EntryMark, type ReleaseEntry, type Tone,
@@ -38,15 +38,19 @@ export interface ReleaseDetailProps {
   runs: GhRun[]
   latest: boolean
   onOpenJob: (job: GhRunJob, workflow: string) => void
+  /** The project's server (files open only from it) and forge (GitLab knows no file sizes). */
+  host?: string
+  provider?: ForgeProvider
 }
 
 /**
  * One release, or a release build that has no release yet (the desktop's `ReleasesItem.vue`): its
  * state, tag and commit, the workflow run that builds it with its jobs (a job opens its log), then
- * its files by platform and its notes. The notes are GitHub's Markdown drawn by `ChatMarkdown`: no
- * HTML, http(s) links only, no pictures fetched from the web. Files open only from github.com.
+ * its files by platform and its notes. The notes are GitHub's or GitLab's Markdown drawn by
+ * `ChatMarkdown`: no HTML, http(s) links only, no pictures fetched from the web. Files open only from
+ * the project's own server (github.com, or its GitLab server).
  */
-export function ReleaseDetail({ entry, read, runs, latest, onOpenJob }: ReleaseDetailProps) {
+export function ReleaseDetail({ entry, read, runs, latest, onOpenJob, host, provider }: ReleaseDetailProps) {
   const t = useTheme()
   const s = useStyles()
   const now = useNow(1000)
@@ -196,14 +200,15 @@ export function ReleaseDetail({ entry, read, runs, latest, onOpenJob }: ReleaseD
                 ? assets.groups.map(g => (
                     <ListSection key={g.platform} title={g.platform}>
                       {g.rows.map(({ asset, signature }) => {
-                        const link = githubLink(asset.url)
+                        const link = githubLink(asset.url, host)
                         const uploading = asset.state !== 'uploaded'
                         return (
                           <ListRow
                             key={asset.name}
                             title={asset.name}
                             mono
-                            subtitle={[uploading ? 'Uploading' : formatSize(asset.size), asset.downloads ? `${asset.downloads} download${asset.downloads === 1 ? '' : 's'}` : null, signature ? 'signed' : null].filter(Boolean).join(' · ')}
+                            subtitle={[uploading ? 'Uploading' : provider === 'gitlab' && !asset.size ? null : formatSize(asset.size),
+ asset.downloads ? `${asset.downloads} download${asset.downloads === 1 ? '' : 's'}` : null, signature ? 'signed' : null].filter(Boolean).join(' · ')}
                             leading={signature ? <FileSignature size={18} strokeWidth={1.75} color={t.colors.fgFaint} /> : <Download size={18} strokeWidth={1.75} color={t.colors.fgFaint} />}
                             trailing={link && !uploading ? <ExternalLink size={16} strokeWidth={1.75} color={t.colors.fgFaint} /> : undefined}
                             accessory="none"

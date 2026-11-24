@@ -1,8 +1,12 @@
 /**
- * Cleans HTML from outside (a pull request's description as GitHub renders it) down to an
- * allow-list of plain document markup before it is shown with `v-html`. Whatever GitHub already
+ * Cleans HTML from outside (a pull request's description as GitHub or GitLab renders it) down to an
+ * allow-list of plain document markup before it is shown with `v-html`. Whatever the forge already
  * did, this text was written by someone else: no scripts, styles, handlers, frames or forms
  * survive, links and pictures must be https, and unknown elements leave only their content.
+ *
+ * GitLab writes its own links and uploads from the server's root (`/group/project/-/issues/1`,
+ * `/uploads/…`): with a `base` (`https://gitlab.example.com`) those are read against it; without one
+ * they are dropped. Nothing is ever left relative to Mango's own page.
  */
 
 const KEEP = new Set([
@@ -36,7 +40,15 @@ const isWebUrl = (v: string) => /^https:\/\//i.test(v.trim())
 const isImageData = (v: string) => /^data:image\/(png|jpe?g|gif|webp|svg\+xml)[;,]/i.test(v.trim())
 const isLink = (v: string) => /^(https?:|mailto:)/i.test(v.trim())
 
-function cleanAttr(tag: string, name: string, value: string): string | null {
+/** `value` read against `base` when it starts at the server's root (`/…`, never `//host`); otherwise as it is. */
+function resolve(value: string, base: string | null): string {
+  const v = value.trim()
+  if (!base || !v.startsWith('/') || v.startsWith('//')) return value
+  try { return new URL(v, base).href } catch { return value }
+}
+
+function cleanAttr(tag: string, name: string, raw: string, base: string | null): string | null {
+  const value = name === 'href' || name === 'src' || name === 'poster' ? resolve(raw, base) : raw
   switch (name) {
     case 'href': return isLink(value) ? value.trim() : null
     case 'src':
@@ -54,21 +66,23 @@ function cleanAttr(tag: string, name: string, value: string): string | null {
   }
 }
 
-function clean(node: Node) {
+function clean(node: Node, base: string | null) {
   for (const child of [...node.childNodes]) {
     if (child.nodeType === Node.COMMENT_NODE) { child.remove(); continue }
     if (child.nodeType !== Node.ELEMENT_NODE) continue
     const el = child as Element
     const tag = el.tagName.toLowerCase()
     if (DROP.has(tag)) { el.remove(); continue }
-    clean(el)
+    clean(el, base)
     if (!KEEP.has(tag) || (tag === 'input' && el.getAttribute('type') !== 'checkbox')) {
       el.replaceWith(...el.childNodes)
       continue
     }
+    // GitLab draws pictures lazily: a placeholder in `src`, the picture itself in `data-src`.
+    if (tag === 'img' && el.getAttribute('data-src')) el.setAttribute('src', el.getAttribute('data-src')!)
     const allowed = ATTRS[tag] ?? []
     for (const attr of [...el.attributes]) {
-      const value = allowed.includes(attr.name) ? cleanAttr(tag, attr.name, attr.value) : null
+      const value = allowed.includes(attr.name) ? cleanAttr(tag, attr.name, attr.value, base) : null
       if (value === null) el.removeAttribute(attr.name)
       else if (value !== attr.value) el.setAttribute(attr.name, value)
     }
@@ -90,11 +104,24 @@ function clean(node: Node) {
   }
 }
 
-/** `html` with only safe markup left, as a string for `v-html`. */
-export function safeHtml(html: string): string {
+/** The forge's address as an origin (`https://host`), or null for anything else. */
+function originOf(base: string | null | undefined): string | null {
+  if (!base) return null
+  try {
+    const u = new URL(base)
+    return u.protocol === 'https:' || u.protocol === 'http:' ? u.origin : null
+  } catch { return null }
+}
+
+/**
+ * `html` with only safe markup left, as a string for `v-html`. `base`, the forge's own address
+ * (`https://host`), is what links and pictures from the server's root are read against.
+ */
+export function safeHtml(html: string, base?: string | null): string {
   if (!html.trim()) return ''
+  const origin = originOf(base)
   // A parsed document is inert: nothing in it loads or runs until it is put on the page.
   const doc = new DOMParser().parseFromString(`<!doctype html><body>${html}`, 'text/html')
-  clean(doc.body)
+  clean(doc.body, origin)
   return doc.body.innerHTML
 }

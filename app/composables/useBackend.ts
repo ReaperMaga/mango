@@ -8,6 +8,7 @@ import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/comp
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
+import { mockGitlabHosts, mockGitlabHostsSave, mockHostingInstall, mockHostingLogin, mockHostingLogout, mockHostingStatus } from '~/composables/mockHosting'
 import { mockPlugins } from '~/composables/mockPlugins'
 import { isEnvPath } from '~/utils/envPath'
 import { invoke } from '@tauri-apps/api/core'
@@ -458,9 +459,19 @@ const mock = (() => {
       case 'setup_check': return setupTools.map(t => ({ ...t }))
       case 'setup_install': {
         const id = newPtyId()
-        fakeInstall(id, args.tool)
+        if (args.tool === 'gh' || args.tool === 'glab') mockHostingInstall(emit, id, args.tool)
+        else fakeInstall(id, args.tool)
         return id
       }
+      case 'hosting_status': await new Promise(r => setTimeout(r, 400)); return mockHostingStatus()
+      case 'hosting_login': {
+        const id = newPtyId()
+        mockHostingLogin(emit, id, args.tool, args.host)
+        return id
+      }
+      case 'hosting_logout': await new Promise(r => setTimeout(r, 300)); return mockHostingLogout(args.tool, args.host, args.user)
+      case 'gitlab_hosts': return mockGitlabHosts()
+      case 'gitlab_hosts_save': return mockGitlabHostsSave(args.hosts)
       case 'lsp_servers': return lspServers.map(s => ({ ...s }))
       case 'lsp_folder': return isEnvPath(args.project) ? null : `preview:${args.project}`
       case 'lsp_install': {

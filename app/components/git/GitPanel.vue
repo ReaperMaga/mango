@@ -12,6 +12,8 @@ import { useFiles } from '~/stores/files'
 import { useLinks } from '~/stores/links'
 import { call } from '~/composables/useBackend'
 import { linkFromItem } from '~/utils/githubLinks'
+import { useForge } from '~/stores/forge'
+import { capital, itemNoun, requestsNoun, siteName } from '~/utils/forge'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
@@ -187,16 +189,21 @@ function mergeIntoBase() {
   void git.mergeWorktree(path.value, mainFolder.value, wtBranch.value)
 }
 
+/** GitHub's pull request or GitLab's merge request, by the remotes of the folder in view. */
+const forge = useForge()
+watch(path, p => forge.ensure(p), { immediate: true })
+const forgeLink = computed(() => (path.value ? forge.links[path.value] ?? null : null))
+const prNoun = computed(() => itemNoun('pr', forgeLink.value?.provider))
 const prBlocked = computed(() => {
-  if (!terms.value.remotes) return 'Pull requests need a git remote'
+  if (!terms.value.remotes) return `${capital(requestsNoun(forgeLink.value?.provider))} need a git remote`
   if (!wtBranch.value) return 'HEAD is detached: switch to a branch first'
   if (!base.value) return "The project's main folder is not on a branch"
   if (wtBranch.value === base.value) return `This worktree is on ${base.value} itself`
   if (aheadOfBase.value === 0) return `No commits to propose: ${base.value} already has them all`
   return null
 })
-const prTitle = computed(() => prBlocked.value ?? `Push ${wtBranch.value} and open a pull request into ${base.value} on GitHub`)
-/** Open the pull request and link it to the chats that work in this worktree. */
+const prTitle = computed(() => prBlocked.value ?? `Push ${wtBranch.value} and open a ${prNoun.value} into ${base.value} on ${siteName(forgeLink.value?.provider, forgeLink.value?.host)}`)
+/** Open the pull request (merge request) and link it to the chats that work in this worktree. */
 async function openPullRequest() {
   const folder = path.value
   if (prBlocked.value || !folder || !base.value) return
@@ -541,10 +548,10 @@ function onListKey(e: KeyboardEvent) {
           :loading="running('pr')"
           :disabled="waiting || !!prBlocked"
           :title="prTitle"
-          aria-label="Pull request"
+          :aria-label="capital(prNoun)"
           @click="openPullRequest"
         >
-          <GitPullRequestArrow v-if="!running('pr')" /><span class="gp__wtpr-label">Pull request</span>
+          <GitPullRequestArrow v-if="!running('pr')" /><span class="gp__wtpr-label">{{ capital(prNoun) }}</span>
         </UiButton>
         <span class="gp__wtgap" />
         <UiMenu :items="stripMenu" placement="bottom-end" :width="220" label="More worktree actions">

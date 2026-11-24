@@ -1,11 +1,15 @@
 import type { GhAsset, GhRelease, GhReleases, GhRun, GhRunAction, GhRunDetail, GhRunJob, GhRunState } from '~/types/ipc'
-import { registerMockJob } from '~/composables/mockGithub'
+import { aliasMockJob, isGitlabMock, registerMockJob } from '~/composables/mockGithub'
+import { baseName } from '~/utils/paths'
 
 /**
  * Releases for the browser preview (`pnpm dev`), told as a small story that plays out while you
  * watch: v0.1.29 is being built (draft, jobs finishing one by one, files appearing as each platform
  * uploads, published at the end), a trial build of the release workflow on main fails its Windows
  * job (re-run it), and older releases sit below. Job logs come from mockGithub's `gh_job`.
+ *
+ * The orchard-api project is on GitLab: the same story told as pipelines, a release appears once its
+ * tag pipeline made it, file sizes and downloads are unknown, and one release is still to come.
  */
 
 const OWNER = 'mango-dev'
@@ -157,6 +161,11 @@ const ALL = new Set(['win', 'mac-arm', 'mac-x64', 'linux', 'updater'])
 const BOT = { login: 'github-actions[bot]', avatarUrl: null }
 
 export function mockGhReleases(path: string, count: number): GhReleases {
+  const github = githubReleases(path, count)
+  return isGitlabMock(path) ? gitlabReleases(path, github) : github
+}
+
+function githubReleases(path: string, count: number): GhReleases {
   const s = story(path)
   const now = Date.now()
   const building = s.runs.get(9001)!
@@ -182,10 +191,59 @@ export function mockGhReleases(path: string, count: number): GhReleases {
   }
   const runs = [...s.runs.values()].map(r => toRun(r, now))
   for (let n = 1; n <= 6; n++) runs.push(pastRun(n, s.at))
-  return { host: 'github.com', owner: OWNER, repo: REPO, releases: releases.slice(0, count), runs }
+  return { provider: 'github', host: 'github.com', owner: OWNER, repo: REPO, releases: releases.slice(0, count), runs }
+}
+
+/* ---------- the same on GitLab ---------- */
+
+const glWeb = (path: string) => `https://gitlab.com/acme/backend/${baseName(path)}`
+
+/** A pipeline for a run: GitLab's own words and links. */
+function glRun(path: string, run: GhRun): GhRun {
+  return {
+    ...run, workflowId: 0, workflow: 'Pipeline', event: run.event === 'workflow_dispatch' ? 'web' : 'push',
+    title: run.event === 'workflow_dispatch' ? '' : run.title, url: `${glWeb(path)}/-/pipelines/${run.id}`, number: run.id - 8000,
+  }
+}
+
+/** A job under its GitLab link, telling the same story in `gh_job`. */
+function glJob(path: string, job: GhRunJob): GhRunJob {
+  const url = `${glWeb(path)}/-/jobs/${job.id + 5_200_000}`
+  aliasMockJob(job.url, url)
+  return { ...job, url }
+}
+
+const glDetail = (path: string, d: GhRunDetail | null): GhRunDetail | null =>
+  (d ? { run: glRun(path, d.run), jobs: d.jobs.map(j => glJob(path, j)) } : null)
+
+function gitlabReleases(path: string, github: GhReleases): GhReleases {
+  const web = glWeb(path)
+  const release = (r: GhRelease): GhRelease => ({
+    ...r, name: r.name.replace('Mango', 'Orchard API'), draft: false, prerelease: false, url: `${web}/-/releases/${r.tag}`,
+    author: { login: 'gitlab-ci', avatarUrl: null }, target: (r.id * 7919).toString(16).padEnd(8, '0').slice(0, 8),
+    bodyHtml: r.bodyHtml ? `<p>Packages for every platform are listed below. See <a href="/acme/backend/${baseName(path)}/-/merge_requests/14">!14</a> for the rate limits.</p>` : '',
+    // GitLab does not say how big a release's files are, nor how often they were downloaded.
+    assets: r.assets.map(a => ({ ...a, size: 0, downloads: 0, url: `${web}/-/releases/${r.tag}/downloads/${a.name}` })),
+  })
+  const upcoming: GhRelease = {
+    id: 200, tag: 'v0.2.0', name: 'Orchard API 0.2.0', draft: false, prerelease: false, url: `${web}/-/releases/v0.2.0`,
+    author: { login: 'you', avatarUrl: null }, createdAt: new Date(Date.now() - 3_600_000).toISOString(), publishedAt: null,
+    target: 'c0ffee12', bodyHtml: '<p>Comes out with the next maintenance window.</p>', assets: [],
+  }
+  return {
+    provider: 'gitlab', host: 'gitlab.com', owner: 'acme/backend', repo: baseName(path),
+    // A GitLab release is made by its tag pipeline's last job: while that pipeline runs, there is only the tag.
+    releases: [upcoming, ...github.releases.filter(r => !r.draft).map(release)],
+    runs: github.runs.map(r => glRun(path, r)),
+  }
 }
 
 export function mockGhTagRun(path: string, tag: string): GhRunDetail | null {
+  const detail = githubTagRun(path, tag)
+  return isGitlabMock(path) ? glDetail(path, detail) : detail
+}
+
+function githubTagRun(path: string, tag: string): GhRunDetail | null {
   const s = story(path)
   const now = Date.now()
   const live = [...s.runs.values()].find(r => r.branch === tag && r.event === 'push')
@@ -211,7 +269,8 @@ export function mockGhRun(path: string, id: number): GhRunDetail {
   const run = s.runs.get(id)
   if (!run) throw new Error(`GitHub has no workflow run ${id}, or the account gh is signed in with cannot see it.`)
   const now = Date.now()
-  return { run: toRun(run, now), jobs: runJobs(run, now) }
+  const detail = { run: toRun(run, now), jobs: runJobs(run, now) }
+  return isGitlabMock(path) ? glDetail(path, detail)! : detail
 }
 
 export function mockGhRunAction(path: string, id: number, action: GhRunAction) {

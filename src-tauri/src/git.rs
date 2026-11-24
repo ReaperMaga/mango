@@ -1870,7 +1870,7 @@ fn explain_sync_failure(detail: String) -> String {
         || lower.contains("authentication failed")
         || lower.contains("permission denied (publickey")
     {
-        "The remote asked for credentials Mango can't enter. Sign in from a terminal first (a credential helper, `gh auth login`, or an SSH key), then try again."
+        "The remote asked for credentials Mango can't enter. Sign in first (Settings > Git hosting for GitHub or GitLab, a credential helper, or an SSH key), then try again."
     } else if lower.contains("non-fast-forward") || lower.contains("fetch first") {
         "The remote has commits you don't have yet. Pull, then push again."
     } else if lower.contains("could not resolve host") || lower.contains("could not read from remote") {
