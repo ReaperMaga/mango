@@ -2,6 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.48
+
+### New
+
+- Open the project's GitHub repository from the titlebar and the phone.
+
+### Fixes
+
+- List the models a remote environment's agent offers.
+
 ## 0.1.47
 
 ### New
