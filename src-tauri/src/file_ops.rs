@@ -157,11 +157,20 @@ fn move_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
     use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
 
     let wide = |p: &Path| p.as_os_str().encode_wide().chain([0]).collect::<Vec<u16>>();
-    let (from, to) = (wide(from), wide(to));
+    let (wide_from, wide_to) = (wide(from), wide(to));
     // `fs::rename` replaces; MoveFileEx without flags refuses.
     // SAFETY: both strings end in NUL and live through the call.
-    unsafe { MoveFileExW(PCWSTR(from.as_ptr()), PCWSTR(to.as_ptr()), MOVE_FILE_FLAGS(0)) }
-        .map_err(|_| std::io::Error::last_os_error())
+    unsafe { MoveFileExW(PCWSTR(wide_from.as_ptr()), PCWSTR(wide_to.as_ptr()), MOVE_FILE_FLAGS(0)) }.map_err(|_| {
+        let e = std::io::Error::last_os_error();
+        // A folder moved onto one that exists is refused as "access denied". The name is taken unless
+        // it is the entry itself (a change of case alone).
+        let taken = fs::symlink_metadata(to).is_ok() && to.canonicalize().ok() != from.canonicalize().ok();
+        if e.kind() != std::io::ErrorKind::AlreadyExists && taken {
+            std::io::ErrorKind::AlreadyExists.into()
+        } else {
+            e
+        }
+    })
 }
 
 /// A rename that fails when the new name is taken. A change of case alone works.
