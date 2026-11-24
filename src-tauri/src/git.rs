@@ -3539,16 +3539,24 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
 
     // -- against a real repository ------------------------------------------
 
-    struct Scratch(PathBuf);
+    /// A scratch folder, and its path spelt the way git reports it back.
+    struct Scratch(PathBuf, String);
     impl Scratch {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("mango-git-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&dir).unwrap();
-            // The canonical path is what git reports back as the root.
-            Scratch(dir.canonicalize().unwrap())
+            // The canonical path is what git reports back as the root. On Windows it comes verbatim
+            // (`\\?\C:\…`), which git neither gives back (`C:/…`) nor takes as a remote.
+            let real = dir.canonicalize().unwrap().to_str().unwrap().to_string();
+            let shown = if cfg!(windows) {
+                real.strip_prefix(r"\\?\").unwrap_or(&real).replace('\\', "/")
+            } else {
+                real
+            };
+            Scratch(PathBuf::from(&shown), shown)
         }
         fn path(&self) -> &str {
-            self.0.to_str().unwrap()
+            &self.1
         }
         fn at(&self) -> At {
             At::local(&self.0)
@@ -3573,6 +3581,8 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
             s.git(&["config", "user.name", "Mango Test"]);
             s.git(&["config", "user.email", "test@mango.invalid"]);
             s.git(&["config", "commit.gpgsign", "false"]);
+            // Git for Windows turns autocrlf on system-wide: files must come back byte for byte.
+            s.git(&["config", "core.autocrlf", "false"]);
             s
         }
         fn entry(&self, rel: &str) -> Option<GitFile> {
