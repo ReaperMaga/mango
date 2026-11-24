@@ -4,8 +4,10 @@ import { useUsage } from '~/stores/usage'
 import { useWorkspace } from '~/stores/workspace'
 import { modLabel } from '~/composables/useShortcuts'
 import { formatDuration, useNow } from '~/utils/time'
+import { limitLabel } from '~/utils/usageSummary'
 
 /* Titlebar widget: the most constrained plan limit across agents, as a small meter. Opens Usage. */
+const { t } = useI18n()
 const ws = useWorkspace()
 const usage = useUsage()
 const now = useNow(60_000)
@@ -14,7 +16,7 @@ onMounted(() => { mod.value = modLabel() })
 
 /** The window with the highest percent across every readable entry. */
 const top = computed(() => {
-  let best: { percent: number; label: string; resetsAt?: number | null } | null = null
+  let best: { percent: number; id: string; label: string; resetsAt?: number | null } | null = null
   for (const e of Object.values(usage.entries)) {
     for (const w of e.usage?.windows ?? []) {
       if (typeof w.percent === 'number' && (!best || w.percent > best.percent)) best = w
@@ -27,12 +29,15 @@ const tone = computed(() => (pct.value === null ? '' : pct.value >= 100 ? 'is-fu
 
 const title = computed(() => {
   const keys = `(${mod.value}+Shift+U)`
-  const reset = usage.hasReset ? ' A limit was reset.' : ''
-  const t = top.value
-  if (!t || pct.value === null) return `Usage limits${reset} ${keys}`
-  const left = t.resetsAt ? t.resetsAt - now.value : 0
-  const resets = left > 0 ? `, resets in ${formatDuration(Math.max(60_000, Math.round(left / 60_000) * 60_000))}` : ''
-  return `Usage: ${pct.value}% of ${t.label} limit${resets}.${reset} ${keys}`
+  const reset = usage.hasReset ? ` ${t('shell.usage.wasReset')}` : ''
+  const w = top.value
+  if (!w || pct.value === null) return `${t('shell.usage.title')}${reset} ${keys}`
+  const left = w.resetsAt ? w.resetsAt - now.value : 0
+  const window = limitLabel(w)
+  const used = left > 0
+    ? t('shell.usage.meterTitleResets', { percent: pct.value, window, left: formatDuration(Math.max(60_000, Math.round(left / 60_000) * 60_000)) })
+    : t('shell.usage.meterTitle', { percent: pct.value, window })
+  return `${used}${reset} ${keys}`
 })
 </script>
 

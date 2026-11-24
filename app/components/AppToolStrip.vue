@@ -17,6 +17,7 @@ import { parsePanelEditorTab } from '~/plugin-host/ids'
  * stopped or can't be reached.
  */
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const git = useGit()
 const threads = useThreads()
@@ -42,7 +43,7 @@ const placeState = computed(() => (place.value ? envState(place.value.hostId, pl
 const placeMark = computed(() => (placeState.value && ['off', 'moving', 'bad'].includes(placeState.value.tone) ? placeState.value : null))
 const placeTitle = computed(() => {
   const p = place.value
-  const where = p ? `Runs on ${p.label} (${p.shared ? 'shared' : p.host})` : 'Runs on this computer'
+  const where = p ? t('shell.tools.runsOn', { name: p.label, host: p.shared ? t('shell.tools.shared') : p.host }) : t('shell.tools.runsHere')
   return placeMark.value ? `${where} · ${placeMark.value.label}` : where
 })
 watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { immediate: true })
@@ -50,15 +51,15 @@ watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { imme
 /** Releases: a corner mark while one builds or after its build failed (see useReleaseWatch). */
 const releaseWatch = useReleaseWatch()
 const releaseMark = releaseWatch.mark
-const RELEASE_MARK = { running: 'a release is building', failed: 'a release build failed' } as const
+const releaseMarks = computed(() => ({ running: t('shell.tools.releaseRunning'), failed: t('shell.tools.releaseFailed') }))
 
 /** The bottom panel's tabs (the Git log, then plugins'): a button each at the foot, above the terminal's (bottom-docked tools sit low, as in an IDE). */
-const panelTabs = computed(() => allPanelTabs().filter(panelTabOffered).map(t => ({
-  ref: t.fullId,
-  label: t.title,
-  title: t.pluginId === null ? ws.withKey(t.title, t.shortcut) : t.title,
-  icon: iconComponent(t.icon)!,
-  count: panelTabBadge(t),
+const panelTabs = computed(() => allPanelTabs().filter(panelTabOffered).map(tab => ({
+  ref: tab.fullId,
+  label: tab.title,
+  title: tab.pluginId === null ? ws.withKey(tab.title, tab.shortcut) : tab.title,
+  icon: iconComponent(tab.icon)!,
+  count: panelTabBadge(tab),
 })))
 /** In view: showing in the open panel, or the tab of the active pane when it sits in the main area. */
 function panelShowing(ref: string) {
@@ -74,19 +75,19 @@ const terminalShowing = computed(() => ws.terminalOpen && !ws.activePanelTab)
 
 /** "Merge requests" for a project on GitLab (read with the titlebar's repository button). */
 const forge = useForge()
-const requestsLabel = computed(() => (forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'Merge requests' : 'Pull requests'))
+const requestsLabel = computed(() => (forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.mergeRequests') : t('shell.tools.links')))
 
 const tools = computed(() => [
-  { id: 'files' as ToolView, label: 'Files', icon: Files, keys: ws.keyLabel('files'), count: 0, counts: '' },
-  { id: 'changes' as ToolView, label: 'Changes', icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changed file' },
-  { id: 'links' as ToolView, label: requestsLabel.value, icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linked item' },
+  { id: 'files' as ToolView, label: t('shell.tools.files'), icon: Files, keys: ws.keyLabel('files'), count: 0, counts: null },
+  { id: 'changes' as ToolView, label: t('shell.tools.changes'), icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changedFiles' },
+  { id: 'links' as ToolView, label: requestsLabel.value, icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linkedItems' },
   ...(releaseWatch.path.value
-    ? [{ id: 'releases' as ToolView, label: 'Releases', icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: '', mark: releaseMark.value }]
+    ? [{ id: 'releases' as ToolView, label: t('shell.tools.releases'), icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: null, mark: releaseMark.value }]
     : []),
   // Plugins' tool windows, after Mango's own.
   ...reg.toolWindows.filter(w => shown(w)).map((w) => {
     const badge = read(w.badge, w.pluginId, null, 'badge')
-    return { id: w.fullId as ToolView, label: w.title, icon: iconComponent(w.icon)!, keys: '', count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0, counts: 'item' }
+    return { id: w.fullId as ToolView, label: w.title, icon: iconComponent(w.icon)!, keys: '', count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0, counts: 'items' }
   }),
 ])
 
@@ -108,7 +109,7 @@ watch(() => ws.toolPanel, async (id) => {
 </script>
 
 <template>
-  <nav class="ts" aria-label="Tool windows">
+  <nav class="ts" :aria-label="t('shell.tools.label')">
     <div class="ts__tools">
     <span
       class="ts__glide"
@@ -117,21 +118,21 @@ watch(() => ws.toolPanel, async (id) => {
       aria-hidden="true"
     />
     <button
-      v-for="(t, i) in tools"
-      :key="t.id"
+      v-for="(tool, i) in tools"
+      :key="tool.id"
       :ref="el => { if (el) btns[i] = el as HTMLElement }"
       type="button"
       class="ts__btn"
-      :class="{ 'is-active': ws.toolPanel === t.id }"
-      :aria-pressed="ws.toolPanel === t.id"
-      :aria-label="t.count ? `${t.label}, ${t.count} ${t.counts}${t.count === 1 ? '' : 's'}` : 'mark' in t && t.mark ? `${t.label}, ${RELEASE_MARK[t.mark]}` : t.label"
-      :title="'mark' in t && t.mark ? `${t.label}: ${RELEASE_MARK[t.mark]}${t.keys ? ` (${t.keys})` : ''}` : `${t.label}${t.keys ? ` (${t.keys})` : ''}`"
-      @click="ws.toggleTool(t.id)"
+      :class="{ 'is-active': ws.toolPanel === tool.id }"
+      :aria-pressed="ws.toolPanel === tool.id"
+      :aria-label="tool.count ? t(`shell.tools.${tool.counts}`, { label: tool.label }, tool.count) : 'mark' in tool && tool.mark ? `${tool.label}, ${releaseMarks[tool.mark]}` : tool.label"
+      :title="'mark' in tool && tool.mark ? `${tool.label}: ${releaseMarks[tool.mark]}${tool.keys ? ` (${tool.keys})` : ''}` : `${tool.label}${tool.keys ? ` (${tool.keys})` : ''}`"
+      @click="ws.toggleTool(tool.id)"
     >
-      <component :is="t.icon" />
-      <span v-if="t.count" class="ts__count tabular" aria-hidden="true">{{ t.count > 99 ? '99+' : t.count }}</span>
-      <span v-if="'mark' in t && t.mark" class="ts__mark ts__run" :class="`is-${t.mark}`" aria-hidden="true">
-        <CircleDashed v-if="t.mark === 'running'" />
+      <component :is="tool.icon" />
+      <span v-if="tool.count" class="ts__count tabular" aria-hidden="true">{{ tool.count > 99 ? '99+' : tool.count }}</span>
+      <span v-if="'mark' in tool && tool.mark" class="ts__mark ts__run" :class="`is-${tool.mark}`" aria-hidden="true">
+        <CircleDashed v-if="tool.mark === 'running'" />
         <X v-else />
       </span>
     </button>
@@ -144,7 +145,7 @@ watch(() => ws.toolPanel, async (id) => {
       class="ts__btn ts__btn--solo"
       :class="{ 'is-active': panelShowing(p.ref) }"
       :aria-pressed="panelShowing(p.ref)"
-      :aria-label="p.count ? `${p.label}, ${p.count} item${p.count === 1 ? '' : 's'}` : p.label"
+      :aria-label="p.count ? t('shell.tools.items', { label: p.label }, p.count) : p.label"
       :title="p.title"
       @click="togglePanelTab(p.ref)"
     >
@@ -156,8 +157,8 @@ watch(() => ws.toolPanel, async (id) => {
       class="ts__btn ts__btn--solo"
       :class="{ 'is-active': terminalShowing }"
       :aria-pressed="terminalShowing"
-      aria-label="Terminal"
-      :title="ws.withKey('Toggle terminal', 'terminal')"
+      :aria-label="t('shell.tools.terminal')"
+      :title="ws.withKey(t('shell.tools.toggleTerminal'), 'terminal')"
       @click="ws.toggleTerminal()"
     >
       <SquareTerminal />
@@ -167,7 +168,7 @@ watch(() => ws.toolPanel, async (id) => {
       class="ts__btn ts__btn--solo ts__btn--env"
       :class="{ 'is-active': ws.toolPanel === 'env' }"
       :aria-pressed="ws.toolPanel === 'env'"
-      :aria-label="`Environment: ${placeTitle}`"
+      :aria-label="t('shell.tools.place', { place: placeTitle })"
       :title="ws.withKey(placeTitle, 'env')"
       @click="ws.toggleEnv()"
     >

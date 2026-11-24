@@ -10,6 +10,7 @@ import { on, appWindow } from '~/composables/useBackend'
 import { usePluginRuntime } from '~/plugin-host/runtime'
 import PluginLayers from '~/plugin-host/ui/PluginLayers.vue'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const updater = useUpdater()
@@ -51,7 +52,7 @@ watch(() => ws.activeProject?.name, (name) => {
 /* Something this window could not take over (a chat still running in another window). */
 watch(() => win.refused, (reason) => {
   if (!reason) return
-  ws.notify('Opened in another window', reason)
+  ws.notify(t('shell.windows.openedElsewhere'), reason)
   win.refused = null
 })
 

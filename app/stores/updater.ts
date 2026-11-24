@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { t } from '~/i18n'
 import type { UpdateInfo, UpdateProgress } from '~/types/ipc'
 import { call, on } from '~/composables/useBackend'
 import { useWindows } from '~/stores/windows'
@@ -139,7 +140,7 @@ export const useUpdater = defineStore('updater', {
     async _allSaved(): Promise<boolean> {
       const unsaved = await useWindows().saveEverywhere()
       if (!unsaved.length) return true
-      this.error = `Save or discard your changes to ${unsaved[0]} first, then install the update.`
+      this.error = t('shell.update.saveFirst', { file: unsaved[0]! })
       this.installFailed = true
       this.phase = 'error'
       return false

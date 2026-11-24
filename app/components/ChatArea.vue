@@ -36,6 +36,7 @@ import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import PluginTabPane from '~/plugin-host/ui/PluginTabPane.vue'
 import PanelTabPane from '~/plugin-host/ui/PanelTabPane.vue'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
@@ -96,8 +97,8 @@ const tabs = computed<Tab[]>(() => {
       if (tab) out.push({ id, kind: 'terminal', title: tab.title, term: tab })
       continue
     }
-    const t = threads.byId(id)
-    if (t) out.push({ id, kind: 'chat', title: t.title, thread: t })
+    const chat = threads.byId(id)
+    if (chat) out.push({ id, kind: 'chat', title: chatTitle(chat.title), thread: chat })
   }
   return out
 })
@@ -128,26 +129,26 @@ function newChat(paneId: string) {
 /** "worktree", or "workspace" for a Unity VCS project. */
 const wtTerm = (projectPath: string) => vcsTerms(ws.openProjects.find(p => p.path === projectPath)?.vcs).worktree
 
-function tabTitle(t: Tab, i: number) {
+function tabTitle(tab: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
-  if (t.kind === 'diff') return `Changes in ${t.file}${keys}`
-  if (t.kind === 'file') return `${t.file}${keys}`
-  if (t.kind === 'commit') return `Changes in ${t.file} at ${t.short}${keys}`
-  if (t.kind === 'decompiled') return `${t.symbol}${keys}
-Decompiled${t.assembly ? ` from ${t.assembly}` : ''}, read-only`
-  if (t.kind === 'plugin' || t.kind === 'panel') return `${t.title}${t.plugin ? `\nFrom ${t.plugin}` : ''}${keys}`
-  if (t.kind === 'terminal') {
-    const where = [t.term.shell, t.term.cwd].filter(Boolean).join(' — ')
-    return `Terminal${where ? ` — ${where}` : ''}${t.term.exited ? ' (exited)' : ''}${keys}`
+  if (tab.kind === 'diff') return `${t('shell.tabs.changesIn', { file: tab.file })}${keys}`
+  if (tab.kind === 'file') return `${tab.file}${keys}`
+  if (tab.kind === 'commit') return `${t('shell.tabs.changesAt', { file: tab.file, commit: tab.short })}${keys}`
+  if (tab.kind === 'decompiled') return `${tab.symbol}${keys}
+${tab.assembly ? t('shell.tabs.decompiledFrom', { assembly: tab.assembly }) : t('shell.tabs.decompiledReadOnly')}`
+  if (tab.kind === 'plugin' || tab.kind === 'panel') return `${tab.title}${tab.plugin ? `\n${t('shell.tabs.from', { plugin: tab.plugin })}` : ''}${keys}`
+  if (tab.kind === 'terminal') {
+    const where = [tab.term.shell, tab.term.cwd].filter(Boolean).join(' — ')
+    return `${t('shell.tools.terminal')}${where ? ` — ${where}` : ''}${tab.term.exited ? ` ${t('shell.tabs.exited')}` : ''}${keys}`
   }
-  if (t.kind === 'browser') {
-    const owner = threads.byId(t.browser.threadId)
-    const where = isBlank(t.browser.url) ? 'New tab' : t.browser.url
-    return `${where}${owner ? `\nOpened by ${owner.title}` : ''}${keys}`
+  if (tab.kind === 'browser') {
+    const owner = threads.byId(tab.browser.threadId)
+    const where = isBlank(tab.browser.url) ? t('shell.tabs.newTab') : tab.browser.url
+    return `${where}${owner ? `\n${t('shell.tabs.openedBy', { title: owner.title })}` : ''}${keys}`
   }
-  const wt = t.kind === 'chat' ? t.thread.worktree : null
-  const term = t.kind === 'chat' ? wtTerm(t.thread.projectPath) : ''
-  return `${t.title}${keys}${wt ? `\n${term[0]!.toUpperCase()}${term.slice(1)}: ${wt}${t.thread.branch ? ` (${t.thread.branch})` : ''}` : ''}`
+  const wt = tab.kind === 'chat' ? tab.thread.worktree : null
+  const term = tab.kind === 'chat' ? wtTerm(tab.thread.projectPath) : ''
+  return `${tab.title}${keys}${wt ? `\n${term[0]!.toUpperCase()}${term.slice(1)}: ${wt}${tab.thread.branch ? ` (${tab.thread.branch})` : ''}` : ''}`
 }
 
 /*
@@ -271,16 +272,16 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (!strip || !tab) return []
   const ids = strip.tabs.map(t => t.id)
   const items: MenuItem[] = [
-    { label: 'Close', icon: X, kbd: ws.keyLabel('close-tab'), onSelect: () => threads.closeTab(tab.id) },
-    { label: 'Close others', icon: XCircle, disabled: ids.length < 2, onSelect: () => closeMany(ids.filter(x => x !== tab.id)) },
-    { label: 'Close to the right', icon: ArrowRightToLine, disabled: at >= ids.length - 1, onSelect: () => closeMany(ids.slice(at + 1)) },
-    { label: 'Close all', icon: ListX, onSelect: () => closeMany(ids) },
+    { label: t('common.actions.close'), icon: X, kbd: ws.keyLabel('close-tab'), onSelect: () => threads.closeTab(tab.id) },
+    { label: t('shell.tabs.closeOthers'), icon: XCircle, disabled: ids.length < 2, onSelect: () => closeMany(ids.filter(x => x !== tab.id)) },
+    { label: t('shell.tabs.closeRight'), icon: ArrowRightToLine, disabled: at >= ids.length - 1, onSelect: () => closeMany(ids.slice(at + 1)) },
+    { label: t('shell.tabs.closeAll'), icon: ListX, onSelect: () => closeMany(ids) },
   ]
 
   // Split: the tab moves into a new right pane, so something has to stay on the left.
   const other = threads.panes.find(p => p.id !== strip.pane.id)
   const splitItem: MenuItem = {
-    label: other ? (other.id === 'pane-b' ? 'Move to the right pane' : 'Move to the left pane') : 'Split right',
+    label: other ? (other.id === 'pane-b' ? t('shell.tabs.toRight') : t('shell.tabs.toLeft')) : t('shell.tabs.splitRight'),
     icon: Columns2,
     divider: true,
     disabled: !other && ids.length < 2,
@@ -292,8 +293,8 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     items.push(
       splitItem,
       { ...win.moveChatAction(tab.id), icon: AppWindow },
-      { label: 'Mark as settled', icon: CircleCheck, divider: true, disabled: busy || tab.thread.status === 'done', onSelect: () => threads.setStatus(tab.id, 'done') },
-      { label: 'Archive chat', icon: Archive, disabled: busy, hint: busy ? 'Still working' : undefined, onSelect: () => ws.confirmThen('archive', { title: 'Archive chat?', body: `“${tab.thread.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(tab.id)) },
+      { label: t('shell.chat.markSettled'), icon: CircleCheck, divider: true, disabled: busy || tab.thread.status === 'done', onSelect: () => threads.setStatus(tab.id, 'done') },
+      { label: t('shell.chat.archive'), icon: Archive, disabled: busy, hint: busy ? t('shell.chat.stillWorking') : undefined, onSelect: () => ws.confirmThen('archive', { title: t('shell.chat.archiveTitle'), body: t('shell.chat.archiveBody', { title: tab.thread.title }), label: t('shell.chat.archiveLabel') }, () => threads.archive(tab.id)) },
     )
     return items
   }
@@ -301,7 +302,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (tab.kind === 'terminal') {
     items.push(
       splitItem,
-      { label: 'Move to panel', icon: ArrowDownToLine, divider: true, onSelect: () => ws.moveTerminalToPanel(tab.term.id) },
+      { label: t('shell.tabs.toPanel'), icon: ArrowDownToLine, divider: true, onSelect: () => ws.moveTerminalToPanel(tab.term.id) },
     )
     return items
   }
@@ -309,7 +310,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (tab.kind === 'decompiled') {
     items.push(
       splitItem,
-      { label: 'Copy type name', icon: Copy, divider: true, onSelect: () => void copyToClipboard(tab.symbol) },
+      { label: t('shell.tabs.copyType'), icon: Copy, divider: true, onSelect: () => void copyToClipboard(tab.symbol) },
     )
     return items
   }
@@ -322,7 +323,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (tab.kind === 'commit') {
     items.push(
       splitItem,
-      { label: 'Copy relative path', icon: Route, divider: true, onSelect: () => void copyToClipboard(tab.file) },
+      { label: t('shell.tabs.copyRelative'), icon: Route, divider: true, onSelect: () => void copyToClipboard(tab.file) },
     )
     return items
   }
@@ -330,7 +331,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (tab.kind === 'panel') {
     items.push(
       splitItem,
-      { label: 'Move to panel', icon: ArrowDownToLine, divider: true, onSelect: () => ws.movePanelTabToPanel(tab.ref) },
+      { label: t('shell.tabs.toPanel'), icon: ArrowDownToLine, divider: true, onSelect: () => ws.movePanelTabToPanel(tab.ref) },
     )
     return items
   }
@@ -340,9 +341,9 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     const blank = isBlank(b.url)
     items.push(
       splitItem,
-      { label: 'Reload', icon: RotateCw, divider: true, disabled: blank, onSelect: () => void browsers.go(b.id, 'reload') },
-      { label: 'Copy URL', icon: Copy, disabled: blank, onSelect: () => void copyToClipboard(b.url) },
-      { label: 'Open in system browser', icon: ExternalLink, disabled: blank, onSelect: () => void openExternal(b.url).catch(() => {}) },
+      { label: t('shell.tabs.reload'), icon: RotateCw, divider: true, disabled: blank, onSelect: () => void browsers.go(b.id, 'reload') },
+      { label: t('shell.tabs.copyUrl'), icon: Copy, disabled: blank, onSelect: () => void copyToClipboard(b.url) },
+      { label: t('shell.tabs.systemBrowser'), icon: ExternalLink, disabled: blank, onSelect: () => void openExternal(b.url).catch(() => {}) },
     )
     return items
   }
@@ -350,11 +351,11 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   const project = tab.kind === 'file' ? parseFileTab(tab.id)?.projectPath : parseDiffTab(tab.id)?.projectPath
   items.push(splitItem)
   if (tab.kind === 'file' && files.isPreview(tab.id)) {
-    items.push({ label: 'Keep open', icon: Pin, divider: true, onSelect: () => files.pin(tab.id) })
+    items.push({ label: t('shell.tabs.keepOpen'), icon: Pin, divider: true, onSelect: () => files.pin(tab.id) })
   }
   items.push(
-    { label: 'Copy path', icon: Copy, divider: !(tab.kind === 'file' && files.isPreview(tab.id)), disabled: !project, onSelect: () => project && void copyToClipboard(absolutePath(project, tab.file)) },
-    { label: 'Copy relative path', icon: Route, onSelect: () => void copyToClipboard(tab.file) },
+    { label: t('shell.tabs.copyPath'), icon: Copy, divider: !(tab.kind === 'file' && files.isPreview(tab.id)), disabled: !project, onSelect: () => project && void copyToClipboard(absolutePath(project, tab.file)) },
+    { label: t('shell.tabs.copyRelative'), icon: Route, onSelect: () => void copyToClipboard(tab.file) },
   )
   return items
 })
@@ -370,9 +371,9 @@ function inProjectPath(project: string, file: string) {
 }
 
 /** A file or diff tab's icon and tint: what the Files view gives that file. */
-function lookOf(t: { id: string, kind: string, file: string }) {
-  const projectPath = tabProject(t.id) ?? ''
-  const path = t.kind === 'diff' ? inProjectPath(projectPath, t.file) : t.file
+function lookOf(tab: { id: string, kind: string, file: string }) {
+  const projectPath = tabProject(tab.id) ?? ''
+  const path = tab.kind === 'diff' ? inProjectPath(projectPath, tab.file) : tab.file
   return fileLook({ projectPath, path, name: nameOf(path), isDir: false, open: false })
 }
 </script>
@@ -387,7 +388,7 @@ function lookOf(t: { id: string, kind: string, file: string }) {
           class="ca__divider ca__divider--bar"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize panes"
+          :aria-label="t('shell.tabs.resizePanes')"
           @pointerdown="onDown"
           @pointermove="onMove"
           @pointerup="onUp"
@@ -399,84 +400,84 @@ function lookOf(t: { id: string, kind: string, file: string }) {
             class="ca__strip"
             :name="tabMotion ? 'ca-tab' : 'ca-tab-still'"
             role="tablist"
-            :aria-label="!threads.isSplit ? 'Open tabs' : si === 0 ? 'Left pane tabs' : 'Right pane tabs'"
+            :aria-label="!threads.isSplit ? t('shell.tabs.open') : si === 0 ? t('shell.tabs.left') : t('shell.tabs.right')"
             data-tab-drop="strip"
             :data-pane-id="strip.pane.id"
           >
             <div
-              v-for="(t, i) in strip.tabs"
-              :key="t.id"
+              v-for="(tab, i) in strip.tabs"
+              :key="tab.id"
               class="ca__tab"
               :class="{
-                'is-active': strip.pane.threadId === t.id && threads.activePaneId === strip.pane.id,
-                'is-shown': strip.pane.threadId === t.id,
-                'is-dragged': isDragged(t),
+                'is-active': strip.pane.threadId === tab.id && threads.activePaneId === strip.pane.id,
+                'is-shown': strip.pane.threadId === tab.id,
+                'is-dragged': isDragged(tab),
               }"
               role="tab"
               tabindex="0"
-              :data-tab-id="t.id"
-              :aria-selected="strip.pane.threadId === t.id"
-              :title="tabTitle(t, i)"
-              @click="onTabClick(t.id)"
-              @pointerdown="onTabPress($event, t)"
-              @keydown.enter.prevent="threads.show(t.id)"
-              @auxclick="onTabAux($event, t.id)"
-              @contextmenu.prevent="onTabContext($event, t.id)"
-              @dblclick="t.kind === 'file' && files.pin(t.id)"
+              :data-tab-id="tab.id"
+              :aria-selected="strip.pane.threadId === tab.id"
+              :title="tabTitle(tab, i)"
+              @click="onTabClick(tab.id)"
+              @pointerdown="onTabPress($event, tab)"
+              @keydown.enter.prevent="threads.show(tab.id)"
+              @auxclick="onTabAux($event, tab.id)"
+              @contextmenu.prevent="onTabContext($event, tab.id)"
+              @dblclick="tab.kind === 'file' && files.pin(tab.id)"
             >
-              <template v-if="t.kind === 'chat'">
-                <UiRipenessDot :status="t.thread.archived ? 'archived' : t.thread.status" :size="11" :unseen="hasUnreadResult(t.thread) || (!t.thread.archived && !t.thread.seen && t.thread.status === 'waiting')" />
-                <span class="ca__tab-title">{{ t.title }}</span>
-                <FolderGit2 v-if="t.thread.worktree" class="ca__tab-wt" :aria-label="`In its own ${wtTerm(t.thread.projectPath)}${t.thread.branch ? `, branch ${t.thread.branch}` : ''}`" />
+              <template v-if="tab.kind === 'chat'">
+                <UiRipenessDot :status="tab.thread.archived ? 'archived' : tab.thread.status" :size="11" :unseen="hasUnreadResult(tab.thread) || (!tab.thread.archived && !tab.thread.seen && tab.thread.status === 'waiting')" />
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <FolderGit2 v-if="tab.thread.worktree" class="ca__tab-wt" :aria-label="tab.thread.branch ? t('shell.tabs.ownTermBranch', { term: wtTerm(tab.thread.projectPath), branch: tab.thread.branch }) : t('shell.tabs.ownTerm', { term: wtTerm(tab.thread.projectPath) })" />
               </template>
-              <template v-else-if="t.kind === 'diff'">
-                <FileDiff class="ca__tab-icon" :style="{ color: lookOf(t).tint ?? undefined }" aria-hidden="true" />
-                <span class="ca__tab-title">{{ t.title }}</span>
-                <span v-if="t.staged" class="ca__tab-note">staged</span>
+              <template v-else-if="tab.kind === 'diff'">
+                <FileDiff class="ca__tab-icon" :style="{ color: lookOf(tab).tint ?? undefined }" aria-hidden="true" />
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <span v-if="tab.staged" class="ca__tab-note">{{ t('shell.tabs.staged') }}</span>
               </template>
-              <template v-else-if="t.kind === 'commit'">
+              <template v-else-if="tab.kind === 'commit'">
                 <GitCommitHorizontal class="ca__tab-icon" aria-hidden="true" />
-                <span class="ca__tab-title">{{ t.title }}</span>
+                <span class="ca__tab-title">{{ tab.title }}</span>
               </template>
-              <template v-else-if="t.kind === 'decompiled'">
+              <template v-else-if="tab.kind === 'decompiled'">
                 <FileCode class="ca__tab-icon" aria-hidden="true" />
-                <span class="ca__tab-title">{{ t.title }}</span>
-                <span class="ca__tab-note">decompiled</span>
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <span class="ca__tab-note">{{ t('shell.tabs.decompiled') }}</span>
               </template>
-              <template v-else-if="t.kind === 'terminal'">
-                <component :is="isEnvPath(t.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': t.term.exited }" aria-hidden="true" />
-                <span class="ca__tab-title">{{ t.title }}</span>
-                <span v-if="t.term.shell" class="ca__tab-note">{{ t.term.shell }}</span>
+              <template v-else-if="tab.kind === 'terminal'">
+                <component :is="isEnvPath(tab.term.cwd) ? Server : SquareTerminal" class="ca__tab-icon" :class="{ 'is-exited': tab.term.exited }" aria-hidden="true" />
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <span v-if="tab.term.shell" class="ca__tab-note">{{ tab.term.shell }}</span>
               </template>
-              <template v-else-if="t.kind === 'plugin' || t.kind === 'panel'">
-                <PluginIcon :icon="t.icon" class="ca__tab-icon" />
-                <span class="ca__tab-title">{{ t.title }}</span>
+              <template v-else-if="tab.kind === 'plugin' || tab.kind === 'panel'">
+                <PluginIcon :icon="tab.icon" class="ca__tab-icon" />
+                <span class="ca__tab-title">{{ tab.title }}</span>
               </template>
-              <template v-else-if="t.kind === 'browser'">
-                <span v-if="t.browser.loading" class="ca__tab-spin" aria-hidden="true" />
+              <template v-else-if="tab.kind === 'browser'">
+                <span v-if="tab.browser.loading" class="ca__tab-spin" aria-hidden="true" />
                 <Globe v-else class="ca__tab-icon" aria-hidden="true" />
-                <span class="ca__tab-title">{{ t.title }}</span>
-                <span v-if="t.browser.threadId" class="ca__tab-note">agent</span>
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <span v-if="tab.browser.threadId" class="ca__tab-note">{{ t('shell.tabs.agent') }}</span>
               </template>
               <template v-else>
-                <component :is="lookOf(t).icon" class="ca__tab-icon" :style="{ color: lookOf(t).tint ?? undefined }" aria-hidden="true" />
-                <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(t.id) }">{{ t.title }}</span>
+                <component :is="lookOf(tab).icon" class="ca__tab-icon" :style="{ color: lookOf(tab).tint ?? undefined }" aria-hidden="true" />
+                <span class="ca__tab-title" :class="{ 'is-preview': files.isPreview(tab.id) }">{{ tab.title }}</span>
               </template>
               <button
                 type="button"
                 class="ca__tab-x"
-                :class="{ 'is-dirty': files.showsUnsaved(t.id) }"
-                :aria-label="files.showsUnsaved(t.id) ? `Close ${t.title}, unsaved changes` : `Close ${t.title}`"
-                @click.stop="threads.closeTab(t.id)"
-              ><X /><span v-if="files.showsUnsaved(t.id)" class="ca__tab-dot" aria-hidden="true" /></button>
+                :class="{ 'is-dirty': files.showsUnsaved(tab.id) }"
+                :aria-label="files.showsUnsaved(tab.id) ? t('shell.tabs.closeUnsaved', { title: tab.title }) : t('shell.tabs.closeTab', { title: tab.title })"
+                @click.stop="threads.closeTab(tab.id)"
+              ><X /><span v-if="files.showsUnsaved(tab.id)" class="ca__tab-dot" aria-hidden="true" /></button>
             </div>
-            <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" label="New chat" :shortcut="ws.keyLabel('new-chat')" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
+            <UiIconButton v-if="win.spec.kind !== 'chat'" key="ca-plus" class="ca__plus" size="sm" :label="t('shell.chat.new')" :shortcut="ws.keyLabel('new-chat')" @click="newChat(strip.pane.id)"><Plus /></UiIconButton>
           </TransitionGroup>
           <div v-if="si === strips.length - 1" class="ca__tools">
-            <UiIconButton size="sm" label="New browser tab" :shortcut="ws.keyLabel('new-browser')" @click="browsers.openNew()"><Globe /></UiIconButton>
+            <UiIconButton size="sm" :label="t('shell.tabs.newBrowser')" :shortcut="ws.keyLabel('new-browser')" @click="browsers.openNew()"><Globe /></UiIconButton>
             <UiIconButton
               size="sm"
-              :label="threads.isSplit ? 'Close split' : 'Split right'"
+              :label="threads.isSplit ? t('shell.tabs.closeSplit') : t('shell.tabs.splitRight')"
               :shortcut="ws.keyLabel('split')"
               :active="threads.isSplit"
               @click="threads.isSplit ? threads.closePane('pane-b') : threads.split()"
@@ -489,7 +490,7 @@ function lookOf(t: { id: string, kind: string, file: string }) {
       </template>
     </div>
 
-    <UiMenu ref="tabMenu" class="ca__ctx" :items="tabMenuItems" :width="230" label="Tab actions" />
+    <UiMenu ref="tabMenu" class="ca__ctx" :items="tabMenuItems" :width="230" :label="t('shell.tabs.actions')" />
 
     <div ref="panesEl" class="ca__panes" :style="{ '--split': split }">
       <template v-for="(pane, i) in threads.panes" :key="pane.id">
@@ -498,7 +499,7 @@ function lookOf(t: { id: string, kind: string, file: string }) {
           class="ca__divider"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize chats"
+          :aria-label="t('shell.tabs.resizeChats')"
           @pointerdown="onDown"
           @pointermove="onMove"
           @pointerup="onUp"

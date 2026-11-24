@@ -17,8 +17,9 @@ const props = withDefaults(defineProps<{
   maxHeight?: number
   /** Grow past `width` to fit the longest row, up to this many pixels (and the window). Without it the width is fixed. */
   maxWidth?: number
-}>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
+}>(), { placement: 'bottom-start', width: 240 })
 
+const { t } = useI18n()
 const open = ref(false)
 /* An open menu hides the browsers' native pages, which would cover it. */
 useOverlay(() => open.value)
@@ -147,8 +148,8 @@ function onKey(e: KeyboardEvent) {
 
 function onDocDown(e: MouseEvent) {
   if (!open.value) return
-  const t = e.target as Node
-  if (root.value?.contains(t) || list.value?.contains(t)) return
+  const el = e.target as Node
+  if (root.value?.contains(el) || list.value?.contains(el)) return
   close()
 }
 /** Scrolling or resizing moves the trigger: keep it simple and close. */
@@ -195,7 +196,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
             transformOrigin: pos.origin,
           }"
           role="menu"
-          :aria-label="label"
+          :aria-label="label ?? t('shell.menu.label')"
           tabindex="-1"
           @keydown="onKey"
         >
@@ -228,7 +229,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
                 v-if="it.action"
                 class="menu__act"
                 :class="{ 'is-disabled': it.action.disabled }"
-                :title="it.action.disabled ? `${it.action.label}: ${it.action.reason ?? 'not now'}` : `${it.action.label} (Shift+Enter)`"
+                :title="it.action.disabled ? `${it.action.label}: ${it.action.reason ?? t('shell.menu.notNow')}` : `${it.action.label} (Shift+Enter)`"
                 :aria-label="it.action.label"
                 :aria-disabled="it.action.disabled || undefined"
                 @click.stop="runAction(i)"

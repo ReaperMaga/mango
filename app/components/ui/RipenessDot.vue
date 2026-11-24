@@ -11,19 +11,12 @@ import type { ThreadStatus } from '~/types/chat'
 type DotStatus = ThreadStatus | 'archived'
 const props = withDefaults(defineProps<{ status: DotStatus; size?: number; unseen?: boolean }>(), { size: 12, unseen: false })
 
+const { t } = useI18n()
 const clipId = useId()
 const maskId = useId()
 const body = 'M6.6 1.6c2.6.3 4.1 2.6 3.7 5.1-.4 2.4-2.4 3.9-4.6 3.7C3.3 10.2 1.6 8.3 1.8 6c.3-2.6 2.3-4.6 4.8-4.4Z'
 
-const labels: Record<DotStatus, string> = {
-  archived: 'Archived',
-  queued: 'Queued',
-  running: 'Working',
-  working: 'Working',
-  waiting: 'Needs you',
-  done: 'Settled',
-  error: 'Failed',
-}
+const label = computed(() => t(`shell.status.${props.status}`))
 </script>
 
 <template>
@@ -32,8 +25,8 @@ const labels: Record<DotStatus, string> = {
     :class="[`ripe--${props.status}`, { 'ripe--unseen': props.unseen }]"
     :style="{ '--s': `${props.size}px` }"
     role="img"
-    :aria-label="labels[props.status]"
-    :title="labels[props.status]"
+    :aria-label="label"
+    :title="label"
   >
     <!-- Settling swaps the fruit for the lime disc: the two cross-fade in one grid cell. -->
     <Transition name="ripe-swap">

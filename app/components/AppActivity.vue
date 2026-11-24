@@ -10,6 +10,7 @@ import { baseName } from '~/utils/paths'
  * Titlebar widget: how many chats run and how many need you. It opens a list of both, and a click on
  * a row opens that chat.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const now = useNow(30_000)
@@ -32,10 +33,10 @@ const visible = computed(() => needs.value.length + running.value.length > 0)
 function projectName(t: Thread) {
   return ws.openProjects.find(p => p.path === t.projectPath)?.name ?? baseName(t.projectPath)
 }
-function subtitle(t: Thread) {
-  const agent = AGENTS[t.agent].name
-  const what = t.status === 'waiting' ? `Needs your ${waitingFor(t)}` : t.status === 'running' ? 'Working…' : 'Starting…'
-  const where = t.projectPath !== ws.activeProjectPath ? projectName(t) : agent
+function subtitle(chat: Thread) {
+  const agent = AGENTS[chat.agent].name
+  const what = chat.status === 'waiting' ? t(waitingFor(chat) === 'answer' ? 'shell.chat.needsAnswer' : 'shell.chat.needsApproval') : chat.status === 'running' ? t('shell.chat.working') : t('shell.chat.starting')
+  const where = chat.projectPath !== ws.activeProjectPath ? projectName(chat) : agent
   return `${what} · ${where}`
 }
 const ago = (t: Thread) => shortAgo(t.updatedAt, now.value)
@@ -105,9 +106,9 @@ watch(() => rows.value.length, (n) => { if (focused.value >= n) focused.value = 
 const rowId = (t: Thread) => `act-${t.id}`
 const label = computed(() => {
   const parts: string[] = []
-  if (running.value.length) parts.push(`${running.value.length} running`)
-  if (needs.value.length) parts.push(`${needs.value.length} need you`)
-  return `Agent activity: ${parts.join(', ')}`
+  if (running.value.length) parts.push(t('shell.activity.runningCount', running.value.length))
+  if (needs.value.length) parts.push(t('shell.activity.needCount', needs.value.length))
+  return t('shell.activity.label', { what: parts.join(', ') })
 })
 </script>
 
@@ -127,12 +128,12 @@ const label = computed(() => {
     <span v-if="running.length" class="act__seg">
       <UiRipenessDot status="working" :size="11" />
       <b class="tabular">{{ running.length }}</b>
-      <span class="act__lbl">running</span>
+      <span class="act__lbl">{{ t('shell.activity.running') }}</span>
     </span>
     <span v-if="needs.length" class="act__seg act__seg--need">
       <UiRipenessDot status="waiting" :size="11" />
       <b class="tabular">{{ needs.length }}</b>
-      <span class="act__lbl">need you</span>
+      <span class="act__lbl">{{ t('shell.activity.need') }}</span>
     </span>
   </button>
 
@@ -142,54 +143,54 @@ const label = computed(() => {
       ref="pop"
       class="actpop"
       role="dialog"
-      aria-label="Agent activity"
+      :aria-label="t('shell.activity.title')"
       tabindex="-1"
       :aria-activedescendant="rows[focused] ? rowId(rows[focused]!) : undefined"
       :style="{ top: `${pos.top}px`, right: `${pos.right}px` }"
       @keydown="onKey"
     >
       <template v-if="needs.length">
-        <h3 class="actpop__h"><UiRipenessDot status="waiting" :size="11" />Needs you · {{ needs.length }}</h3>
+        <h3 class="actpop__h"><UiRipenessDot status="waiting" :size="11" />{{ t('shell.activity.needsHead', { n: needs.length }) }}</h3>
         <button
-          v-for="(t, i) in needsShown"
-          :id="rowId(t)"
-          :key="t.id"
+          v-for="(chat, i) in needsShown"
+          :id="rowId(chat)"
+          :key="chat.id"
           type="button"
           class="actpop__row"
           :class="{ 'is-focus': focused === i }"
           tabindex="-1"
           @mousemove="focused = i"
-          @click="openChat(t)"
+          @click="openChat(chat)"
         >
-          <UiRipenessDot :status="t.status === 'waiting' ? 'waiting' : 'done'" :size="11" />
-          <span class="actpop__tx"><b>{{ t.title }}</b><span>{{ subtitle(t) }}</span></span>
-          <em class="tabular">{{ ago(t) }}</em>
+          <UiRipenessDot :status="chat.status === 'waiting' ? 'waiting' : 'done'" :size="11" />
+          <span class="actpop__tx"><b>{{ chatTitle(chat.title) }}</b><span>{{ subtitle(chat) }}</span></span>
+          <em class="tabular">{{ ago(chat) }}</em>
         </button>
-        <p v-if="needs.length > MAX_ROWS" class="actpop__more">+{{ needs.length - MAX_ROWS }} more</p>
+        <p v-if="needs.length > MAX_ROWS" class="actpop__more">{{ t('shell.activity.more', { n: needs.length - MAX_ROWS }) }}</p>
       </template>
       <template v-if="running.length">
-        <h3 class="actpop__h" :class="{ 'actpop__h--gap': needs.length }"><UiRipenessDot status="working" :size="11" />Running · {{ running.length }}</h3>
+        <h3 class="actpop__h" :class="{ 'actpop__h--gap': needs.length }"><UiRipenessDot status="working" :size="11" />{{ t('shell.activity.runningHead', { n: running.length }) }}</h3>
         <button
-          v-for="(t, i) in runningShown"
-          :id="rowId(t)"
-          :key="t.id"
+          v-for="(chat, i) in runningShown"
+          :id="rowId(chat)"
+          :key="chat.id"
           type="button"
           class="actpop__row"
           :class="{ 'is-focus': focused === needsShown.length + i }"
           tabindex="-1"
           @mousemove="focused = needsShown.length + i"
-          @click="openChat(t)"
+          @click="openChat(chat)"
         >
           <UiRipenessDot status="working" :size="11" />
-          <span class="actpop__tx"><b>{{ t.title }}</b><span>{{ subtitle(t) }}</span></span>
-          <em class="tabular">{{ ago(t) }}</em>
+          <span class="actpop__tx"><b>{{ chatTitle(chat.title) }}</b><span>{{ subtitle(chat) }}</span></span>
+          <em class="tabular">{{ ago(chat) }}</em>
         </button>
-        <p v-if="running.length > MAX_ROWS" class="actpop__more">+{{ running.length - MAX_ROWS }} more</p>
+        <p v-if="running.length > MAX_ROWS" class="actpop__more">{{ t('shell.activity.more', { n: running.length - MAX_ROWS }) }}</p>
       </template>
       <div class="actpop__ft">
-        <span><kbd>↑</kbd> <kbd>↓</kbd> move</span>
-        <span><kbd>Enter</kbd> open</span>
-        <span><kbd>Esc</kbd> close</span>
+        <span><kbd>↑</kbd> <kbd>↓</kbd> {{ t('shell.activity.move') }}</span>
+        <span><kbd>Enter</kbd> {{ t('shell.activity.open') }}</span>
+        <span><kbd>Esc</kbd> {{ t('shell.activity.close') }}</span>
       </div>
     </div>
   </Teleport>

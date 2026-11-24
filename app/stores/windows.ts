@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { t } from '~/i18n'
 import { appWindow, call, isTauri, on, onWindows, postWindows, windowLabel } from '~/composables/useBackend'
 import {
   MAIN_WINDOW, claimsFor, holderOf, lostChats, onlyOpen, ownerOf, parseWindowQuery, returningChats, withClaims, withoutWindow,
@@ -15,11 +16,12 @@ import { useWorkspace } from '~/stores/workspace'
 function notSavedQuestion({ failed, saving }: { failed: string[], saving: string[] }): string {
   const list = (all: string[]) => {
     const names = [...new Set(all)]
-    return `${names.slice(0, 3).join(', ')}${names.length > 3 ? ` and ${names.length - 3} more` : ''}`
+    const files = names.slice(0, 3).join(', ')
+    return names.length > 3 ? t('shell.windows.andMore', { files, n: names.length - 3 }) : files
   }
-  if (!failed.length) return `Mango is still saving ${list(saving)}. The window closes once that is done. Closing now can lose your changes there.`
-  if (!saving.length) return `Mango could not save ${list(failed)}. Closing now loses your changes there.`
-  return `Mango could not save ${list(failed)}, and is still saving ${list(saving)}. Closing now loses what is not saved.`
+  if (!failed.length) return t('shell.windows.savingAll', { files: list(saving) })
+  if (!saving.length) return t('shell.windows.failedAll', { files: list(failed) })
+  return t('shell.windows.failedSome', { failed: list(failed), saving: list(saving) })
 }
 
 /**
@@ -73,7 +75,7 @@ const sameClaims = (a: Claim[] = [], b: Claim[] = []) =>
 function terminalBlocker(path: string): string | null {
   const n = useWorkspace().terminalsOf(path).length
   if (!n) return null
-  return `${n === 1 ? 'A terminal is' : `${n} terminals are`} open for this project here, and terminals stay in their window. Close ${n === 1 ? 'it' : 'them'} first.`
+  return t('shell.windows.terminals', n)
 }
 
 const waiting = new Map<string, (m: Message) => void>()
@@ -170,11 +172,11 @@ export const useWindows = defineStore('windows', {
       watch(() => threads.tabs.includes(id), (open) => {
         if (open) { seen = true; return }
         if (!seen) return
-        const t = threads.byId(id)
-        if (t && threads.isBusyChat(id)) {
+        const chat = threads.byId(id)
+        if (chat && threads.isBusyChat(id)) {
           // A run cannot follow the chat to another window: keep it here until it is done.
           threads.show(id)
-          useWorkspace().notify('Still working', `“${t.title}” stays in this window until it is done. Stop it first to return it.`)
+          useWorkspace().notify(t('shell.chat.stillWorking'), t('shell.windows.stays', { title: chat.title }))
           return
         }
         void this.returnChat()
@@ -246,7 +248,7 @@ export const useWindows = defineStore('windows', {
         this.table = withoutWindow(this.table, window)
         await this._post({ t: 'bye', id: window })
       }
-      return (refused as { reason?: string }).reason ?? 'Another window is using it.'
+      return (refused as { reason?: string }).reason ?? t('shell.windows.inUse')
     },
 
     /** Let go of the chats this window would lose under `next` (saved first). The reason when it cannot. */
@@ -259,13 +261,13 @@ export const useWindows = defineStore('windows', {
       // Saved before anything is decided below (it takes a moment): the other window reads these files.
       if (moving.length) {
         const [left] = await useFiles().saveAll(SAVE_FOR_PEER_MS, f => moving.includes(threads.ownerOf(f.projectPath)))
-        if (left) return `${left} has changes in another window that could not be saved. Save or discard them there first.`
+        if (left) return t('shell.windows.unsavedThere', { file: left })
       }
       const lose = lostChats(threads.heldRefs(), next, this.self)
       const busy = lose.find(c => threads.isBusyChat(c.id))
       if (busy) {
-        const t = threads.byId(busy.rootId) ?? threads.byId(busy.id)
-        return `“${t?.title ?? 'A chat'}” is still working in another window. Stop it there first, or wait until it is done.`
+        const chat = threads.byId(busy.rootId) ?? threads.byId(busy.id)
+        return t('shell.windows.busyThere', { title: chat?.title ?? t('shell.windows.aChat') })
       }
       // A chat window shows its chat's project without holding it: that project stays open there.
       const ws = useWorkspace()
@@ -362,9 +364,9 @@ export const useWindows = defineStore('windows', {
       let answer!: (close: boolean) => void
       const answered = new Promise<boolean>(resolve => (answer = resolve))
       ws.confirm = {
-        title: 'Close without saving?',
+        title: t('shell.windows.closeTitle'),
         body: question(),
-        label: 'Close without saving',
+        label: t('shell.windows.closeLabel'),
         danger: true,
         run: () => {
           // First: the dialog took the question away, which alone would mean Cancel.
@@ -438,7 +440,7 @@ export const useWindows = defineStore('windows', {
       ])
       // With autosave off no window has anything to say.
       const silent = useWorkspace().editorAutoSave && peers.some(id => !answers.some(m => m.from === id))
-      return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : [])), ...(silent ? ['files in a window that is not answering'] : [])]
+      return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : [])), ...(silent ? [t('shell.windows.silent')] : [])]
     },
 
     /**
@@ -573,10 +575,10 @@ export const useWindows = defineStore('windows', {
      * open here), or null: a short `hint` for menu items and the full `reason`.
      */
     moveBlocker(path: string): { hint: string; reason: string } | null {
-      const t = useThreads().busyIn(path)
-      if (t) return { hint: 'A chat is still working', reason: `“${t.title}” is still working. Stop it first, or wait until it is done.` }
+      const chat = useThreads().busyIn(path)
+      if (chat) return { hint: t('shell.windows.busyHint'), reason: t('shell.windows.busy', { title: chat.title }) }
       const shells = terminalBlocker(path)
-      return shells ? { hint: 'Its terminals stay in this window', reason: shells } : null
+      return shells ? { hint: t('shell.windows.terminalsHint'), reason: shells } : null
     },
 
     /**
@@ -600,7 +602,7 @@ export const useWindows = defineStore('windows', {
       try {
         await this.openProjectWindow(path)
       } catch (e) {
-        useWorkspace().notify('Not opened in a new window', e instanceof Error ? e.message : String(e))
+        useWorkspace().notify(t('shell.windows.notOpened'), e instanceof Error ? e.message : String(e))
       }
     },
 
@@ -615,9 +617,9 @@ export const useWindows = defineStore('windows', {
       if (!root) {
         const h = holderOf(this.table, { kind: 'chat', key: threadId })
         if (h && h !== this.self) return this.focus(h)
-        throw new Error('That chat is not in this window.')
+        throw new Error(t('shell.windows.notHere'))
       }
-      if (threads.isBusyChat(root.id)) throw new Error(`“${root.title}” is still working. Stop it first, or wait until it is done.`)
+      if (threads.isBusyChat(root.id)) throw new Error(t('shell.windows.busy', { title: root.title }))
       await flushHistory()
       await call('window_open', { kind: 'chat', threadId: root.id, path: root.projectPath, ...place })
     },
@@ -631,13 +633,13 @@ export const useWindows = defineStore('windows', {
 
     /** The menu entry that moves a chat to a window of its own, or (its own window) back. */
     moveChatAction(id: string): { label: string; hint?: string; disabled?: boolean; divider?: boolean; onSelect: () => void } {
-      if (this.isOwnChat(id)) return { label: 'Return to main window', divider: true, onSelect: () => void this.returnChat() }
+      if (this.isOwnChat(id)) return { label: t('shell.windows.return'), divider: true, onSelect: () => void this.returnChat() }
       const busy = useThreads().isBusyChat(id)
       return {
-        label: 'Move to new window',
+        label: t('shell.windows.move'),
         divider: true,
         disabled: busy,
-        hint: busy ? 'Still working' : undefined,
+        hint: busy ? t('shell.chat.stillWorking') : undefined,
         onSelect: () => void this.moveChatToWindow(id),
       }
     },
@@ -647,7 +649,7 @@ export const useWindows = defineStore('windows', {
       try {
         await this.openChatWindow(id, place)
       } catch (e) {
-        useWorkspace().notify('Not moved to a new window', e instanceof Error ? e.message : String(e))
+        useWorkspace().notify(t('shell.windows.notMoved'), e instanceof Error ? e.message : String(e))
       }
     },
 
@@ -670,7 +672,7 @@ export const useWindows = defineStore('windows', {
       const threads = useThreads()
       const root = threads.byId(this.spec.threadId)
       if (root && threads.isBusyChat(root.id)) {
-        useWorkspace().notify('Not returned yet', `“${root.title}” is still working. Stop it first, or wait until it is done.`)
+        useWorkspace().notify(t('shell.windows.notReturned'), t('shell.windows.busy', { title: root.title }))
         return
       }
       if (!await this._savedToClose()) {

@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.ts'
 import type { VcsKind, VcsLock } from '~/types/ipc'
 
 /**
@@ -18,6 +19,10 @@ export interface VcsTerms {
   message: string
   /** One recorded change: "commit" / "changeset". */
   unit: string
+  /** Several of them: "commits" / "changesets". */
+  units: string
+  /** n of them: "2 commits" / "1 changeset". */
+  count: (n: number) => string
   /** Pull: "Pull" / "Update". */
   pull: string
   /** Branches have git-style remotes: fetch, push, publish, remote branches, upstream tracking. */
@@ -49,12 +54,18 @@ export interface VcsTerms {
 
 const TERMS: Record<VcsKind, VcsTerms> = {
   git: {
-    name: 'git', commit: 'Commit', commitAll: 'Commit all', committed: 'Committed', message: 'Commit message', unit: 'commit',
-    pull: 'Pull', remotes: true, amend: true, merge: true, mergePreview: false, rebase: true, pathBranches: false, locks: false, shelves: false, worktrees: true, worktree: 'worktree', pollMs: 4000,
+    name: 'git',
+    get commit() { return t('shell.vcs.git.commit') }, get commitAll() { return t('shell.vcs.git.commitAll') }, get committed() { return t('shell.vcs.git.committed') }, get message() { return t('shell.vcs.git.message') },
+    get unit() { return t('shell.vcs.git.unit') }, get units() { return t('shell.vcs.git.units') }, get pull() { return t('shell.vcs.git.pull') }, get worktree() { return t('shell.vcs.git.worktree') },
+    count: n => t('shell.vcs.git.count', n),
+    remotes: true, amend: true, merge: true, mergePreview: false, rebase: true, pathBranches: false, locks: false, shelves: false, worktrees: true, pollMs: 4000,
   },
   plastic: {
-    name: 'Unity VCS', commit: 'Check in', commitAll: 'Check in all', committed: 'Checked in', message: 'Checkin comment', unit: 'changeset',
-    pull: 'Update', remotes: false, amend: false, merge: true, mergePreview: true, rebase: false, pathBranches: true, locks: true, shelves: true, worktrees: true, worktree: 'workspace', pollMs: 15000,
+    name: 'Unity VCS',
+    get commit() { return t('shell.vcs.plastic.commit') }, get commitAll() { return t('shell.vcs.plastic.commitAll') }, get committed() { return t('shell.vcs.plastic.committed') }, get message() { return t('shell.vcs.plastic.message') },
+    get unit() { return t('shell.vcs.plastic.unit') }, get units() { return t('shell.vcs.plastic.units') }, get pull() { return t('shell.vcs.plastic.pull') }, get worktree() { return t('shell.vcs.plastic.worktree') },
+    count: n => t('shell.vcs.plastic.count', n),
+    remotes: false, amend: false, merge: true, mergePreview: true, rebase: false, pathBranches: true, locks: true, shelves: true, worktrees: true, pollMs: 15000,
   },
 }
 
@@ -63,21 +74,22 @@ export function vcsTerms(kind: VcsKind | null | undefined): VcsTerms {
 }
 
 /** "n changesets" / "1 commit". */
-export function units(n: number, t: VcsTerms): string {
-  return `${n} ${t.unit}${n === 1 ? '' : 's'}`
+export function units(n: number, terms: VcsTerms): string {
+  return terms.count(n)
 }
 
 /** Who holds a lock, short: "you", or the user name without its email domain. */
 export function lockHolder(lock: VcsLock): string {
-  return lock.mine ? 'you' : lock.owner.split('@')[0] || lock.owner
+  return lock.mine ? t('shell.locks.you') : lock.owner.split('@')[0] || lock.owner
 }
 
 /** One line on a lock, for tooltips and screen readers. */
 export function lockSummary(lock: VcsLock): string {
-  const who = lock.mine ? 'you' : lock.owner
-  if (lock.status === 'retained') return `Lock kept for ${who} until ${lock.branch || 'their branch'} is merged`
-  const ws = lock.workspace ? ` in workspace ${lock.workspace}` : ''
-  return `Locked by ${who}${ws}${lock.branch ? `, on ${lock.branch}` : ''}`
+  const who = lock.mine ? t('shell.locks.you') : lock.owner
+  const { branch, workspace } = lock
+  if (lock.status === 'retained') return branch ? t('shell.locks.kept', { who, branch }) : t('shell.locks.keptTheirs', { who })
+  if (workspace) return branch ? t('shell.locks.byBoth', { who, workspace, branch }) : t('shell.locks.byWorkspace', { who, workspace })
+  return branch ? t('shell.locks.byBranch', { who, branch }) : t('shell.locks.by', { who })
 }
 
 /**

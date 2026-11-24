@@ -12,15 +12,16 @@ import PluginToolWindow from '~/plugin-host/ui/PluginToolWindow.vue'
  * inside owns its own header.
  */
 
+const { t } = useI18n()
 const ws = useWorkspace()
-const LABELS: Record<string, string> = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests', releases: 'Releases' }
+const labels = computed<Record<string, string>>(() => ({ env: t('shell.tools.env'), files: t('shell.tools.files'), changes: t('shell.tools.changes'), links: t('shell.tools.links'), releases: t('shell.tools.releases') }))
 /** A plugin's tool window, while its plugin runs (see `plugin-host/`). */
 const pluginWin = computed(() => pluginToolWindow(ws.toolPanel))
 /** The Pull requests window is Merge requests for a project on GitLab. */
 const forge = useForge()
 const label = computed(() => pluginWin.value?.title
-  ?? (ws.toolPanel === 'links' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'Merge requests' : null)
-  ?? LABELS[ws.toolPanel ?? 'files'] ?? 'Tool window')
+  ?? (ws.toolPanel === 'links' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.mergeRequests') : null)
+  ?? labels.value[ws.toolPanel ?? 'files'] ?? t('shell.tools.fallback'))
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
@@ -58,7 +59,7 @@ function endResize() {
       class="tp__resize"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize tool window"
+      :aria-label="t('shell.tools.resize')"
       @pointerdown="startResize"
       @pointermove="onResize"
       @pointerup="endResize"

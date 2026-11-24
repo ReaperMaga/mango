@@ -1,3 +1,4 @@
+import { t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
@@ -32,7 +33,7 @@ export async function openFolderFlow() {
 /** The system's folder picker, then open what was picked. */
 export async function openLocalFolder() {
   const ws = useWorkspace()
-  const path = await pickFolder('Open folder')
+  const path = await pickFolder(t('shell.shortcuts.labels.open-folder'))
   if (path) await ws.openProjectAsking(path)
 }
 

@@ -102,7 +102,7 @@ function begin(item: DragItem): boolean {
   } else {
     const t = useThreads().byId(item.id)
     if (!t) return false
-    tabDrag.title = t.title
+    tabDrag.title = chatTitle(t.title)
     tabDrag.remote = false
   }
   tabDrag.item = item

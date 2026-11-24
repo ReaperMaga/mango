@@ -22,6 +22,7 @@ import { summarize, type UsageTone } from '~/utils/usageSummary'
  * click each. Usage numbers come from `stores/usage` (the titlebar keeps them fresh); sign-in
  * state is asked of each CLI here, on mount and whenever the menu opens.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
@@ -66,8 +67,8 @@ interface Line { tone: UsageTone | 'waiting'; text: string; meter: number | null
 
 const line = computed<Line | null>(() => {
   const id = current.value
-  if (missing(id)) return { tone: 'waiting', text: 'Not installed', meter: null, plan: null, long: 'Not installed.' }
-  if (signedOut(id)) return { tone: 'waiting', text: 'Signed out', meter: null, plan: null, long: 'Signed out.' }
+  if (missing(id)) return { tone: 'waiting', text: t('shell.foot.notInstalled'), meter: null, plan: null, long: t('shell.usage.notInstalled') }
+  if (signedOut(id)) return { tone: 'waiting', text: t('shell.foot.signedOut'), meter: null, plan: null, long: t('shell.usage.signedOut') }
   const plan = planOf(id)
   const s = summarize(usage.entries[id].usage?.windows ?? [], now.value)
   if (s) return { tone: s.tone, text: s.text, meter: s.percent, plan, long: s.long }
@@ -76,15 +77,15 @@ const line = computed<Line | null>(() => {
 
 const accountTitle = computed(() => {
   const name = AGENTS[current.value].name
-  const plan = line.value?.plan ? `, ${line.value.plan} plan` : ''
-  return [`${name}${plan}.`, line.value?.long, 'Accounts and usage'].filter(Boolean).join(' ')
+  const plan = line.value?.plan
+  return [plan ? t('shell.foot.namePlan', { name, plan }) : `${name}.`, line.value?.long, t('shell.foot.accounts')].filter(Boolean).join(' ')
 })
 
 /* ---------- the account menu ---------- */
 
 function hintOf(id: AgentId): string | undefined {
-  if (missing(id)) return 'Not installed'
-  if (signedOut(id)) return 'Signed out'
+  if (missing(id)) return t('shell.foot.notInstalled')
+  if (signedOut(id)) return t('shell.foot.signedOut')
   return [planOf(id), auth[id]?.account].filter(Boolean).join(' · ') || undefined
 }
 
@@ -97,7 +98,7 @@ const accountItems = computed<MenuItem[]>(() => {
   const id = current.value
   const name = AGENTS[id].name
   const items: MenuItem[] = ids.map((a, i) => ({
-    group: i === 0 ? 'New chats start with' : undefined,
+    group: i === 0 ? t('shell.foot.newChatsWith') : undefined,
     label: AGENTS[a].name,
     icon: () => h(AgentIcon, { agent: a }),
     hint: hintOf(a),
@@ -105,12 +106,12 @@ const accountItems = computed<MenuItem[]>(() => {
     onSelect: () => setDefault(a),
   }))
   items.push(
-    { label: 'Usage limits', icon: Gauge, divider: true, kbd: ws.keyLabel('usage'), onSelect: () => ws.openUsage() },
-    { label: 'Subscription', icon: CreditCard, onSelect: () => ws.openSettings('agents', 'subscription') },
+    { label: t('shell.usage.title'), icon: Gauge, divider: true, kbd: ws.keyLabel('usage'), onSelect: () => ws.openUsage() },
+    { label: t('shell.foot.subscription'), icon: CreditCard, onSelect: () => ws.openSettings('agents', 'subscription') },
   )
-  if (ids.some(missing)) items.push({ label: 'Add an agent…', icon: Plus, onSelect: () => ws.openSetup() })
-  if (signedOut(id)) items.push({ label: `Sign in to ${name}…`, icon: LogIn, onSelect: () => ws.openSettings('agents') })
-  else if (!missing(id)) items.push({ label: `Sign out of ${name}…`, icon: LogOut, onSelect: askLogout })
+  if (ids.some(missing)) items.push({ label: t('shell.foot.addAgent'), icon: Plus, onSelect: () => ws.openSetup() })
+  if (signedOut(id)) items.push({ label: t('shell.foot.signIn', { name }), icon: LogIn, onSelect: () => ws.openSettings('agents') })
+  else if (!missing(id)) items.push({ label: t('shell.foot.signOut', { name }), icon: LogOut, onSelect: askLogout })
   return items
 })
 
@@ -118,25 +119,25 @@ const accountItems = computed<MenuItem[]>(() => {
 
 const helpItems = computed<MenuItem[]>(() => {
   const items: MenuItem[] = [
-    { label: 'What\'s new', icon: History, aside: unseen.value ? `New in ${build.version}` : undefined, onSelect: () => ws.openSettings('changelog') },
-    { label: 'Get started…', icon: Rocket, onSelect: () => ws.openSetup() },
-    { label: 'Keyboard shortcuts', icon: Keyboard, onSelect: () => ws.openSettings('shortcuts') },
-    { label: 'Report an issue', icon: Bug, onSelect: () => void openExternal(newIssueUrl(build.summary())) },
+    { label: t('shell.foot.whatsNew'), icon: History, aside: unseen.value ? t('shell.foot.newIn', { version: build.version }) : undefined, onSelect: () => ws.openSettings('changelog') },
+    { label: t('shell.foot.getStarted'), icon: Rocket, onSelect: () => ws.openSetup() },
+    { label: t('shell.palette.shortcuts'), icon: Keyboard, onSelect: () => ws.openSettings('shortcuts') },
+    { label: t('shell.foot.report'), icon: Bug, onSelect: () => void openExternal(newIssueUrl(build.summary())) },
   ]
   if (updater.update && !updater.busy) {
-    items.push({ label: 'Update and restart', icon: CircleArrowUp, divider: true, aside: updater.update.version, asideMono: true, onSelect: () => void updater.install() })
+    items.push({ label: t('shell.update.restart'), icon: CircleArrowUp, divider: true, aside: updater.update.version, asideMono: true, onSelect: () => void updater.install() })
   } else {
     // Like the palette's: Settings > Maintenance shows the answer (up to date, or the new version).
     items.push({
-      label: 'Check for updates',
+      label: t('shell.update.check'),
       icon: RefreshCw,
       divider: true,
-      aside: updater.phase === 'checking' ? 'Checking…' : undefined,
+      aside: updater.phase === 'checking' ? t('shell.foot.checking') : undefined,
       disabled: updater.busy,
       onSelect: () => { ws.openSettings('maintenance'); void updater.check(true) },
     })
   }
-  items.push({ label: 'About Mango', icon: Info, aside: build.version, asideMono: true, onSelect: () => ws.openSettings('maintenance') })
+  items.push({ label: t('shell.foot.about'), icon: Info, aside: build.version, asideMono: true, onSelect: () => ws.openSettings('maintenance') })
   return items
 })
 
@@ -165,7 +166,7 @@ async function logout() {
     refreshAuth()
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err)
-    logoutError.value = `Couldn't sign out of ${AGENTS[id].name}: ${why.replace(/\.$/, '')}.`
+    logoutError.value = t('shell.foot.signOutFailed', { name: AGENTS[id].name, why: why.replace(/\.$/, '') })
   } finally {
     loggingOut.value = false
   }
@@ -174,7 +175,7 @@ async function logout() {
 
 <template>
   <footer class="sf">
-    <UiMenu :items="accountItems" placement="top-start" :width="290" label="Agents and accounts" class="sf__acct-menu">
+    <UiMenu :items="accountItems" placement="top-start" :width="290" :label="t('shell.foot.menu')" class="sf__acct-menu">
       <template #default="{ toggle, open }">
         <button
           type="button"
@@ -197,12 +198,12 @@ async function logout() {
       </template>
     </UiMenu>
 
-    <UiButton v-if="signedOut(current)" size="sm" class="sf__signin" @click="ws.openSettings('agents')">Sign in</UiButton>
+    <UiButton v-if="signedOut(current)" size="sm" class="sf__signin" @click="ws.openSettings('agents')">{{ t('common.actions.signIn') }}</UiButton>
 
-    <UiMenu :items="helpItems" placement="top-end" :width="250" label="Help">
+    <UiMenu :items="helpItems" placement="top-end" :width="250" :label="t('shell.foot.help')">
       <template #default="{ toggle, open }">
         <UiIconButton
-          :label="unseen ? `Help. What's new in ${build.version}` : 'Help'"
+          :label="unseen ? t('shell.foot.helpNew', { version: build.version }) : t('shell.foot.help')"
           class="sf__help"
           :class="{ 'is-active': open }"
           @click="toggle"
@@ -213,18 +214,18 @@ async function logout() {
       </template>
     </UiMenu>
 
-    <UiIconButton label="Settings" :shortcut="ws.keyLabel('settings')" @click="ws.openSettings()">
+    <UiIconButton :label="t('shell.foot.settings')" :shortcut="ws.keyLabel('settings')" @click="ws.openSettings()">
       <Settings />
     </UiIconButton>
 
-    <UiDialog :open="logoutOpen" :title="`Sign out of ${AGENTS[logoutAgent].name}`" :width="420" :dismissible="!loggingOut" @close="logoutOpen = false">
+    <UiDialog :open="logoutOpen" :title="t('shell.foot.signOutTitle', { name: AGENTS[logoutAgent].name })" :width="420" :dismissible="!loggingOut" @close="logoutOpen = false">
       <p class="sf__msg">
-        Sign out of {{ AGENTS[logoutAgent].name }}? Chats that use it stop until you sign in again in Settings > Agents.
+        {{ t('shell.foot.signOutBody', { name: AGENTS[logoutAgent].name }) }}
       </p>
       <p v-if="logoutError" class="sf__msg sf__msg--error selectable" role="alert">{{ logoutError }}</p>
       <template #footer>
-        <UiButton variant="ghost" data-autofocus :disabled="loggingOut" @click="logoutOpen = false">Cancel</UiButton>
-        <UiButton variant="danger" :loading="loggingOut" @click="logout">Sign out</UiButton>
+        <UiButton variant="ghost" data-autofocus :disabled="loggingOut" @click="logoutOpen = false">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="danger" :loading="loggingOut" @click="logout">{{ t('common.actions.signOut') }}</UiButton>
       </template>
     </UiDialog>
   </footer>
