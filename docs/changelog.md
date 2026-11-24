@@ -2,6 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.1.47
+
+### New
+
+- Keep language servers loaded and tell them about changes on disk.
+
+### Fixes
+
+- Always offer an Other field on agent questions.
+
 ## 0.1.46
 
 ### Fixes
