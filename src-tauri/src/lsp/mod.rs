@@ -11,6 +11,7 @@ mod resolve;
 mod servers;
 mod session;
 mod tree;
+mod watch;
 
 #[cfg(test)]
 mod test_support;
@@ -39,6 +40,8 @@ struct Entry {
     token: u64,
     /// `None` while it is starting.
     session: Option<Arc<Session>>,
+    /// Its folder, watched for it; ends with the entry.
+    watch: Option<watch::Watch>,
 }
 
 #[derive(Default)]
@@ -126,18 +129,20 @@ impl Sessions {
         }
         self.ended.retain(|e| !this(e));
         self.next += 1;
-        self.by_id.insert(id.to_string(), Entry { owner: owner.to_string(), token: self.next, session: None });
+        self.by_id.insert(id.to_string(), Entry { owner: owner.to_string(), token: self.next, session: None, watch: None });
         Ok(self.next)
     }
 
     /// False when it was stopped, or its window went, while it was starting.
-    fn attach(&mut self, id: &str, token: u64, session: &Arc<Session>) -> bool {
+    /// `Err` gives the watch back, to end outside the lock.
+    fn attach(&mut self, id: &str, token: u64, session: &Arc<Session>, watch: Option<watch::Watch>) -> Result<(), Option<watch::Watch>> {
         match self.by_id.get_mut(id) {
             Some(entry) if entry.token == token => {
                 entry.session = Some(session.clone());
-                true
+                entry.watch = watch;
+                Ok(())
             }
-            _ => false,
+            _ => Err(watch),
         }
     }
 
@@ -153,12 +158,15 @@ impl Sessions {
         self.allowed.get(&(owner.to_string(), root.to_string())).cloned()
     }
 
-    fn forget(&mut self, id: &str, token: u64) {
-        if self.by_id.get(id).is_some_and(|e| e.token == token) {
-            if let Some(entry) = self.by_id.remove(id) {
-                remember(&mut self.ended, &entry.owner, id);
-            }
+    /// The entry is returned so its watch ends outside the lock.
+    #[must_use]
+    fn forget(&mut self, id: &str, token: u64) -> Option<Entry> {
+        if !self.by_id.get(id).is_some_and(|e| e.token == token) {
+            return None;
         }
+        let entry = self.by_id.remove(id)?;
+        remember(&mut self.ended, &entry.owner, id);
+        Some(entry)
     }
 
     fn session(&self, owner: &str, id: &str) -> Option<Arc<Session>> {
@@ -258,12 +266,21 @@ pub struct LspServer {
 pub struct LspStarted {
     root: String,
     pid: u32,
+    /// Its folder is watched: changes on disk come as `lsp://files`.
+    watching: bool,
 }
 
 #[derive(Clone, Serialize)]
 struct MessageEvent<'a> {
     id: &'a str,
     message: String,
+}
+
+#[derive(Clone, Serialize)]
+struct FilesEvent<'a> {
+    id: &'a str,
+    changes: Vec<watch::FileChange>,
+    more: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -332,6 +349,7 @@ pub async fn lsp_start(
     id: String,
     root: String,
     server: String,
+    watch: Option<bool>,
 ) -> Result<LspStarted, String> {
     check_id(&id)?;
     let known = servers::by_id(&server)?;
@@ -349,11 +367,12 @@ pub async fn lsp_start(
     let key = id.clone();
     let started = blocking(move || {
         let root = check_consent(&root, allowed.as_ref())?;
-        start(app, owner, key, token, known, root)
+        start(app, owner, key, token, known, root, watch.unwrap_or(false))
     })
     .await;
     if started.is_err() {
-        state.lock().forget(&id, token);
+        let gone = state.lock().forget(&id, token);
+        drop(gone);
     }
     started
 }
@@ -365,16 +384,29 @@ fn start(
     token: u64,
     server: &'static servers::Server,
     root: Root,
+    watch: bool,
 ) -> Result<LspStarted, String> {
-    let started = LspStarted { root: root.real.to_string_lossy().into_owned(), pid: std::process::id() };
     let search = Search::system(Some(&root));
     let (session, io) = spawn_server(&search, server, &root)?;
-    if !app.state::<LspState>().lock().attach(&id, token, &session) {
+    // Not being able to watch (too many watches on Linux, say) leaves the page to its fallback.
+    let watch = watch.then(|| watch_folder(&app, &owner, &id, &root.real).ok()).flatten();
+    let started = LspStarted { root: root.real.to_string_lossy().into_owned(), pid: std::process::id(), watching: watch.is_some() };
+    let attached = app.state::<LspState>().lock().attach(&id, token, &session, watch);
+    if let Err(watch) = attached {
+        drop(watch);
         session.abandon(io);
         return Err("The language server was stopped before it started.".into());
     }
     session.begin(io, move |event| emit(&app, &owner, &id, token, event));
     Ok(started)
+}
+
+/// Changes on disk in `root`, to the owning window as `lsp://files`.
+fn watch_folder(app: &AppHandle, owner: &str, id: &str, root: &std::path::Path) -> Result<watch::Watch, String> {
+    let (app, to, id) = (app.clone(), EventTarget::webview(owner), id.to_string());
+    watch::start(root, move |batch| {
+        let _ = app.emit_to(to.clone(), "lsp://files", FilesEvent { id: &id, changes: batch.changes, more: batch.more });
+    })
 }
 
 fn spawn_server(search: &Search, server: &servers::Server, root: &Root) -> Result<(Arc<Session>, session::Io), String> {
@@ -399,7 +431,8 @@ fn emit(app: &AppHandle, owner: &str, id: &str, token: u64, event: Event) {
         }
         Event::Exit { code, stderr } => {
             if let Some(state) = app.try_state::<LspState>() {
-                state.lock().forget(id, token);
+                let gone = state.lock().forget(id, token);
+                drop(gone);
             }
             let _ = app.emit_to(to, "lsp://exit", ExitEvent { id, code, stderr });
         }

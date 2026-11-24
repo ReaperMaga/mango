@@ -370,7 +370,7 @@ fn starting_sessions_can_be_stopped() {
     // Stopped while starting.
     let token = all.reserve("main", "a").unwrap();
     assert!(all.stop("main", "a").is_none());
-    assert!(!all.attach("a", token, &session));
+    assert!(all.attach("a", token, &session, None).is_err());
     // Stopping it again is late, not early: the id can start again.
     all.stop("main", "a");
     assert!(all.reserve("main", "a").is_ok());
@@ -382,14 +382,14 @@ fn starting_sessions_can_be_stopped() {
 
     // Stopped after it ended.
     let token = all.reserve("main", "c").unwrap();
-    all.forget("c", token);
+    let _ = all.forget("c", token);
     all.stop("main", "c");
     assert!(all.reserve("main", "c").is_ok());
 
     // The page reloaded while it was starting.
     let token = all.reserve("w-1", "d").unwrap();
     assert!(all.page_gone("w-1").is_empty());
-    assert!(!all.attach("d", token, &session));
+    assert!(all.attach("d", token, &session, None).is_err());
     session.abandon(io);
 }
 
@@ -398,7 +398,7 @@ fn each_window_has_its_own_sessions() {
     let (session, io) = Session::spawn(fake("echo")).unwrap();
     let mut all = Sessions::default();
     let token = all.reserve("w-1", "x").unwrap();
-    assert!(all.attach("x", token, &session));
+    assert!(all.attach("x", token, &session, None).is_ok());
     assert!(all.reserve("main", "x").is_err(), "the id is taken");
     assert!(all.session("main", "x").is_none() && all.session("w-1", "x").is_some());
     assert!(all.stop("main", "x").is_none() && all.page_gone("main").is_empty(), "another window's");

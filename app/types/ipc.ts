@@ -83,10 +83,21 @@ export interface LspStarted {
   root: string
   /** Mango's own process id, for `initialize`'s processId. */
   pid: number
+  /** Its folder is watched (it was asked to, and could be): changes on disk come as `lsp://files`. */
+  watching: boolean
 }
 
 /** One JSON-RPC message from a language server, its framing already removed. */
 export interface LspMessageEvent { id: string; message: string }
+
+/** Files changed on disk in a watched server's folder, gathered over a moment. */
+export interface LspFilesEvent {
+  id: string
+  /** Relative to the folder, forward slashes; `type` is LSP's FileChangeType (1 created, 2 changed, 3 deleted). */
+  changes: Array<{ file: string; type: 1 | 2 | 3 }>
+  /** Some changes were not listed: too many at once, or the system lost track. */
+  more: boolean
+}
 
 /** A language server ended; sent once, also after `lsp_stop`. */
 export interface LspExitEvent { id: string; code: number | null; stderr: string }
@@ -1241,9 +1252,10 @@ export interface Commands {
   lsp_folder: [{ root: string; project: string; allowed: string | null; worktree?: string | null }, string | null]
   /**
    * Start a server in a local project (remote projects are refused). The caller makes up `id` and
-   * listens for it first. Only after the user allowed language servers for the project.
+   * listens for it first. Only after the user allowed language servers for the project. `watch`:
+   * also watch its folder for changes on disk (for servers that leave watching to their client).
    */
-  lsp_start: [{ id: string; root: string; server: LspServerId }, LspStarted]
+  lsp_start: [{ id: string; root: string; server: LspServerId; watch?: boolean }, LspStarted]
   /** Send one JSON-RPC message; the backend adds the framing. Messages arrive in the order they were sent. */
   lsp_send: [{ id: string; message: string }, void]
   lsp_stop: [{ id: string }, void]
@@ -1694,6 +1706,7 @@ export interface Events {
   'agent://exit': AgentExitEvent
   'agent://connection': AgentConnectionEvent
   'lsp://message': LspMessageEvent
+  'lsp://files': LspFilesEvent
   'lsp://exit': LspExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress

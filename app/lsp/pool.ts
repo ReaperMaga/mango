@@ -1,13 +1,14 @@
 /**
  * One session per server and project folder, shared by its files: started when the first needs it,
- * stopped a while after the last is gone, and at once when it is no longer allowed.
+ * kept while its folder is open in the window (with no file open, so the project is not indexed
+ * again), stopped a while after the folder closed, and at once when it is no longer allowed.
  */
 
 export interface PoolKey<S extends string = string> { server: S; root: string }
 
 export const poolKey = ({ server, root }: PoolKey) => `${server}\0${root}`
 
-/** Long enough to close one tab and open the next without indexing the project again. */
+/** How long a session runs on once neither a file nor its open folder needs it. */
 export const IDLE_MS = 120_000
 
 interface Pooled {
@@ -18,6 +19,8 @@ interface Pooled {
 export interface PoolHost<S extends string, T extends Pooled> {
   create(key: PoolKey<S>): T
   allowed(key: PoolKey<S>): boolean
+  /** Its folder is still open in the window: the session runs on without files. */
+  live?(key: PoolKey<S>): boolean
   idleMs?: number
 }
 
@@ -44,7 +47,7 @@ export class Pool<S extends string, T extends Pooled> {
     for (const [id, entry] of this.entries) {
       if (!this.host.allowed(entry.key)) {
         this.remove(id, true)
-      } else if (need.has(id)) {
+      } else if (need.has(id) || this.host.live?.(entry.key)) {
         clearTimeout(entry.timer)
         entry.timer = undefined
       } else {

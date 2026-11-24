@@ -20,7 +20,8 @@ import type { MonacoApi } from '~/composables/monaco'
 
 /**
  * Runs the language servers for the open files: one per server and project folder, only where the
- * user allowed them, started when a file needs one. Loaded with the editor and lives as long as the window.
+ * user allowed them, started when a file needs one and kept while its project is open in the window,
+ * so a project is indexed once. Loaded with the editor and lives as long as the window.
  */
 
 const MARKERS = 'mango-lsp'
@@ -66,6 +67,7 @@ let listening: Promise<unknown> | null = null
 function listen() {
   return (listening ??= Promise.all([
     on('lsp://message', e => processes.get(e.id)?.message(e.message)),
+    on('lsp://files', e => processes.get(e.id)?.files?.(e.changes, e.more)),
     on('lsp://exit', (e) => {
       const process = processes.get(e.id)
       processes.delete(e.id)
@@ -85,12 +87,14 @@ function connector(key: PoolKey<LspServerId>): Connect {
     const id = crypto.randomUUID()
     processes.set(id, handlers)
     try {
-      const { root, pid } = await call('lsp_start', { id, root: key.root, server: key.server })
+      const watch = !!PROFILES[key.server].clientWatches
+      const { root, pid, watching } = await call('lsp_start', { id, root: key.root, server: key.server, watch })
       let queue: Promise<unknown> = Promise.resolve()
       let killed = false
       return {
         root,
         pid,
+        watching,
         // One after another: a change that overtook the one before would corrupt the server's copy.
         send(message) {
           queue = queue.then(() => (killed ? undefined : call('lsp_send', { id, message }))).catch(() => {})
@@ -152,8 +156,12 @@ function create(monaco: MonacoApi): LanguageService {
     }, 300)
   }
 
+  /** Its project is open in this window (a worktree's, its chat's project). */
+  const live = (root: string) => ws.openProjects.some(p => p.path === threads.ownerOf(root))
+
   const pool = new Pool<LspServerId, Session>({
     allowed: key => store.allowed(key.root),
+    live: key => live(key.root),
     create(key) {
       const id = poolKey(key)
       const name = store.servers?.find(s => s.id === key.server)?.name ?? key.server
@@ -182,6 +190,8 @@ function create(monaco: MonacoApi): LanguageService {
           recolourSoon()
         },
         tokensChanged: recolourSoon,
+        // Its folder's watch missed some: git knows at least what it lists as changed.
+        filesLost: () => fromGit(key.root, true, true),
         diagnostics(file, markers) {
           for (const b of byModel.values()) {
             if (b.session === session && b.file === file && !b.model.isDisposed()) monaco.editor.setModelMarkers(b.model, MARKERS, markers)
@@ -261,8 +271,11 @@ function create(monaco: MonacoApi): LanguageService {
     store.servers?.map(s => `${s.id}${s.installed}`).join(),
     // A tab, or a worktree changing whose project it is.
     ...Object.entries(files.open).map(([id, f]) => `${id}\n${store.allowed(f.projectPath)}`),
-    // The gate, also where only an idle server is left.
-    ...Object.keys(store.sessions).map(id => `${id}\n${store.allowed(id.slice(id.indexOf('\0') + 1))}`),
+    // The gate, and whether its project is still open, also where no file needs a server any more.
+    ...Object.keys(store.sessions).map((id) => {
+      const root = id.slice(id.indexOf('\0') + 1)
+      return `${id}\n${store.allowed(root)}\n${live(root)}`
+    }),
   ].join('\0'), update)
   monaco.editor.onDidChangeModelLanguage(update)
 
@@ -293,18 +306,24 @@ function create(monaco: MonacoApi): LanguageService {
     }
   })
 
-  /* ---------- changes outside the editor, for the servers that leave watching to Mango */
+  /*
+   * ---------- changes outside the editor, for the servers that leave watching to Mango. The backend
+   * watches their folders (`lsp://files`); where it could not, git's list of changes stands in.
+   */
 
   function watchingRoots() {
-    return pool.all().filter(({ key }) => PROFILES[key.server].clientWatches).map(({ key }) => key.root)
+    return pool.all().filter(({ key, session }) => PROFILES[key.server].clientWatches && !session.watching).map(({ key }) => key.root)
   }
-  function tellFiles(root: string, changes: Array<{ file: string; type: FileChange }>) {
-    for (const { key, session } of pool.all()) if (key.root === root) session.filesChanged(changes.slice(0, MAX_FILE_EVENTS))
+  /** `watched`: also to servers whose folder is watched, which hear of changes on disk by themselves. */
+  function tellFiles(root: string, changes: Array<{ file: string; type: FileChange }>, watched = false) {
+    for (const { key, session } of pool.all()) {
+      if (key.root === root && (watched || !session.watching)) session.filesChanged(changes.slice(0, MAX_FILE_EVENTS))
+    }
   }
 
   /** What git lists as changed in a folder, as a way to see files change without watching the disk. */
   const listed = new Map<string, { head: string | null; files: Map<string, FileChange> }>()
-  function fromGit(root: string, again = false) {
+  function fromGit(root: string, again = false, watched = false) {
     const status = git.status(root)
     if (!status) return
     const now = new Map<string, FileChange>()
@@ -327,7 +346,7 @@ function create(monaco: MonacoApi): LanguageService {
       const back = type === FILE_DELETED ? FILE_CREATED : type === FILE_CREATED && before!.head === status.head ? FILE_DELETED : FILE_CHANGED
       changes.push({ file, type: back })
     }
-    if (changes.length) tellFiles(root, changes)
+    if (changes.length) tellFiles(root, changes, watched)
   }
   watch(() => Object.keys(store.sessions).map(id => git.status(id.slice(id.indexOf('\0') + 1))), () => {
     for (const root of watchingRoots()) fromGit(root)
