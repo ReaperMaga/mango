@@ -7,21 +7,23 @@ import type { PluginRunStatus } from '~/plugin-host/types'
  */
 const props = defineProps<{ status: PluginRunStatus | null | undefined }>()
 
-const LOOK: Record<PluginRunStatus, { word: string; tone: string; fill: 'none' | 'half' | 'full' }> = {
-  active: { word: 'Active', tone: 'done', fill: 'full' },
-  loading: { word: 'Starting…', tone: 'running', fill: 'half' },
-  error: { word: 'Failed', tone: 'error', fill: 'full' },
-  incompatible: { word: 'Needs a newer Mango', tone: 'waiting', fill: 'full' },
-  builtIn: { word: 'Built into Mango', tone: 'idle', fill: 'none' },
-  paused: { word: 'Paused', tone: 'queued', fill: 'none' },
-  disabled: { word: 'Off', tone: 'idle', fill: 'none' },
+const { t } = useI18n()
+const LOOK: Record<PluginRunStatus, { tone: string; fill: 'none' | 'half' | 'full' }> = {
+  active: { tone: 'done', fill: 'full' },
+  loading: { tone: 'running', fill: 'half' },
+  error: { tone: 'error', fill: 'full' },
+  incompatible: { tone: 'waiting', fill: 'full' },
+  builtIn: { tone: 'idle', fill: 'none' },
+  paused: { tone: 'queued', fill: 'none' },
+  disabled: { tone: 'idle', fill: 'none' },
 }
 const look = computed(() => LOOK[props.status ?? 'disabled'])
+const word = computed(() => t(`plugins.status.${props.status ?? 'disabled'}`))
 </script>
 
 <template>
   <span class="pst" :class="[`pst--${look.tone}`, `pst--${look.fill}`]">
-    <span class="pst__mark" aria-hidden="true" />{{ look.word }}
+    <span class="pst__mark" aria-hidden="true" />{{ word }}
   </span>
 </template>
 

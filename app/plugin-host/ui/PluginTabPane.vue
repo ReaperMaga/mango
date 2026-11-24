@@ -12,12 +12,13 @@ import { useThreads } from '~/stores/threads'
  * While its plugin is not running the tab stays and says so; turning the plugin off closes it.
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
+const { t } = useI18n()
 const threads = useThreads()
 const runtime = usePluginRuntime()
 
 const ref_ = computed(() => parsePluginTab(props.tabId))
 const view = computed(() => (ref_.value ? pluginTabView(ref_.value.pluginId, ref_.value.viewId) : null))
-const title = computed(() => pluginTabs[props.tabId]?.title ?? ref_.value?.viewId ?? 'Plugin')
+const title = computed(() => pluginTabs[props.tabId]?.title ?? ref_.value?.viewId ?? t('plugins.view.plugin'))
 const plugin = computed(() => (ref_.value ? pluginNames[ref_.value.pluginId] ?? ref_.value.pluginId : ''))
 
 const ctx = computed<TabContext>(() => {
@@ -45,7 +46,7 @@ const ctx = computed<TabContext>(() => {
       <PluginViewHost :key="tabId" :view="view.view" :ctx="ctx" :plugin-id="view.pluginId" />
     </div>
     <div v-else-if="runtime.ready" class="ptp__gone">
-      <p>{{ plugin || 'The plugin' }} is not running, so this tab has nothing to show. Turn it on in Settings &gt; Plugins, or close the tab.</p>
+      <p>{{ plugin ? t('plugins.view.tabGone', { plugin }) : t('plugins.view.tabGoneUnnamed') }}</p>
     </div>
   </section>
 </template>

@@ -17,6 +17,7 @@ import PluginStatus from './PluginStatus.vue'
  * checks for all of them, and per row Reload, Check for update, Open folder, Copy folder path and Remove (asked first,
  * under the row, like MCP servers).
  */
+const { t } = useI18n()
 const plugins = usePlugins()
 const runtime = usePluginRuntime()
 const view = usePluginsView()
@@ -80,8 +81,8 @@ async function checkAll() {
     const infos = await plugins.checkUpdates(null)
     const failed = infos.filter(i => i.error)
     const found = infos.filter(i => i.hasUpdate).length
-    if (failed.length) error.value = `${failed.length === 1 ? 'One plugin' : `${failed.length} plugins`} could not be checked: ${failed.map(f => `${plugins.byId(f.id)?.manifest.name ?? f.id}: ${f.error}`).join('; ')}`
-    else if (!found) notice.value = 'Every plugin is up to date.'
+    if (failed.length) error.value = t('plugins.list.notChecked', { list: failed.map(f => `${plugins.byId(f.id)?.manifest.name ?? f.id}: ${f.error}`).join('; ') }, failed.length)
+    else if (!found) notice.value = t('plugins.list.allCurrent')
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -96,8 +97,8 @@ async function updateAll() {
 async function checkOne(p: InstalledPlugin) {
   await run(p.manifest.id, async () => {
     const [info] = await plugins.checkUpdates([p.manifest.id])
-    if (info?.error) throw new Error(`${p.manifest.name} could not be checked: ${info.error}`)
-    if (info && !info.hasUpdate) notice.value = `${p.manifest.name} is up to date.`
+    if (info?.error) throw new Error(t('plugins.list.oneNotChecked', { name: p.manifest.name, error: info.error }))
+    if (info && !info.hasUpdate) notice.value = t('plugins.list.oneCurrent', { name: p.manifest.name })
   })
 }
 
@@ -110,12 +111,12 @@ async function reveal(id: string | null) {
   })
 }
 async function copyDir(p: InstalledPlugin) {
-  notice.value = (await copyText(p.dir)) ? `Copied the folder of ${p.manifest.name}.` : null
+  notice.value = (await copyText(p.dir)) ? t('plugins.list.copiedFolder', { name: p.manifest.name }) : null
 }
 async function copyPluginsDir() {
   await run('', async () => {
     const dir = await call('plugins_dir', {})
-    notice.value = (await copyText(dir)) ? `Copied ${dir}` : dir
+    notice.value = (await copyText(dir)) ? t('plugins.list.copied', { path: dir }) : dir
   })
 }
 
@@ -123,17 +124,17 @@ function menu(p: InstalledPlugin): MenuItem[] {
   const id = p.manifest.id
   const builtIn = !!builtInPluginNote(id)
   return [
-    { label: 'Details', icon: Info, onSelect: () => openPlugins({ detail: id }) },
-    { label: 'Reload', icon: RotateCw, disabled: builtIn || !p.enabled || runtime.safeMode, onSelect: () => void run(id, () => runtime.reload(id)) },
+    { label: t('plugins.list.details'), icon: Info, onSelect: () => openPlugins({ detail: id }) },
+    { label: t('plugins.reload'), icon: RotateCw, disabled: builtIn || !p.enabled || runtime.safeMode, onSelect: () => void run(id, () => runtime.reload(id)) },
     {
-      label: p.source.kind === 'local' ? 'Read again from its folder' : 'Check for update',
+      label: p.source.kind === 'local' ? t('plugins.list.readFolder') : t('plugins.checkUpdate'),
       icon: RefreshCw,
       disabled: builtIn,
       onSelect: () => void (p.source.kind === 'local' ? updatePlugin(id) : checkOne(p)),
     },
-    { label: 'Open folder', icon: FolderOpen, onSelect: () => void reveal(id) },
-    { label: 'Copy folder path', icon: Copy, onSelect: () => void copyDir(p) },
-    { label: 'Remove…', icon: Trash2, danger: true, divider: true, onSelect: () => askRemove(p) },
+    { label: t('plugins.openFolder'), icon: FolderOpen, onSelect: () => void reveal(id) },
+    { label: t('plugins.copyFolder'), icon: Copy, onSelect: () => void copyDir(p) },
+    { label: t('plugins.list.remove'), icon: Trash2, danger: true, divider: true, onSelect: () => askRemove(p) },
   ]
 }
 
@@ -170,43 +171,43 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
 <template>
   <div ref="listEl" class="pi">
     <p v-if="plugins.loadError" class="pi__error selectable" role="alert">
-      <CircleAlert aria-hidden="true" />The installed plugins could not be read. {{ plugins.loadError }}
+      <CircleAlert aria-hidden="true" />{{ t('plugins.list.loadError', { error: plugins.loadError }) }}
     </p>
 
     <template v-if="list.length">
       <div class="pi__bar">
         <span class="pi__count tabular">
-          {{ list.length }} installed<template v-if="plugins.updateCount"> · <span class="pi__updates">{{ plugins.updateCount }} {{ plugins.updateCount === 1 ? 'update' : 'updates' }} available</span></template>
+          {{ t('plugins.list.count', { n: list.length }) }}<template v-if="plugins.updateCount"> · <span class="pi__updates">{{ t('plugins.list.updates', plugins.updateCount) }}</span></template>
         </span>
-        <UiButton v-if="plugins.updateCount > 1" size="sm" @click="updateAll">Update all</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="checking" @click="checkAll"><RefreshCw v-if="!checking" />Check for updates</UiButton>
+        <UiButton v-if="plugins.updateCount > 1" size="sm" @click="updateAll">{{ t('plugins.list.updateAll') }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="checking" @click="checkAll"><RefreshCw v-if="!checking" />{{ t('plugins.list.checkUpdates') }}</UiButton>
       </div>
 
-      <ul class="pi__card" aria-label="Installed plugins">
+      <ul class="pi__card" :aria-label="t('plugins.list.label')">
         <li v-for="p in list" :key="p.manifest.id" class="pi__item">
           <div class="pi__row" :class="{ 'is-off': !p.enabled }">
             <SettingsSwitch
               :model-value="p.enabled && !builtInPluginNote(p.manifest.id)"
               :labelledby="nameId(p)"
-              :title="p.enabled ? `Turn ${p.manifest.name} off` : `Turn ${p.manifest.name} on`"
+              :title="p.enabled ? t('plugins.turnOff', { name: p.manifest.name }) : t('plugins.turnOn', { name: p.manifest.name })"
               :disabled="busy === p.manifest.id || !!builtInPluginNote(p.manifest.id)"
               @update:model-value="v => toggle(p, v)"
             />
             <div class="pi__text">
               <div class="pi__line">
-                <button :id="nameId(p)" type="button" class="pi__name" :title="`${p.manifest.name}: details`" @click="openPlugins({ detail: p.manifest.id })">
+                <button :id="nameId(p)" type="button" class="pi__name" :title="t('plugins.details', { name: p.manifest.name })" @click="openPlugins({ detail: p.manifest.id })">
                   {{ p.manifest.name }}
                 </button>
                 <span class="pi__version tabular">{{ p.manifest.version }}</span>
                 <PluginStatus :status="statusOf(p)" />
               </div>
               <div class="pi__source selectable" :title="sourceText(p)">
-                <span v-if="p.source.kind === 'local'" class="pi__kind">Local folder</span>{{ sourceText(p) }}
+                <span v-if="p.source.kind === 'local'" class="pi__kind">{{ t('plugins.localFolder') }}</span>{{ sourceText(p) }}
               </div>
               <p v-if="errorOf(p)" class="pi__why selectable" :class="{ 'is-warn': statusOf(p) === 'incompatible', 'is-note': statusOf(p) === 'builtIn' }" :title="errorOf(p) ?? ''">{{ errorOf(p) }}</p>
               <p v-if="view.jobs[p.manifest.id]?.error" class="pi__why selectable" role="alert">
                 {{ view.jobs[p.manifest.id]!.error }}
-                <button type="button" class="pi__dismiss" @click="dismissJob(p.manifest.id)">Dismiss</button>
+                <button type="button" class="pi__dismiss" @click="dismissJob(p.manifest.id)">{{ t('plugins.dismiss') }}</button>
               </p>
               <p v-else-if="view.jobs[p.manifest.id]" class="pi__progress selectable" aria-live="polite">
                 {{ view.jobs[p.manifest.id]!.line || jobLabel(view.jobs[p.manifest.id]!) }}
@@ -217,32 +218,31 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
               <UiButton
                 v-else-if="update(p)?.hasUpdate"
                 size="sm"
-                :title="update(p)?.latestVersion ? `Update to ${update(p)!.latestVersion}` : 'Update to the latest commit'"
+                :title="update(p)?.latestVersion ? t('plugins.updateTo', { version: update(p)!.latestVersion! }) : t('plugins.list.updateLatest')"
                 @click="updatePlugin(p.manifest.id)"
               >
-                Update<template v-if="update(p)?.latestVersion && update(p)!.latestVersion !== p.manifest.version"> to {{ update(p)!.latestVersion }}</template>
+                {{ update(p)?.latestVersion && update(p)!.latestVersion !== p.manifest.version ? t('plugins.updateTo', { version: update(p)!.latestVersion! }) : t('plugins.update') }}
               </UiButton>
-              <UiMenu :items="menu(p)" placement="bottom-end" :width="220" :label="`${p.manifest.name} actions`">
+              <UiMenu :items="menu(p)" placement="bottom-end" :width="220" :label="t('plugins.list.actions', { name: p.manifest.name })">
                 <template #default="{ toggle: open, open: isOpen }">
-                  <UiIconButton size="sm" :label="`More for ${p.manifest.name}`" :active="isOpen" :data-more="p.manifest.id" aria-haspopup="menu" @click="open"><MoreHorizontal /></UiIconButton>
+                  <UiIconButton size="sm" :label="t('plugins.list.more', { name: p.manifest.name })" :active="isOpen" :data-more="p.manifest.id" aria-haspopup="menu" @click="open"><MoreHorizontal /></UiIconButton>
                 </template>
               </UiMenu>
-              <UiIconButton size="sm" :label="`${p.manifest.name}: details`" @click="openPlugins({ detail: p.manifest.id })"><ChevronRight /></UiIconButton>
+              <UiIconButton size="sm" :label="t('plugins.details', { name: p.manifest.name })" @click="openPlugins({ detail: p.manifest.id })"><ChevronRight /></UiIconButton>
             </div>
           </div>
           <div
             v-if="removing === p.manifest.id"
             class="pi__ask"
             role="alertdialog"
-            :aria-label="`Remove ${p.manifest.name}`"
+            :aria-label="t('plugins.remove.label', { name: p.manifest.name })"
             @keydown.esc.stop.prevent="keep"
           >
-            <p class="pi__ask-text">
-              Remove <strong>{{ p.manifest.name }}</strong>? It stops now, and its settings and saved data go with it.
-              <template v-if="p.source.kind === 'local'"> Its folder stays where it is.</template>
-            </p>
-            <UiButton size="sm" variant="ghost" data-autofocus @click="keep">Keep</UiButton>
-            <UiButton size="sm" variant="danger" :loading="busy === p.manifest.id" @click="remove(p)">Remove plugin</UiButton>
+            <i18n-t :keypath="p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask'" tag="p" scope="global" class="pi__ask-text">
+              <template #name><strong>{{ p.manifest.name }}</strong></template>
+            </i18n-t>
+            <UiButton size="sm" variant="ghost" data-autofocus @click="keep">{{ t('plugins.remove.keep') }}</UiButton>
+            <UiButton size="sm" variant="danger" :loading="busy === p.manifest.id" @click="remove(p)">{{ t('plugins.remove.confirm') }}</UiButton>
           </div>
         </li>
       </ul>
@@ -250,25 +250,24 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
 
     <div v-else-if="plugins.loaded" class="pi__empty">
       <p class="pi__empty-text">
-        No plugins yet. Plugins add commands, tool windows, colour schemes and more to Mango.
-        Install one from the catalog, from a repository link, or from a folder on this computer.
+        {{ t('plugins.list.empty') }}
       </p>
       <div class="pi__empty-actions">
-        <UiButton size="sm" variant="primary" @click="openPlugins({ tab: 'browse' })"><Store />Browse plugins</UiButton>
-        <UiButton size="sm" @click="openPlugins({ add: true })"><Plus />Add from a link</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="adding" @click="addLocal"><FolderPlus v-if="!adding" />Add local folder</UiButton>
+        <UiButton size="sm" variant="primary" @click="openPlugins({ tab: 'browse' })"><Store />{{ t('plugins.list.browse') }}</UiButton>
+        <UiButton size="sm" @click="openPlugins({ add: true })"><Plus />{{ t('plugins.addFromLink') }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="adding" @click="addLocal"><FolderPlus v-if="!adding" />{{ t('plugins.list.addLocal') }}</UiButton>
       </div>
     </div>
 
     <p v-if="error" class="pi__error selectable" role="alert">
       <CircleAlert aria-hidden="true" /><span>{{ error }}</span>
-      <UiIconButton size="sm" label="Dismiss" @click="error = null"><X /></UiIconButton>
+      <UiIconButton size="sm" :label="t('plugins.dismiss')" @click="error = null"><X /></UiIconButton>
     </p>
     <p v-else-if="notice" class="pi__notice selectable" role="status">{{ notice }}</p>
 
     <p v-if="list.length" class="pi__foot">
-      Plugins run inside Mango with the same access as Mango itself. Install only plugins you trust.
-      <button type="button" class="pi__link" @click="reveal(null)">Open the plugins folder</button>
+      {{ t('plugins.list.foot') }}
+      <button type="button" class="pi__link" @click="reveal(null)">{{ t('plugins.list.openDir') }}</button>
     </p>
   </div>
 </template>

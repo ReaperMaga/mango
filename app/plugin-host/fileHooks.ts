@@ -2,6 +2,7 @@ import type { Component } from 'vue'
 import type { FileEntryContext, FileIconContext, FileTint } from './types'
 import { pluginNames, reg, report, type Owned } from './registry'
 import { iconComponent } from './icons'
+import { t } from '~/i18n'
 import { fileIcon } from '~/utils/fileIcons'
 import { nameOf } from '~/utils/fileOps'
 import type { HiddenRule } from '~/utils/fileTree'
@@ -62,9 +63,9 @@ export function requiredSuffixes(projectPath: string, path: string, isDir: boole
       answer = c.when({ projectPath, path, name, isDir })
     } catch (e) {
       report(c.pluginId, e, `file companion ${c.id}`)
-      throw new Error(`The ${pluginNames[c.pluginId] ?? c.pluginId} plugin failed to say which files go with ${name}, so it was left alone. Its log is in Settings > Plugins.`)
+      throw new Error(t('plugins.files.failed', { plugin: pluginNames[c.pluginId] ?? c.pluginId, name }))
     }
-    if (answer === null) throw new Error(`The ${pluginNames[c.pluginId] ?? c.pluginId} plugin is still reading this project, so it cannot tell which files go with ${name} yet. Try again in a moment.`)
+    if (answer === null) throw new Error(t('plugins.files.reading', { plugin: pluginNames[c.pluginId] ?? c.pluginId, name }))
     if (answer === true) out.add(c.suffix)
   }
   return [...out]

@@ -6,6 +6,7 @@ import { usePluginRuntime } from '~/plugin-host/runtime'
 import { useWorkspace } from '~/stores/workspace'
 import { call, isTauri, openExternal } from '~/composables/useBackend'
 import { copyText, jobLabel, updatePlugin, usePluginsView } from '~/composables/pluginsView'
+import { formatLocale } from '~/i18n'
 import { builtInPluginNote } from '~/utils/builtIns'
 import { repoLabel } from '~/utils/pluginSource'
 import SettingsSwitch from '~/components/settings/SettingsSwitch.vue'
@@ -20,6 +21,7 @@ import PluginSettingsForm from './PluginSettingsForm.vue'
 const props = defineProps<{ id: string }>()
 const emit = defineEmits<{ removed: [] }>()
 
+const { t } = useI18n()
 const plugins = usePlugins()
 const runtime = usePluginRuntime()
 const ws = useWorkspace()
@@ -67,8 +69,8 @@ const reload = () => run('reload', () => runtime.reload(props.id))
 async function check() {
   await run('check', async () => {
     const [info] = await plugins.checkUpdates([props.id])
-    if (info?.error) throw new Error(`The check failed: ${info.error}`)
-    if (info && !info.hasUpdate) notice.value = 'Up to date.'
+    if (info?.error) throw new Error(t('plugins.detail.checkFailed', { error: info.error }))
+    if (info && !info.hasUpdate) notice.value = t('plugins.detail.upToDate')
   })
 }
 async function openDir() {
@@ -76,7 +78,7 @@ async function openDir() {
   await run('open', () => call('plugins_reveal', { id: props.id }))
 }
 async function copyDir() {
-  if (p.value) notice.value = (await copyText(p.value.dir)) ? 'Copied the folder path.' : null
+  if (p.value) notice.value = (await copyText(p.value.dir)) ? t('plugins.detail.copied') : null
 }
 function askRemove() {
   removing.value = true
@@ -98,16 +100,11 @@ const source = computed(() => {
   if (s.kind === 'local') return s.path
   return [repoLabel(s.url), s.subpath].filter(Boolean).join(' / ')
 })
-const fmtDate = (ts: number) => new Date(ts).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const fmtDate = (ts: number) => new Date(ts).toLocaleString(formatLocale(), { dateStyle: 'medium', timeStyle: 'short' })
 
-/** `toolWindows: 2` → "2 tool windows". */
-function contributionText(kind: string, n: number) {
-  const words = kind.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase()
-  return `${n} ${n === 1 ? words.replace(/s$/, '') : words}`
-}
 const contributions = computed(() => Object.entries(state.value?.contributions ?? {})
   .filter(([, n]) => n > 0)
-  .map(([k, n]) => contributionText(k, n))
+  .map(([k, n]) => t(`plugins.adds.${k}`, n))
   .join(', '))
 
 const homepage = computed(() => {
@@ -115,7 +112,7 @@ const homepage = computed(() => {
   return h && /^https?:\/\//i.test(h) ? h : null
 })
 
-const time = (at: number) => new Date(at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+const time = (at: number) => new Date(at).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 const nameId = useId()
 </script>
 
@@ -127,17 +124,17 @@ const nameId = useId()
         <div class="pd__title-line">
           <h3 :id="nameId" class="pd__title" tabindex="-1" data-page-title>{{ m.name }}</h3>
           <span class="pd__version tabular">{{ m.version }}</span>
-          <span v-if="entry?.official" class="pd__official" title="Maintained in Mango's repository"><BadgeCheck aria-hidden="true" />Official</span>
+          <span v-if="entry?.official" class="pd__official" :title="t('plugins.officialHint')"><BadgeCheck aria-hidden="true" />{{ t('plugins.official') }}</span>
         </div>
         <div class="pd__byline">
           <PluginStatus :status="status" />
-          <span v-if="m.author" class="pd__author">by {{ m.author }}</span>
+          <span v-if="m.author" class="pd__author">{{ t('plugins.detail.by', { author: m.author }) }}</span>
           <span class="pd__id">{{ m.id }}</span>
         </div>
       </div>
       <label class="pd__switch">
-        <span class="pd__switch-label">{{ p.enabled && !builtIn ? 'On' : 'Off' }}</span>
-        <SettingsSwitch :model-value="p.enabled && !builtIn" :disabled="!!builtIn" :labelledby="nameId" :title="p.enabled ? `Turn ${m.name} off` : `Turn ${m.name} on`" @update:model-value="setEnabled" />
+        <span class="pd__switch-label">{{ p.enabled && !builtIn ? t('plugins.detail.on') : t('plugins.detail.off') }}</span>
+        <SettingsSwitch :model-value="p.enabled && !builtIn" :disabled="!!builtIn" :labelledby="nameId" :title="p.enabled ? t('plugins.turnOff', { name: m.name }) : t('plugins.turnOn', { name: m.name })" @update:model-value="setEnabled" />
       </label>
     </header>
 
@@ -147,7 +144,7 @@ const nameId = useId()
     <div v-else-if="state?.error && (status === 'error' || status === 'incompatible')" class="pd__banner" :class="{ 'is-warn': status === 'incompatible' }" role="alert">
       <CircleAlert aria-hidden="true" />
       <div class="pd__banner-text">
-        <strong>{{ status === 'incompatible' ? 'This plugin needs a newer Mango.' : 'This plugin stopped with an error.' }}</strong>
+        <strong>{{ status === 'incompatible' ? t('plugins.detail.incompatible') : t('plugins.detail.error') }}</strong>
         <span class="selectable">{{ state.error }}</span>
       </div>
     </div>
@@ -156,69 +153,68 @@ const nameId = useId()
       <template v-if="!builtIn">
         <UiButton v-if="job && !job.error" size="sm" loading>{{ jobLabel(job) }}</UiButton>
         <UiButton v-else-if="update?.hasUpdate" size="sm" variant="primary" @click="updatePlugin(id)">
-          Update<template v-if="update.latestVersion && update.latestVersion !== m.version"> to {{ update.latestVersion }}</template>
+          {{ update.latestVersion && update.latestVersion !== m.version ? t('plugins.updateTo', { version: update.latestVersion }) : t('plugins.update') }}
         </UiButton>
-        <UiButton v-else-if="p.source.kind === 'git'" size="sm" :loading="busy === 'check'" @click="check"><RefreshCw v-if="busy !== 'check'" />Check for update</UiButton>
-        <UiButton v-else size="sm" @click="updatePlugin(id)"><RefreshCw />Read again</UiButton>
-        <UiButton size="sm" variant="ghost" :disabled="!p.enabled || runtime.safeMode" :loading="busy === 'reload'" @click="reload"><RotateCw v-if="busy !== 'reload'" />Reload</UiButton>
+        <UiButton v-else-if="p.source.kind === 'git'" size="sm" :loading="busy === 'check'" @click="check"><RefreshCw v-if="busy !== 'check'" />{{ t('plugins.checkUpdate') }}</UiButton>
+        <UiButton v-else size="sm" @click="updatePlugin(id)"><RefreshCw />{{ t('plugins.detail.readAgain') }}</UiButton>
+        <UiButton size="sm" variant="ghost" :disabled="!p.enabled || runtime.safeMode" :loading="busy === 'reload'" @click="reload"><RotateCw v-if="busy !== 'reload'" />{{ t('plugins.reload') }}</UiButton>
       </template>
-      <UiButton size="sm" variant="ghost" @click="openDir"><FolderOpen />Open folder</UiButton>
-      <UiButton size="sm" variant="ghost" @click="copyDir"><Copy />Copy folder path</UiButton>
-      <UiButton v-if="homepage" size="sm" variant="ghost" :title="homepage" @click="openExternal(homepage)"><ExternalLink />Homepage</UiButton>
-      <UiButton size="sm" variant="ghost" class="pd__remove" data-remove @click="askRemove"><Trash2 />Remove</UiButton>
+      <UiButton size="sm" variant="ghost" @click="openDir"><FolderOpen />{{ t('plugins.openFolder') }}</UiButton>
+      <UiButton size="sm" variant="ghost" @click="copyDir"><Copy />{{ t('plugins.copyFolder') }}</UiButton>
+      <UiButton v-if="homepage" size="sm" variant="ghost" :title="homepage" @click="openExternal(homepage)"><ExternalLink />{{ t('plugins.detail.homepage') }}</UiButton>
+      <UiButton size="sm" variant="ghost" class="pd__remove" data-remove @click="askRemove"><Trash2 />{{ t('plugins.detail.remove') }}</UiButton>
     </div>
     <p v-if="job?.error" class="pd__error selectable" role="alert"><CircleAlert aria-hidden="true" />{{ job.error }}</p>
     <p v-else-if="job" class="pd__progress selectable" aria-live="polite">{{ job.line || jobLabel(job) }}</p>
     <p v-if="error" class="pd__error selectable" role="alert"><CircleAlert aria-hidden="true" />{{ error }}</p>
     <p v-else-if="notice" class="pd__notice" role="status">{{ notice }}</p>
 
-    <div v-if="removing" class="pd__ask" role="alertdialog" :aria-label="`Remove ${m.name}`" @keydown.esc.stop.prevent="keep">
-      <p class="pd__ask-text">
-        Remove <strong>{{ m.name }}</strong>? It stops now, and its settings and saved data go with it.
-        <template v-if="p.source.kind === 'local'"> Its folder stays where it is.</template>
-      </p>
-      <UiButton size="sm" variant="ghost" data-autofocus @click="keep">Keep</UiButton>
-      <UiButton size="sm" variant="danger" :loading="busy === 'remove'" @click="remove">Remove plugin</UiButton>
+    <div v-if="removing" class="pd__ask" role="alertdialog" :aria-label="t('plugins.remove.label', { name: m.name })" @keydown.esc.stop.prevent="keep">
+      <i18n-t :keypath="p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask'" tag="p" scope="global" class="pd__ask-text">
+        <template #name><strong>{{ m.name }}</strong></template>
+      </i18n-t>
+      <UiButton size="sm" variant="ghost" data-autofocus @click="keep">{{ t('plugins.remove.keep') }}</UiButton>
+      <UiButton size="sm" variant="danger" :loading="busy === 'remove'" @click="remove">{{ t('plugins.remove.confirm') }}</UiButton>
     </div>
 
     <dl class="pd__facts">
       <div class="pd__fact">
-        <dt>{{ p.source.kind === 'local' ? 'Local folder' : 'Source' }}</dt>
+        <dt>{{ p.source.kind === 'local' ? t('plugins.localFolder') : t('plugins.detail.source') }}</dt>
         <dd class="mono selectable" :title="source">{{ source }}</dd>
       </div>
       <div v-if="p.source.kind === 'git' && p.source.ref" class="pd__fact">
-        <dt>Branch or tag</dt>
+        <dt>{{ t('plugins.branchOrTag') }}</dt>
         <dd class="mono selectable">{{ p.source.ref }}</dd>
       </div>
       <div v-if="p.commit" class="pd__fact">
-        <dt>Commit</dt>
+        <dt>{{ t('plugins.commit') }}</dt>
         <dd class="mono selectable" :title="p.commit">{{ p.commit.slice(0, 10) }}</dd>
       </div>
       <div v-if="p.source.kind === 'git'" class="pd__fact">
-        <dt>Folder</dt>
+        <dt>{{ t('plugins.folder') }}</dt>
         <dd class="mono selectable" :title="p.dir">{{ p.dir }}</dd>
       </div>
       <div class="pd__fact">
-        <dt>Installed</dt>
-        <dd class="tabular">{{ fmtDate(p.installedAt) }}<template v-if="p.updatedAt > p.installedAt + 1000"> · updated {{ fmtDate(p.updatedAt) }}</template></dd>
+        <dt>{{ t('plugins.installed') }}</dt>
+        <dd class="tabular">{{ p.updatedAt > p.installedAt + 1000 ? t('plugins.detail.updated', { installed: fmtDate(p.installedAt), updated: fmtDate(p.updatedAt) }) : fmtDate(p.installedAt) }}</dd>
       </div>
       <div v-if="m.minAppVersion" class="pd__fact">
-        <dt>Needs</dt>
-        <dd>Mango {{ m.minAppVersion }} or newer</dd>
+        <dt>{{ t('plugins.detail.needs') }}</dt>
+        <dd>{{ t('plugins.detail.needsVersion', { version: m.minAppVersion }) }}</dd>
       </div>
       <div class="pd__fact">
-        <dt>Adds</dt>
-        <dd>{{ contributions || (status === 'active' ? 'Nothing it shows yet' : 'Shown while it runs') }}</dd>
+        <dt>{{ t('plugins.detail.adds') }}</dt>
+        <dd>{{ contributions || (status === 'active' ? t('plugins.detail.addsNothing') : t('plugins.detail.addsLater')) }}</dd>
       </div>
     </dl>
 
     <section v-if="m.settings?.length" class="pd__sec" aria-labelledby="pd-settings">
-      <h4 id="pd-settings" class="pd__h">Settings</h4>
+      <h4 id="pd-settings" class="pd__h">{{ t('plugins.detail.settings') }}</h4>
       <PluginSettingsForm :plugin-id="id" :fields="m.settings" />
     </section>
 
     <section v-if="pages.length" class="pd__sec" aria-labelledby="pd-pages">
-      <h4 id="pd-pages" class="pd__h">Its settings pages</h4>
+      <h4 id="pd-pages" class="pd__h">{{ t('plugins.detail.pages') }}</h4>
       <div class="pd__pages">
         <UiButton v-for="pg in pages" :key="pg.fullId" size="sm" @click="ws.openSettings(`plugin:${pg.fullId}`)">
           <PluginGlyph v-if="pg.icon" :icon="pg.icon" /><Settings2 v-else />{{ pg.title }}
@@ -228,20 +224,22 @@ const nameId = useId()
 
     <section class="pd__sec" aria-labelledby="pd-log">
       <div class="pd__sub">
-        <h4 id="pd-log" class="pd__h">Log</h4>
-        <UiButton size="sm" variant="ghost" :disabled="!log.length" @click="runtime.clearLog(id)">Clear</UiButton>
+        <h4 id="pd-log" class="pd__h">{{ t('plugins.detail.log') }}</h4>
+        <UiButton size="sm" variant="ghost" :disabled="!log.length" @click="runtime.clearLog(id)">{{ t('plugins.detail.clear') }}</UiButton>
       </div>
-      <ol v-if="log.length" class="pd__log selectable" aria-label="Log lines, newest last">
+      <ol v-if="log.length" class="pd__log selectable" :aria-label="t('plugins.detail.logLines')">
         <li v-for="(l, i) in log" :key="i" class="pd__log-line" :class="`is-${l.level}`">
           <span class="pd__log-time tabular">{{ time(l.at) }}</span>
           <span class="pd__log-level">{{ l.level }}</span>
           <span class="pd__log-text">{{ l.text }}</span>
         </li>
       </ol>
-      <p v-else class="pd__muted">Nothing logged yet. What the plugin writes with <code>mango.log</code>, and its errors, show here.</p>
+      <i18n-t v-else keypath="plugins.detail.logEmpty" tag="p" scope="global" class="pd__muted">
+        <template #code><code>mango.log</code></template>
+      </i18n-t>
     </section>
   </div>
-  <p v-else class="pd__muted">This plugin is no longer installed.</p>
+  <p v-else class="pd__muted">{{ t('plugins.detail.gone') }}</p>
 </template>
 
 <style scoped>

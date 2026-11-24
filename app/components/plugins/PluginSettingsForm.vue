@@ -11,6 +11,7 @@ import SettingsSelect from '~/components/settings/SettingsSelect.vue'
  * them through `mango.settings` and hears about changes.
  */
 const props = defineProps<{ pluginId: string; fields: PluginSettingField[] }>()
+const { t } = useI18n()
 const plugins = usePlugins()
 
 const value = (f: PluginSettingField) => plugins.setting(props.pluginId, f.key)
@@ -49,9 +50,9 @@ const selected = (f: PluginSettingField) => {
 
 const changed = computed(() => Object.keys(plugins.settingsValues[props.pluginId] ?? {}).length > 0)
 const rangeHint = (f: PluginSettingField) =>
-  typeof f.min === 'number' && typeof f.max === 'number' ? `${f.min} to ${f.max}`
-    : typeof f.min === 'number' ? `At least ${f.min}`
-      : typeof f.max === 'number' ? `At most ${f.max}` : ''
+  typeof f.min === 'number' && typeof f.max === 'number' ? t('plugins.form.range', { min: f.min, max: f.max })
+    : typeof f.min === 'number' ? t('plugins.form.atLeast', { min: f.min })
+      : typeof f.max === 'number' ? t('plugins.form.atMost', { max: f.max }) : ''
 const hintOf = (f: PluginSettingField) => [f.description?.replace(/\.\s*$/, ''), f.type === 'number' ? rangeHint(f) : ''].filter(Boolean).join('. ')
 </script>
 
@@ -117,7 +118,7 @@ const hintOf = (f: PluginSettingField) => [f.description?.replace(/\.\s*$/, ''),
     </template>
 
     <div class="psf__foot">
-      <UiButton size="sm" variant="ghost" :disabled="!changed" @click="plugins.resetSettings(pluginId)">Reset to defaults</UiButton>
+      <UiButton size="sm" variant="ghost" :disabled="!changed" @click="plugins.resetSettings(pluginId)">{{ t('plugins.form.reset') }}</UiButton>
     </div>
   </div>
 </template>
