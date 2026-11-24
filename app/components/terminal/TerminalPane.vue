@@ -12,11 +12,12 @@ import { parseEnvPath } from '~/utils/envPath'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 
 const terminalId = computed(() => parseTerminalTab(props.tabId)?.terminalId ?? '')
-const tab = computed(() => ws.terminalTabs.find(t => t.id === terminalId.value) ?? null)
+const tab = computed(() => ws.terminalTabs.find(x => x.id === terminalId.value) ?? null)
 const remote = computed(() => parseEnvPath(tab.value?.cwd))
 /** The folder it started in: inside the environment for a remote shell. */
 const folder = computed(() => remote.value ? remote.value.dir : tab.value?.cwd ?? '')
@@ -28,16 +29,16 @@ watch([terminalId, host], ([id, el], _old, onCleanup) => {
 </script>
 
 <template>
-  <section class="tp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? `Terminal ${tab.title}` : 'Terminal'">
+  <section class="tp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? t('terminal.named', { title: tab.title }) : t('terminal.label')">
     <header class="tp__head">
       <component :is="remote ? Server : SquareTerminal" class="tp__icon" aria-hidden="true" />
-      <h2 class="tp__name">{{ tab?.title ?? 'Terminal' }}</h2>
+      <h2 class="tp__name">{{ tab?.title ?? t('terminal.label') }}</h2>
       <span v-if="tab?.shell" class="tp__shell">{{ tab.shell }}</span>
       <span v-if="folder" class="tp__dir selectable" :title="folder"><bdi>{{ folder }}</bdi></span>
-      <span v-if="tab?.exited" class="tp__state">Exited</span>
+      <span v-if="tab?.exited" class="tp__state">{{ t('terminal.exited') }}</span>
       <span class="tp__spacer" />
-      <UiIconButton size="sm" label="Move to panel" :disabled="!tab" @click="tab && ws.moveTerminalToPanel(tab.id)"><ArrowDownToLine /></UiIconButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiIconButton size="sm" :label="t('terminal.moveToPanel')" :disabled="!tab" @click="tab && ws.moveTerminalToPanel(tab.id)"><ArrowDownToLine /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('terminal.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
     <div ref="host" class="tp__body" />
   </section>

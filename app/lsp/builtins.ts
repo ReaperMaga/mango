@@ -13,7 +13,8 @@ export const FILE_METHODS = [
   'getFormattingEditsAfterKeystroke', 'findRenameLocations', 'getRenameInfo', 'getEmitOutput', 'getCodeFixesAtPosition', 'provideInlayHints',
 ] as const
 
-const RENAME_REFUSED = 'Can\'t rename this safely: other files may use this name'
+/** Said inside the worker, which knows no languages: `lsp/providers.ts` translates it. */
+export const RENAME_REFUSED = 'Can\'t rename this safely: other files may use this name'
 
 /** The kinds of bindings. A member (a parameter property too) is none: other files reach it through a value. */
 const BINDINGS = new Set([

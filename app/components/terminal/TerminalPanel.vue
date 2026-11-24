@@ -25,14 +25,15 @@ import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
  */
 const props = defineProps<{ container: HTMLElement | null }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 
 /** Hover text: the shell and folder, or for a shell in a remote environment, where it runs. */
 function tabTitle(tab: TerminalTab) {
   const place = remotePlace(tab.cwd)
-  const where = place ? `Shell in ${place.where} — ${place.dir}` : [tab.shell, tab.cwd ?? tab.title].filter(Boolean).join(' — ')
-  return tab.exited ? `${where} — (exited)` : where
+  const where = place ? t('terminal.shellInDir', { place: place.where, dir: place.dir }) : [tab.shell, tab.cwd ?? tab.title].filter(Boolean).join(' — ')
+  return tab.exited ? t('terminal.exitedTitle', { where }) : where
 }
 
 const DEFAULT_H = 0.34
@@ -124,7 +125,7 @@ const showingTab = computed(() => ws.activePanelTab)
 /** The strip, in its order: terminals and panel tabs side by side. */
 type StripItem = { kind: 'terminal'; key: string; term: TerminalTab } | { kind: 'tab'; key: string; tab: PanelTab }
 const stripItems = computed<StripItem[]>(() => ws.panelStrip.flatMap((key): StripItem[] => {
-  const term = ws.panelTerminals.find(t => t.id === key)
+  const term = ws.panelTerminals.find(x => x.id === key)
   if (term) return [{ kind: 'terminal', key, term }]
   const tab = findPanelTab(key)
   return tab ? [{ kind: 'tab', key, tab }] : []
@@ -133,7 +134,7 @@ const hasPanelTabs = computed(() => stripItems.value.some(i => i.kind === 'tab')
 
 // The main area holds a tab for each panel tab placed there that is Mango's own or whose plugin runs (after a reload, a plugin coming back...).
 watch(
-  () => [allPanelTabs().map(t => t.fullId).join(' '), JSON.stringify(ws.panelTabPlaces), threads.tabs.length],
+  () => [allPanelTabs().map(x => x.fullId).join(' '), JSON.stringify(ws.panelTabPlaces), threads.tabs.length],
   () => ws.syncPanelEditorTabs(),
   { immediate: true },
 )
@@ -151,17 +152,17 @@ const tabInView = (ref: string) => {
 }
 const seen = ref<string[]>([])
 watchEffect(() => {
-  const live = allPanelTabs().filter(t => ws.panelTabPlaces[t.fullId]?.at !== 'closed').map(t => t.fullId)
+  const live = allPanelTabs().filter(x => ws.panelTabPlaces[x.fullId]?.at !== 'closed').map(x => x.fullId)
   const keep = seen.value.filter(r => live.includes(r))
   for (const r of live) if (!keep.includes(r) && (tabSlot(r) || showingTab.value?.fullId === r)) keep.push(r)
   if (keep.join(' ') !== seen.value.join(' ')) seen.value = keep
 })
-const mountedTabs = computed(() => allPanelTabs().filter(t => seen.value.includes(t.fullId)))
+const mountedTabs = computed(() => allPanelTabs().filter(x => seen.value.includes(x.fullId)))
 const ctxs = computed<Record<string, PanelTabContext>>(() => {
   const projectPath = threads.workdir ?? ws.activeProjectPath
   const out: Record<string, PanelTabContext> = {}
-  for (const t of mountedTabs.value) {
-    const ref = t.fullId
+  for (const tab of mountedTabs.value) {
+    const ref = tab.fullId
     out[ref] = {
       projectPath,
       visible: tabInView(ref),
@@ -255,7 +256,7 @@ function placeOf(tab: TerminalTab) {
 const paneTerminal = computed(() => parseTerminalTab(threads.activePane.threadId)?.terminalId ?? null)
 
 const canMoveToEditor = computed(() => !!ws.activeProjectPath)
-const moveLabel = 'Move to editor area'
+const moveLabel = computed(() => t('terminal.moveToEditor'))
 
 /* Right-click on a tab of the strip: a terminal's, or a panel tab's (no shell actions). */
 const tabMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
@@ -270,13 +271,13 @@ const tabMenuItems = computed<MenuItem[]>(() => {
   if (!id) return []
   if (findPanelTab(id)) {
     return [
-      { label: moveLabel, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.movePanelTabToEditor(id) },
-      { label: 'Close', icon: X, divider: true, onSelect: () => ws.closePanelTab(id) },
+      { label: moveLabel.value, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.movePanelTabToEditor(id) },
+      { label: t('common.actions.close'), icon: X, divider: true, onSelect: () => ws.closePanelTab(id) },
     ]
   }
   return [
-    { label: moveLabel, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.moveTerminalToEditor(id) },
-    { label: 'Close', icon: X, divider: true, onSelect: () => ws.closeTerminal(id) },
+    { label: moveLabel.value, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.moveTerminalToEditor(id) },
+    { label: t('common.actions.close'), icon: X, divider: true, onSelect: () => ws.closeTerminal(id) },
   ]
 })
 
@@ -285,8 +286,8 @@ const projectEnv = computed(() => parseEnvPath(ws.activeProjectPath))
 
 /** "+" opens a shell where the project runs. */
 const newLabel = computed(() => projectEnv.value
-  ? `New shell in ${projectEnv.value.instance}`
-  : ws.defaultTerminalProfile ? `New ${ws.defaultTerminalProfile.name} terminal` : 'New terminal')
+  ? t('terminal.newShellIn', { place: projectEnv.value.instance })
+  : ws.defaultTerminalProfile ? t('terminal.newNamed', { name: ws.defaultTerminalProfile.name }) : t('terminal.new'))
 
 /**
  * Where a new terminal can run: the project's environment first (when remote), the shells found on this
@@ -298,22 +299,22 @@ const profileItems = computed<MenuItem[]>(() => {
   const env = projectEnv.value
   if (env) {
     items.push({
-      label: `Shell in ${env.instance}`,
+      label: t('terminal.shellIn', { place: env.instance }),
       hint: env.dir,
       icon: Server,
-      kbd: 'Default',
+      kbd: t('terminal.default'),
       onSelect: () => ws.newTerminal(),
     })
   }
   const local: MenuItem[] = ws.terminalProfiles.map((p, i) => ({
-    ...(i === 0 && env ? { group: 'This computer', divider: true } : {}),
+    ...(i === 0 && env ? { group: t('terminal.thisComputer'), divider: true } : {}),
     label: p.name,
     hint: p.path,
     icon: SquareTerminal,
-    kbd: !env && p.id === fallback?.id ? 'Default' : undefined,
+    kbd: !env && p.id === fallback?.id ? t('terminal.default') : undefined,
     onSelect: () => ws.newTerminal(undefined, p.id),
   }))
-  if (!local.length) local.push({ label: ws.terminalProfilesLoading ? 'Looking for shells…' : 'No shells found', disabled: true, divider: !!env })
+  if (!local.length) local.push({ label: ws.terminalProfilesLoading ? t('terminal.looking') : t('terminal.noShells'), disabled: true, divider: !!env })
   items.push(...local)
 
   // Every environment, grouped by server; the last item of whereItems is "Manage environments…".
@@ -322,8 +323,8 @@ const profileItems = computed<MenuItem[]>(() => {
   }, () => useEnvironments().openView())
   items.push(...envItems.slice(1, -1))
   items.push(
-    { label: 'Look for shells again', icon: RefreshCw, divider: true, onSelect: () => ws.loadTerminalProfiles() },
-    { label: 'Terminal settings…', icon: Settings, onSelect: () => ws.openSettings('terminal') },
+    { label: t('terminal.lookAgain'), icon: RefreshCw, divider: true, onSelect: () => ws.loadTerminalProfiles() },
+    { label: t('terminal.settings'), icon: Settings, onSelect: () => ws.openSettings('terminal') },
   )
   return items
 })
@@ -334,7 +335,7 @@ const profileItems = computed<MenuItem[]>(() => {
     class="terminal-panel"
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
-    :aria-label="hasPanelTabs ? 'Bottom panel' : 'Terminal'"
+    :aria-label="hasPanelTabs ? t('terminal.bottomPanel') : t('terminal.label')"
     data-tab-drop="panel"
     @transitionend="onPanelTransitionEnd"
   >
@@ -342,7 +343,7 @@ const profileItems = computed<MenuItem[]>(() => {
       class="terminal-panel__handle"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="Resize terminal"
+      :aria-label="t('terminal.resize')"
       :aria-valuenow="Math.round(ws.terminalHeight * 100)"
       aria-valuemin="14"
       aria-valuemax="80"
@@ -358,7 +359,7 @@ const profileItems = computed<MenuItem[]>(() => {
         ref="strip"
         class="terminal-panel__tabs"
         role="tablist"
-        :aria-label="hasPanelTabs ? 'Panel tabs' : 'Terminals'"
+        :aria-label="hasPanelTabs ? t('terminal.panelTabs') : t('terminal.tabs')"
         data-term-strip
         @wheel="onStripWheel"
       >
@@ -391,8 +392,8 @@ const profileItems = computed<MenuItem[]>(() => {
               type="button"
               class="term-tab__close"
               tabindex="-1"
-              :aria-label="`Close ${item.tab.title}`"
-              title="Close"
+              :aria-label="t('terminal.closeNamed', { title: item.tab.title })"
+              :title="t('common.actions.close')"
               @click.stop="ws.closePanelTab(item.key)"
             >
               <X aria-hidden="true" />
@@ -424,8 +425,8 @@ const profileItems = computed<MenuItem[]>(() => {
               type="button"
               class="term-tab__close"
               tabindex="-1"
-              :aria-label="`Close ${item.term.title}`"
-              title="Close"
+              :aria-label="t('terminal.closeNamed', { title: item.term.title })"
+              :title="t('common.actions.close')"
               @click.stop="ws.closeTerminal(item.key)"
             >
               <X aria-hidden="true" />
@@ -436,14 +437,14 @@ const profileItems = computed<MenuItem[]>(() => {
           <UiIconButton :label="newLabel" size="sm" @click="ws.newTerminal()">
             <Plus />
           </UiIconButton>
-          <UiMenu :items="profileItems" placement="bottom-start" :width="280" label="New terminal with…">
+          <UiMenu :items="profileItems" placement="bottom-start" :width="280" :label="t('terminal.newWith')">
             <template #default="{ toggle, open }">
               <button
                 type="button"
                 class="terminal-panel__pick"
                 :class="{ 'is-open': open }"
-                aria-label="Choose where a new terminal runs"
-                :title="open ? undefined : 'Choose a shell or an environment'"
+                :aria-label="t('terminal.choose')"
+                :title="open ? undefined : t('terminal.chooseTitle')"
                 aria-haspopup="menu"
                 :aria-expanded="open"
                 @click="() => { if (!open) refreshEnvs({ once: true }); toggle() }"
@@ -464,11 +465,11 @@ const profileItems = computed<MenuItem[]>(() => {
         >
           <ArrowUpToLine />
         </UiIconButton>
-        <UiIconButton :label="isMaximized ? 'Restore panel size' : 'Maximize panel'" size="sm" @click="toggleMaximize">
+        <UiIconButton :label="isMaximized ? t('terminal.restoreSize') : t('terminal.maximize')" size="sm" @click="toggleMaximize">
           <Minimize2 v-if="isMaximized" />
           <Maximize2 v-else />
         </UiIconButton>
-        <UiIconButton :label="hasPanelTabs ? 'Hide panel' : 'Hide terminal'" size="sm" @click="ws.toggleTerminal(false)">
+        <UiIconButton :label="hasPanelTabs ? t('terminal.hidePanel') : t('terminal.hide')" size="sm" @click="ws.toggleTerminal(false)">
           <ChevronDown />
         </UiIconButton>
       </div>
@@ -499,7 +500,7 @@ const profileItems = computed<MenuItem[]>(() => {
       </Teleport>
     </div>
 
-    <UiMenu ref="tabMenu" :items="tabMenuItems" :width="220" label="Terminal actions" />
+    <UiMenu ref="tabMenu" :items="tabMenuItems" :width="220" :label="t('terminal.actions')" />
   </section>
 </template>
 

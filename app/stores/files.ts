@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { FileContent, FsAhead, FsDeleted, FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { t } from '~/i18n'
 import { useGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
@@ -87,7 +88,7 @@ export interface OpenFile {
   view: 'preview' | 'code'
 }
 
-const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
+const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || t('files.op.wentWrong')
 
 /** What became of a delete, with the companions that stayed behind (`ui.files.companions`) and why. */
 export interface EntryDeleted extends FsDeleted {
@@ -426,7 +427,7 @@ export const useFiles = defineStore('files', {
             // A tab left over from a file that had the new name: it would be replaced, edits and all.
             for (const id of this._tabsWithin(projectPath, m.from)) {
               const next = fileTabId(projectPath, movedPath(this.open[id]!.file, m.from, m.to)!)
-              if (next !== id && this.open[next]?.dirty) throw new Error(`A tab with unsaved changes is open as ${this.open[next]!.file}. Close it first.`)
+              if (next !== id && this.open[next]?.dirty) throw new Error(t('files.op.tabOpen', { file: this.open[next]!.file }))
             }
           }
         }))
@@ -464,7 +465,7 @@ export const useFiles = defineStore('files', {
       // With autosave a save is under way often: it is waited for below.
       if (!autoSaves()) for (const p of [path, ...along]) this._refuseWhileSaving(projectPath, p)
       const key = dirKey(projectPath, path)
-      if (this.deleting.includes(key)) throw new Error('It is already being deleted.')
+      if (this.deleting.includes(key)) throw new Error(t('files.op.deletingAlready'))
       this.deleting.push(key)
       const going: Match = f => f.projectPath === projectPath && [path, ...along].some(p => isWithin(f.file, p))
       let release = () => {}
@@ -524,7 +525,7 @@ export const useFiles = defineStore('files', {
 
     _refuseWhileSaving(projectPath: string, path: string) {
       const saving = this._tabsWithin(projectPath, path).find(id => this.open[id]!.saving)
-      if (saving) throw new Error(`${this.open[saving]!.file} is being saved. Try again in a moment.`)
+      if (saving) throw new Error(t('files.op.beingSaved', { file: this.open[saving]!.file }))
     },
 
     _moveTabs(projectPath: string, from: string, to: string) {
@@ -803,7 +804,7 @@ export const useFiles = defineStore('files', {
             // Likely what the failed save left. The next try writes over exactly this, nothing newer.
             const now = await call('fs_read_file', { root, file })
             Object.assign(f, { modifiedMs: now.modifiedMs, hash: now.hash ?? null })
-            f.saveError = saveFailure(f.saveError, 'the file holds other text now. Try again to write over it.')
+            f.saveError = saveFailure(f.saveError, t('files.editor.otherText'))
             return false
           }
           f.conflict = true

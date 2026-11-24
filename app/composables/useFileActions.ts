@@ -1,6 +1,7 @@
 import type { Ref } from 'vue'
 import type { FsEntry } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useFiles } from '~/stores/files'
 import { excludedPathsOf } from '~/utils/fileTree'
@@ -24,9 +25,10 @@ export interface NameEdit {
 }
 
 const onPlatform = (pattern: RegExp) => pattern.test(navigator.platform)
-const trashName = () => (onPlatform(/Win/) ? 'Recycle Bin' : 'Trash')
-/** What the system calls its file manager. */
-export const fileManagerName = () => (onPlatform(/Win/) ? 'Explorer' : onPlatform(/Mac/) ? 'Finder' : 'file manager')
+/** Windows calls its trash by another name. */
+const recycles = () => onPlatform(/Win/)
+/** Which file manager the system has. */
+export const fileManager = () => (onPlatform(/Win/) ? 'explorer' : onPlatform(/Mac/) ? 'finder' : 'other')
 
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e))
 
@@ -88,7 +90,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
       if (!left) e.error = problem
       else {
         // Leaving a field that already showed its problem gives the name up.
-        if (!e.error) ws.notify(e.mode === 'rename' ? 'Could not rename' : 'Could not create', problem)
+        if (!e.error) ws.notify(e.mode === 'rename' ? t('files.op.renameFailed') : t('files.op.createFailed'), problem)
         edit.value = null
       }
       return
@@ -108,7 +110,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
       // A pair that is apart is said out loud: its row, and the field with it, may be gone.
       if (err instanceof SplitError || (e.mode === 'rename' && edit.value?.id !== e.id)) {
         if (edit.value?.id === e.id) edit.value = null
-        ws.notify('Could not rename', reason(err))
+        ws.notify(t('files.op.renameFailed'), reason(err))
         return
       }
       if (edit.value?.id !== e.id) return
@@ -116,7 +118,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
       if (!left) e.error = reason(err)
       else {
         edit.value = null
-        ws.notify(e.mode === 'rename' ? 'Could not rename' : 'Could not create', reason(err))
+        ws.notify(e.mode === 'rename' ? t('files.op.renameFailed') : t('files.op.createFailed'), reason(err))
       }
       return
     }
@@ -143,7 +145,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
       // The copy's name is ready to be changed.
       if (made) await nextTick(() => startRename(made))
     } catch (err) {
-      ws.notify('Could not duplicate', reason(err))
+      ws.notify(t('files.op.duplicateFailed'), reason(err))
     }
   }
 
@@ -157,7 +159,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
     try {
       along = await files.companionPaths(project, entry.path, entry.isDir)
     } catch (err) {
-      ws.notify(`Could not delete ${name}`, reason(err))
+      ws.notify(t('files.op.deleteFailed', { name }), reason(err))
       return
     }
     // What is being edited goes to the trash as edited, so there is mostly nothing to lose.
@@ -165,10 +167,12 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
     if (path.value !== project) return
     const unsaved = [entry.path, ...along].flatMap(p => files.unsavedWithin(project, p))
     const losses = unsaved.length === 1
-      ? ` Your unsaved changes to ${unsaved[0]} will be lost.`
-      : unsaved.length ? ` Your unsaved changes to ${unsaved.length} files will be lost.` : ''
-    const itself = entry.isDir ? `${entry.path} and everything in it` : entry.path
-    const what = along.length ? `${itself}${entry.isDir ? ', and' : ' and'} ${along.map(nameOf).join(', ')}` : itself
+      ? ` ${t('files.delete.unsavedFile', { file: unsaved[0] })}`
+      : unsaved.length ? ` ${t('files.delete.unsavedFiles', unsaved.length)}` : ''
+    const all = { path: entry.path, names: along.map(nameOf).join(', ') }
+    const what = entry.isDir
+      ? along.length ? t('files.delete.folderAlong', all) : t('files.delete.folder', all)
+      : along.length ? t('files.delete.fileAlong', all) : entry.path
 
     const run = async (permanent: boolean) => {
       try {
@@ -176,32 +180,32 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
         if (got.deleted) {
           if (got.left.length) {
             const why = got.left[0]!.why.trim().replace(/[.!]+$/, '')
-            ws.notify(`Deleted ${name}, but not ${got.left.map(l => nameOf(l.path)).join(', ')}`, `${why ? `${why}. ` : ''}Delete what is left yourself.`)
+            ws.notify(t('files.delete.partly', { name, names: got.left.map(l => nameOf(l.path)).join(', ') }), `${why ? `${why}. ` : ''}${t('files.delete.partlyHint')}`)
           }
           if (path.value === project) await nextTick(then)
         } else {
           forGood(`${got.reason ?? ''} `)
         }
       } catch (err) {
-        ws.notify(`Could not delete ${name}`, reason(err))
+        ws.notify(t('files.op.deleteFailed', { name }), reason(err))
       }
     }
     const forGood = (why: string) => {
       ws.confirm = {
-        title: `Delete ${name} permanently?`,
-        body: `${why}This deletes ${what} for good and cannot be undone.${losses}`,
-        label: 'Delete permanently',
+        title: t('files.delete.titleForGood', { name }),
+        body: `${why}${t('files.delete.bodyForGood', { what })}${losses}`,
+        label: t('files.delete.forGood'),
         danger: true,
         run: () => void run(true),
       }
       asked()
     }
 
-    if (isEnvPath(project)) return forGood('Remote environments have no trash. ')
+    if (isEnvPath(project)) return forGood(`${t('files.delete.noTrash')} `)
     ws.confirm = {
-      title: `Delete ${name}?`,
-      body: `This moves ${what} to the ${trashName()}.${losses}`,
-      label: `Move to ${trashName()}`,
+      title: t('files.delete.title', { name }),
+      body: (recycles() ? t('files.delete.bodyRecycleBin', { what }) : t('files.delete.bodyTrash', { what })) + losses,
+      label: recycles() ? t('files.delete.toRecycleBin') : t('files.delete.toTrash'),
       danger: true,
       run: () => void run(false),
     }
@@ -213,7 +217,7 @@ export function useFileActions(path: Ref<string | null>, focus: (key: string) =>
     try {
       await call('fs_reveal', { root: path.value, path: rel })
     } catch (err) {
-      ws.notify(`Could not show it in ${fileManagerName()}`, reason(err))
+      ws.notify(t(`files.showInFailed.${fileManager()}`), reason(err))
     }
   }
 

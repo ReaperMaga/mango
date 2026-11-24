@@ -10,6 +10,8 @@
  *   that may have left the file broken (`keepsBackup`) only when asked.
  */
 
+import { t } from '../i18n/index.ts'
+
 /** What decides whether a file may save itself. */
 export interface SaveFile {
   dirty: boolean
@@ -45,11 +47,18 @@ export function nothingWritten(why: string, file: string): boolean {
   ].includes(why)
 }
 
+/** Kept as it is in the state, whatever the language (`failureText` shows it). */
 const AGAIN = ' Trying again: '
 
 /** What to show for a save that failed with `why`, while `before` was showing. */
 export function saveFailure(before: string | null | undefined, why: string): string {
   return keepsBackup(before) ? `${before!.split(AGAIN)[0]}${AGAIN}${why}` : why
+}
+
+/** `saveFailure`'s answer as the user reads it. */
+export function failureText(why: string): string {
+  const at = keepsBackup(why) ? why.indexOf(AGAIN) : -1
+  return at < 0 ? why : t('files.editor.tryingAgain', { kept: why.slice(0, at), error: why.slice(at + AGAIN.length) })
 }
 
 export function canAutoSave(f: SaveFile): boolean {
