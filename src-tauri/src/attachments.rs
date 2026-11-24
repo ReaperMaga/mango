@@ -3,6 +3,14 @@
 //! Each one is copied into Mango's own store (`<app data>/attachments/<id>/<name>`), so the
 //! agent reads a stable copy that the user cannot move away mid-run and the chat history can
 //! point at it later. The webview can only read back files inside that store.
+//!
+//! A remote project's agent cannot read this computer's disk, so before a run there each file
+//! it reads by path is put into the environment (`attachment_put_remote`), where the phone app
+//! puts its attachments too (`mobile/src/remote/sshBackend.ts`, `ATTACH`: keep them in step):
+//!
+//! ```text
+//! ~/.local/share/mango/attachments/<id>/<name>   in the agent user's home inside the instance
+//! ```
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -142,6 +150,34 @@ fn read(root: &Path, path: &str) -> Result<Vec<u8>, String> {
     fs::read(&file).map_err(|e| format!("Could not read the attachment: {e}"))
 }
 
+/// Puts the attachment into the environment: `$1` its id, `$2` its file name, the bytes base64
+/// on stdin. Prints where it is there. The same script as the phone's `ATTACH`.
+const ATTACH: &str = r#"
+d="$HOME/.local/share/mango/attachments"
+mkdir -p "$d/$1" && chmod 700 "$d" "$d/$1" && cd "$d/$1" || exit 1
+base64 -d > ".$2.part" && mv -f -- ".$2.part" "$2" || { rm -f -- ".$2.part"; exit 1; }
+printf '%s/%s\n' "$PWD" "$2"
+"#;
+
+/// The id and file name a stored attachment keeps in the environment: its folder's name, and
+/// its own name made safe there (one segment, not hidden, not an option; as the phone checks it).
+fn remote_names(root: &Path, path: &str) -> Result<(String, String), String> {
+    let root = root.canonicalize().map_err(|_| "That file is not an attachment.".to_string())?;
+    let file = Path::new(path).canonicalize().map_err(|_| "The attachment is gone from disk.".to_string())?;
+    let rel = file.strip_prefix(&root).map_err(|_| "That file is not an attachment.".to_string())?;
+    let parts: Vec<String> = rel.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
+    let [id, name] = parts.as_slice() else {
+        return Err("That file is not an attachment.".into());
+    };
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("That file is not an attachment.".into());
+    }
+    let cleaned: String = name.chars().map(|c| if c.is_control() || c == '/' || c == '\\' { '_' } else { c }).collect();
+    let trimmed = cleaned.trim().trim_start_matches(['.', '-', ' ']);
+    let name = if trimmed.is_empty() { "attachment".to_string() } else { trimmed.to_string() };
+    Ok((id.clone(), name))
+}
+
 /// Saves pasted or browser-picked bytes (`data` is base64) as an attachment named `name`.
 #[tauri::command]
 pub async fn attachment_save(app: AppHandle, name: String, data: String) -> Result<AttachmentInfo, String> {
@@ -167,6 +203,34 @@ pub async fn attachment_import(app: AppHandle, path: String) -> Result<Attachmen
 pub async fn attachment_read(app: AppHandle, path: String) -> Result<String, String> {
     let root = store_dir(&app)?;
     crate::git::blocking(move || read(&root, &path).map(|b| base64::engine::general_purpose::STANDARD.encode(b))).await
+}
+
+/// Puts a stored attachment into a remote environment, for its agent to read; answers its
+/// absolute path there. Only files inside this computer's store go.
+#[tauri::command]
+pub async fn attachment_put_remote(app: AppHandle, host_id: String, instance: String, path: String) -> Result<String, String> {
+    crate::envs::valid_instance(&instance)?;
+    let root = store_dir(&app)?;
+    crate::git::blocking(move || {
+        let (id, name) = remote_names(&root, &path)?;
+        let data = base64::engine::general_purpose::STANDARD.encode(read(&root, &path)?);
+        let env = crate::git::EnvAt {
+            host: crate::envs::hosts::get(&app, &host_id)?,
+            instance: instance.clone(),
+            dir: crate::envs::AGENT_HOME.to_string(),
+        };
+        let argv: Vec<String> = ["sh", "-c", ATTACH, "sh", &id, &name].map(String::from).to_vec();
+        let out = env.run_plain(&[], &argv, Some(data.into_bytes()), 4096, crate::git::LOCAL_TIMEOUT)?;
+        if !out.ok() {
+            return Err(format!("Could not put {name} into {instance}: {}", out.error("The upload")));
+        }
+        let there = out.line();
+        if !there.starts_with('/') || !there.ends_with(&format!("/{name}")) {
+            return Err(format!("Putting {name} into {instance} gave an unexpected answer."));
+        }
+        Ok(there)
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -232,6 +296,48 @@ mod tests {
         assert!(read(&root, root.to_str().unwrap()).is_err());
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&elsewhere).unwrap();
+    }
+
+    #[test]
+    fn remote_names_come_from_the_store() {
+        let root = scratch();
+        let a = store(&root, "report final.pdf", b"%PDF").unwrap();
+        assert_eq!(remote_names(&root, &a.path).unwrap(), (a.id.clone(), "report final.pdf".to_string()));
+        // Not hidden and not an option there.
+        let b = store(&root, "-rf .pdf", b"x").unwrap();
+        assert_eq!(remote_names(&root, &b.path).unwrap().1, "rf .pdf");
+        // Only files directly in an attachment's folder.
+        let elsewhere = scratch();
+        let other = elsewhere.join("x.txt");
+        fs::write(&other, "no").unwrap();
+        assert!(remote_names(&root, other.to_str().unwrap()).is_err());
+        fs::write(root.join("loose.txt"), "no").unwrap();
+        assert!(remote_names(&root, root.join("loose.txt").to_str().unwrap()).is_err());
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
+    }
+
+    /// The script itself, run by the local `sh` against a scratch HOME.
+    #[cfg(unix)]
+    #[test]
+    fn attach_script_puts_the_file() {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+        let home = scratch();
+        let mut child = Command::new("sh")
+            .args(["-c", ATTACH, "sh", "abc123", "my file.pdf"])
+            .env("HOME", &home)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(base64::engine::general_purpose::STANDARD.encode(b"%PDF-1.7").as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        let there = String::from_utf8(out.stdout).unwrap();
+        assert!(there.trim_end().ends_with("/.local/share/mango/attachments/abc123/my file.pdf"), "{there}");
+        assert_eq!(fs::read(there.trim_end()).unwrap(), b"%PDF-1.7");
+        fs::remove_dir_all(&home).unwrap();
     }
 
     #[test]

@@ -12,8 +12,8 @@ export const inlineFor = (a: Attachment) => inlineCopies.get(a.id)
 
 /**
  * What a run gets for a message and its attachments. Every attachment from the phone is already
- * inside the environment (`backend.attachmentPut`), so unlike the desktop's remote runs nothing
- * stays behind: pictures go inline (when a copy fitted for the model is at hand), and every other
+ * inside the environment (`backend.attachmentPut`; the desktop puts its own there when it sends,
+ * `attachment_put_remote`), so nothing stays behind: pictures go inline (when a copy fitted for the model is at hand), and every other
  * file, or a picture without one, is named by its path there for the agent to read.
  */
 export function agentInput(

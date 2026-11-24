@@ -122,6 +122,7 @@ pub fn run() {
             attachments::attachment_save,
             attachments::attachment_import,
             attachments::attachment_read,
+            attachments::attachment_put_remote,
             images::chat_image,
             notify::notify,
             chats::chats_load,

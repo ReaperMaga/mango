@@ -2,10 +2,11 @@ import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, Ques
 import { awaitsUser } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, ContextUsage, SpawnFn, SpawnHandlers, ToolImage, TurnUsage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
+import type { EnvRemote } from '~/types/ipc'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
 import { mergeContext } from '~/agents/context'
-import { forAgent, makeThumb } from '~/utils/attachments'
+import { forAgent, forRemoteAgent, makeThumb, type DroppedAttachment } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
 import { emitAgentEvent, pluginMcpFor, pluginSystemPrompt } from '~/plugin-host/registry'
@@ -254,16 +255,16 @@ const TASK_END_SUMMARY = { done: 'finished', error: 'failed', stopped: 'stopped'
 
 /**
  * What a run gets for a message and its attachments. A `remote` run (the CLI is in a remote
- * environment) cannot read this computer's disk: pictures go inline, every other file (and a
- * picture too large to send inline) stays behind and is listed in `dropped`.
+ * environment) cannot read this computer's disk: pictures go inline, and every other file (or a
+ * picture too large to send inline) is put into the environment first and named by its path
+ * there. One that could not be put there stays behind and is listed in `dropped`.
  */
-async function agentInput(text: string, files: Attachment[], remote: boolean) {
+async function agentInput(text: string, files: Attachment[], remote: EnvRemote | null) {
   const read = (path: string) => call('attachment_read', { path })
-  if (!files.length) return { prompt: text, images: [], readDirs: [] as string[], dropped: [] as Attachment[] }
-  if (!remote) return { ...(await forAgent(text, files, read)), dropped: [] as Attachment[] }
-  const { images } = await forAgent(text, files.filter(a => a.kind === 'image'), read)
-  const sent = new Set(images.map(i => i.path))
-  return { prompt: text.trim(), images, readDirs: [] as string[], dropped: files.filter(a => !sent.has(a.path)) }
+  if (!files.length) return { prompt: text, images: [], readDirs: [] as string[], dropped: [] as DroppedAttachment[] }
+  if (!remote) return { ...(await forAgent(text, files, read)), dropped: [] as DroppedAttachment[] }
+  const put = (path: string) => call('attachment_put_remote', { ...remote, path })
+  return { ...(await forRemoteAgent(text, files, read, put)), readDirs: [] as string[] }
 }
 
 /**
@@ -541,23 +542,23 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     store._touch(threadId)
   }
 
-  /** Tell the user which files stayed behind (a remote run cannot read this computer's disk). */
-  const noteDropped = (dropped: Attachment[]) => {
+  /** Tell the user which files stayed behind (they could not be put into the remote environment). */
+  const noteDropped = (dropped: DroppedAttachment[]) => {
     if (!dropped.length) return
-    const names = dropped.map(a => a.name).join(', ')
+    const names = dropped.map(d => d.attachment.name).join(', ')
     push(main, {
       type: 'notice',
-      level: 'info',
-      text: `Not sent: ${names}. The agent runs in a remote environment and can't read files on this computer; only pictures go along. Copy files into the instance from a terminal.`,
+      level: 'error',
+      text: `Not sent: ${names}. ${dropped[0]!.error}`,
     })
   }
 
   try {
     const adapter = await adapters[thread.agent]()
-    const { dropped, ...input } = await agentInput(text, attachments, !!place.remote)
+    const { dropped, ...input } = await agentInput(text, attachments, place.remote)
     noteDropped(dropped)
     if (place.remote && !input.prompt.trim() && !input.images.length) {
-      throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
+      throw new Error(`Nothing to send: the attached files could not be put into the remote environment. ${dropped[0]?.error ?? ''}`.trim())
     }
     const [browserMcp, userMcp] = await Promise.all([
       browserToolsFor(store, threadId),
@@ -591,7 +592,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       run,
       async steer(text, files) {
         if (!run.steer) return false
-        const { dropped, ...input } = await agentInput(text, files, !!place.remote)
+        const { dropped, ...input } = await agentInput(text, files, place.remote)
         // A message with nothing that can go along waits for the next turn, which says why.
         if (place.remote && !input.prompt.trim() && !input.images.length) return false
         if (runs.get(threadId)?.run !== run || !(await run.steer(input))) return false

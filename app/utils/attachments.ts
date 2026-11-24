@@ -155,3 +155,44 @@ export async function forAgent(
   const readDirs = [...new Set(list.map(a => a.path.replace(/[\\/][^\\/]*$/, '')).filter(Boolean))]
   return { prompt, images, readDirs }
 }
+
+/** An attachment a remote run could not take along, and why. */
+export interface DroppedAttachment {
+  attachment: Attachment
+  error: string
+}
+
+/**
+ * What a run in a remote environment gets. Its agent cannot read this computer's disk, so
+ * pictures go inline as they do here, and every other file (or a picture too large to go
+ * inline) is first put into the environment by `put` and named by its path there. A file
+ * that could not be put there stays behind, in `dropped`.
+ */
+export async function forRemoteAgent(
+  text: string,
+  list: Attachment[],
+  read: (path: string) => Promise<string>,
+  put: (path: string) => Promise<string>,
+): Promise<{ prompt: string; images: AgentImage[]; dropped: DroppedAttachment[] }> {
+  const images: AgentImage[] = []
+  const toPut: Attachment[] = []
+  for (const a of list) {
+    if (a.kind === 'image') {
+      try {
+        const fitted = await fitForAgent(a.mime, await read(a.path))
+        images.push({ name: a.name, path: a.path, mime: fitted.mime, data: fitted.data })
+        continue
+      } catch { /* it goes into the environment instead */ }
+    }
+    toPut.push(a)
+  }
+  const byPath: Pick<Attachment, 'name' | 'path'>[] = []
+  const dropped: DroppedAttachment[] = []
+  const results = await Promise.allSettled(toPut.map(a => put(a.path)))
+  results.forEach((r, i) => {
+    const a = toPut[i]!
+    if (r.status === 'fulfilled') byPath.push({ name: a.name, path: r.value })
+    else dropped.push({ attachment: a, error: r.reason instanceof Error ? r.reason.message : String(r.reason) })
+  })
+  return { prompt: [text.trim(), attachmentNote(byPath)].filter(Boolean).join('\n\n'), images, dropped }
+}

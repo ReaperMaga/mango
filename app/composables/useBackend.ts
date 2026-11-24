@@ -497,6 +497,11 @@ const mock = (() => {
         if (data === undefined) throw new Error('The attachment is gone from disk.')
         return data
       }
+      case 'attachment_put_remote': {
+        if (!attachments.has(args.path)) throw new Error('The attachment is gone from disk.')
+        const [id, name] = args.path.split('/').slice(-2)
+        return `/home/agent/.local/share/mango/attachments/${id}/${name}`
+      }
       case 'chat_image': return mockChatImage(args.path, args.base)
       case 'notify': {
         // No system service in the browser preview: the page's own notifications stand in.
