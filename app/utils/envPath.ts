@@ -31,6 +31,16 @@ export function movedEnvPath(path: string | null | undefined, hostId: string, fr
   return envPath({ ...loc, instance: to })
 }
 
+/**
+ * Which computer an agent CLI for `path` runs on: `local` for this one, `env://<hostId>/<instance>`
+ * for a remote environment. What a CLI reports about itself (its models, its sign-in) belongs to that
+ * place, not to the project folder, so lists like that are kept per place.
+ */
+export function placeKey(path: string | null | undefined): string {
+  const loc = parseEnvPath(path)
+  return loc ? `${PREFIX}${loc.hostId}/${loc.instance}` : 'local'
+}
+
 /** The parts of an env:// path; null for a local path. */
 export function parseEnvPath(path: string | null | undefined): EnvLocation | null {
   if (!path || !path.startsWith(PREFIX)) return null

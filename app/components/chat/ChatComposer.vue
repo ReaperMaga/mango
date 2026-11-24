@@ -456,8 +456,9 @@ defineExpose({ focus: () => ta.value?.focus() })
 /* ---------- model and effort: the lists come from the CLI itself (stores/models.ts) ---------- */
 
 const models = useModels()
-const refreshModels = () => void models.refresh(props.agent, ws.activeProjectPath)
-watch(() => props.agent, refreshModels, { immediate: true })
+/** Where the chat's agent runs decides its models: a remote project's CLI may offer others than this computer's. */
+const where = computed(() => ws.activeProjectPath)
+watch(() => [props.agent, where.value] as const, ([agent, cwd]) => void models.refresh(agent, cwd), { immediate: true })
 watch(() => [props.agent, ws.activeProjectPath] as const, ([agent, cwd]) => void commands.refresh(agent, cwd), { immediate: true })
 
 /** A model picked in the run menu: the chat's own agent keeps its effort if the new model takes it. */
@@ -467,12 +468,12 @@ function pickModel(agent: AgentId, id: string) {
     return
   }
   emit('update:model', id)
-  if (props.effort && !models.efforts(agent, id).includes(props.effort)) emit('update:effort', null)
+  if (props.effort && !models.efforts(agent, id, where.value).includes(props.effort)) emit('update:effort', null)
 }
 
-const efforts = computed(() => models.efforts(props.agent, props.model))
+const efforts = computed(() => models.efforts(props.agent, props.model, where.value))
 /** The level the CLI picks when none is chosen, when it says (both report it with their model lists). */
-const fallbackEffort = computed(() => models.find(props.agent, props.model)?.defaultEffort)
+const fallbackEffort = computed(() => models.find(props.agent, props.model, where.value)?.defaultEffort)
 /**
  * The level the chat runs at: the chosen one, else the CLI's default.
  * Until the CLI has answered (or for a model it gives no default for) that reads "Default".
@@ -487,7 +488,7 @@ const effortTitle = computed(() => {
   return fallbackEffort.value ? `Effort: ${effortText.value} (${usual})` : `Effort: ${usual}`
 })
 const runTitle = computed(() => [
-  `${AGENTS[props.agent].name}: ${models.label(props.agent, props.model)}`,
+  `${AGENTS[props.agent].name}: ${models.label(props.agent, props.model, where.value)}`,
   ...(efforts.value.length ? [effortTitle.value] : []),
   `Permissions: ${PERMISSION_MODES[props.mode].label}`,
 ].join('\n'))
@@ -594,7 +595,7 @@ const sendTitle = computed(() => (props.busy
         <template #default="{ toggle, open }">
           <button type="button" class="cp__chip cp__run" :class="{ 'is-open': open }" :title="runTitle" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
             <AgentIcon :agent="agent" class="cp__agent" />
-            <span class="cp__chip-text">{{ models.label(agent, model) }}</span>
+            <span class="cp__chip-text">{{ models.label(agent, model, where) }}</span>
             <span class="cp__run-more cp__mode-text">
               <template v-if="efforts.length && (effort || fallbackEffort)"><span class="cp__dot" aria-hidden="true">·</span>{{ effortText }}</template>
               <span class="cp__dot" aria-hidden="true">·</span><span :class="{ 'cp__auto': mode === 'auto' }">{{ PERMISSION_MODES[mode].label }}</span>

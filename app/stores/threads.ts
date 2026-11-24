@@ -392,7 +392,7 @@ export const useThreads = defineStore('threads', {
         projectPath,
         title: 'New chat',
         agent,
-        model: !agentArg && project?.model && useModels().find(agent, project.model) ? project.model : AGENTS[agent].models[0]!.id,
+        model: !agentArg && project?.model && useModels().find(agent, project.model, projectPath) ? project.model : AGENTS[agent].models[0]!.id,
         mode: project?.mode ?? useWorkspace().defaultMode,
         effort: null,
         status: 'working',

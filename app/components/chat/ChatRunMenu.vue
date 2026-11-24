@@ -70,7 +70,7 @@ const rows = computed<Row[]>(() => [
     key: id,
     agent: id,
     label: AGENTS[id].name,
-    aside: id === props.agent ? models.label(id, props.model) : missing(id) ? 'Not installed' : '',
+    aside: id === props.agent ? models.label(id, props.model, ws.activeProjectPath) : missing(id) ? 'Not installed' : '',
     icon: null,
   })),
   ...(props.efforts.length ? [{ key: 'effort' as const, label: 'Effort', aside: props.effortText, icon: Gauge }] : []),
@@ -173,7 +173,7 @@ const modeChoices = computed<Choice[]>(() => (Object.keys(PERMISSION_MODES) as P
 })))
 
 function modelChoices(agent: AgentId): Choice[] {
-  const list = models.list(agent)
+  const list = models.list(agent, ws.activeProjectPath)
   // Claude Code lists its aliases first, then pinned versions: set those apart.
   const firstPinned = list.findIndex(m => m.id.startsWith('claude-'))
   const locked = agent !== props.agent && !!props.busy

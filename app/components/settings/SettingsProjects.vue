@@ -85,7 +85,7 @@ const modes: Array<{ value: Choice<PermissionMode>; label: string }> = [
 const agent = computed<AgentId>(() => prefs.value.agent ?? threads.defaultAgent)
 const modelOptions = computed(() => [
   { value: '', label: 'Default' },
-  ...models.list(agent.value).filter(m => m.id !== 'default').map(m => ({ value: m.id, label: m.label })),
+  ...models.list(agent.value, path.value).filter(m => m.id !== 'default').map(m => ({ value: m.id, label: m.label })),
 ])
 function setAgent(v: string) {
   // The model belongs to an agent: a different agent starts from its own default.

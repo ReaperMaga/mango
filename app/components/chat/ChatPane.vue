@@ -32,7 +32,7 @@ watch([() => ws.defaultMode, () => projectPref.value?.mode], ([m, own]) => { dra
 /** A model picked together with its agent in the composer: kept when the agent change resets the draft. */
 let pickedModel: string | null = null
 watch([() => draft.agent, () => projectPref.value?.model], ([a, own]) => {
-  draft.model = pickedModel ?? (own && useModels().find(a, own) ? own : AGENTS[a].models[0]!.id)
+  draft.model = pickedModel ?? (own && useModels().find(a, own, ws.activeProjectPath) ? own : AGENTS[a].models[0]!.id)
   pickedModel = null
   draft.effort = null
 }, { immediate: true })
