@@ -116,7 +116,11 @@ function placeOf(projectPath: string) {
  * the runner shows it, whether or not the adapter cares.
  */
 function spawnFor(agent: AgentId, projectPath: string, onConnection?: (state: 'lost' | 'back') => void): SpawnFn {
-  const { cwd, remote } = placeOf(projectPath)
+  return spawnAt(agent, placeOf(projectPath), onConnection)
+}
+
+/** `spawnFor` with the place given: an empty `cwd` is the agent's home, here or in `remote`. */
+function spawnAt(agent: AgentId, { cwd, remote }: { cwd: string; remote: EnvRemote | null }, onConnection?: (state: 'lost' | 'back') => void): SpawnFn {
   return async (args, given, env) => {
     await ensureListening()
     const id = await call('agent_spawn', { agent, args, cwd, env: env ?? null, ...(remote ? { remote } : {}) })
@@ -162,12 +166,15 @@ export async function listAgentCommands(agent: AgentId, cwd: string): Promise<Ag
 
 /**
  * The plan's usage limits as the agent's CLI reports them (no turn is run; the CLI starts
- * in the home folder). Rejects with a readable message when the CLI cannot answer.
+ * in the home folder). With `remote`, the CLI inside that environment answers: it may be signed
+ * in to another account or plan than this computer's. Rejects with a readable message when the
+ * CLI cannot answer.
  */
-export async function readAgentUsage(agent: AgentId): Promise<AgentUsage> {
+export async function readAgentUsage(agent: AgentId, remote: EnvRemote | null = null): Promise<AgentUsage> {
   const adapter = await adapters[agent]()
   if (!adapter.readUsage) throw new Error(`${agent} cannot report its usage.`)
-  return adapter.readUsage(spawnFor(agent, ''))
+  // No folder: the agent's home, here or in the environment (`agent_spawn`).
+  return adapter.readUsage(spawnAt(agent, { cwd: '', remote }))
 }
 
 /**
