@@ -19,6 +19,7 @@ import EnvJoinDialog from '~/components/envs/EnvJoinDialog.vue'
  */
 const props = defineProps<{ active: boolean }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const root = ref<HTMLElement | null>(null)
 const host = computed(() => (envs.selected ? envs.host(envs.selected.hostId) : null))
@@ -102,13 +103,13 @@ watch(sel, async (now, before) => {
 
 <template>
   <div ref="root" class="envs">
-    <nav v-if="sel" class="crumbs" aria-label="Breadcrumb">
-      <UiIconButton label="Back" :shortcut="`${modKey}+Left`" size="sm" class="crumbs__back" @click="up">
+    <nav v-if="sel" class="crumbs" :aria-label="t('envs.crumbs.label')">
+      <UiIconButton :label="t('common.actions.back')" :shortcut="`${modKey}+Left`" size="sm" class="crumbs__back" @click="up">
         <ArrowLeft />
       </UiIconButton>
       <ol class="crumbs__list">
         <li class="crumbs__item">
-          <button type="button" class="crumbs__link" @click="envs.home()">Environments</button>
+          <button type="button" class="crumbs__link" @click="envs.home()">{{ t('envs.common.title') }}</button>
         </li>
         <!-- a joined environment: Environments › its name -->
         <li v-if="host?.direct" class="crumbs__item">
@@ -118,9 +119,9 @@ watch(sel, async (now, before) => {
         <li v-else class="crumbs__item">
           <ChevronRight class="crumbs__sep" aria-hidden="true" />
           <button v-if="sel.instance" type="button" class="crumbs__link" @click="envs.select(sel.hostId)">
-            {{ host?.name ?? 'Server' }}
+            {{ host?.name ?? t('envs.crumbs.server') }}
           </button>
-          <span v-else class="crumbs__here" aria-current="location">{{ host?.name ?? 'Server' }}</span>
+          <span v-else class="crumbs__here" aria-current="location">{{ host?.name ?? t('envs.crumbs.server') }}</span>
         </li>
         <li v-if="sel.instance && !host?.direct" class="crumbs__item">
           <ChevronRight class="crumbs__sep" aria-hidden="true" />

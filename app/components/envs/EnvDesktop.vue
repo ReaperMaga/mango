@@ -12,6 +12,7 @@ import { useWorkspace } from '~/stores/workspace'
 const props = defineProps<{ hostId: string; instance: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const key = computed(() => instanceKey(props.hostId, props.instance))
 const desktop = computed(() => envs.desktops[key.value] ?? null)
@@ -20,7 +21,7 @@ const opening = ref(false)
 const full = ref(false)
 const root = ref<HTMLElement | null>(null)
 const ws = useWorkspace()
-const hostName = computed(() => envs.host(props.hostId)?.name ?? 'its server')
+const hostName = computed(() => envs.host(props.hostId)?.name ?? t('envs.desktop.itsServer'))
 
 /** Filled, it covers the page: keep focus on it (Restore). */
 watch(full, async (on) => {
@@ -71,28 +72,28 @@ onMounted(() => { if (!desktop.value) connect() })
 </script>
 
 <template>
-  <section ref="root" class="dt" :class="{ 'dt--failed': !!error, 'dt--full': full }" :aria-label="`Desktop of ${instance}`">
+  <section ref="root" class="dt" :class="{ 'dt--failed': !!error, 'dt--full': full }" :aria-label="t('envs.desktop.of', { name: instance })">
     <header class="dt__head">
       <span class="dt__status" role="status">
         <TriangleAlert v-if="error" class="dt__warn" aria-hidden="true" />
         <span v-else-if="opening" class="ring" aria-hidden="true" />
-        <span class="dt__title">{{ error ? 'The desktop didn\'t open' : opening ? 'Opening the desktop…' : full ? `Desktop of ${instance} on ${hostName}` : 'Desktop' }}</span>
+        <span class="dt__title">{{ error ? t('envs.desktop.failed') : opening ? t('envs.desktop.opening') : full ? t('envs.desktop.ofOn', { name: instance, host: hostName }) : t('envs.common.desktop') }}</span>
         <span v-if="desktop && !error && where" class="dt__url selectable">{{ where }}</span>
       </span>
       <span class="dt__actions">
-        <UiButton v-if="error" size="sm" @click="connect">Try again</UiButton>
+        <UiButton v-if="error" size="sm" @click="connect">{{ t('common.actions.retry') }}</UiButton>
         <template v-else-if="desktop">
-          <UiIconButton class="dt__fill" :label="full ? 'Restore' : 'Fill the window'" :shortcut="full ? 'Esc' : undefined" size="sm" @click="full = !full">
+          <UiIconButton class="dt__fill" :label="full ? t('envs.desktop.restore') : t('envs.desktop.fill')" :shortcut="full ? 'Esc' : undefined" size="sm" @click="full = !full">
             <Minimize2 v-if="full" /><Maximize2 v-else />
           </UiIconButton>
-          <UiButton variant="ghost" size="sm" :title="desktop.url" @click="openExternal(desktop.url)"><ExternalLink />Open in browser</UiButton>
+          <UiButton variant="ghost" size="sm" :title="desktop.url" @click="openExternal(desktop.url)"><ExternalLink />{{ t('envs.desktop.openInBrowser') }}</UiButton>
         </template>
-        <UiButton variant="ghost" size="sm" @click="close">Close</UiButton>
+        <UiButton variant="ghost" size="sm" @click="close">{{ t('common.actions.close') }}</UiButton>
       </span>
     </header>
-    <p v-if="error" class="dt__note selectable" role="alert">{{ error }}. Check that the Desktop component is installed and the environment is running.</p>
+    <p v-if="error" class="dt__note selectable" role="alert">{{ t('envs.desktop.help', { error }) }}</p>
     <div v-else class="dt__frame">
-      <iframe v-if="desktop" :src="desktop.url" :title="`Desktop of ${instance}`" allow="clipboard-read; clipboard-write; fullscreen" />
+      <iframe v-if="desktop" :src="desktop.url" :title="t('envs.desktop.of', { name: instance })" allow="clipboard-read; clipboard-write; fullscreen" />
     </div>
   </section>
 </template>

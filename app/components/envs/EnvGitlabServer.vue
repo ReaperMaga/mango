@@ -9,16 +9,17 @@ import { GITHUB_COM, normalizeHost } from '~/utils/gitHosts'
 const props = withDefaults(defineProps<{ compact?: boolean }>(), { compact: false })
 const emit = defineEmits<{ pick: [host: string]; cancel: [] }>()
 
+const { t } = useI18n()
 const id = useId()
 const value = ref('')
 const touched = ref(false)
 const input = ref<HTMLInputElement | null>(null)
 
 const problem = computed(() => {
-  if (!value.value.trim()) return 'Type the server\'s name.'
+  if (!value.value.trim()) return t('envs.gitlab.empty')
   const host = normalizeHost(value.value)
-  if (!host) return 'Type a server name like gitlab.example.com.'
-  if (host === GITHUB_COM) return 'github.com is GitHub: sign in to the GitHub CLI for it.'
+  if (!host) return t('envs.gitlab.invalid')
+  if (host === GITHUB_COM) return t('envs.gitlab.github')
   return null
 })
 
@@ -35,10 +36,10 @@ onMounted(() => input.value?.focus())
 <template>
   <form class="gls" :class="{ 'gls--compact': props.compact }" novalidate @submit.prevent="submit" @keydown.esc.stop="emit('cancel')">
     <UiField
-      label="GitLab server"
+      :label="t('envs.instance.gitlabServer')"
       :for="id"
       :error="touched ? problem : null"
-      hint="glab asks how to sign in: a personal access token with the api and write_repository scopes works on every server."
+      :hint="t('envs.gitlab.hint')"
     >
       <div class="gls__row">
         <input
@@ -53,8 +54,8 @@ onMounted(() => input.value?.focus())
           spellcheck="false"
           :aria-invalid="(touched && !!problem) || undefined"
         >
-        <UiButton type="submit">Sign in</UiButton>
-        <UiButton variant="ghost" @click="emit('cancel')">Cancel</UiButton>
+        <UiButton type="submit">{{ t('common.actions.signIn') }}</UiButton>
+        <UiButton variant="ghost" @click="emit('cancel')">{{ t('common.actions.cancel') }}</UiButton>
       </div>
     </UiField>
   </form>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { Check, RefreshCw, Search } from 'lucide-vue-next'
-import { ENV_DEFAULT_VERSION, useEnvironments } from '~/stores/environments'
+import { envDefaultVersion, useEnvironments } from '~/stores/environments'
 import type { EnvComponentId, EnvVersion } from '~/types/ipc'
+import { formatLocale } from '~/i18n'
 import { useOverlay } from '~/composables/useOverlay'
 
 /**
@@ -25,6 +26,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{ pick: [id: string | null] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const open = ref(false)
 useOverlay(() => open.value)
@@ -41,22 +43,22 @@ const all = computed(() => envs.versions[props.component] ?? null)
 const loading = computed(() => !!envs.loadingVersions[props.component])
 const error = computed(() => envs.versionErrors[props.component] ?? null)
 const source = computed(() => (props.component === 'java' ? 'SDKMAN' : 'nodejs.org'))
-const defaultName = computed(() => ENV_DEFAULT_VERSION[props.component] ?? 'Default')
+const defaultName = computed(() => envDefaultVersion(props.component))
 const defaultVersion = computed(() => all.value?.find(v => v.default) ?? null)
 
 /* ---------- filtering: every word must appear (vendor, line, version, identifier or note) ---------- */
 
 const words = computed(() => query.value.toLowerCase().split(/\s+/).filter(Boolean))
-const hay = (v: EnvVersion) => `${v.group} ${v.version} ${v.id} ${v.note ?? ''} ${v.default ? 'default' : ''}`.toLowerCase()
+const hay = (v: EnvVersion) => `${v.group} ${v.version} ${v.id} ${v.note ?? ''} ${v.default ? t('envs.common.default') : ''}`.toLowerCase()
 /** A number ("21", "22.11") is the start of the version, so 21 finds Java 21 and not 17.0.21. */
 const numeric = /^\d+(\.\d+)*\.?$/
-const matches = (v: EnvVersion, t: string) => (numeric.test(t) ? v.version.startsWith(t) : hay(v).includes(t))
+const matches = (v: EnvVersion, word: string) => (numeric.test(word) ? v.version.startsWith(word) : hay(v).includes(word))
 
 /** What can be picked, in order: null is the default row. */
 const options = computed<Array<EnvVersion | null>>(() => {
   const w = words.value
-  const list = (all.value ?? []).filter(v => w.every(t => matches(v, t)))
-  const withDefault = props.allowDefault && (!w.length || w.every(t => `default ${defaultName.value}`.toLowerCase().includes(t)))
+  const list = (all.value ?? []).filter(v => w.every(word => matches(v, word)))
+  const withDefault = props.allowDefault && (!w.length || w.every(word => `${t('envs.common.default')} ${defaultName.value}`.toLowerCase().includes(word)))
   return withDefault ? [null, ...list] : list
 })
 
@@ -174,8 +176,8 @@ function onKey(e: KeyboardEvent) {
 
 function onDocDown(e: MouseEvent) {
   if (!open.value) return
-  const t = e.target as Node
-  if (root.value?.contains(t) || pop.value?.contains(t)) return
+  const target = e.target as Node
+  if (root.value?.contains(target) || pop.value?.contains(target)) return
   close()
 }
 /** Scrolling or resizing moves the trigger: close, as UiMenu does. */
@@ -202,8 +204,8 @@ onBeforeUnmount(() => {
 
 const day = (d: string | null) => {
   if (!d) return null
-  const t = Date.parse(`${d}T00:00:00Z`)
-  return Number.isNaN(t) ? d : new Date(t).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const ms = Date.parse(`${d}T00:00:00Z`)
+  return Number.isNaN(ms) ? d : new Date(ms).toLocaleDateString(formatLocale(), { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
 }
 const count = computed(() => (all.value ? options.value.filter(Boolean).length : 0))
 
@@ -220,7 +222,7 @@ defineExpose({ show, close, toggle })
           ref="pop"
           class="vp"
           role="dialog"
-          :aria-label="`${name} versions`"
+          :aria-label="t('envs.versions.label', { name })"
           data-own-escape
           :style="{
             left: `${pos.left}px`,
@@ -239,8 +241,8 @@ defineExpose({ show, close, toggle })
               v-model="query"
               type="text"
               role="combobox"
-              :placeholder="component === 'java' ? 'Search vendors and versions' : 'Search versions'"
-              :aria-label="`Search ${name} versions`"
+              :placeholder="component === 'java' ? t('envs.versions.searchJava') : t('envs.versions.search')"
+              :aria-label="t('envs.versions.searchLabel', { name })"
               aria-autocomplete="list"
               aria-expanded="true"
               :aria-controls="`${uid}-list`"
@@ -251,7 +253,7 @@ defineExpose({ show, close, toggle })
             <span v-if="loading && all" class="vp__spin" aria-hidden="true" />
           </div>
 
-          <div :id="`${uid}-list`" ref="scroller" class="vp__scroll" role="listbox" :aria-label="`${name} versions`" :aria-busy="loading || undefined">
+          <div :id="`${uid}-list`" ref="scroller" class="vp__scroll" role="listbox" :aria-label="t('envs.versions.label', { name })" :aria-busy="loading || undefined">
             <template v-if="all">
               <template v-for="r in rows" :key="r.key">
                 <div v-if="r.kind === 'group'" class="vp__group" role="presentation">
@@ -272,8 +274,8 @@ defineExpose({ show, close, toggle })
                     <span class="vp__main">
                       <span class="vp__version tabular">{{ r.v.version }}</span>
                       <span v-if="r.v.note" class="vp__note">{{ r.v.note }}</span>
-                      <span v-if="r.v.id === installed" class="vp__tag">Installed</span>
-                      <span v-else-if="r.v.default" class="vp__tag">Default</span>
+                      <span v-if="r.v.id === installed" class="vp__tag">{{ t('envs.common.installed') }}</span>
+                      <span v-else-if="r.v.default" class="vp__tag">{{ t('envs.common.default') }}</span>
                     </span>
                     <span v-if="component === 'java'" class="vp__aside vp__aside--mono">{{ r.v.id }}</span>
                     <span v-else-if="r.v.date" class="vp__aside tabular">{{ day(r.v.date) }}</span>
@@ -284,20 +286,21 @@ defineExpose({ show, close, toggle })
                   </span>
                 </div>
               </template>
-              <p v-if="!options.length" class="vp__empty">No {{ name }} version matches “{{ query.trim() }}”.</p>
+              <p v-if="!options.length" class="vp__empty">{{ t('envs.versions.none', { name, query: query.trim() }) }}</p>
             </template>
             <div v-else-if="error" class="vp__error" role="alert">
-              <p>Couldn't list the versions. <span class="selectable">{{ error }}</span></p>
-              <UiButton size="sm" :loading="loading" @click="retry"><RefreshCw />Try again</UiButton>
+              <p>{{ t('envs.versions.failed') }} <span class="selectable">{{ error }}</span></p>
+              <UiButton size="sm" :loading="loading" @click="retry"><RefreshCw />{{ t('common.actions.retry') }}</UiButton>
             </div>
             <div v-else class="vp__bones" aria-hidden="true">
               <span v-for="n in 7" :key="n" class="vp__bone" :style="{ width: `${36 + ((n * 23) % 40)}%` }" />
             </div>
           </div>
 
-          <p v-if="all" class="vp__foot">
-            <span class="tabular">{{ count }} {{ count === 1 ? 'version' : 'versions' }}</span> from {{ source }}<template v-if="component === 'java'">, Linux x64 builds</template>
-          </p>
+          <i18n-t v-if="all" :keypath="component === 'java' ? 'envs.versions.fromJava' : 'envs.versions.from'" tag="p" class="vp__foot" scope="global">
+            <template #count><span class="tabular">{{ t('envs.versions.count', count) }}</span></template>
+            <template #source>{{ source }}</template>
+          </i18n-t>
         </div>
       </Transition>
     </Teleport>
