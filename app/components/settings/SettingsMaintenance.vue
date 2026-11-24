@@ -2,10 +2,12 @@
 import SettingsSection from './SettingsSection.vue'
 import SettingsAbout from './SettingsAbout.vue'
 import SettingsUpdates from './SettingsUpdates.vue'
+
+const { t } = useI18n()
 </script>
 
 <template>
-  <SettingsSection title="Maintenance" description="Keep Mango up to date, and see which version you are running.">
+  <SettingsSection :title="t('settings.nav.maintenance')" :description="t('settings.maintenance')">
     <div class="maintenance">
       <SettingsUpdates />
       <SettingsAbout />

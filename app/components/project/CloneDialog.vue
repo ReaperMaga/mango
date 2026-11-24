@@ -11,6 +11,7 @@ import { GITLAB_COM } from '~/utils/gitHosts'
  * Where: on this computer, or inside an environment, where its own git (and GitHub or GitLab CLI
  * sign-in) does the cloning and reports no progress, only the outcome.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 
@@ -89,22 +90,22 @@ function parseRepo(raw: string): Parsed | null {
 
 const parsed = computed(() => parseRepo(url.value))
 const urlError = computed(() => {
-  if (!url.value.trim()) return 'Paste a repository URL.'
-  if (!parsed.value) return 'Use an https or SSH URL, or owner/repo for GitHub.'
+  if (!url.value.trim()) return t('project.clone.urlMissing')
+  if (!parsed.value) return t('project.clone.urlBad')
   return null
 })
 const folderError = computed(() => {
   const f = folder.value.trim()
   if (!f) return null
-  if (/[/\\]/.test(f)) return 'Use a single folder name, without slashes.'
-  if (f.startsWith('.')) return 'Names can\'t start with a dot; that would hide the folder.'
+  if (/[/\\]/.test(f)) return t('project.slashes')
+  if (f.startsWith('.')) return t('project.dotName')
   return null
 })
 const parentError = computed(() => {
   const p = parentDir.value.trim()
-  if (!p) return 'Choose where to put the clone.'
-  if (where.value && !p.startsWith('/')) return 'Use an absolute path inside the environment, starting with /.'
-  if (where.value && p.split('/').includes('..')) return 'Leave out ".." in the path.'
+  if (!p) return t('project.clone.parentMissing')
+  if (where.value && !p.startsWith('/')) return t('project.absolutePath')
+  if (where.value && p.split('/').includes('..')) return t('project.dotDot')
   return null
 })
 
@@ -112,7 +113,7 @@ const shownUrlError = computed(() => (touched.value ? urlError.value : null))
 
 const parent = computed(() => parentDir.value.trim().replace(/(.)[\\/]+$/, '$1'))
 const finalName = computed(() => folder.value.trim() || parsed.value?.name || '')
-const urlHint = computed(() => (parsed.value?.shorthand ? `Clones ${parsed.value.url}` : undefined))
+const urlHint = computed(() => (parsed.value?.shorthand ? t('project.clone.clones', { url: parsed.value.url }) : undefined))
 const preview = computed(() => {
   const leaf = finalName.value || 'repo'
   if (where.value) return { base: parent.value === '/' ? '/' : `${parent.value || '…'}/`, leaf }
@@ -223,7 +224,7 @@ async function browse() {
     browsing.value = !browsing.value
     return
   }
-  const picked = await pickFolder('Choose destination', localParent.value || undefined)
+  const picked = await pickFolder(t('project.clone.chooseDestination'), localParent.value || undefined)
   if (picked) localParent.value = picked
 }
 
@@ -247,12 +248,12 @@ function pushLine(rawLine: string) {
       const label = m[1]!.trim()
       const pct = Math.min(100, Number(m[2]))
       // Receiving is the long part; resolving deltas fills the last stretch.
-      if (/receiving objects/i.test(label)) { percent.value = Math.round(pct * 0.9); stage.value = `Receiving objects ${pct}%` }
-      else if (/resolving deltas/i.test(label)) { percent.value = 90 + Math.round(pct * 0.1); stage.value = `Resolving deltas ${pct}%` }
+      if (/receiving objects/i.test(label)) { percent.value = Math.round(pct * 0.9); stage.value = t('project.clone.receiving', { percent: pct }) }
+      else if (/resolving deltas/i.test(label)) { percent.value = 90 + Math.round(pct * 0.1); stage.value = t('project.clone.resolving', { percent: pct }) }
       else if (/updating files|checking out/i.test(label)) { percent.value = Math.max(percent.value ?? 0, 98); stage.value = `${label} ${pct}%` }
       else if (percent.value === null) stage.value = `${label.replace(/^remote:\s*/i, '')} ${pct}%`
     } else if (/^Cloning into/i.test(line)) {
-      stage.value = 'Connecting…'
+      stage.value = t('project.clone.connecting')
     }
   }
 }
@@ -263,14 +264,14 @@ function explain(message: string): { message: string; hint: string } {
   const text = fatal.replace(/^(fatal|error):\s*/i, '').replace(/\.$/, '')
   const pretty = text.charAt(0).toUpperCase() + text.slice(1)
   const m = message.toLowerCase()
-  let hint = 'Check the URL and try again.'
-  if (m.includes('already exists and is not an empty directory')) hint = 'Pick another folder name or destination, then try again.'
-  else if (m.includes('permission denied (publickey)') || m.includes('host key verification failed')) hint = 'The host didn\'t accept your SSH key. Use the https URL, or add your key to the host.'
-  else if (m.includes('authentication failed') || m.includes('could not read username')) hint = 'The host asked for credentials. Sign in with your git credential helper or use an SSH URL.'
-  else if (m.includes('not found') || m.includes('does not exist')) hint = 'Check the owner and repository name, and that you have access to it.'
-  else if (m.includes('could not resolve host') || m.includes('unable to access')) hint = 'Check your network connection and the host name.'
+  let hint = t('project.clone.hintUrl')
+  if (m.includes('already exists and is not an empty directory')) hint = t('project.clone.hintExists')
+  else if (m.includes('permission denied (publickey)') || m.includes('host key verification failed')) hint = t('project.clone.hintKey')
+  else if (m.includes('authentication failed') || m.includes('could not read username')) hint = t('project.clone.hintCredentials')
+  else if (m.includes('not found') || m.includes('does not exist')) hint = t('project.clone.hintNotFound')
+  else if (m.includes('could not resolve host') || m.includes('unable to access')) hint = t('project.clone.hintNetwork')
   if (where.value && (m.includes('could not read username') || m.includes('authentication failed') || m.includes('terminal prompts disabled'))) {
-    hint = `The host asked for credentials. Sign in to the GitHub CLI inside ${place.value?.label ?? 'the environment'}, then try again.`
+    hint = t('project.clone.hintEnvCredentials', { place: place.value?.label ?? t('project.clone.theEnvironment') })
   }
   return { message: pretty, hint }
 }
@@ -281,7 +282,7 @@ async function submit() {
   reset()
   phase.value = 'cloning'
   if (where.value) return cloneRemote(where.value, parsed.value.url)
-  stage.value = 'Starting git…'
+  stage.value = t('project.clone.starting')
   const jobId = `clone-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   let unlisten: (() => void) | null = null
   try {
@@ -306,7 +307,7 @@ async function submit() {
 }
 
 async function cloneRemote(w: EnvRemote, repo: string) {
-  stage.value = `Cloning inside ${place.value?.label ?? 'the environment'}…`
+  stage.value = t('project.clone.cloningIn', { place: place.value?.label ?? t('project.clone.theEnvironment') })
   try {
     const name = finalName.value
     const base = parent.value === '/' ? '' : parent.value
@@ -332,13 +333,13 @@ watch(error, async (e) => {
 </script>
 
 <template>
-  <UiDialog :open="open" title="Clone repository" :width="520" :dismissible="!cloning" @close="close">
+  <UiDialog :open="open" :title="t('project.clone.title')" :width="520" :dismissible="!cloning" @close="close">
     <form id="clone-form" class="cl" novalidate @submit.prevent="submit">
-      <UiField label="Where" for="cl-where">
+      <UiField :label="t('project.where')" for="cl-where">
         <ProjectWhere id="cl-where" :model-value="where" :disabled="cloning" @update:model-value="changeWhere" />
       </UiField>
 
-      <UiField label="Repository URL" for="cl-url" :error="shownUrlError" :hint="urlHint">
+      <UiField :label="t('project.clone.url')" for="cl-url" :error="shownUrlError" :hint="urlHint">
         <input
           id="cl-url"
           v-model="url"
@@ -355,12 +356,12 @@ watch(error, async (e) => {
       </UiField>
 
       <p v-if="place" class="cl__note">
-        Cloned by git inside {{ place.label }}. Private repositories need the {{ gitlabServer ? 'GitLab' : 'GitHub' }} CLI signed in there.
-        <button v-if="gitlabServer" type="button" class="cl__link" :disabled="cloning" @click="signInGitLab">Sign in to {{ gitlabServer }} in {{ place.label }}…</button>
-        <button v-else type="button" class="cl__link" :disabled="cloning" @click="signInGitHub">Sign in to GitHub in {{ place.label }}…</button>
+        {{ t('project.clone.note', { place: place.label, tool: gitlabServer ? 'GitLab' : 'GitHub' }) }}
+        <button v-if="gitlabServer" type="button" class="cl__link" :disabled="cloning" @click="signInGitLab">{{ t('project.clone.signIn', { server: gitlabServer, place: place.label }) }}</button>
+        <button v-else type="button" class="cl__link" :disabled="cloning" @click="signInGitHub">{{ t('project.clone.signIn', { server: 'GitHub', place: place.label }) }}</button>
       </p>
 
-      <UiField :label="where ? 'Destination in the environment' : 'Destination'" for="cl-parent" :error="touched ? parentError : null">
+      <UiField :label="where ? t('project.clone.destinationEnv') : t('project.clone.destination')" for="cl-parent" :error="touched ? parentError : null">
         <div class="cl__picker">
           <input
             id="cl-parent"
@@ -371,7 +372,7 @@ watch(error, async (e) => {
             spellcheck="false"
             :disabled="cloning"
           >
-          <UiButton :disabled="cloning" :aria-expanded="where ? browsing : undefined" @click="browse">{{ where && browsing ? 'Done' : 'Browse…' }}</UiButton>
+          <UiButton :disabled="cloning" :aria-expanded="where ? browsing : undefined" @click="browse">{{ where && browsing ? t('common.actions.done') : t('project.browse') }}</UiButton>
         </div>
       </UiField>
       <ProjectEnvFolders
@@ -382,12 +383,12 @@ watch(error, async (e) => {
         :host-id="where.hostId"
         :instance="where.instance"
         :rows="5"
-        choose-label="Use"
+        :choose-label="t('project.use')"
         :disabled="cloning"
         @choose="useFolder"
       />
 
-      <UiField label="Folder name" for="cl-folder" :error="folderError" hint="Optional. Defaults to the repository name.">
+      <UiField :label="t('project.clone.folder')" for="cl-folder" :error="folderError" :hint="t('project.clone.folderHint')">
         <input
           id="cl-folder"
           v-model="folder"
@@ -411,21 +412,21 @@ watch(error, async (e) => {
 
       <div v-if="phase !== 'idle' || log.length" class="cl__progress" :class="`is-${phase}`">
         <div class="cl__status">
-          <span class="cl__stage tabular" aria-live="polite">{{ phase === 'error' ? 'Clone failed' : stage }}</span>
+          <span class="cl__stage tabular" aria-live="polite">{{ phase === 'error' ? t('project.clone.failed') : stage }}</span>
         </div>
         <div
           v-if="phase !== 'error'"
           class="cl__bar"
           :class="{ 'is-indeterminate': percent === null }"
           role="progressbar"
-          aria-label="Clone progress"
+          :aria-label="t('project.clone.progress')"
           aria-valuemin="0"
           aria-valuemax="100"
           :aria-valuenow="percent ?? undefined"
         >
           <span class="cl__bar-fill" :style="percent !== null ? { width: `${percent}%` } : undefined" />
         </div>
-        <pre v-if="log.length" class="cl__log selectable" aria-label="git output"><span v-for="(l, i) in log" :key="i" class="cl__log-line">{{ l }}</span></pre>
+        <pre v-if="log.length" class="cl__log selectable" :aria-label="t('project.clone.output')"><span v-for="(l, i) in log" :key="i" class="cl__log-line">{{ l }}</span></pre>
       </div>
 
       <p v-if="error" ref="errorEl" class="cl__error" role="alert">
@@ -441,13 +442,13 @@ watch(error, async (e) => {
       <UiButton
         variant="ghost"
         :disabled="cloning"
-        :title="cloning ? 'Wait for git to finish' : undefined"
+        :title="cloning ? t('project.clone.wait') : undefined"
         @click="close"
       >
-        Cancel
+        {{ t('common.actions.cancel') }}
       </UiButton>
       <UiButton variant="primary" type="submit" form="clone-form" :loading="cloning">
-        {{ cloning ? 'Cloning…' : phase === 'error' ? 'Try again' : 'Clone' }}
+        {{ cloning ? t('project.clone.cloning') : phase === 'error' ? t('common.actions.retry') : t('project.clone.clone') }}
       </UiButton>
     </template>
   </UiDialog>

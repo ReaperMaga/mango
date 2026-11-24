@@ -9,6 +9,7 @@ import { useThreads } from '~/stores/threads'
  * Create an empty project folder (optionally `git init`) and land in a fresh chat. Where: on this
  * computer, or inside an environment (the folder is made there, and chats run there).
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 const threads = useThreads()
@@ -43,16 +44,16 @@ function errorText(e: unknown): string {
 
 const nameError = computed(() => {
   const n = name.value.trim()
-  if (!n) return 'Enter a name for the project folder.'
-  if (/[/\\]/.test(n)) return 'Use a single folder name, without slashes.'
-  if (n.startsWith('.')) return 'Names can\'t start with a dot; that would hide the folder.'
+  if (!n) return t('project.new.nameMissing')
+  if (/[/\\]/.test(n)) return t('project.slashes')
+  if (n.startsWith('.')) return t('project.dotName')
   return null
 })
 const locationError = computed(() => {
   const l = location.value.trim()
-  if (!l) return 'Choose where to create the folder.'
-  if (where.value && !l.startsWith('/')) return 'Use an absolute path inside the environment, starting with /.'
-  if (where.value && l.split('/').includes('..')) return 'Leave out ".." in the path.'
+  if (!l) return t('project.new.locationMissing')
+  if (where.value && !l.startsWith('/')) return t('project.absolutePath')
+  if (where.value && l.split('/').includes('..')) return t('project.dotDot')
   return null
 })
 
@@ -60,7 +61,7 @@ const shownNameError = computed(() => (touched.value ? nameError.value : null))
 
 const parent = computed(() => location.value.trim().replace(/(.)[\\/]+$/, '$1'))
 const preview = computed(() => {
-  const leaf = name.value.trim() || 'name'
+  const leaf = name.value.trim() || t('project.new.leaf')
   if (where.value) return { base: parent.value === '/' ? '/' : `${parent.value || '…'}/`, leaf }
   return { base: withTrailingSep(tildify(parent.value || '…')), leaf }
 })
@@ -103,7 +104,7 @@ async function browse() {
     browsing.value = !browsing.value
     return
   }
-  const picked = await pickFolder('Choose location', localLocation.value || undefined)
+  const picked = await pickFolder(t('project.new.chooseLocation'), localLocation.value || undefined)
   if (picked) localLocation.value = picked
 }
 
@@ -117,7 +118,7 @@ async function createRemote(w: EnvRemote) {
   // Never "create" over a folder that is already there: that one is opened with Open folder.
   const there = await envs.listDir(w.hostId, w.instance, parent.value)
   if (there.entries.some(e => e.name === leaf)) {
-    throw new Error(`${there.dir === '/' ? '' : there.dir}/${leaf} already exists. Pick another name, or open that folder with Open folder`)
+    throw new Error(t('project.new.exists', { path: `${there.dir === '/' ? '' : there.dir}/${leaf}` }))
   }
   const dir = await envs.prepareDir(w.hostId, w.instance, `${there.dir === '/' ? '' : there.dir}/${leaf}`, null, gitInit.value)
   const opened = await ws.openEnvProject({ ...w, dir }, leaf)
@@ -147,13 +148,13 @@ async function submit() {
 </script>
 
 <template>
-  <UiDialog :open="open" title="New project" :width="480" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('project.new.title')" :width="480" :dismissible="!busy" @close="close">
     <form id="new-project-form" class="np" novalidate @submit.prevent="submit">
-      <UiField label="Where" for="np-where">
+      <UiField :label="t('project.where')" for="np-where">
         <ProjectWhere id="np-where" :model-value="where" :disabled="busy" @update:model-value="changeWhere" />
       </UiField>
 
-      <UiField label="Name" for="np-name" :error="shownNameError">
+      <UiField :label="t('project.new.name')" for="np-name" :error="shownNameError">
         <input
           id="np-name"
           v-model="name"
@@ -169,7 +170,7 @@ async function submit() {
         >
       </UiField>
 
-      <UiField :label="where ? 'Location in the environment' : 'Location'" for="np-location" :error="touched ? locationError : null">
+      <UiField :label="where ? t('project.new.locationEnv') : t('project.new.location')" for="np-location" :error="touched ? locationError : null">
         <div class="np__picker">
           <input
             id="np-location"
@@ -180,7 +181,7 @@ async function submit() {
             spellcheck="false"
             :disabled="busy"
           >
-          <UiButton :disabled="busy" :aria-expanded="where ? browsing : undefined" @click="browse">{{ where && browsing ? 'Done' : 'Browse…' }}</UiButton>
+          <UiButton :disabled="busy" :aria-expanded="where ? browsing : undefined" @click="browse">{{ where && browsing ? t('common.actions.done') : t('project.browse') }}</UiButton>
         </div>
       </UiField>
       <ProjectEnvFolders
@@ -191,15 +192,18 @@ async function submit() {
         :host-id="where.hostId"
         :instance="where.instance"
         :rows="5"
-        choose-label="Use"
+        :choose-label="t('project.use')"
         :disabled="busy"
         @choose="useFolder"
       />
 
       <div class="np__switch-row">
         <span class="np__switch-text">
-          <span id="np-git-label" class="np__switch-label">Initialize git repository</span>
-          <span class="np__switch-hint">Runs <code>git init</code> in the new folder<template v-if="place">, inside {{ place.label }}</template>.</span>
+          <span id="np-git-label" class="np__switch-label">{{ t('project.new.git') }}</span>
+          <i18n-t :keypath="place ? 'project.new.gitHintEnv' : 'project.new.gitHint'" tag="span" scope="global" class="np__switch-hint">
+            <template #command><code>git init</code></template>
+            <template v-if="place" #place>{{ place.label }}</template>
+          </i18n-t>
         </span>
         <button
           type="button"
@@ -224,14 +228,14 @@ async function submit() {
 
       <p v-if="error" class="np__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't create the project. {{ error }}.<template v-if="!where"> Pick another name or location and try again.</template></span>
+        <span class="selectable">{{ t('project.new.failed') }} {{ error }}.{{ where ? '' : ` ${t('project.new.failedHint')}` }}</span>
       </p>
     </form>
 
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton variant="primary" type="submit" form="new-project-form" :loading="busy">
-        {{ busy ? 'Creating…' : 'Create project' }}
+        {{ busy ? t('project.new.creating') : t('project.new.create') }}
       </UiButton>
     </template>
   </UiDialog>

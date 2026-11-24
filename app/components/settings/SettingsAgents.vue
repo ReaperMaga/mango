@@ -28,6 +28,7 @@ import AgentIcon from '~/components/ui/AgentIcon.vue'
 /** `active`: this section is the one on screen (it stays mounted while Settings is open). */
 const props = defineProps<{ active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 
@@ -95,27 +96,27 @@ const defaultProblem = computed(() => {
   const name = AGENTS[id]?.name ?? id
   const info = infoOf(id)
   const status = auth[id]?.status
-  if (info ? !info.installed : status?.installed === false) return `${name} isn't installed yet, so new chats can't start with it.`
-  if (status && !status.loggedIn) return `${name} isn't signed in yet. Sign in above before starting a chat with it.`
+  if (info ? !info.installed : status?.installed === false) return t('agents.page.defaultMissing', { name })
+  if (status && !status.loggedIn) return t('agents.page.defaultSignedOut', { name })
   return ''
 })
 
 /** The heading follows the tab. */
-const HEADINGS: Record<AgentsTab, { title: string; description: string }> = {
+const HEADINGS = computed<Record<AgentsTab, { title: string; description: string }>>(() => ({
   agents: {
-    title: 'Agents',
-    description: 'Mango runs the agent command-line tools installed on this computer. You sign in with each tool\'s own sign-in, so your credentials stay with it.',
+    title: t('settings.nav.agents'),
+    description: t('agents.page.description'),
   },
   subscription: {
-    title: 'Subscription',
-    description: 'The plan each agent is signed in with, as the agent itself reports it. Billing and renewal are managed with the vendor.',
+    title: t('agents.page.subscription'),
+    description: t('agents.page.subscriptionDescription'),
   },
   usage: {
-    title: 'Usage',
-    description: 'How much of each plan\'s allowance is used, and when each limit resets. Checking spends none of it.',
+    title: t('agents.page.usage'),
+    description: t('agents.page.usageDescription'),
   },
-}
-const heading = computed(() => HEADINGS[ws.agentsTab])
+}))
+const heading = computed(() => HEADINGS.value[ws.agentsTab])
 </script>
 
 <template>
@@ -126,14 +127,14 @@ const heading = computed(() => HEADINGS[ws.agentsTab])
     <SettingsSegmented
       v-model="ws.agentsTab"
       class="tabs"
-      label="Agent settings"
-      :options="[{ value: 'agents', label: 'Agents' }, { value: 'subscription', label: 'Subscription' }, { value: 'usage', label: 'Usage' }]"
+      :label="t('agents.page.tabs')"
+      :options="[{ value: 'agents', label: t('settings.nav.agents') }, { value: 'subscription', label: t('agents.page.subscription') }, { value: 'usage', label: t('agents.page.usage') }]"
     />
 
     <SettingsSubscription v-if="ws.agentsTab === 'subscription'" :ids="ids" :auth="auth" :info-of="infoOf" />
     <SettingsUsage v-else-if="ws.agentsTab === 'usage'" />
 
-    <ul v-show="ws.agentsTab === 'agents'" class="agents" aria-label="Agents">
+    <ul v-show="ws.agentsTab === 'agents'" class="agents" :aria-label="t('settings.nav.agents')">
       <SettingsAgentRow
         v-for="id in ids"
         :key="id"
@@ -145,10 +146,10 @@ const heading = computed(() => HEADINGS[ws.agentsTab])
       />
     </ul>
 
-    <SettingsRow v-if="ws.agentsTab === 'agents' && ids.length > 1" label="Default agent for new chats">
+    <SettingsRow v-if="ws.agentsTab === 'agents' && ids.length > 1" :label="t('agents.page.default')">
       <template #hint>
         <span v-if="defaultProblem" class="warn" role="status">{{ defaultProblem }}</span>
-        <template v-else>You can still pick another agent in any chat.</template>
+        <template v-else>{{ t('agents.page.defaultHint') }}</template>
       </template>
       <template #default="{ labelId }">
         <SettingsSegmented
@@ -160,7 +161,7 @@ const heading = computed(() => HEADINGS[ws.agentsTab])
       </template>
     </SettingsRow>
 
-    <p v-if="ws.agentsTab === 'agents'" class="later">Mango can learn more agents over time. When it does, they appear in this list.</p>
+    <p v-if="ws.agentsTab === 'agents'" class="later">{{ t('agents.page.later') }}</p>
   </SettingsSection>
 </template>
 

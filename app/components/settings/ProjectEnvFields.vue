@@ -9,6 +9,7 @@ import { applyEntries, entriesFromPaste, isValidKey, parseEnv } from '~/utils/do
  * Values are secrets: masked until shown, never logged. `revealed` is the section's one
  * "Show values" switch (in memory only); each row's eye shows or hides that row on its own.
  */
+const { t } = useI18n()
 const props = defineProps<{ text: string; docKey: string; revealed: boolean }>()
 const emit = defineEmits<{ 'update:text': [text: string]; 'invalid': [count: number] }>()
 
@@ -52,11 +53,11 @@ const problems = computed(() => {
   rows.value.forEach((r, i) => {
     const k = r.key.trim()
     if (!k) {
-      if (r.value) out[r.id] = { tone: 'note', text: 'Give it a name, or it isn\'t saved.' }
+      if (r.value) out[r.id] = { tone: 'note', text: t('settings.mcpPairs.nameless') }
     } else if (!isValidKey(k)) {
-      out[r.id] = { tone: 'error', text: '.env loaders can\'t read this name. Start with a letter or underscore, then use letters, digits, _ . or -.' }
+      out[r.id] = { tone: 'error', text: t('settings.envFields.badName') }
     } else if ((lastIndex.get(k) ?? i) > i) {
-      out[r.id] = { tone: 'warn', text: `${k} is set again further down, and the later one usually wins.` }
+      out[r.id] = { tone: 'warn', text: t('settings.envFields.again', { name: k }) }
     }
   })
   return out
@@ -146,13 +147,13 @@ defineExpose({ addRow })
 <template>
   <div class="envf">
     <div class="envf__head">
-      <span class="envf__col">Name</span>
-      <span class="envf__col">Value</span>
+      <span class="envf__col">{{ t('settings.envFields.name') }}</span>
+      <span class="envf__col">{{ t('settings.mcpPairs.value') }}</span>
     </div>
 
     <div ref="list" class="envf__list">
       <div v-for="(row, i) in rows" :key="row.id" class="envf__item">
-        <div class="envf__row" role="group" :aria-label="row.key.trim() || 'New variable'">
+        <div class="envf__row" role="group" :aria-label="row.key.trim() || t('settings.mcpPairs.new.variable')">
           <input
             v-model="row.key"
             class="envf__in envf__key"
@@ -160,7 +161,7 @@ defineExpose({ addRow })
             :data-row="row.id"
             data-part="key"
             type="text"
-            aria-label="Name"
+            :aria-label="t('settings.envFields.name')"
             placeholder="NAME"
             autocomplete="off"
             autocapitalize="off"
@@ -178,8 +179,8 @@ defineExpose({ addRow })
             :data-row="row.id"
             data-part="value"
             type="text"
-            :aria-label="row.shown ? 'Value' : 'Value, hidden'"
-            placeholder="value"
+            :aria-label="row.shown ? t('settings.mcpPairs.value') : t('settings.mcpPairs.valueHidden')"
+            :placeholder="t('settings.mcpPairs.valuePlaceholder')"
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"
@@ -190,10 +191,10 @@ defineExpose({ addRow })
             @input="write"
             @keydown.enter.prevent="onValueEnter(i)"
           >
-          <UiIconButton size="sm" :label="row.shown ? 'Hide value' : 'Show value'" :active="row.shown" @click="row.shown = !row.shown">
+          <UiIconButton size="sm" :label="row.shown ? t('settings.mcpPairs.hideValue') : t('settings.mcpPairs.showValue')" :active="row.shown" @click="row.shown = !row.shown">
             <EyeOff v-if="row.shown" /><Eye v-else />
           </UiIconButton>
-          <UiIconButton size="sm" label="Remove variable" @click="removeRow(i)"><X /></UiIconButton>
+          <UiIconButton size="sm" :label="t('settings.mcpPairs.remove.variable')" @click="removeRow(i)"><X /></UiIconButton>
         </div>
         <p
           v-if="problems[row.id]"
@@ -206,16 +207,16 @@ defineExpose({ addRow })
       </div>
     </div>
 
-    <p v-if="!rows.length" class="envf__empty">No variables yet. Add one, or paste <code>NAME=value</code> lines into a name.</p>
+    <i18n-t v-if="!rows.length" keypath="settings.envFields.empty" tag="p" scope="global" class="envf__empty">
+      <template #example><code>NAME=value</code></template>
+    </i18n-t>
 
     <div class="envf__foot">
-      <UiButton size="sm" variant="ghost" class="envf__add" @click="addRow"><Plus />Add variable</UiButton>
+      <UiButton size="sm" variant="ghost" class="envf__add" @click="addRow"><Plus />{{ t('settings.mcpPairs.add.variable') }}</UiButton>
       <p v-if="leftover.stray" class="envf__hint is-warn">
-        {{ leftover.stray === 1
-          ? '1 line isn\'t a variable this view can read. It stays as written; edit it in Raw.'
-          : `${leftover.stray} lines aren't variables this view can read. They stay as written; edit them in Raw.` }}
+        {{ t('settings.envFields.stray', leftover.stray) }}
       </p>
-      <p v-else-if="leftover.comments" class="envf__hint">Comments and blank lines stay as they are. Edit them in Raw.</p>
+      <p v-else-if="leftover.comments" class="envf__hint">{{ t('settings.envFields.comments') }}</p>
     </div>
   </div>
 </template>

@@ -31,16 +31,18 @@ import SettingsHostingRow from './SettingsHostingRow.vue'
 /** `active`: this section is the one on screen (it stays mounted while Settings is open). */
 const props = defineProps<{ active: boolean }>()
 
-const TOOLS: Array<{ id: HostingToolId; name: string; icon: typeof Github; defaultHost: string; otherHint: string; otherPlaceholder: string }> = [
+const { t } = useI18n()
+
+const TOOLS = computed<Array<{ id: HostingToolId; name: string; icon: typeof Github; defaultHost: string; otherHint: string; otherPlaceholder: string }>>(() => [
   {
     id: 'gh', name: 'GitHub CLI', icon: Github, defaultHost: GITHUB_COM,
-    otherHint: 'A GitHub Enterprise Server, by its name.', otherPlaceholder: 'github.example.com',
+    otherHint: t('agents.hosting.ghOther'), otherPlaceholder: 'github.example.com',
   },
   {
     id: 'glab', name: 'GitLab CLI', icon: Gitlab, defaultHost: GITLAB_COM,
-    otherHint: 'A self-managed GitLab server, by its name. It joins the GitLab servers below.', otherPlaceholder: 'gitlab.example.com',
+    otherHint: t('agents.hosting.glabOther'), otherPlaceholder: 'gitlab.example.com',
   },
-]
+])
 
 const cliOf = (id: HostingToolId) => state.clis?.find(c => c.id === id) ?? null
 
@@ -119,7 +121,7 @@ async function remove(host: string) {
     // The button that had the keyboard is gone: land in the field.
     input.value?.focus()
   } catch (err) {
-    hostsError.value = `Couldn't remove ${host}: ${err instanceof Error ? err.message : String(err)}`
+    hostsError.value = t('agents.hosting.removeFailed', { host, message: err instanceof Error ? err.message : String(err) })
   } finally {
     removing.value = null
   }
@@ -130,20 +132,20 @@ onMounted(() => { if (!state.hosts) void loadHosts() })
 
 <template>
   <SettingsSection
-    title="Git hosting"
-    description="Mango reads pull requests, merge requests, issues, checks and releases through the GitHub CLI and the GitLab CLI on this computer. You sign in with each tool's own sign-in, so your credentials stay with it."
+    :title="t('settings.nav.hosting')"
+    :description="t('agents.hosting.description')"
   >
-    <ul class="clis" aria-label="Git hosting tools">
+    <ul class="clis" :aria-label="t('agents.hosting.tools')">
       <SettingsHostingRow
-        v-for="t in TOOLS"
-        :key="t.id"
-        :tool="t.id"
-        :name="t.name"
-        :icon="t.icon"
-        :default-host="t.defaultHost"
-        :other-hint="t.otherHint"
-        :other-placeholder="t.otherPlaceholder"
-        :cli="cliOf(t.id)"
+        v-for="tool in TOOLS"
+        :key="tool.id"
+        :tool="tool.id"
+        :name="tool.name"
+        :icon="tool.icon"
+        :default-host="tool.defaultHost"
+        :other-hint="tool.otherHint"
+        :other-placeholder="tool.otherPlaceholder"
+        :cli="cliOf(tool.id)"
         :loading="state.loading"
         :error="state.error"
         :refresh="refresh"
@@ -151,32 +153,33 @@ onMounted(() => { if (!state.hosts) void loadHosts() })
     </ul>
 
     <section class="servers" aria-labelledby="hosting-servers">
-      <h3 id="hosting-servers" class="servers__title">GitLab servers</h3>
+      <h3 id="hosting-servers" class="servers__title">{{ t('agents.hosting.servers') }}</h3>
       <p class="servers__note">
-        Projects whose git remotes are on these servers get merge requests, issues, pipelines and releases.
-        gitlab.com and servers named gitlab.<i>something</i> are always recognised.
+        <i18n-t keypath="agents.hosting.serversNote" scope="global">
+          <template #something><i>{{ t('agents.hosting.something') }}</i></template>
+        </i18n-t>
       </p>
 
-      <ul v-if="state.hosts?.length" ref="listEl" class="servers__list" aria-label="Self-managed GitLab servers">
+      <ul v-if="state.hosts?.length" ref="listEl" class="servers__list" :aria-label="t('agents.hosting.serversLabel')">
         <li v-for="h in state.hosts" :key="h" class="server">
           <Gitlab class="server__mark" aria-hidden="true" />
           <span class="server__host selectable">{{ h }}</span>
-          <span v-if="glabHosts.has(h)" class="server__meta">Known to the GitLab CLI</span>
+          <span v-if="glabHosts.has(h)" class="server__meta">{{ t('agents.hosting.known') }}</span>
           <UiIconButton
             v-else
             size="sm"
-            :label="`Remove ${h}`"
+            :label="t('agents.hosting.remove', { host: h })"
             :disabled="removing === h"
             @click="remove(h)"
           ><X /></UiIconButton>
         </li>
       </ul>
-      <p v-else-if="state.hosts" class="servers__empty">No self-managed servers yet.</p>
+      <p v-else-if="state.hosts" class="servers__empty">{{ t('agents.hosting.empty') }}</p>
 
       <p v-if="hostsError" class="servers__error selectable" role="alert">{{ hostsError }}</p>
 
       <form class="add" @submit.prevent="add">
-        <label class="add__label" :for="fieldId">Add a server</label>
+        <label class="add__label" :for="fieldId">{{ t('agents.hosting.add') }}</label>
         <div class="add__line">
           <input
             :id="fieldId"
@@ -192,10 +195,10 @@ onMounted(() => { if (!state.hosts) void loadHosts() })
             :aria-invalid="!!draftError || undefined"
             @input="draftError = null"
           >
-          <UiButton size="sm" type="submit" :loading="saving">Add</UiButton>
+          <UiButton size="sm" type="submit" :loading="saving">{{ t('common.actions.add') }}</UiButton>
         </div>
         <p v-if="draftError" :id="hintId" class="add__hint add__hint--error" role="alert">{{ draftError }}</p>
-        <p v-else :id="hintId" class="add__hint">The name in the server's address, with its port if it has one.</p>
+        <p v-else :id="hintId" class="add__hint">{{ t('agents.hosting.addHint') }}</p>
       </form>
     </section>
   </SettingsSection>

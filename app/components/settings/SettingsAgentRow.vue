@@ -34,6 +34,7 @@ const props = defineProps<{
   refresh: (opts?: { detect?: boolean }) => Promise<AuthStatus | null>
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const cli = computed(() => AGENT_CLI[props.agent] ?? null)
 const loginCommand = computed(() => cli.value?.login.join(' ') ?? '')
@@ -55,7 +56,7 @@ const account = computed(() => {
   const s = status.value
   if (!s?.loggedIn) return ''
   if (s.account) return [s.account, s.method].filter(Boolean).join(' · ')
-  if (s.method) return `with ${s.method}`
+  if (s.method) return t('agents.cli.withMethod', { method: s.method })
   return s.detail && !/^(logged|signed) in\.?$/i.test(s.detail) ? s.detail : ''
 })
 
@@ -138,17 +139,17 @@ async function onLoginExit(code: number | null) {
   }
   const bin = cli.value?.bin ?? props.name
   loginNote.value = code === 0
-    ? `The ${bin} command closed without signing in.`
+    ? t('agents.cli.closedSignedOut', { bin })
     : code == null
-      ? `The ${bin} command stopped before sign-in finished.`
+      ? t('agents.cli.signInStopped', { bin })
       : code === 130
-        ? `The ${bin} command was interrupted before sign-in finished.`
-        : `The ${bin} command exited with code ${code} before sign-in finished.`
+        ? t('agents.cli.signInInterrupted', { bin })
+        : t('agents.cli.signInExitedCode', { bin, code })
   login.value = 'failed'
 }
 
 function onLoginFailed(message: string) {
-  loginNote.value = `Mango couldn't start "${loginCommand.value}": ${message}`
+  loginNote.value = t('agents.row.cantStart', { command: loginCommand.value, message })
   login.value = 'failed'
 }
 
@@ -183,9 +184,10 @@ async function signOut() {
     await nextTick()
     stateEl.value?.focus()
   } catch (err) {
-    const why = err instanceof Error ? err.message : String(err)
-    const manual = cli.value ? ` Try again, or run "${cli.value.logout}" in a terminal.` : ' Try again.'
-    actionError.value = `Couldn't sign out of ${props.name}: ${why.replace(/\.$/, '')}.${manual}`
+    const why = (err instanceof Error ? err.message : String(err)).replace(/\.$/, '')
+    actionError.value = cli.value
+      ? t('agents.cli.signOutFailed', { name: props.name, why, command: cli.value.logout })
+      : t('agents.cli.signOutFailedPlain', { name: props.name, why })
     confirming.value = false
   } finally {
     signingOut.value = false
@@ -210,7 +212,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       <UiIconButton
         v-if="view !== 'missing'"
         size="sm"
-        :label="`Check ${name} again`"
+        :label="t('agents.row.recheck', { name })"
         :disabled="rechecking || auth.loading"
         @click="recheck"
       >
@@ -223,19 +225,21 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       <p ref="stateEl" class="agent__state" tabindex="-1">
         <span class="agent__says" role="status">
           <span class="agent__lead" aria-hidden="true"><CircleDashed class="agent__icon agent__icon--idle" /></span>
-          <span class="agent__word">Not installed</span>
+          <span class="agent__word">{{ t('agents.cli.notInstalled') }}</span>
           <span class="agent__more">
-            <template v-if="cli">Mango couldn't find the <code>{{ cli.bin }}</code> command on this computer.</template>
-            <template v-else>Mango couldn't find this agent's command on this computer.</template>
+            <i18n-t v-if="cli" keypath="agents.cli.notFound" scope="global">
+              <template #command><code>{{ cli.bin }}</code></template>
+            </i18n-t>
+            <template v-else>{{ t('agents.row.notFound') }}</template>
           </span>
         </span>
       </p>
       <div class="agent__indent">
         <div class="agent__after">
-          <span>Mango can run the official installer for you.</span>
+          <span>{{ t('agents.row.canInstall') }}</span>
           <span class="agent__actions">
-            <UiButton variant="ghost" size="sm" :loading="rechecking" @click="recheck">Check again</UiButton>
-            <UiButton size="sm" @click="ws.openSetup()">Install…</UiButton>
+            <UiButton variant="ghost" size="sm" :loading="rechecking" @click="recheck">{{ t('agents.row.checkAgain') }}</UiButton>
+            <UiButton size="sm" @click="ws.openSetup()">{{ t('agents.cli.installMore') }}</UiButton>
           </span>
         </div>
       </div>
@@ -247,14 +251,14 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       ref="confirmEl"
       class="agent__state agent__state--confirm"
       role="group"
-      :aria-label="`Sign out of ${name}`"
+      :aria-label="t('agents.cli.signOutOf', { name })"
       @keydown.esc.stop.prevent="cancelSignOut"
     >
       <span class="agent__lead" aria-hidden="true"><CircleAlert class="agent__icon agent__icon--warn" /></span>
-      <span class="agent__more agent__more--strong">Sign out of {{ name }}? Chats that use it stop until you sign in again.</span>
+      <span class="agent__more agent__more--strong">{{ t('agents.row.confirmSignOut', { name }) }}</span>
       <span class="agent__actions">
-        <UiButton variant="ghost" size="sm" data-cancel :disabled="signingOut" @click="cancelSignOut">Cancel</UiButton>
-        <UiButton variant="danger" size="sm" :loading="signingOut" @click="signOut">Sign out</UiButton>
+        <UiButton variant="ghost" size="sm" data-cancel :disabled="signingOut" @click="cancelSignOut">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="danger" size="sm" :loading="signingOut" @click="signOut">{{ t('common.actions.signOut') }}</UiButton>
       </span>
     </div>
 
@@ -263,35 +267,35 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       <span class="agent__says" role="status">
         <template v-if="view === 'checking' || view === 'unknown'">
           <span class="agent__lead" aria-hidden="true"><span class="ring" /></span>
-          <span class="agent__more">Checking sign-in…</span>
+          <span class="agent__more">{{ t('agents.cli.checkingSignIn') }}</span>
         </template>
         <template v-else-if="view === 'error'">
           <span class="agent__lead" aria-hidden="true"><TriangleAlert class="agent__icon agent__icon--error" /></span>
-          <span class="agent__word agent__word--error">Couldn't check sign-in</span>
+          <span class="agent__word agent__word--error">{{ t('agents.cli.checkFailed') }}</span>
           <span class="agent__more selectable" :title="auth.error ?? undefined">{{ auth.error }}</span>
         </template>
         <template v-else-if="view === 'in'">
           <span class="agent__lead" aria-hidden="true"><CircleCheck class="agent__icon agent__icon--ok" /></span>
-          <span class="agent__word agent__word--ok">Signed in</span>
+          <span class="agent__word agent__word--ok">{{ t('agents.cli.signedIn') }}</span>
           <span v-if="account" class="agent__more selectable" :title="account">{{ account }}</span>
         </template>
         <template v-else>
           <span class="agent__lead" aria-hidden="true"><CircleAlert class="agent__icon agent__icon--warn" /></span>
-          <span class="agent__word agent__word--warn">Not signed in</span>
+          <span class="agent__word agent__word--warn">{{ t('agents.cli.notSignedIn') }}</span>
           <span v-if="signedOutDetail" class="agent__more selectable" :title="signedOutDetail">{{ signedOutDetail }}</span>
-          <span v-else-if="!cli" class="agent__more">Sign in with this agent's own command, then check again.</span>
+          <span v-else-if="!cli" class="agent__more">{{ t('agents.row.ownCommand') }}</span>
         </template>
       </span>
 
       <span v-if="view === 'error'" class="agent__actions">
-        <UiButton size="sm" :loading="rechecking" @click="recheck">Try again</UiButton>
+        <UiButton size="sm" :loading="rechecking" @click="recheck">{{ t('common.actions.retry') }}</UiButton>
       </span>
       <span v-else-if="view === 'in' && login === 'off'" class="agent__actions">
-        <UiButton v-if="cli" variant="ghost" size="sm" @click="startLogin">Switch account</UiButton>
-        <UiButton variant="ghost" size="sm" data-signout @click="askSignOut">Sign out</UiButton>
+        <UiButton v-if="cli" variant="ghost" size="sm" @click="startLogin">{{ t('agents.row.switchAccount') }}</UiButton>
+        <UiButton variant="ghost" size="sm" data-signout @click="askSignOut">{{ t('common.actions.signOut') }}</UiButton>
       </span>
       <span v-else-if="view === 'out' && login === 'off' && cli" class="agent__actions">
-        <UiButton size="sm" @click="startLogin">Sign in</UiButton>
+        <UiButton size="sm" @click="startLogin">{{ t('common.actions.signIn') }}</UiButton>
       </span>
     </div>
 
@@ -303,46 +307,46 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       ref="loginEl"
       class="login"
       :class="[`login--${login}`, { 'is-focused': termFocused }]"
-      :aria-label="`Sign in to ${name}`"
+      :aria-label="t('agents.cli.signInTo', { name })"
     >
       <header class="login__head">
         <span class="login__status" role="status">
           <template v-if="login === 'running'">
             <span class="ring ring--work" aria-hidden="true" />
-            <span class="login__title">Signing in to {{ name }}…</span>
+            <span class="login__title">{{ t('agents.cli.signingInTo', { name }) }}</span>
           </template>
           <template v-else-if="login === 'verifying'">
             <span class="ring" aria-hidden="true" />
-            <span class="login__title">Checking sign-in…</span>
+            <span class="login__title">{{ t('agents.cli.checkingSignIn') }}</span>
           </template>
           <template v-else>
             <TriangleAlert class="login__warn" aria-hidden="true" />
-            <span class="login__title">Sign-in didn't finish</span>
+            <span class="login__title">{{ t('agents.cli.signInUnfinished') }}</span>
           </template>
         </span>
         <span class="login__actions">
           <template v-if="login === 'running' && loginLink">
             <UiButton variant="ghost" size="sm" :title="loginLink" @click="openExternal(loginLink)">
-              <ExternalLink />Open sign-in page
+              <ExternalLink />{{ t('agents.cli.openSignInPage') }}
             </UiButton>
             <UiButton variant="ghost" size="sm" @click="copyText(loginLink, 'link')">
-              <Check v-if="copied === 'link'" /><Copy v-else />{{ copied === 'link' ? 'Copied' : 'Copy link' }}
+              <Check v-if="copied === 'link'" /><Copy v-else />{{ copied === 'link' ? t('common.actions.copied') : t('agents.cli.copyLink') }}
             </UiButton>
           </template>
-          <UiButton v-if="login === 'failed'" size="sm" @click="startLogin">Try again</UiButton>
-          <UiButton variant="ghost" size="sm" @click="closeLogin">{{ login === 'failed' ? 'Close' : 'Cancel' }}</UiButton>
+          <UiButton v-if="login === 'failed'" size="sm" @click="startLogin">{{ t('common.actions.retry') }}</UiButton>
+          <UiButton variant="ghost" size="sm" @click="closeLogin">{{ login === 'failed' ? t('common.actions.close') : t('common.actions.cancel') }}</UiButton>
         </span>
       </header>
 
       <p v-if="login === 'failed'" class="login__note selectable" role="alert">
-        {{ loginNote }} The output is kept below.
+        {{ loginNote }} {{ t('agents.cli.outputKept') }}
       </p>
 
       <div class="login__term" @focusin="termFocused = true" @focusout="termFocused = false">
         <LoginTerminal
           :key="attempt"
           :command="cli.login"
-          :label="`${name} sign-in terminal`"
+          :label="t('agents.cli.signInTerminal', { name })"
           @exit="onLoginExit"
           @failed="onLoginFailed"
           @link="loginLink = $event"
@@ -350,8 +354,10 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       </div>
 
       <p v-if="login === 'running'" class="login__hint">
-        Finish in your browser. If the page gives you a code, press <kbd>{{ pasteMod }}</kbd><kbd>V</kbd> to paste it here, then
-        <kbd>Enter</kbd>. The code may stay hidden as you paste.
+        <i18n-t keypath="agents.row.loginHint" scope="global">
+          <template #keys><kbd>{{ pasteMod }}</kbd><kbd>V</kbd></template>
+          <template #enter><kbd>Enter</kbd></template>
+        </i18n-t>
       </p>
     </section>
   </li>

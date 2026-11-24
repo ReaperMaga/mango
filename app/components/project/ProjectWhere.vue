@@ -21,6 +21,7 @@ const props = withDefaults(defineProps<{
 }>(), { variant: 'field', id: undefined, disabled: false, label: undefined, placeholder: undefined })
 const emit = defineEmits<{ 'update:modelValue': [where: EnvRemote | null] }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 
@@ -46,7 +47,7 @@ onMounted(() => { if (!envs.loaded) envs.load().catch(() => {}) })
 </script>
 
 <template>
-  <UiMenu :items="items" :width="300" label="Where">
+  <UiMenu :items="items" :width="300" :label="t('project.where')">
     <template #default="{ toggle, open: isOpen }">
       <button
         :id="id"

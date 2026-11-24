@@ -5,6 +5,7 @@ import { useUsage, useUsageUpdated } from '~/stores/usage'
 import UsageList from '~/components/UsageList.vue'
 
 /** Settings > Agents > Usage: the plan limits and when each one resets. Reading spends no quota. */
+const { t } = useI18n()
 const ws = useWorkspace()
 const usage = useUsage()
 const updated = useUsageUpdated()
@@ -18,14 +19,13 @@ onMounted(() => { void usage.refreshReadable() })
       <span class="usage__updated" aria-live="polite">{{ updated }}</span>
       <UiButton size="sm" :loading="usage.loading" @click="usage.refreshReadable(true)">
         <RefreshCw v-if="!usage.loading" aria-hidden="true" />
-        Refresh
+        {{ t('common.actions.refresh') }}
       </UiButton>
     </div>
     <UsageList @sign-in="ws.agentsTab = 'agents'" />
 
     <p v-if="!usage.hasReset" class="usage__none">
-      No early reset noticed. If a limit is reset before its time, a note appears under the agent's name here,
-      and a dot on the gauge in the title bar.
+      {{ t('agents.usage.noReset') }}
     </p>
   </div>
 </template>

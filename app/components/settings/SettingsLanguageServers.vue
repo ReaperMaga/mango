@@ -15,18 +15,19 @@ import SettingsSwitch from './SettingsSwitch.vue'
  * Settings > Editor, the language servers: whether the folder in view lets them run (they can run its
  * code), which are installed, and installing one with its own installer in a terminal the user watches.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const store = useLanguageServers()
 
-const LANGUAGES: Record<LspServerId, string> = {
-  typescript: 'TypeScript and JavaScript',
+const LANGUAGES = computed<Record<LspServerId, string>>(() => ({
+  typescript: t('agents.languageServers.typescript'),
   rust: 'Rust',
   python: 'Python',
   go: 'Go',
-  clangd: 'C and C++',
+  clangd: t('agents.languageServers.clangd'),
   csharp: 'C#',
-}
+}))
 
 const project = computed(() => ws.activeProject)
 /** The folder in view: a chat's worktree, or the project. */
@@ -39,10 +40,10 @@ const alone = computed(() => !!answers.value && answers.value !== project.value?
 const consentName = computed(() => (alone.value ? baseName(answers.value!) : project.value?.name ?? ''))
 const allowed = computed(() => !!folder.value && store.consentOf(folder.value) === true)
 const consentHint = computed(() => {
-  if (remote.value) return 'Language servers run only for projects on this computer. Completion from open files still works here.'
-  let what = `They can run this ${alone.value ? 'folder' : 'project'}'s code (build scripts, plugins).`
-  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ' Git worktrees Mango makes for it follow this.'
-  return ws.editorLanguageServers ? what : `${what} Nothing runs while language servers are turned off.`
+  if (remote.value) return t('agents.languageServers.remoteHint')
+  let what = alone.value ? t('agents.languageServers.folderHint') : t('agents.languageServers.projectHint')
+  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ` ${t('agents.languageServers.worktreesHint')}`
+  return ws.editorLanguageServers ? what : `${what} ${t('agents.languageServers.offHint')}`
 })
 function allow(on: boolean) {
   if (folder.value) store.setConsent(folder.value, on)
@@ -76,10 +77,10 @@ async function onExit(code: number | null) {
   }
   j.phase = 'failed'
   j.note = code === 0
-    ? `The installer finished, but Mango can't find ${j.server.name} yet. Restart Mango, then look again.`
+    ? t('agents.cli.installedNotFound', { name: j.server.name })
     : code === null
-      ? 'The installer stopped before it finished.'
-      : `The installer exited with code ${code}.`
+      ? t('agents.cli.installerStopped')
+      : t('agents.cli.installerExited', { code })
 }
 async function closeJob() {
   const id = job.value?.server.id
@@ -92,7 +93,7 @@ async function closeJob() {
 function onFailed(message: string) {
   if (!job.value) return
   job.value.phase = 'failed'
-  job.value.note = `Mango couldn't start the installer: ${message.replace(/\.$/, '')}.`
+  job.value.note = t('agents.languageServers.cantStart', { message: message.replace(/\.$/, '') })
 }
 
 function help(server: LspServer) {
@@ -105,7 +106,7 @@ onMounted(() => void store.load(true))
 <template>
   <div ref="root" class="ls">
     <div v-if="project" class="ls__card">
-      <SettingsRow :label="`Language servers in ${consentName}`" :hint="consentHint" class="ls__project">
+      <SettingsRow :label="t('agents.languageServers.in', { name: consentName })" :hint="consentHint" class="ls__project">
         <template #default="{ labelId }">
           <SettingsSwitch v-if="!remote && answers" :model-value="allowed" :labelledby="labelId" @update:model-value="allow" />
         </template>
@@ -113,14 +114,14 @@ onMounted(() => void store.load(true))
     </div>
 
     <div class="ls__head">
-      <h4 class="ls__title">Servers on this computer</h4>
+      <h4 class="ls__title">{{ t('agents.languageServers.servers') }}</h4>
       <UiButton size="sm" variant="ghost" :loading="store.loading" @click="store.load(true)">
-        <RefreshCw v-if="!store.loading" />Look again
+        <RefreshCw v-if="!store.loading" />{{ t('agents.languageServers.lookAgain') }}
       </UiButton>
     </div>
 
-    <p v-if="store.error" class="ls__note is-error selectable" role="alert">Mango couldn't look for language servers: {{ store.error }}</p>
-    <p v-else-if="!store.servers" class="ls__note" role="status">Looking for language servers…</p>
+    <p v-if="store.error" class="ls__note is-error selectable" role="alert">{{ t('agents.languageServers.failed', { error: store.error }) }}</p>
+    <p v-else-if="!store.servers" class="ls__note" role="status">{{ t('agents.languageServers.looking') }}</p>
 
     <ul v-if="store.servers" class="ls__card ls__list">
       <li v-for="s in store.servers" :key="s.id" class="ls__item">
@@ -130,7 +131,7 @@ onMounted(() => void store.load(true))
             <div v-if="s.installed && s.path" class="ls__where selectable" :title="s.path"><bdi>{{ s.path }}</bdi></div>
             <div v-else-if="!s.installed && s.install" class="ls__command selectable">{{ s.install }}</div>
           </div>
-          <span class="ls__state" :class="{ 'is-installed': s.installed }">{{ s.installed ? 'Installed' : 'Not installed' }}</span>
+          <span class="ls__state" :class="{ 'is-installed': s.installed }">{{ s.installed ? t('agents.cli.installed') : t('agents.cli.notInstalled') }}</span>
           <template v-if="!s.installed">
             <template v-if="s.install">
               <UiButton
@@ -138,11 +139,11 @@ onMounted(() => void store.load(true))
                 size="sm"
                 :data-install="s.id"
                 :disabled="!!job && job.phase !== 'failed'"
-                :aria-label="`Install ${s.name}`"
+                :aria-label="t('agents.cli.installNamed', { name: s.name })"
                 @click="install(s)"
-              >Install</UiButton>
+              >{{ t('common.actions.install') }}</UiButton>
             </template>
-            <UiButton v-else size="sm" variant="ghost" :aria-label="`How to install ${s.name}`" @click="help(s)"><ExternalLink />How to install</UiButton>
+            <UiButton v-else size="sm" variant="ghost" :aria-label="t('agents.cli.howToInstallNamed', { name: s.name })" @click="help(s)"><ExternalLink />{{ t('agents.cli.howToInstall') }}</UiButton>
           </template>
         </div>
 
@@ -150,38 +151,38 @@ onMounted(() => void store.load(true))
           v-if="job?.server.id === s.id"
           class="ls__job"
           :class="{ 'is-failed': job.phase === 'failed', 'is-focused': termFocused }"
-          :aria-label="`Install ${s.name}`"
+          :aria-label="t('agents.cli.installNamed', { name: s.name })"
         >
           <header class="ls__job-head">
             <span class="ls__job-status" role="status">
               <TriangleAlert v-if="job.phase === 'failed'" class="ls__warn" aria-hidden="true" />
               <span v-else class="ring" :class="{ 'ring--work': job.phase === 'running' }" aria-hidden="true" />
               <span class="ls__job-title">
-                {{ job.phase === 'running' ? `Installing ${s.name}…` : job.phase === 'checking' ? `Checking ${s.name}…` : `${s.name} isn't installed` }}
+                {{ job.phase === 'running' ? t('agents.cli.installing', { name: s.name }) : job.phase === 'checking' ? t('agents.languageServers.checking', { name: s.name }) : t('agents.languageServers.missing', { name: s.name }) }}
               </span>
             </span>
             <span v-if="job.phase !== 'checking'" class="ls__job-actions">
               <template v-if="job.phase === 'failed'">
-                <UiButton size="sm" @click="install(s)">Try again</UiButton>
-                <UiButton size="sm" variant="ghost" @click="help(s)"><ExternalLink />How to install</UiButton>
+                <UiButton size="sm" @click="install(s)">{{ t('common.actions.retry') }}</UiButton>
+                <UiButton size="sm" variant="ghost" @click="help(s)"><ExternalLink />{{ t('agents.cli.howToInstall') }}</UiButton>
               </template>
-              <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? 'Cancel' : 'Close' }}</UiButton>
+              <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? t('common.actions.cancel') : t('common.actions.close') }}</UiButton>
             </span>
           </header>
 
-          <p v-if="job.phase === 'failed'" class="ls__job-note selectable" role="alert">{{ job.note }} The output is kept below.</p>
+          <p v-if="job.phase === 'failed'" class="ls__job-note selectable" role="alert">{{ job.note }} {{ t('agents.cli.outputKept') }}</p>
 
           <div class="ls__term" @focusin="termFocused = true" @focusout="termFocused = false">
             <LoginTerminal
               :key="job.attempt"
               :start="startInstall(s.id)"
-              :label="`${s.name} installer`"
+              :label="t('agents.cli.installer', { name: s.name })"
               :rows="10"
               @exit="onExit"
               @failed="onFailed"
             />
           </div>
-          <p v-if="job.phase === 'running'" class="ls__hint">If the installer asks a question, answer it here.</p>
+          <p v-if="job.phase === 'running'" class="ls__hint">{{ t('agents.cli.answerInstaller') }}</p>
         </section>
       </li>
     </ul>
