@@ -2,6 +2,8 @@
 import { Check, CircleAlert, Copy, FileText, GitBranch, Pencil, Pin, RefreshCw } from 'lucide-vue-next'
 import type { Message, Part, Thread } from '~/types/chat'
 import { formatDuration } from '~/utils/time'
+import { noticeText } from '~/utils/chatTexts'
+import { formatLocale } from '~/i18n'
 import { formatCost, formatTokens } from '~/agents/context'
 import { copyText } from '~/utils/clipboard'
 import { formatSize } from '~/utils/attachments'
@@ -15,6 +17,7 @@ import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import type { MessageActionContext } from '~/plugin-host/types'
 
 const props = defineProps<{ message: Message; thread: Thread; last: boolean }>()
+const { t } = useI18n()
 const threads = useThreads()
 const ws = useWorkspace()
 
@@ -69,8 +72,8 @@ const segments = computed<Segment[]>(() => {
   return out
 })
 
-const clock = computed(() => new Date(props.message.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }))
-const sentAt = computed(() => new Date(props.message.createdAt).toLocaleString())
+const clock = computed(() => new Date(props.message.createdAt).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' }))
+const sentAt = computed(() => new Date(props.message.createdAt).toLocaleString(formatLocale()))
 const plainText = computed(() => props.message.parts.flatMap(p => (p.type === 'text' ? [p.text] : [])).join('\n\n'))
 
 /** Plugins' hover actions for this message (`chat.messageActions`). */
@@ -102,7 +105,7 @@ const writable = computed(() => !props.thread.parentId && !props.message.fromAge
 /** Messages (this one included) that editing or asking again here would remove. */
 const cuts = computed(() => threads.cutCount(props.thread.id, props.message.id))
 const sentTitle = computed(() => (props.message.writtenAt
-  ? `Written ${new Date(props.message.writtenAt).toLocaleTimeString()}, sent ${new Date(props.message.createdAt).toLocaleTimeString()}`
+  ? t('chat.message.written', { written: new Date(props.message.writtenAt).toLocaleTimeString(formatLocale()), sent: new Date(props.message.createdAt).toLocaleTimeString(formatLocale()) })
   : sentAt.value))
 
 /* Editing: the bubble turns into a field; saving cuts the chat back to here and runs it again. */
@@ -145,7 +148,7 @@ onBeforeUnmount(() => clearTimeout(confirmTimer))
 const usageLine = computed(() => {
   const u = props.message.usage
   if (!u) return ''
-  return [`${formatTokens(u.input)} in`, `${formatTokens(u.output)} out`, ...(u.costUsd !== undefined ? [formatCost(u.costUsd)] : [])].join(' · ')
+  return [t('chat.message.usage', { input: formatTokens(u.input), output: formatTokens(u.output) }), ...(u.costUsd !== undefined ? [formatCost(u.costUsd)] : [])].join(' · ')
 })
 
 const lastTextIndex = computed(() => {
@@ -156,8 +159,8 @@ const lastTextIndex = computed(() => {
 
 <template>
   <article v-if="message.role === 'user'" class="msg msg--user" :data-message-id="message.id">
-    <p v-if="message.fromAgent" class="msg__from">Task from {{ AGENTS[thread.agent].name }}</p>
-    <ul v-if="message.attachments?.length" class="msg__files" aria-label="Attachments">
+    <p v-if="message.fromAgent" class="msg__from">{{ t('chat.message.taskFrom', { agent: AGENTS[thread.agent].name }) }}</p>
+    <ul v-if="message.attachments?.length" class="msg__files" :aria-label="t('chat.attachments')">
       <li
         v-for="a in message.attachments"
         :key="a.id"
@@ -166,7 +169,7 @@ const lastTextIndex = computed(() => {
         :title="`${a.name} · ${formatSize(a.size)}
 ${a.path}`"
       >
-        <button v-if="a.thumb" type="button" class="msg__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
+        <button v-if="a.thumb" type="button" class="msg__thumb-btn" :aria-label="t('chat.view', { name: a.name })" @click="viewAttachment(a.id)">
           <img class="msg__thumb" :src="a.thumb" alt="">
         </button>
         <template v-else>
@@ -184,13 +187,13 @@ ${a.path}`"
         v-model="draft"
         class="msg__edit-field"
         rows="3"
-        aria-label="Edit message"
+        :aria-label="t('chat.message.edit')"
         @keydown="onEditKey"
       />
-      <p v-if="cuts > 1" class="msg__edit-note">Sending replaces this message and the {{ cuts - 1 }} after it.</p>
+      <p v-if="cuts > 1" class="msg__edit-note">{{ t('chat.message.replaces', { n: cuts - 1 }) }}</p>
       <div class="msg__edit-actions">
-        <UiButton size="sm" variant="ghost" type="button" @click="editing = false">Cancel</UiButton>
-        <UiButton size="sm" variant="primary" type="submit" :disabled="!draft.trim() && !message.attachments?.length">Send again</UiButton>
+        <UiButton size="sm" variant="ghost" type="button" @click="editing = false">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton size="sm" variant="primary" type="submit" :disabled="!draft.trim() && !message.attachments?.length">{{ t('chat.message.sendAgain') }}</UiButton>
       </div>
     </form>
     <div v-else-if="message.parts.length" class="msg__bubble selectable">
@@ -200,16 +203,16 @@ ${a.path}`"
     </div>
     <div v-if="message.parts.length && !editing" class="msg__meta msg__meta--user">
       <time class="msg__time tabular" :datetime="new Date(message.createdAt).toISOString()" :title="sentTitle">{{ clock }}</time>
-      <UiIconButton v-if="plainText" size="sm" :label="copied ? 'Copied' : 'Copy message'" @click="copy">
+      <UiIconButton v-if="plainText" size="sm" :label="copied ? t('common.actions.copied') : t('chat.message.copy')" @click="copy">
         <Check v-if="copied" /><Copy v-else />
       </UiIconButton>
-      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? 'Unpin message' : 'Pin message'" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
+      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? t('chat.message.unpin') : t('chat.message.pin')" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
         <Pin />
       </UiIconButton>
-      <UiIconButton v-if="writable && !busy" size="sm" label="Edit and send again" @click="startEdit">
+      <UiIconButton v-if="writable && !busy" size="sm" :label="t('chat.message.editAgain')" @click="startEdit">
         <Pencil />
       </UiIconButton>
-      <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
+      <UiIconButton v-if="writable" size="sm" :label="t('chat.message.branch')" @click="threads.branchFrom(thread.id, message.id)">
         <GitBranch />
       </UiIconButton>
       <UiIconButton v-for="a in pluginActions" :key="a.fullId" size="sm" :label="a.label" @click="runAction(a)">
@@ -247,7 +250,7 @@ ${a.path}`"
         />
         <p v-else-if="seg.part.type === 'notice'" class="msg__notice" :class="`msg__notice--${seg.part.level}`" :role="seg.part.level === 'error' ? 'alert' : undefined">
           <CircleAlert v-if="seg.part.level === 'error'" />
-          <span class="selectable">{{ seg.part.text }}</span>
+          <span class="selectable">{{ noticeText(seg.part.text) }}</span>
         </p>
         <ChatMarkdown
           v-else-if="seg.part.type === 'text'"
@@ -261,20 +264,20 @@ ${a.path}`"
     </template>
     <ChatChanges v-if="!live" :message="message" :thread="thread" />
     <p v-if="message.elapsedMs !== undefined && !live" class="msg__ran tabular">
-      {{ message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for' }} {{ formatDuration(message.elapsedMs) }}<template v-if="usageLine"> · {{ usageLine }}</template>
+      {{ t(message.outcome === 'stopped' ? 'chat.message.stoppedAfter' : message.outcome === 'error' ? 'chat.message.failedAfter' : 'chat.message.workedFor', { time: formatDuration(message.elapsedMs) }) }}<template v-if="usageLine"> · {{ usageLine }}</template>
     </p>
     <div v-if="!live" class="msg__meta">
       <time class="msg__time tabular" :datetime="new Date(message.createdAt).toISOString()" :title="sentTitle">{{ clock }}</time>
-      <UiIconButton v-if="plainText" size="sm" :label="copied ? 'Copied' : 'Copy message'" @click="copy">
+      <UiIconButton v-if="plainText" size="sm" :label="copied ? t('common.actions.copied') : t('chat.message.copy')" @click="copy">
         <Check v-if="copied" /><Copy v-else />
       </UiIconButton>
-      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? 'Unpin message' : 'Pin message'" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
+      <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? t('chat.message.unpin') : t('chat.message.pin')" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
         <Pin />
       </UiIconButton>
-      <UiIconButton v-if="writable && !busy" size="sm" class="msg__again" :class="{ 'msg__again--ask': confirmAgain }" :label="confirmAgain ? `Ask again: removes ${cuts - 1} later message${cuts - 1 === 1 ? '' : 's'}. Click to confirm` : 'Ask again'" @click="again">
+      <UiIconButton v-if="writable && !busy" size="sm" class="msg__again" :class="{ 'msg__again--ask': confirmAgain }" :label="confirmAgain ? t('chat.message.againConfirm', cuts - 1) : t('chat.message.again')" @click="again">
         <RefreshCw />
       </UiIconButton>
-      <UiIconButton v-if="writable" size="sm" label="Branch into a new chat from here" @click="threads.branchFrom(thread.id, message.id)">
+      <UiIconButton v-if="writable" size="sm" :label="t('chat.message.branch')" @click="threads.branchFrom(thread.id, message.id)">
         <GitBranch />
       </UiIconButton>
       <UiIconButton v-for="a in pluginActions" :key="a.fullId" size="sm" :label="a.label" @click="runAction(a)">

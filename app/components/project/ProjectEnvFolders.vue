@@ -17,8 +17,9 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** The action on a row (shown on hover and on the selected row): "Open", "Use". */
   chooseLabel?: string
-}>(), { rows: 8, disabled: false, chooseLabel: 'Open' })
+}>(), { rows: 8, disabled: false, chooseLabel: undefined })
 
+const { t } = useI18n()
 const dir = defineModel<string | null>('dir', { default: null })
 const selected = defineModel<string | null>('selected', { default: null })
 const emit = defineEmits<{ choose: [path: string] }>()
@@ -104,8 +105,8 @@ const lastDir = new Map<string, string>()
 <template>
   <div class="fol" :class="{ 'is-disabled': disabled }" :style="{ '--rows': rows }">
     <div class="fol__bar">
-      <UiIconButton label="Up one folder" size="sm" :disabled="disabled || !listing?.parent" @click="up"><ArrowUp /></UiIconButton>
-      <nav class="fol__crumbs" aria-label="Folder">
+      <UiIconButton :label="t('project.folders.up')" size="sm" :disabled="disabled || !listing?.parent" @click="up"><ArrowUp /></UiIconButton>
+      <nav class="fol__crumbs" :aria-label="t('project.folder')">
         <template v-for="(c, i) in crumbs" :key="c.path">
           <ChevronRight v-if="i > 1" class="fol__sep" aria-hidden="true" />
           <button
@@ -121,15 +122,15 @@ const lastDir = new Map<string, string>()
           </button>
         </template>
       </nav>
-      <UiIconButton label="Refresh" size="sm" :disabled="disabled || loading" @click="retry"><RotateCw /></UiIconButton>
+      <UiIconButton :label="t('common.actions.refresh')" size="sm" :disabled="disabled || loading" @click="retry"><RotateCw /></UiIconButton>
     </div>
 
     <div v-if="error" class="fol__state" role="alert">
       <CircleAlert class="fol__state-icon fol__state-icon--bad" aria-hidden="true" />
-      <p class="selectable">Couldn't list this folder. {{ error }}.</p>
-      <UiButton size="sm" :disabled="disabled" @click="retry">Try again</UiButton>
+      <p class="selectable">{{ t('project.folders.failed') }} {{ error }}.</p>
+      <UiButton size="sm" :disabled="disabled" @click="retry">{{ t('common.actions.retry') }}</UiButton>
     </div>
-    <div v-else-if="!listing" class="fol__skel" aria-busy="true" aria-label="Loading folders">
+    <div v-else-if="!listing" class="fol__skel" aria-busy="true" :aria-label="t('project.folders.loading')">
       <span v-for="n in 4" :key="n" class="fol__skel-row" :style="{ width: `${[46, 62, 38, 54][n - 1]}%` }" />
     </div>
     <div
@@ -138,7 +139,7 @@ const lastDir = new Map<string, string>()
       class="fol__list"
       :class="{ 'is-loading': loading }"
       role="listbox"
-      :aria-label="`Folders in ${listing.dir}`"
+      :aria-label="t('project.folders.list', { path: listing.dir })"
       :aria-busy="loading || undefined"
       :aria-activedescendant="activeIndex >= 0 ? optionId(activeIndex) : undefined"
       :tabindex="disabled ? -1 : 0"
@@ -163,15 +164,15 @@ const lastDir = new Map<string, string>()
           type="button"
           class="fol__open"
           tabindex="-1"
-          :aria-label="`${chooseLabel} ${e.name}`"
+          :aria-label="t('project.folders.chooseNamed', { action: chooseLabel ?? t('common.actions.open'), name: e.name })"
           :disabled="disabled"
           @click.stop="emit('choose', e.path)"
         >
-          {{ chooseLabel }}
+          {{ chooseLabel ?? t('common.actions.open') }}
         </button>
       </div>
-      <p v-if="!entries.length" class="fol__empty">No folders in here.</p>
-      <p v-else-if="listing.truncated" class="fol__empty">Showing the first {{ entries.length }} folders. Type a path to reach the others.</p>
+      <p v-if="!entries.length" class="fol__empty">{{ t('project.folders.empty') }}</p>
+      <p v-else-if="listing.truncated" class="fol__empty">{{ t('project.folders.truncated', { n: entries.length }) }}</p>
     </div>
   </div>
 </template>

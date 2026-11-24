@@ -12,25 +12,25 @@ import { formatDuration } from '~/utils/time'
  * the run ends, so a glance says what happened.
  */
 const props = defineProps<{ thread: Thread }>()
+const { t } = useI18n()
 const threads = useThreads()
 
 const tasks = computed<BackgroundTask[]>(() => threads.live[props.thread.id]?.tasks ?? [])
-const running = computed(() => tasks.value.filter(t => t.status === 'running').length)
+const running = computed(() => tasks.value.filter(x => x.status === 'running').length)
 const open = ref(true)
 
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 onMounted(() => { clock = setInterval(() => (now.value = Date.now()), 1000) })
 onBeforeUnmount(() => clearInterval(clock))
-const elapsed = (t: BackgroundTask) => formatDuration(Math.max(0, (t.endedAt ?? now.value) - t.startedAt))
+const elapsed = (task: BackgroundTask) => formatDuration(Math.max(0, (task.endedAt ?? now.value) - task.startedAt))
 
 const ICONS = { command: SquareTerminal, agent: Bot, other: Activity } as const
 const END_ICONS = { done: CircleCheck, error: CircleAlert, stopped: CircleSlash } as const
-const END_WORDS = { done: 'finished', error: 'failed', stopped: 'stopped' } as const
 
 /** A background sub-agent has a chat of its own. */
-const childOf = (t: BackgroundTask) =>
-  t.kind === 'agent' && t.toolId ? threads.threads.find(c => c.parentId && c.toolId === t.toolId) ?? null : null
+const childOf = (task: BackgroundTask) =>
+  task.kind === 'agent' && task.toolId ? threads.threads.find(c => c.parentId && c.toolId === task.toolId) ?? null : null
 
 /* ---------- output peek: polled while open and the command runs ---------- */
 const peeking = ref<string | null>(null)
@@ -49,19 +49,19 @@ async function readOutput(id: string) {
   if (text === null) { if (outputState.value === 'loading') outputState.value = 'none' }
   else { output.value = text; outputState.value = 'ready' }
   if (atEnd) { await nextTick(); outEl?.scrollTo({ top: outEl.scrollHeight }) }
-  const task = tasks.value.find(t => t.id === id)
+  const task = tasks.value.find(x => x.id === id)
   if (task?.status === 'running') poll = setTimeout(() => readOutput(id), 1500)
 }
 
-function togglePeek(t: BackgroundTask) {
+function togglePeek(task: BackgroundTask) {
   clearTimeout(poll)
-  if (peeking.value === t.id) { peeking.value = null; return }
-  peeking.value = t.id
+  if (peeking.value === task.id) { peeking.value = null; return }
+  peeking.value = task.id
   output.value = ''
   outputState.value = 'loading'
-  void readOutput(t.id)
+  void readOutput(task.id)
 }
-watch(tasks, (list) => { if (peeking.value && !list.some(t => t.id === peeking.value)) peeking.value = null })
+watch(tasks, (list) => { if (peeking.value && !list.some(x => x.id === peeking.value)) peeking.value = null })
 onBeforeUnmount(() => clearTimeout(poll))
 
 /** The end of a terminal's output can carry colour codes: plain text reads better here. */
@@ -69,46 +69,46 @@ const plain = computed(() => output.value.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, ''
 </script>
 
 <template>
-  <section v-if="tasks.length" class="bg" aria-label="Background tasks">
+  <section v-if="tasks.length" class="bg" :aria-label="t('chat.tasks.label')">
     <button type="button" class="bg__head" :aria-expanded="open" @click="open = !open">
       <ChevronRight class="bg__caret" :class="{ 'is-open': open }" aria-hidden="true" />
-      <span class="bg__title">Background</span>
-      <span class="bg__count tabular">{{ running ? `${running} running` : 'all finished' }}</span>
+      <span class="bg__title">{{ t('chat.tasks.title') }}</span>
+      <span class="bg__count tabular">{{ running ? t('chat.tasks.running', { n: running }) : t('chat.tasks.allFinished') }}</span>
     </button>
     <UiReveal>
       <ul v-show="open" class="bg__list" role="list">
-        <li v-for="t in tasks" :key="t.id" class="bg__item" :class="`is-${t.status}`">
+        <li v-for="task in tasks" :key="task.id" class="bg__item" :class="`is-${task.status}`">
           <div class="bg__row">
             <span class="bg__icon" aria-hidden="true">
-              <span v-if="t.status === 'running'" class="bg__spin" />
-              <component :is="END_ICONS[t.status]" v-else />
+              <span v-if="task.status === 'running'" class="bg__spin" />
+              <component :is="END_ICONS[task.status]" v-else />
             </span>
-            <component :is="ICONS[t.kind]" class="bg__kind" aria-hidden="true" />
-            <span class="bg__name" :title="t.title">{{ t.title }}</span>
-            <span v-if="t.status === 'running' && t.activity" class="bg__activity" :title="t.activity">{{ t.activity }}</span>
-            <span v-else-if="t.status !== 'running'" class="bg__activity">{{ END_WORDS[t.status] }}</span>
-            <span class="bg__time tabular">{{ elapsed(t) }}</span>
+            <component :is="ICONS[task.kind]" class="bg__kind" aria-hidden="true" />
+            <span class="bg__name" :title="task.title">{{ task.title }}</span>
+            <span v-if="task.status === 'running' && task.activity" class="bg__activity" :title="task.activity">{{ task.activity }}</span>
+            <span v-else-if="task.status !== 'running'" class="bg__activity">{{ t(`chat.tasks.${task.status}`) }}</span>
+            <span class="bg__time tabular">{{ elapsed(task) }}</span>
             <span class="bg__actions">
               <UiIconButton
-                v-if="t.kind === 'command' || t.kind === 'other'"
+                v-if="task.kind === 'command' || task.kind === 'other'"
                 size="sm"
-                :label="peeking === t.id ? 'Hide output' : 'Show output'"
-                :active="peeking === t.id"
-                @click="togglePeek(t)"
+                :label="peeking === task.id ? t('chat.tasks.hideOutput') : t('chat.tasks.showOutput')"
+                :active="peeking === task.id"
+                @click="togglePeek(task)"
               >
                 <ScrollText />
               </UiIconButton>
-              <UiIconButton v-else-if="childOf(t)" size="sm" label="Open the sub-agent's chat" @click="threads.show(childOf(t)!.id)">
+              <UiIconButton v-else-if="childOf(task)" size="sm" :label="t('chat.tasks.openSub')" @click="threads.show(childOf(task)!.id)">
                 <ArrowUpRight />
               </UiIconButton>
-              <UiIconButton v-if="t.status === 'running'" size="sm" label="Stop" @click="stopTask(thread.id, t.id)">
+              <UiIconButton v-if="task.status === 'running'" size="sm" :label="t('chat.stop')" @click="stopTask(thread.id, task.id)">
                 <CircleStop />
               </UiIconButton>
             </span>
           </div>
-          <div v-if="peeking === t.id" class="bg__out selectable">
+          <div v-if="peeking === task.id" class="bg__out selectable">
             <pre v-if="outputState === 'ready' && plain" :ref="setOutEl">{{ plain }}</pre>
-            <p v-else class="bg__out-note">{{ outputState === 'loading' ? 'Reading output…' : outputState === 'ready' ? 'No output yet.' : 'This task has no output to show.' }}</p>
+            <p v-else class="bg__out-note">{{ outputState === 'loading' ? t('chat.tasks.reading') : outputState === 'ready' ? t('chat.tasks.noOutput') : t('chat.tasks.nothing') }}</p>
           </div>
         </li>
       </ul>

@@ -26,6 +26,7 @@ import { iconComponent } from '~/plugin-host/icons'
  * Mod+K command palette: actions, every thread in the open projects, and
  * recent projects, filtered with a forgiving subsequence match.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const envs = useEnvironments()
@@ -95,40 +96,40 @@ const actions = computed<Item[]>(() => {
   const dark = ws.resolvedTheme() === 'dark'
   const items: Item[] = []
   if (project && win.spec.kind !== 'chat') {
-    items.push({ id: 'new-chat', group: 'Actions', label: 'New chat', detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: ws.keyParts('new-chat'), keywords: 'thread conversation agent', run: () => threads.create(project) })
+    items.push({ id: 'new-chat', group: 'Actions', label: t('shell.chat.new'), detail: ws.activeProject?.name, icon: MessageSquarePlus, keys: ws.keyParts('new-chat'), keywords: 'thread conversation agent', run: () => threads.create(project) })
     if (wts.supported.value) {
-      items.push({ id: 'new-worktree-chat', group: 'Actions', label: `New chat in a ${wts.term.value}`, detail: 'Its own folder and branch, named from your first message', icon: FolderGit2, keys: ws.keyParts('new-chat-worktree'), keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
+      items.push({ id: 'new-worktree-chat', group: 'Actions', label: t('shell.chat.newInTerm', { term: wts.term.value }), detail: t('shell.palette.worktreeDetail'), icon: FolderGit2, keys: ws.keyParts('new-chat-worktree'), keywords: 'worktree workspace parallel branch isolated new chat thread git unity', run: () => threads.createAwaitingWorktree(project) })
       for (const w of wts.linked.value) {
         if (w.prunable) continue
-        items.push({ id: `worktree:${w.path}`, group: 'Actions', label: `Go to ${wts.term.value} ${wts.label(w)}`, detail: wts.hint(w), icon: FolderGit2, keywords: `worktree workspace switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
+        items.push({ id: `worktree:${w.path}`, group: 'Actions', label: t('shell.palette.goToTerm', { term: wts.term.value, name: wts.label(w) }), detail: wts.hint(w), icon: FolderGit2, keywords: `worktree workspace switch ${w.branch ?? ''}`, run: () => wts.goTo(w) })
       }
     }
-    items.push({ id: 'new-browser', group: 'Actions', label: 'New browser tab', detail: ws.activeProject?.name, icon: Globe, keys: ws.keyParts('new-browser'), keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
+    items.push({ id: 'new-browser', group: 'Actions', label: t('shell.tabs.newBrowser'), detail: ws.activeProject?.name, icon: Globe, keys: ws.keyParts('new-browser'), keywords: 'browser web page url localhost preview dev server open site', run: () => useBrowser().openNew() })
   }
   // With environments around, say where these put the project (the remembered choice).
   const where = projectWhere()
-  const whereDetail = envs.hosts.length ? (where ? envLabels(where.hostId, where.instance).where : 'This computer') : undefined
+  const whereDetail = envs.hosts.length ? (where ? envLabels(where.hostId, where.instance).where : t('shell.titlebar.thisComputer')) : undefined
   // Another window: on this project (it moves there), or a new one on the welcome screen.
   if (project && (win.isMain || ws.openProjects.length > 1)) {
     const blocked = win.moveBlocker(project)
-    items.push({ id: 'project-window', group: 'Actions', label: 'Open project in new window', detail: blocked?.hint ?? ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
+    items.push({ id: 'project-window', group: 'Actions', label: t('shell.palette.projectWindow'), detail: blocked?.hint ?? ws.activeProject?.name, icon: AppWindow, keywords: 'window move separate detach second monitor screen', run: () => win.openInNewWindow(project) })
   }
   // The chat in front: out into a window of its own, or (its own window) back.
   const chat = threads.activeThread
   if (chat) {
     const move = win.moveChatAction(chat.id)
     const back = win.isOwnChat(chat.id)
-    items.push({ id: 'chat-window', group: 'Actions', label: back ? 'Return chat to main window' : 'Move chat to new window', detail: move.hint ?? chat.title, icon: AppWindow, keywords: 'window move separate detach tear off pop out second monitor screen', run: move.onSelect })
+    items.push({ id: 'chat-window', group: 'Actions', label: back ? t('shell.palette.returnChat') : t('shell.palette.moveChat'), detail: move.hint ?? chatTitle(chat.title), icon: AppWindow, keywords: 'window move separate detach tear off pop out second monitor screen', run: move.onSelect })
   }
-  items.push({ id: 'new-window', group: 'Actions', label: 'New window', icon: AppWindow, keys: ws.keyParts('new-window'), keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
+  items.push({ id: 'new-window', group: 'Actions', label: t('shell.project.newWindow'), icon: AppWindow, keys: ws.keyParts('new-window'), keywords: 'window open another second monitor screen', run: () => win.openInNewWindow(null) })
   items.push(
-    { id: 'open-folder', group: 'Actions', label: 'Open folder…', detail: whereDetail, icon: FolderOpen, keys: ws.keyParts('open-folder'), keywords: 'project directory', run: openFolderFlow },
-    { id: 'new-project', group: 'Actions', label: 'New project…', detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
-    { id: 'clone', group: 'Actions', label: 'Clone repository…', detail: whereDetail, icon: GitFork, keywords: 'git github gitlab remote', run: () => { ws.dialog = 'clone' } },
+    { id: 'open-folder', group: 'Actions', label: t('shell.project.openFolder'), detail: whereDetail, icon: FolderOpen, keys: ws.keyParts('open-folder'), keywords: 'project directory', run: openFolderFlow },
+    { id: 'new-project', group: 'Actions', label: t('shell.project.new'), detail: whereDetail, icon: FolderPlus, keywords: 'create folder init', run: () => { ws.dialog = 'new' } },
+    { id: 'clone', group: 'Actions', label: t('shell.project.clone'), detail: whereDetail, icon: GitFork, keywords: 'git github gitlab remote', run: () => { ws.dialog = 'clone' } },
   )
   // Straight into a known, usable environment: open a folder there (and make it the place for the next one).
   if (where) {
-    items.push({ id: 'open-folder-local', group: 'Actions', label: 'Open folder on this computer…', icon: Laptop, keywords: 'project directory local disk', run: () => { ws.setWhere(null); return openLocalFolder() } })
+    items.push({ id: 'open-folder-local', group: 'Actions', label: t('shell.palette.openLocal'), icon: Laptop, keywords: 'project directory local disk', run: () => { ws.setWhere(null); return openLocalFolder() } })
   }
   for (const p of knownPlaces()) {
     if (samePlace(p, where)) continue
@@ -136,73 +137,73 @@ const actions = computed<Item[]>(() => {
     items.push({
       id: `open-folder-env:${p.hostId}/${p.instance}`,
       group: 'Actions',
-      label: `Open folder in ${l.label}…`,
-      detail: l.shared ? 'Shared with you' : l.host,
+      label: t('shell.palette.openIn', { name: l.label }),
+      detail: l.shared ? t('shell.palette.sharedWithYou') : l.host,
       icon: Server,
       keywords: `project directory remote environment ${l.where}`,
       run: () => { ws.setWhere(p); ws.dialog = 'open-env' },
     })
   }
   items.push(
-    { id: 'environments', group: 'Actions', label: 'Environments', detail: 'Remote containers and VMs', icon: Server, keywords: 'remote environment server ssh incus container vm instance cloud machine', run: () => envs.openView() },
-    { id: 'join-env', group: 'Actions', label: 'Join a shared environment', detail: 'With a link someone sent you', icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => envs.openJoin() },
+    { id: 'environments', group: 'Actions', label: t('shell.palette.environments'), detail: t('shell.palette.environmentsDetail'), icon: Server, keywords: 'remote environment server ssh incus container vm instance cloud machine', run: () => envs.openView() },
+    { id: 'join-env', group: 'Actions', label: t('shell.palette.join'), detail: t('shell.palette.joinDetail'), icon: Link2, keywords: 'join share shared link invite remote environment mango://join paste qr', run: () => envs.openJoin() },
   )
   if (inWorkspace) {
     // Move the terminal in view between the panel and the main area.
     const paneTerm = parseTerminalTab(threads.activePane.threadId)?.terminalId
-    if (paneTerm) items.push({ id: 'terminal-to-panel', group: 'Actions', label: 'Move terminal to panel', icon: PanelBottom, keywords: 'terminal shell dock bottom panel editor tab', run: () => ws.moveTerminalToPanel(paneTerm) })
+    if (paneTerm) items.push({ id: 'terminal-to-panel', group: 'Actions', label: t('shell.palette.terminalToPanel'), icon: PanelBottom, keywords: 'terminal shell dock bottom panel editor tab', run: () => ws.moveTerminalToPanel(paneTerm) })
     const panelTerm = ws.terminalOpen ? ws.activeTerminalId : null
-    if (panelTerm) items.push({ id: 'terminal-to-editor', group: 'Actions', label: 'Move terminal to editor area', icon: PanelTop, keywords: 'terminal shell tab main pane editor area undock', run: () => ws.moveTerminalToEditor(panelTerm) })
+    if (panelTerm) items.push({ id: 'terminal-to-editor', group: 'Actions', label: t('shell.palette.terminalToEditor'), icon: PanelTop, keywords: 'terminal shell tab main pane editor area undock', run: () => ws.moveTerminalToEditor(panelTerm) })
     items.push(
-      { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? 'Hide terminal' : 'Show terminal', icon: PanelBottom, keys: ws.keyParts('terminal'), keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
-      { id: 'new-terminal', group: 'Actions', label: 'New terminal', icon: SquareTerminal, keys: ws.keyParts('new-terminal'), keywords: 'shell tab console', run: () => ws.newTerminal() },
-      { id: 'new-terminal-editor', group: 'Actions', label: 'New terminal in editor area', icon: SquareTerminal, keywords: 'shell tab console main pane editor', run: () => ws.newTerminal(undefined, undefined, true) },
-      { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? 'Hide environment' : 'Show environment', keys: ws.keyParts('env'), detail: remotePlace(ws.activeProjectPath)?.where ?? 'This computer', icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
-      { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? 'Hide files' : 'Show files', icon: Files, keys: ws.keyParts('files'), keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
-      { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? 'Hide changes' : 'Show changes', icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
-      { id: 'git-log.show', group: 'Actions', label: 'Show Git log', icon: GitGraph, keys: ws.keyParts('git-log'), keywords: 'git log history commits graph branches', run: () => useGitLog().open() },
-      { id: 'git-log.go-to-commit', group: 'Actions', label: 'Go to commit…', detail: 'Git log', icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
-      { id: 'toggle-links', group: 'Actions', label: `${ws.toolPanel === 'links' ? 'Hide' : 'Show'} ${forge.providerOf(ws.activeProjectPath) === 'gitlab' ? 'merge' : 'pull'} requests`, icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() },
-      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? 'Hide releases' : 'Show releases', icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
-      { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? 'Hide sidebar' : 'Show sidebar', icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
+      { id: 'toggle-terminal', group: 'Actions', label: ws.terminalOpen ? t('shell.palette.hideTerminal') : t('shell.palette.showTerminal'), icon: PanelBottom, keys: ws.keyParts('terminal'), keywords: 'toggle terminal shell panel console', run: () => ws.toggleTerminal() },
+      { id: 'new-terminal', group: 'Actions', label: t('shell.palette.newTerminal'), icon: SquareTerminal, keys: ws.keyParts('new-terminal'), keywords: 'shell tab console', run: () => ws.newTerminal() },
+      { id: 'new-terminal-editor', group: 'Actions', label: t('shell.palette.newTerminalEditor'), icon: SquareTerminal, keywords: 'shell tab console main pane editor', run: () => ws.newTerminal(undefined, undefined, true) },
+      { id: 'toggle-env', group: 'Actions', label: ws.toolPanel === 'env' ? t('shell.palette.hideEnv') : t('shell.palette.showEnv'), keys: ws.keyParts('env'), detail: remotePlace(ws.activeProjectPath)?.where ?? t('shell.titlebar.thisComputer'), icon: remotePlace(ws.activeProjectPath) ? Server : Laptop, keywords: 'environment where runs remote local computer instance server shell desktop sign in components', run: () => ws.toggleEnv() },
+      { id: 'toggle-files', group: 'Actions', label: ws.toolPanel === 'files' ? t('shell.palette.hideFiles') : t('shell.palette.showFiles'), icon: Files, keys: ws.keyParts('files'), keywords: 'files explorer tree folder browse open edit editor', run: () => ws.toggleFiles() },
+      { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? t('shell.palette.hideChanges') : t('shell.palette.showChanges'), icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
+      { id: 'git-log.show', group: 'Actions', label: t('shell.palette.showGitLog'), icon: GitGraph, keys: ws.keyParts('git-log'), keywords: 'git log history commits graph branches', run: () => useGitLog().open() },
+      { id: 'git-log.go-to-commit', group: 'Actions', label: t('shell.palette.goToCommit'), detail: t('shell.tools.gitLog'), icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
+      { id: 'toggle-links', group: 'Actions', label: forge.providerOf(ws.activeProjectPath) === 'gitlab' ? (ws.toolPanel === 'links' ? t('shell.palette.hideMerges') : t('shell.palette.showMerges')) : (ws.toolPanel === 'links' ? t('shell.palette.hidePulls') : t('shell.palette.showPulls')), icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() },
+      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? t('shell.palette.hideReleases') : t('shell.palette.showReleases'), icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
+      { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? t('shell.sidebar.hide') : t('shell.sidebar.show'), icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
-        ? { id: 'split', group: 'Actions', label: 'Close split pane', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
-        : { id: 'split', group: 'Actions', label: 'Split chat right', icon: Columns2, keys: ws.keyParts('split'), keywords: 'split pane side by side', run: () => threads.split() },
+        ? { id: 'split', group: 'Actions', label: t('shell.palette.closeSplit'), icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }
+        : { id: 'split', group: 'Actions', label: t('shell.palette.splitChat'), icon: Columns2, keys: ws.keyParts('split'), keywords: 'split pane side by side', run: () => threads.split() },
     )
   }
   if (ws.activeProject) {
     // Names only: what is in the files never reaches the palette.
     items.push(
-      { id: 'project-settings', group: 'Actions', label: 'Project settings', detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure name icon color pin archive agent model permissions env environment variables dotenv', run: () => ws.openSettings('projects') },
-      { id: 'project-env', group: 'Actions', label: 'Environment variables', detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
-      { id: 'project-mcp', group: 'Actions', label: 'Project MCP servers', detail: ws.activeProject.name, icon: Plug, keywords: 'mcp model context protocol servers tools project unity', run: () => ws.openProjectMcp() },
+      { id: 'project-settings', group: 'Actions', label: t('shell.palette.projectSettings'), detail: ws.activeProject.name, icon: FolderCog, keywords: 'project settings preferences configure name icon color pin archive agent model permissions env environment variables dotenv', run: () => ws.openSettings('projects') },
+      { id: 'project-env', group: 'Actions', label: t('shell.palette.projectEnv'), detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
+      { id: 'project-mcp', group: 'Actions', label: t('shell.palette.projectMcp'), detail: ws.activeProject.name, icon: Plug, keywords: 'mcp model context protocol servers tools project unity', run: () => ws.openProjectMcp() },
     )
   }
-  items.push({ id: 'settings-mcp', group: 'Actions', label: 'MCP servers', icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
-  items.push({ id: 'plugins-browse', group: 'Actions', label: 'Browse plugins', icon: Puzzle, keywords: 'plugins extensions addons catalog install marketplace', run: () => openPlugins({ tab: 'browse' }) })
-  items.push({ id: 'plugins-add', group: 'Actions', label: 'Add plugin from link', icon: Puzzle, keywords: 'plugins install git repository url extension', run: () => openPlugins({ add: true }) })
-  items.push({ id: 'settings-editor', group: 'Actions', label: 'Editor settings', icon: FilePen, keywords: 'editor autosave auto save files smooth caret cursor language servers lsp completion', run: () => ws.openSettings('editor') })
-  items.push({ id: 'settings-terminal', group: 'Actions', label: 'Terminal settings', icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
-  items.push({ id: 'settings-notifications', group: 'Actions', label: 'Notification settings', icon: Bell, keywords: 'notifications notify alert sound desktop finished approval fails background', run: () => ws.openSettings('notifications') })
-  items.push({ id: 'settings-shortcuts', group: 'Actions', label: 'Keyboard shortcuts', icon: Keyboard, keywords: 'keyboard shortcuts keys keybindings bindings hotkeys rebind remap', run: () => ws.openSettings('shortcuts') })
+  items.push({ id: 'settings-mcp', group: 'Actions', label: t('shell.palette.mcp'), icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
+  items.push({ id: 'plugins-browse', group: 'Actions', label: t('shell.palette.browsePlugins'), icon: Puzzle, keywords: 'plugins extensions addons catalog install marketplace', run: () => openPlugins({ tab: 'browse' }) })
+  items.push({ id: 'plugins-add', group: 'Actions', label: t('shell.palette.addPlugin'), icon: Puzzle, keywords: 'plugins install git repository url extension', run: () => openPlugins({ add: true }) })
+  items.push({ id: 'settings-editor', group: 'Actions', label: t('shell.palette.editorSettings'), icon: FilePen, keywords: 'editor autosave auto save files smooth caret cursor language servers lsp completion', run: () => ws.openSettings('editor') })
+  items.push({ id: 'settings-terminal', group: 'Actions', label: t('shell.palette.terminalSettings'), icon: SquareTerminal, keywords: 'terminal shell bash zsh fish powershell cmd wsl git bash profile font cursor default', run: () => ws.openSettings('terminal') })
+  items.push({ id: 'settings-notifications', group: 'Actions', label: t('shell.palette.notificationSettings'), icon: Bell, keywords: 'notifications notify alert sound desktop finished approval fails background', run: () => ws.openSettings('notifications') })
+  items.push({ id: 'settings-shortcuts', group: 'Actions', label: t('shell.palette.shortcuts'), icon: Keyboard, keywords: 'keyboard shortcuts keys keybindings bindings hotkeys rebind remap', run: () => ws.openSettings('shortcuts') })
   const up = useUpdater()
   items.push(up.update
-    ? { id: 'update', group: 'Actions', label: `Update to ${up.update.version} and restart`, icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
-    : { id: 'update', group: 'Actions', label: 'Check for updates', icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('maintenance'); up.check(true) } })
-  items.push({ id: 'usage', group: 'Actions', label: 'Usage limits', detail: '5-hour and weekly', icon: Gauge, keys: ws.keyParts('usage'), keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
-  items.push({ id: 'setup', group: 'Actions', label: 'Get started', detail: 'Install and sign in to agents', icon: Download, keywords: 'setup install onboarding first run claude code codex git cli agents download sign in login', run: () => ws.openSetup() })
-  items.push({ id: 'changelog', group: 'Actions', label: 'Changelog', icon: History, keywords: 'changelog release notes what is new whats new versions history', run: () => ws.openSettings('changelog') })
-  items.push({ id: 'settings', group: 'Actions', label: 'Open settings', icon: Settings, keys: ws.keyParts('settings'), keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
+    ? { id: 'update', group: 'Actions', label: t('shell.palette.updateTo', { version: up.update.version }), icon: CircleArrowUp, keywords: 'update upgrade new version release install restart', run: () => up.install() }
+    : { id: 'update', group: 'Actions', label: t('shell.update.check'), icon: CircleArrowUp, keywords: 'update upgrade new version release', run: () => { ws.openSettings('maintenance'); up.check(true) } })
+  items.push({ id: 'usage', group: 'Actions', label: t('shell.usage.title'), detail: t('shell.palette.usageDetail'), icon: Gauge, keys: ws.keyParts('usage'), keywords: 'usage limits quota rate limit plan weekly 5-hour five hour session reset claude codex', run: () => ws.openUsage() })
+  items.push({ id: 'setup', group: 'Actions', label: t('shell.usage.getStarted'), detail: t('shell.palette.setupDetail'), icon: Download, keywords: 'setup install onboarding first run claude code codex git cli agents download sign in login', run: () => ws.openSetup() })
+  items.push({ id: 'changelog', group: 'Actions', label: t('shell.palette.changelog'), icon: History, keywords: 'changelog release notes what is new whats new versions history', run: () => ws.openSettings('changelog') })
+  items.push({ id: 'settings', group: 'Actions', label: t('shell.palette.openSettings'), icon: Settings, keys: ws.keyParts('settings'), keywords: 'settings preferences agents sign in login account claude codex', run: () => ws.openSettings() })
   items.push({
     id: 'theme',
     group: 'Actions',
-    label: dark ? 'Switch to light theme' : 'Switch to dark theme',
+    label: dark ? t('shell.palette.lightTheme') : t('shell.palette.darkTheme'),
     icon: dark ? Sun : Moon,
     keywords: 'theme appearance dark light mode color',
     run: () => ws.cycleTheme(),
   })
   if (project) {
-    items.push({ id: 'demo', group: 'Actions', label: 'Load demo threads', detail: ws.activeProject?.name, icon: FlaskConical, keywords: 'sample example seed', run: () => threads.loadDemo(project) })
+    items.push({ id: 'demo', group: 'Actions', label: t('shell.palette.demo'), detail: ws.activeProject?.name, icon: FlaskConical, keywords: 'sample example seed', run: () => threads.loadDemo(project) })
   }
   return items.map((it, i) => ({ ...it, rank: i }))
 })
@@ -217,7 +218,7 @@ const pluginItems = computed<Item[]>(() =>
     return {
       id: `plugin:${c.fullId}`,
       group: 'Plugins' as const,
-      label: c.title,
+      label: chatTitle(c.title),
       detail: c.detail || plugin,
       icon: iconComponent(c.icon) ?? iconComponent('puzzle'),
       keywords: `${plugin} plugin ${c.keywords ?? ''}`,
@@ -229,20 +230,20 @@ const pluginItems = computed<Item[]>(() =>
 const threadItems = computed<Item[]>(() => {
   const many = ws.openProjects.length > 1
   return ws.openProjects
-    .flatMap(p => threads.forProject(p.path).map(t => ({ t, p })))
-    .sort((a, b) => b.t.updatedAt - a.t.updatedAt)
-    .map(({ t, p }, i) => ({
-      id: `thread:${t.id}`,
+    .flatMap(p => threads.forProject(p.path).map(chat => ({ chat, p })))
+    .sort((a, b) => b.chat.updatedAt - a.chat.updatedAt)
+    .map(({ chat, p }, i) => ({
+      id: `thread:${chat.id}`,
       group: 'Threads' as const,
-      label: t.title,
-      detail: many ? `${AGENTS[t.agent].name} · ${p.name}` : AGENTS[t.agent].name,
-      status: t.status,
-      unseen: t.status === 'waiting' || hasUnreadResult(t),
-      keywords: `${AGENTS[t.agent].name} ${p.name} ${t.model}`,
+      label: chatTitle(chat.title),
+      detail: many ? `${AGENTS[chat.agent].name} · ${p.name}` : AGENTS[chat.agent].name,
+      status: chat.status,
+      unseen: chat.status === 'waiting' || hasUnreadResult(chat),
+      keywords: `${AGENTS[chat.agent].name} ${p.name} ${chat.model}`,
       rank: i,
       run: () => {
-        if (ws.activeProjectPath !== t.projectPath) ws.setActiveProject(t.projectPath)
-        threads.show(t.id)
+        if (ws.activeProjectPath !== chat.projectPath) ws.setActiveProject(chat.projectPath)
+        threads.show(chat.id)
       },
     }))
 })
@@ -260,7 +261,7 @@ const projectItems = computed<Item[]>(() =>
       label: p.name,
       detail: remote ? `${remote.where} · ${remote.dir}` : tildify(p.path),
       icon: remote ? Server : Folder,
-      badge: current ? 'Current' : isOpen ? 'Open' : elsewhere ? 'Other window' : undefined,
+      badge: current ? t('shell.palette.current') : isOpen ? t('shell.palette.openBadge') : elsewhere ? t('shell.palette.otherWindow') : undefined,
       keywords: remote ? `${remote.where} ${remote.dir} remote environment` : `${p.path} ${p.branch ?? ''}`,
       rank: i,
       run: async () => {
@@ -282,10 +283,10 @@ const isBoundary = (s: string, i: number) => {
 
 /** Subsequence match with bonuses for word starts and runs. Tries every start for the first char. */
 function fuzzy(q: string, text: string): { score: number; hits: number[] } | null {
-  const t = text.toLowerCase()
+  const lower = text.toLowerCase()
   if (!q) return { score: 0, hits: [] }
   let best: { score: number; hits: number[] } | null = null
-  let start = t.indexOf(q[0]!)
+  let start = lower.indexOf(q[0]!)
   while (start !== -1) {
     const hits = [start]
     let score = isBoundary(text, start) ? 8 : 1
@@ -296,11 +297,11 @@ function fuzzy(q: string, text: string): { score: number; hits: number[] } | nul
       const ch = q[qi]!
       // Prefer the very next char, then the next word start, then any later match.
       let next = -1
-      if (t[pos + 1] === ch) next = pos + 1
+      if (lower[pos + 1] === ch) next = pos + 1
       else {
         let any = -1
-        for (let j = pos + 1; j < t.length; j++) {
-          if (t[j] !== ch) continue
+        for (let j = pos + 1; j < lower.length; j++) {
+          if (lower[j] !== ch) continue
           if (any === -1) any = j
           if (isBoundary(text, j)) { next = j; break }
         }
@@ -315,15 +316,16 @@ function fuzzy(q: string, text: string): { score: number; hits: number[] } | nul
       pos = next
     }
     if (ok) {
-      score -= t.length * 0.02
+      score -= lower.length * 0.02
       if (!best || score > best.score) best = { score, hits }
     }
-    start = t.indexOf(q[0]!, start + 1)
+    start = lower.indexOf(q[0]!, start + 1)
   }
   return best
 }
 
 const GROUP_ORDER: Group[] = ['Actions', 'Plugins', 'Threads', 'Projects']
+const groupTitles = computed<Record<Group, string>>(() => ({ Actions: t('shell.palette.groups.actions'), Plugins: t('shell.palette.groups.plugins'), Threads: t('shell.palette.groups.threads'), Projects: t('shell.palette.groups.projects') }))
 const EMPTY_LIMIT: Record<Group, number> = { Actions: 20, Plugins: 8, Threads: 8, Projects: 6 }
 
 const groups = computed(() => {
@@ -418,8 +420,8 @@ async function run(item: Item | undefined) {
     await item.run()
   } catch (e) {
     // Reopen with the reason so the failure isn't silent.
-    carryError = `${item.group === 'Projects' ? `Couldn't open ${item.label}` : `${item.label} failed`}: ${errorText(e).replace(/\.$/, '')}.`
-    if (item.group === 'Projects') carryError += ' If the folder moved, open it again with Open folder…'
+    const why = errorText(e).replace(/\.$/, '')
+    carryError = item.group === 'Projects' ? t('shell.palette.openFailed', { name: item.label, why }) : t('shell.palette.failed', { name: item.label, why })
     await nextTick() // let the close settle so reopening runs the open path
     ws.paletteOpen = true
   }
@@ -449,7 +451,7 @@ const activeId = computed(() => (flat.value.length ? `cmdk-opt-${selected.value}
   <Teleport to="body">
     <Transition name="cmdk">
       <div v-if="ws.paletteOpen" class="cmdk" @mousedown.self="close">
-        <div class="cmdk__panel" role="dialog" aria-modal="true" aria-label="Command palette">
+        <div class="cmdk__panel" role="dialog" aria-modal="true" :aria-label="t('shell.palette.label')">
           <div class="cmdk__search">
             <Search class="cmdk__search-icon" aria-hidden="true" />
             <input
@@ -457,7 +459,7 @@ const activeId = computed(() => (flat.value.length ? `cmdk-opt-${selected.value}
               v-model="query"
               class="cmdk__input"
               type="text"
-              placeholder="Run a command, jump to a thread or project"
+              :placeholder="t('shell.palette.placeholder')"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded="true"
@@ -472,9 +474,9 @@ const activeId = computed(() => (flat.value.length ? `cmdk-opt-${selected.value}
 
           <p v-if="runError" class="cmdk__error" role="alert">{{ runError }}</p>
 
-          <div id="cmdk-list" ref="list" class="cmdk__list" role="listbox" aria-label="Results">
+          <div id="cmdk-list" ref="list" class="cmdk__list" role="listbox" :aria-label="t('shell.palette.results')">
             <div v-for="g in groups" :key="g.group" role="group" :aria-labelledby="`cmdk-g-${g.group}`" class="cmdk__group">
-              <div :id="`cmdk-g-${g.group}`" class="cmdk__group-label" role="presentation">{{ g.group }}</div>
+              <div :id="`cmdk-g-${g.group}`" class="cmdk__group-label" role="presentation">{{ groupTitles[g.group] }}</div>
               <div
                 v-for="it in g.items"
                 :id="`cmdk-opt-${it.index}`"
@@ -504,7 +506,9 @@ const activeId = computed(() => (flat.value.length ? `cmdk-opt-${selected.value}
             </div>
 
             <div v-if="!flat.length" class="cmdk__empty" role="presentation">
-              Nothing matches <span class="cmdk__empty-q">“{{ query.trim() }}”</span>
+              <i18n-t keypath="shell.palette.nothing" scope="global">
+                <template #query><span class="cmdk__empty-q">{{ t('shell.palette.query', { query: query.trim() }) }}</span></template>
+              </i18n-t>
             </div>
           </div>
         </div>

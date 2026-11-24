@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Ban, Check, MessageCircleQuestion } from 'lucide-vue-next'
 import type { AgentQuestion, Part, QuestionAnswers } from '~/types/chat'
+import { askTitle } from '~/utils/chatTexts'
 
 /**
  * Questions for the user, from the agent (Claude Code's AskUserQuestion, Codex's
@@ -13,6 +14,7 @@ type QuestionPart = Extract<Part, { type: 'question' }>
 const props = defineProps<{ part: QuestionPart; agentName: string }>()
 const emit = defineEmits<{ answer: [answers: QuestionAnswers | null] }>()
 
+const { t } = useI18n()
 const uid = useId()
 const typed = (q: AgentQuestion) => q.freeText === true || !q.options.length
 const isOption = (q: AgentQuestion, v: string) => q.options.some(o => o.label === v)
@@ -55,8 +57,8 @@ const problemOf = (qi: number): string => {
   const own = (picked[qi]!.other || !q.options.length) ? picked[qi]!.text.trim() : ''
   if (own && q.format) {
     const n = Number(own)
-    if (!Number.isFinite(n)) return 'Enter a number.'
-    if (q.format === 'integer' && !Number.isInteger(n)) return 'Enter a whole number.'
+    if (!Number.isFinite(n)) return t('chat.question.number')
+    if (q.format === 'integer' && !Number.isInteger(n)) return t('chat.question.integer')
   }
   return ''
 }
@@ -68,13 +70,12 @@ function submit() {
 }
 
 const title = computed(() => {
-  if (props.part.title) return props.part.title
-  const n = props.part.questions.length
-  return n === 1 ? `${props.agentName} has a question` : `${props.agentName} has ${n} questions`
+  if (props.part.title) return askTitle(props.part.title)
+  return t('chat.question.has', { agent: props.agentName }, props.part.questions.length)
 })
 const shown = (qi: number) => {
   const a = props.part.answers?.[qi] ?? []
-  return a.length ? a.join(', ') : 'No answer'
+  return a.length ? a.join(', ') : t('chat.question.noAnswer')
 }
 </script>
 
@@ -96,8 +97,8 @@ const shown = (qi: number) => {
       <legend class="qa__legend">
         <span v-if="q.header" class="qa__tag">{{ q.header }}</span>
         <span class="qa__text selectable">{{ q.question }}</span>
-        <span v-if="q.multiSelect" class="qa__hint">Pick any</span>
-        <span v-else-if="q.optional" class="qa__hint">Optional</span>
+        <span v-if="q.multiSelect" class="qa__hint">{{ t('chat.question.pickAny') }}</span>
+        <span v-else-if="q.optional" class="qa__hint">{{ t('chat.question.optional') }}</span>
       </legend>
       <p v-if="q.detail" class="qa__detail selectable">{{ q.detail }}</p>
       <div class="qa__options">
@@ -133,8 +134,8 @@ const shown = (qi: number) => {
             class="qa__field"
             :type="q.secret ? 'password' : 'text'"
             :value="picked[qi]!.text"
-            :placeholder="q.placeholder ?? 'Other: answer in your own words'"
-            :aria-label="`Your own answer to: ${q.question}`"
+            :placeholder="q.placeholder ?? t('chat.question.other')"
+            :aria-label="t('chat.question.ownAnswer', { question: q.question })"
             autocomplete="off"
             @input="typeOther(qi, ($event.target as HTMLInputElement).value)"
             @focus="picked[qi]!.text.trim() && pickOther(qi)"
@@ -147,7 +148,7 @@ const shown = (qi: number) => {
           :type="q.secret ? 'password' : 'text'"
           :inputmode="q.format ? 'decimal' : undefined"
           :value="picked[qi]!.text"
-          :placeholder="q.placeholder ?? (q.format ? 'A number' : 'Your answer')"
+          :placeholder="q.placeholder ?? (q.format ? t('chat.question.aNumber') : t('chat.question.yourAnswer'))"
           :aria-label="q.question"
           :aria-invalid="!!picked[qi]!.text.trim() && !!problemOf(qi) || undefined"
           autocomplete="off"
@@ -156,16 +157,16 @@ const shown = (qi: number) => {
         >
       </div>
       <p v-if="picked[qi]!.text.trim() && problemOf(qi) && problemOf(qi) !== 'needed'" class="qa__problem" role="alert">{{ problemOf(qi) }}</p>
-      <p v-if="q.secret" class="qa__note">Hidden as you type, and not kept in the chat.</p>
+      <p v-if="q.secret" class="qa__note">{{ t('chat.question.secret') }}</p>
     </fieldset>
     <div class="qa__actions">
-      <UiButton variant="primary" size="sm" type="submit" :disabled="!ready || undefined">Answer</UiButton>
-      <UiButton variant="ghost" size="sm" @click="emit('answer', null)">Dismiss</UiButton>
+      <UiButton variant="primary" size="sm" type="submit" :disabled="!ready || undefined">{{ t('chat.question.answer') }}</UiButton>
+      <UiButton variant="ghost" size="sm" @click="emit('answer', null)">{{ t('chat.question.dismiss') }}</UiButton>
     </div>
   </form>
 
-  <div v-else-if="part.state === 'answered' && part.answers" class="qa-done" role="group" aria-label="Your answers">
-    <p class="qa-done__head"><Check aria-hidden="true" /><span>{{ part.title ? `You answered ${part.title.replace(/ asks$/, '')}` : 'You answered' }}</span></p>
+  <div v-else-if="part.state === 'answered' && part.answers" class="qa-done" role="group" :aria-label="t('chat.question.answers')">
+    <p class="qa-done__head"><Check aria-hidden="true" /><span>{{ part.title ? t('chat.question.answeredWho', { name: part.title.replace(/ asks$/, '') }) : t('chat.question.answered') }}</span></p>
     <dl class="qa-done__list selectable">
       <template v-for="(q, qi) in part.questions" :key="qi">
         <dt>{{ q.header || q.question }}</dt>
@@ -175,7 +176,7 @@ const shown = (qi: number) => {
   </div>
   <p v-else class="qa-done qa-done--quiet">
     <Ban aria-hidden="true" />
-    <span>{{ part.state === 'dismissed' ? 'You dismissed the question' : 'Not answered' }}</span>
+    <span>{{ part.state === 'dismissed' ? t('chat.question.dismissed') : t('chat.notAnswered') }}</span>
   </p>
 </template>
 

@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { AGENTS, type AgentCommand, type AgentId } from '~/types/chat'
 import { listAgentCommands } from '~/agents'
 import { pluginSlashList } from '~/plugin-host/registry'
+import { t } from '~/i18n'
 
 /**
  * The slash commands the composer offers, per agent and project: what the agent's CLI
@@ -19,10 +20,20 @@ const MAX_CACHED = 24
 
 /** Handled by Mango for every agent (`threads.send`). */
 export const MANGO_COMMANDS: AgentCommand[] = [
-  { name: 'clear', description: 'Start a new conversation in this chat. The agent forgets the messages above.', mango: true },
-  { name: 'create-pr', description: 'Commit, check, push and open a pull request (on GitLab a merge request) for this branch', argumentHint: '[notes, e.g. draft]', mango: true },
-{ name: 'create-release', description: 'Version, tag, push and publish a GitHub or GitLab release from the default branch', argumentHint: '[notes, e.g. minor]', mango: true },
+  { name: 'clear', mango: true },
+  { name: 'create-pr', mango: true },
+  { name: 'create-release', mango: true },
 ]
+
+/** Mango's commands as the list shows them. */
+const mangoCommands = (): AgentCommand[] => {
+  const shown: Record<string, Partial<AgentCommand>> = {
+    'clear': { description: t('chat.commands.clear') },
+    'create-pr': { description: t('chat.commands.createPr'), argumentHint: t('chat.commands.createPrArgs') },
+    'create-release': { description: t('chat.commands.createRelease'), argumentHint: t('chat.commands.createReleaseArgs') },
+  }
+  return MANGO_COMMANDS.map(c => ({ ...c, ...shown[c.name] }))
+}
 
 /** Stand-ins until the CLI has answered. */
 const FALLBACK: Record<AgentId, AgentCommand[]> = {
@@ -69,7 +80,7 @@ export const useCommands = defineStore('commands', {
       const live = cwd ? s.lists[keyOf(agent, cwd)] : undefined
       const plugins = pluginSlashList(agent)
       const own = (live?.length ? live : FALLBACK[agent]).filter(c => !MANGO_COMMANDS.some(m => m.name === c.name) && !plugins.some(m => m.name === c.name))
-      return [...MANGO_COMMANDS, ...plugins, ...own]
+      return [...mangoCommands(), ...plugins, ...own]
     },
   },
 

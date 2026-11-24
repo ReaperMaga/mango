@@ -10,6 +10,7 @@ import type { EnvInstance } from '~/types/ipc'
 const props = defineProps<{ open: boolean; hostId: string; instance: EnvInstance }>()
 const emit = defineEmits<{ close: []; resized: [note: string | null] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const cpus = ref('')
 const memory = ref('')
@@ -39,7 +40,7 @@ const num = (v: string) => (v.trim() ? Number(v.trim()) : null)
 function rangeError(v: string, lo: number, hi: number) {
   if (!v.trim()) return null
   const n = num(v)!
-  return Number.isInteger(n) && n >= lo && n <= hi ? null : `A whole number from ${lo} to ${hi}.`
+  return Number.isInteger(n) && n >= lo && n <= hi ? null : t('envs.common.wholeNumber', { min: lo, max: hi })
 }
 const cpusError = computed(() => rangeError(cpus.value, 1, 64))
 const memoryError = computed(() => rangeError(memory.value, 1, 512))
@@ -47,7 +48,7 @@ const diskError = computed(() => {
   const e = rangeError(disk.value, 4, 2048)
   if (e) return e
   const n = num(disk.value)
-  return n !== null && now.value.disk !== null && n < now.value.disk ? `A disk can only grow: ${now.value.disk} GiB or more.` : null
+  return n !== null && now.value.disk !== null && n < now.value.disk ? t('envs.resize.diskGrows', { min: now.value.disk }) : null
 })
 
 /** What changed (null leaves it as it is). An emptied field is not a change: limits can't be removed here. */
@@ -85,36 +86,35 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="`Resize ${instance.name}`" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('envs.resize.title', { name: instance.name })" :dismissible="!busy" @close="close">
     <form id="env-resize-form" class="rsz" novalidate @submit.prevent="submit">
       <div class="rsz__sizes">
-        <UiField label="CPUs" for="rsz-cpus" :error="touched ? cpusError : null">
-          <input id="rsz-cpus" v-model="cpus" class="input tabular" type="text" inputmode="numeric" placeholder="Default" autocomplete="off" :disabled="busy">
+        <UiField :label="t('envs.common.cpus')" for="rsz-cpus" :error="touched ? cpusError : null">
+          <input id="rsz-cpus" v-model="cpus" class="input tabular" type="text" inputmode="numeric" :placeholder="t('envs.common.default')" autocomplete="off" :disabled="busy">
         </UiField>
-        <UiField label="Memory (GiB)" for="rsz-mem" :error="touched ? memoryError : null">
-          <input id="rsz-mem" v-model="memory" class="input tabular" type="text" inputmode="numeric" :placeholder="instance.memory ?? 'Default'" autocomplete="off" :disabled="busy">
+        <UiField :label="t('envs.common.memoryGib')" for="rsz-mem" :error="touched ? memoryError : null">
+          <input id="rsz-mem" v-model="memory" class="input tabular" type="text" inputmode="numeric" :placeholder="instance.memory ?? t('envs.common.default')" autocomplete="off" :disabled="busy">
         </UiField>
-        <UiField label="Disk (GiB)" for="rsz-disk" :error="touched ? diskError : null">
-          <input id="rsz-disk" v-model="disk" class="input tabular" type="text" inputmode="numeric" :placeholder="instance.disk ?? 'Default'" autocomplete="off" :disabled="busy">
+        <UiField :label="t('envs.common.diskGib')" for="rsz-disk" :error="touched ? diskError : null">
+          <input id="rsz-disk" v-model="disk" class="input tabular" type="text" inputmode="numeric" :placeholder="instance.disk ?? t('envs.common.default')" autocomplete="off" :disabled="busy">
         </UiField>
       </div>
       <p class="rsz__lede">
         <template v-if="vm && running">
-          A running VM takes more CPUs at once; memory may need a restart, and its file system grows to a bigger disk
-          when it next starts.
+          {{ t('envs.resize.vmRunning') }}
         </template>
-        <template v-else-if="vm">A VM's file system grows to a bigger disk when it next starts.</template>
-        <template v-else>A container takes the new limits at once, without a restart.</template>
-        A disk can only grow.
+        <template v-else-if="vm">{{ t('envs.resize.vm') }}</template>
+        <template v-else>{{ t('envs.resize.container') }}</template>
+        {{ t('envs.resize.onlyGrows') }}
       </p>
       <p v-if="error" class="rsz__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't resize it. {{ error }}.</span>
+        <span class="selectable">{{ t('envs.resize.failed', { error }) }}</span>
       </p>
     </form>
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
-      <UiButton variant="primary" type="submit" form="env-resize-form" :disabled="!changed" :loading="busy">Apply</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
+      <UiButton variant="primary" type="submit" form="env-resize-form" :disabled="!changed" :loading="busy">{{ t('envs.resize.apply') }}</UiButton>
     </template>
   </UiDialog>
 </template>

@@ -3,6 +3,7 @@ import { Clock, Paperclip, SendHorizontal, X } from 'lucide-vue-next'
 import type { Thread } from '~/types/chat'
 import { useThreads } from '~/stores/threads'
 import { isRunning } from '~/agents'
+import { formatLocale } from '~/i18n'
 
 /**
  * Messages written while the agent works. They wait for the turn to end, so the agent is not
@@ -10,6 +11,7 @@ import { isRunning } from '~/agents'
  * One row each, so a glance says what is still to go out.
  */
 const props = defineProps<{ thread: Thread }>()
+const { t } = useI18n()
 const threads = useThreads()
 
 /** A message that is already in the chat only waits for its turn: nothing to offer there. */
@@ -23,24 +25,24 @@ const steerable = computed(() => props.thread.status !== undefined && isRunning(
 </script>
 
 <template>
-  <ul v-if="waiting.length" class="qu" role="list" aria-label="Messages waiting to be sent">
+  <ul v-if="waiting.length" class="qu" role="list" :aria-label="t('chat.queue.label')">
     <li v-for="q in waiting" :key="q.id" class="qu__row">
       <Clock class="qu__icon" aria-hidden="true" />
-      <span class="qu__text" :title="q.text">{{ q.text || 'Attachment' }}</span>
-      <time v-if="q.queuedAt" class="qu__time tabular" :datetime="new Date(q.queuedAt).toISOString()" :title="`Written ${new Date(q.queuedAt).toLocaleTimeString()}`">{{ new Date(q.queuedAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) }}</time>
-      <span v-if="q.attachments.length" class="qu__files tabular" :title="`${q.attachments.length} attached`">
+      <span class="qu__text" :title="q.text">{{ q.text || t('chat.attachment') }}</span>
+      <time v-if="q.queuedAt" class="qu__time tabular" :datetime="new Date(q.queuedAt).toISOString()" :title="t('chat.queue.written', { time: new Date(q.queuedAt).toLocaleTimeString(formatLocale()) })">{{ new Date(q.queuedAt).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' }) }}</time>
+      <span v-if="q.attachments.length" class="qu__files tabular" :title="t('chat.queue.attached', { n: q.attachments.length })">
         <Paperclip aria-hidden="true" />{{ q.attachments.length }}
       </span>
       <UiButton
         v-if="steerable"
         variant="ghost"
         size="sm"
-        :title="`Give it to ${thread.status === 'waiting' ? 'the agent' : 'the running turn'} now: it reads it at its next step`"
+        :title="thread.status === 'waiting' ? t('chat.queue.toAgent') : t('chat.queue.toTurn')"
         @click="threads.sendNow(thread.id, q.id)"
       >
-        <SendHorizontal aria-hidden="true" /> Send now
+        <SendHorizontal aria-hidden="true" /> {{ t('chat.queue.sendNow') }}
       </UiButton>
-      <UiIconButton size="sm" label="Remove from the queue" @click="threads.dropQueued(thread.id, q.id)">
+      <UiIconButton size="sm" :label="t('chat.queue.remove')" @click="threads.dropQueued(thread.id, q.id)">
         <X />
       </UiIconButton>
     </li>

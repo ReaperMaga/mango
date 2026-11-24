@@ -6,6 +6,7 @@ import { useWorkspace } from '~/stores/workspace'
  * in a window that already holds others. Enter opens it here, Escape cancels. "Remember my choice"
  * stops the question; Settings > Preferences brings it back.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const remember = ref(false)
 const here = ref<{ $el: HTMLElement } | null>(null)
@@ -32,22 +33,21 @@ function onEnter(e: KeyboardEvent) {
 </script>
 
 <template>
-  <UiDialog :open="!!ws.openWhere" title="Open project" :width="440" @close="answer(null)">
+  <UiDialog :open="!!ws.openWhere" :title="t('shell.openWhere.title')" :width="440" @close="answer(null)">
     <div class="ow" @keydown.enter="onEnter">
-      <p class="ow__body">
-        Where would you like to open <strong class="ow__name">{{ ws.openWhere?.name }}</strong>?
-        This window keeps it beside the projects already open here.
-      </p>
+      <i18n-t keypath="shell.openWhere.body" tag="p" class="ow__body" scope="global">
+        <template #name><strong class="ow__name">{{ ws.openWhere?.name }}</strong></template>
+      </i18n-t>
       <label class="ow__remember">
         <input v-model="remember" type="checkbox" class="ow__check">
-        <span>Remember my choice</span>
+        <span>{{ t('shell.openWhere.remember') }}</span>
       </label>
-      <p v-if="remember" class="ow__hint">Change it later in Settings &gt; Preferences.</p>
+      <p v-if="remember" class="ow__hint">{{ t('shell.openWhere.hint') }}</p>
     </div>
     <template #footer>
-      <UiButton variant="ghost" @click="answer(null)">Cancel</UiButton>
-      <UiButton @click="answer('new')">New window</UiButton>
-      <UiButton ref="here" variant="primary" @click="answer('this')">This window</UiButton>
+      <UiButton variant="ghost" @click="answer(null)">{{ t('common.actions.cancel') }}</UiButton>
+      <UiButton @click="answer('new')">{{ t('shell.project.newWindow') }}</UiButton>
+      <UiButton ref="here" variant="primary" @click="answer('this')">{{ t('shell.openWhere.thisWindow') }}</UiButton>
     </template>
   </UiDialog>
 </template>

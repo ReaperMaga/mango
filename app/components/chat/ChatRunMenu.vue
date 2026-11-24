@@ -2,12 +2,12 @@
 import { FilePen, Map as MapIcon, ShieldCheck, Zap } from 'lucide-vue-next'
 import type { PermissionMode } from '~/types/chat'
 
-/** The permission modes as the composer names them. */
-export const PERMISSION_MODES = {
-  plan: { label: 'Plan', hint: 'Read-only: explores and proposes a plan', icon: MapIcon },
-  ask: { label: 'Ask first', hint: 'Asks before edits and commands', icon: ShieldCheck },
-  edits: { label: 'Accept edits', hint: 'Edits files freely, asks before commands', icon: FilePen },
-  auto: { label: 'Full auto', hint: 'Never asks. Use with care.', icon: Zap },
+/** The permission modes the composer offers; their names are `general.modes`. */
+const PERMISSION_MODES = {
+  plan: { icon: MapIcon },
+  ask: { icon: ShieldCheck },
+  edits: { icon: FilePen },
+  auto: { icon: Zap },
 } as const satisfies Record<PermissionMode, unknown>
 </script>
 
@@ -51,6 +51,7 @@ const emit = defineEmits<{
   'update:mode': [mode: PermissionMode]
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const models = useModels()
 
@@ -70,11 +71,11 @@ const rows = computed<Row[]>(() => [
     key: id,
     agent: id,
     label: AGENTS[id].name,
-    aside: id === props.agent ? models.label(id, props.model, ws.activeProjectPath) : missing(id) ? 'Not installed' : '',
+    aside: id === props.agent ? models.label(id, props.model, ws.activeProjectPath) : missing(id) ? t('chat.run.notInstalled') : '',
     icon: null,
   })),
-  ...(props.efforts.length ? [{ key: 'effort' as const, label: 'Effort', aside: props.effortText, icon: Gauge }] : []),
-  { key: 'mode', label: 'Permissions', aside: PERMISSION_MODES[props.mode].label, icon: PERMISSION_MODES[props.mode].icon },
+  ...(props.efforts.length ? [{ key: 'effort' as const, label: t('chat.effort.title'), aside: props.effortText, icon: Gauge }] : []),
+  { key: 'mode', label: t('chat.run.permissions'), aside: t(`general.modes.${props.mode}.label`), icon: PERMISSION_MODES[props.mode].icon },
 ])
 
 /* ---------- open / close ---------- */
@@ -165,8 +166,8 @@ const toggle = () => (open.value ? close() : show())
 
 const modeChoices = computed<Choice[]>(() => (Object.keys(PERMISSION_MODES) as PermissionMode[]).map(k => ({
   key: k,
-  label: PERMISSION_MODES[k].label,
-  hint: PERMISSION_MODES[k].hint,
+  label: t(`general.modes.${k}.label`),
+  hint: t(`chat.run.modes.${k}`),
   icon: PERMISSION_MODES[k].icon,
   checked: props.mode === k,
   onSelect: () => { emit('update:mode', k); close(true) },
@@ -200,8 +201,8 @@ const switchNote = computed(() => {
   const target = sub.value
   if (!target || target === 'effort' || target === 'mode' || target === props.agent) return null
   const other = AGENTS[target].name
-  if (props.busy) return `Stop ${AGENTS[props.agent].name} to switch this chat to ${other}.`
-  if (props.started) return `${other} starts a new conversation: it won't see the messages above.`
+  if (props.busy) return t('chat.run.stopToSwitch', { agent: AGENTS[props.agent].name, other })
+  if (props.started) return t('chat.run.newConversation', { other })
   return null
 })
 
@@ -302,8 +303,8 @@ function onListKey(e: KeyboardEvent) {
 
 /* ---------- outside the menu ---------- */
 
-function inside(t: Node) {
-  return !!(root.value?.contains(t) || pop.value?.contains(t) || fly.value?.contains(t))
+function inside(el: Node) {
+  return !!(root.value?.contains(el) || pop.value?.contains(el) || fly.value?.contains(el))
 }
 function onDocDown(e: MouseEvent) {
   if (open.value && !inside(e.target as Node)) close()
@@ -340,7 +341,7 @@ defineExpose({ toggle, close })
           ref="pop"
           class="run"
           role="menu"
-          aria-label="Agent, model, effort and permissions"
+          :aria-label="t('chat.run.menu')"
           tabindex="-1"
           :style="{
             width: `${WIDTH}px`,
@@ -352,7 +353,7 @@ defineExpose({ toggle, close })
           @keydown="onMenuKey"
         >
           <template v-for="(row, i) in rows" :key="row.key">
-            <div v-if="i === 0" class="run__group" role="presentation">Agent</div>
+            <div v-if="i === 0" class="run__group" role="presentation">{{ t('chat.run.agent') }}</div>
             <div v-else-if="row.key === 'effort' || (row.key === 'mode' && !efforts.length)" class="run__sep" role="separator" />
             <button
               type="button"
@@ -387,7 +388,7 @@ defineExpose({ toggle, close })
             'is-gliding': flyGlide,
           }"
           :role="sub === 'effort' ? 'dialog' : 'menu'"
-          :aria-label="sub === 'effort' ? 'Reasoning effort' : sub === 'mode' ? 'Permissions' : `${AGENTS[sub].name} models`"
+          :aria-label="sub === 'effort' ? t('chat.effort.reasoning') : sub === 'mode' ? t('chat.run.permissions') : t('chat.run.models', { agent: AGENTS[sub].name })"
           tabindex="-1"
           :style="{
             left: `${flyPos.left}px`,

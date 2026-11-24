@@ -1,6 +1,6 @@
 /**
  * What a person pastes to install a plugin, read as a git source (`url`, `ref`, `subpath`) for
- * `plugins_probe`. Pure and plain-Node testable (tests/pluginSource.test.ts): no Vue, no `~/` imports.
+ * `plugins_probe`. Pure and plain-Node testable (tests/pluginSource.test.ts): no `~/` imports.
  *
  * Understood:
  * - `https://host/owner/repo(.git)`, any host (self-hosted too)
@@ -14,6 +14,8 @@
  * A branch with a `/` in its name can't be told apart from a folder in a web link: the first part is
  * taken as the branch, and the Branch field in the dialog sets it exactly.
  */
+
+import { t } from '../i18n/index.ts'
 
 export interface GitSourceInput {
   url: string
@@ -39,8 +41,8 @@ function looksLocal(s: string): boolean {
 /** A folder inside the repository: `/`-separated, no `..`, no leading or trailing slash. Null when empty. */
 export function cleanSubpath(raw: string | null | undefined): { ok: true; value: string | null } | { ok: false; error: string } {
   const parts = (raw ?? '').replace(/\\/g, '/').split('/').map(p => p.trim()).filter(p => p && p !== '.')
-  if (parts.some(p => p === '..')) return { ok: false, error: 'The folder must be inside the repository (no "..").' }
-  if (parts.some(p => /[\0-\x1f]/.test(p))) return { ok: false, error: 'The folder name has characters git can\'t use.' }
+  if (parts.some(p => p === '..')) return { ok: false, error: t('plugins.source.outside') }
+  if (parts.some(p => /[\0-\x1f]/.test(p))) return { ok: false, error: t('plugins.source.folderChars') }
   return { ok: true, value: parts.length ? parts.join('/') : null }
 }
 
@@ -49,7 +51,7 @@ export function cleanRef(raw: string | null | undefined): { ok: true; value: str
   const ref = (raw ?? '').trim()
   if (!ref) return { ok: true, value: null }
   if (/\s/.test(ref) || ref.startsWith('-') || ref.includes('..') || /[\0-\x1f~^:?*[\\]/.test(ref)) {
-    return { ok: false, error: `"${ref}" isn't a branch, tag or commit name git accepts.` }
+    return { ok: false, error: t('plugins.source.badRef', { ref }) }
   }
   return { ok: true, value: ref }
 }
@@ -93,9 +95,9 @@ function fromWebPath(segments: string[]): { repo: string[]; ref: string | null; 
 /** Read a pasted source. `extra` (the dialog's Branch and Folder fields) wins over the link when set. */
 export function parsePluginSource(input: string, extra: { ref?: string | null; subpath?: string | null } = {}): ParsedPluginSource {
   let s = input.trim()
-  if (!s) return { ok: false, error: 'Paste a link to a git repository.', empty: true }
+  if (!s) return { ok: false, error: t('plugins.source.empty'), empty: true }
   if (looksLocal(s)) {
-    return { ok: false, local: true, error: 'That looks like a folder on this computer. Use "Add local folder" for it.' }
+    return { ok: false, local: true, error: t('plugins.source.local') }
   }
 
   // An optional `#ref:folder` / `#folder` suffix.
@@ -129,20 +131,20 @@ export function parsePluginSource(input: string, extra: { ref?: string | null; s
     // git@host:owner/repo.git
     url = s.replace(/\/+$/, '')
   } else if (scheme === 'ssh' || scheme === 'git' || scheme === 'git+ssh') {
-    if (/\s/.test(s)) return { ok: false, error: 'A link can\'t contain spaces.' }
+    if (/\s/.test(s)) return { ok: false, error: t('plugins.source.spaces') }
     url = s.replace(/\/+$/, '')
   } else if (scheme === 'http' || scheme === 'https') {
     let u: URL
     try {
       u = new URL(s)
     } catch {
-      return { ok: false, error: 'That link can\'t be read. Paste the repository\'s address, such as https://github.com/owner/repo.' }
+      return { ok: false, error: t('plugins.source.unreadable', { example: 'https://github.com/owner/repo' }) }
     }
     if (u.username || u.password) {
-      return { ok: false, error: 'Leave the sign-in out of the link: git uses your own credentials for private repositories.' }
+      return { ok: false, error: t('plugins.source.signIn') }
     }
     const segments = u.pathname.split('/').filter(Boolean).map(p => decodeURIComponent(p))
-    if (!segments.length) return { ok: false, error: 'That link names a site, not a repository. Add the owner and repository, such as https://github.com/owner/repo.' }
+    if (!segments.length) return { ok: false, error: t('plugins.source.site', { example: 'https://github.com/owner/repo' }) }
     const web = fromWebPath(segments)
     if (web) {
       url = `${u.protocol}//${u.host}/${web.repo.join('/')}`
@@ -153,9 +155,9 @@ export function parsePluginSource(input: string, extra: { ref?: string | null; s
       url = `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, '')}`
     }
   } else if (scheme) {
-    return { ok: false, error: `Links starting with ${scheme}:// aren't supported. Use an https:// or ssh link to the repository.` }
+    return { ok: false, error: t('plugins.source.scheme', { scheme: `${scheme}://` }) }
   } else {
-    return { ok: false, error: 'That isn\'t a repository link. Paste one such as https://github.com/owner/repo or git@github.com:owner/repo.git.' }
+    return { ok: false, error: t('plugins.source.notLink', { https: 'https://github.com/owner/repo', ssh: 'git@github.com:owner/repo.git' }) }
   }
 
   // The suffix wins over the link, and the dialog's fields win over both.

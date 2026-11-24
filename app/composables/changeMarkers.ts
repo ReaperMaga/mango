@@ -1,6 +1,7 @@
 import type * as Monaco from 'monaco-editor'
-import { h, render } from 'vue'
+import { h, render, watch } from 'vue'
 import FilesChangePeek from '~/components/files/FilesChangePeek.vue'
+import { i18n, t } from '~/i18n'
 import { lineChanges, type LineChange } from '~/utils/lineDiff'
 import { tokenHex } from '~/utils/cssColor'
 import type { MonacoApi } from '~/composables/monaco'
@@ -33,7 +34,7 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
   const colour = (kind: LineChange['kind']) =>
     tokenHex(kind === 'add' ? '--diff-add-fg' : kind === 'mod' ? '--accent-ink' : '--diff-del-fg', '#888888')
   const label = (c: LineChange) =>
-    c.kind === 'add' ? 'Added since the last commit' : c.kind === 'mod' ? 'Changed since the last commit' : 'Lines removed here'
+    c.kind === 'add' ? t('files.peek.markAdd') : c.kind === 'mod' ? t('files.peek.markMod') : t('files.peek.markDel')
 
   function compute() {
     clearTimeout(timer)
@@ -55,7 +56,7 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
         options: {
           isWholeLine: true,
           linesDecorationsClassName: `mango-change mango-change--${c.kind}${atEnd ? ' is-end' : ''}`,
-          linesDecorationsTooltip: `${label(c)}. Click to see what was there.`,
+          linesDecorationsTooltip: label(c),
           overviewRuler: { color: colour(c.kind), position: monaco.editor.OverviewRulerLane.Left },
         },
       }
@@ -172,6 +173,7 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
   // The scrollbar marks take their colours once; a theme or scheme change paints them again.
   const themeWatch = new MutationObserver(() => { if (base) compute() })
   themeWatch.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-scheme'] })
+  const stopLocale = watch(i18n.global.locale, () => { if (base) compute() })
 
   return {
     setBase(text) {
@@ -185,6 +187,7 @@ export function changeMarkers(monaco: MonacoApi, editor: Monaco.editor.IStandalo
       clearTimeout(timer)
       closePeek()
       themeWatch.disconnect()
+      stopLocale()
       for (const s of subs) s.dispose()
       decorations.clear()
     },

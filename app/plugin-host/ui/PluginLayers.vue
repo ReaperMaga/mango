@@ -12,6 +12,7 @@ import { useOverlay } from '~/composables/useOverlay'
  */
 useOverlay(() => layers.toasts.length > 0)
 
+const { t } = useI18n()
 const ICONS = { info: Info, success: CircleCheck, warning: TriangleAlert, error: CircleX }
 
 /* ---------- toasts: each times out unless the pointer or the focus is on it */
@@ -19,9 +20,9 @@ const ICONS = { info: Info, success: CircleCheck, warning: TriangleAlert, error:
 const timers = new Map<number, { left: number; started: number; handle: ReturnType<typeof setTimeout> | null }>()
 const held = ref(false)
 
-function arm(t: Toast) {
-  if (!t.timeout || timers.has(t.id)) return
-  timers.set(t.id, { left: t.timeout, started: Date.now(), handle: held.value ? null : setTimeout(() => dismiss(t.id), t.timeout) })
+function arm(item: Toast) {
+  if (!item.timeout || timers.has(item.id)) return
+  timers.set(item.id, { left: item.timeout, started: Date.now(), handle: held.value ? null : setTimeout(() => dismiss(item.id), item.timeout) })
 }
 function dismiss(id: number) {
   const tm = timers.get(id)
@@ -42,16 +43,16 @@ function hold(on: boolean) {
     }
   }
 }
-watch(() => layers.toasts.map(t => t.id), () => {
-  for (const t of layers.toasts) arm(t)
-  for (const id of [...timers.keys()]) if (!layers.toasts.some(t => t.id === id)) dismiss(id)
+watch(() => layers.toasts.map(item => item.id), () => {
+  for (const item of layers.toasts) arm(item)
+  for (const id of [...timers.keys()]) if (!layers.toasts.some(item => item.id === id)) dismiss(id)
 }, { immediate: true })
 onBeforeUnmount(() => { for (const tm of timers.values()) if (tm.handle) clearTimeout(tm.handle) })
 
-function act(t: Toast) {
-  const run = t.action?.run
-  dismiss(t.id)
-  try { run?.() } catch (e) { if (t.pluginId) report(t.pluginId, e, 'toast action') }
+function act(item: Toast) {
+  const run = item.action?.run
+  dismiss(item.id)
+  try { run?.() } catch (e) { if (item.pluginId) report(item.pluginId, e, 'toast action') }
 }
 
 /* ---------- dialogs: one at a time, the oldest first */
@@ -78,16 +79,16 @@ const viewCtx = computed(() => {
 
 <template>
   <Teleport to="body">
-    <section v-if="layers.toasts.length" class="toasts" aria-label="Notifications" @pointerenter="hold(true)" @pointerleave="hold(false)" @focusin="hold(true)" @focusout="hold(false)">
+    <section v-if="layers.toasts.length" class="toasts" :aria-label="t('plugins.view.notifications')" @pointerenter="hold(true)" @pointerleave="hold(false)" @focusin="hold(true)" @focusout="hold(false)">
       <TransitionGroup name="toast" tag="ol" class="toasts__list">
-        <li v-for="t in layers.toasts" :key="t.id" class="toast" :class="`toast--${t.kind}`" :role="t.kind === 'error' || t.kind === 'warning' ? 'alert' : 'status'">
-          <component :is="ICONS[t.kind]" class="toast__icon" aria-hidden="true" />
+        <li v-for="item in layers.toasts" :key="item.id" class="toast" :class="`toast--${item.kind}`" :role="item.kind === 'error' || item.kind === 'warning' ? 'alert' : 'status'">
+          <component :is="ICONS[item.kind]" class="toast__icon" aria-hidden="true" />
           <div class="toast__text selectable">
-            <p class="toast__title">{{ t.title }}</p>
-            <p v-if="t.body" class="toast__body">{{ t.body }}</p>
-            <button v-if="t.action" type="button" class="toast__action" @click="act(t)">{{ t.action.label }}</button>
+            <p class="toast__title">{{ item.title }}</p>
+            <p v-if="item.body" class="toast__body">{{ item.body }}</p>
+            <button v-if="item.action" type="button" class="toast__action" @click="act(item)">{{ item.action.label }}</button>
           </div>
-          <button type="button" class="toast__close" aria-label="Dismiss" @click="dismiss(t.id)"><X /></button>
+          <button type="button" class="toast__close" :aria-label="t('plugins.dismiss')" @click="dismiss(item.id)"><X /></button>
         </li>
       </TransitionGroup>
     </section>
@@ -102,9 +103,9 @@ const viewCtx = computed(() => {
       <PluginViewHost v-if="dialog.kind === 'view'" :key="dialog.id" :view="dialog.view" :ctx="viewCtx" :plugin-id="dialog.pluginId" />
     </template>
     <template v-if="dialog && dialog.kind !== 'view'" #footer>
-      <UiButton variant="ghost" :data-autofocus="dialog.kind === 'confirm' ? '' : undefined" @click="cancel">Cancel</UiButton>
+      <UiButton variant="ghost" :data-autofocus="dialog.kind === 'confirm' ? '' : undefined" @click="cancel">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton :variant="dialog.kind === 'confirm' && dialog.danger ? 'danger' : 'primary'" @click="accept">
-        {{ dialog.kind === 'confirm' ? dialog.confirmLabel || 'OK' : 'OK' }}
+        {{ dialog.kind === 'confirm' ? dialog.confirmLabel || t('plugins.view.ok') : t('plugins.view.ok') }}
       </UiButton>
     </template>
   </UiDialog>

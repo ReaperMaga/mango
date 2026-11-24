@@ -80,10 +80,15 @@ function lastProblem(messages: Message[]): string {
   return note ? plainExcerpt(note.text, 140) : ''
 }
 
-const PLAIN: Record<NotifyKind, string> = {
-  done: 'A chat finished.',
-  needsYou: 'A chat is waiting for you.',
-  failed: 'A chat failed.',
+/** What a notification says in its own words: alone (`plain`), or before the chat's (`lead`). */
+export interface NotifyWords {
+  plain: Record<NotifyKind, string>
+  lead: Record<NotifyKind, string>
+}
+
+const ENGLISH: NotifyWords = {
+  plain: { done: 'A chat finished.', needsYou: 'A chat is waiting for you.', failed: 'A chat failed.' },
+  lead: { done: 'Finished', needsYou: 'Needs your approval', failed: 'Failed' },
 }
 
 /**
@@ -95,11 +100,12 @@ export function notificationFor(
   thread: { title: string; messages: Message[] },
   prefs: NotifyPrefs,
   ctx: NotifyContext,
+  words: NotifyWords = ENGLISH,
 ): { title: string; body: string } | null {
   if (!prefs.enabled || !prefs[kind]) return null
   if (ctx.windowFocused && (prefs.backgroundOnly || ctx.chatVisible)) return null
-  if (!prefs.preview) return { title: 'Mango', body: PLAIN[kind] }
+  if (!prefs.preview) return { title: 'Mango', body: words.plain[kind] }
   const detail = kind === 'done' ? lastReply(thread.messages) : kind === 'needsYou' ? pendingAsk(thread.messages) : lastProblem(thread.messages)
-  const lead = kind === 'done' ? 'Finished' : kind === 'needsYou' ? 'Needs your approval' : 'Failed'
+  const lead = words.lead[kind]
   return { title: thread.title, body: detail ? `${lead}: ${detail}` : `${lead}.` }
 }

@@ -10,6 +10,7 @@ import { useWorkspace } from '~/stores/workspace'
 const props = defineProps<{ open: boolean; hostId: string; instance: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const ws = useWorkspace()
 
@@ -47,15 +48,15 @@ watch(leaf, (l) => {
 const dir = computed(() => folder.value.trim().replace(/\/+$/, ''))
 const folderError = computed(() => {
   const d = dir.value
-  if (!d || d === ENV_WORK_DIR) return 'Name the project, or enter the folder to open.'
-  if (!d.startsWith('/')) return 'Use an absolute path inside the environment, starting with /.'
-  if (d.split('/').includes('..')) return 'Leave out ".." in the path.'
+  if (!d || d === ENV_WORK_DIR) return t('envs.project.folderEmpty')
+  if (!d.startsWith('/')) return t('envs.project.folderAbsolute')
+  if (d.split('/').includes('..')) return t('envs.project.folderDots')
   return null
 })
 const urlError = computed(() => {
   const u = cloneUrl.value.trim()
   if (!u) return null
-  return /^(https?:\/\/|ssh:\/\/|git@)[^\s]+$/.test(u) ? null : 'Use an https:// or git@ address.'
+  return /^(https?:\/\/|ssh:\/\/|git@)[^\s]+$/.test(u) ? null : t('envs.project.urlInvalid')
 })
 
 async function submit() {
@@ -80,9 +81,9 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="`Open project in ${instance}`" :width="500" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('envs.project.title', { name: instance })" :width="500" :dismissible="!busy" @close="close">
     <form id="env-project-form" class="op" novalidate @submit.prevent="submit">
-      <UiField label="Name" for="op-name" hint="Optional. Names the project and its folder.">
+      <UiField :label="t('envs.common.name')" for="op-name" :hint="t('envs.project.nameHint')">
         <input
           id="op-name"
           v-model="name"
@@ -96,9 +97,9 @@ function close() {
         >
       </UiField>
       <UiField
-        label="Clone from"
+        :label="t('envs.project.cloneFrom')"
         for="op-url"
-        hint="Optional. Cloned inside the environment with its own git and GitHub sign-in."
+        :hint="t('envs.project.cloneHint')"
         :error="touched ? urlError : null"
       >
         <input
@@ -113,9 +114,9 @@ function close() {
         >
       </UiField>
       <UiField
-        label="Folder in the environment"
+        :label="t('envs.project.folder')"
         for="op-folder"
-        hint="Created if it doesn't exist. An existing folder opens as it is."
+        :hint="t('envs.project.folderHint')"
         :error="touched ? folderError : null"
       >
         <input
@@ -132,13 +133,13 @@ function close() {
 
       <p v-if="error" class="op__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't open it. {{ error }}.</span>
+        <span class="selectable">{{ t('envs.project.failed', { error }) }}</span>
       </p>
     </form>
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton variant="primary" type="submit" form="env-project-form" :loading="busy">
-        <FolderGit2 v-if="!busy" />{{ busy ? (cloneUrl.trim() ? 'Cloning…' : 'Opening…') : cloneUrl.trim() ? 'Clone and open' : 'Open project' }}
+        <FolderGit2 v-if="!busy" />{{ busy ? (cloneUrl.trim() ? t('envs.project.cloning') : t('envs.project.opening')) : cloneUrl.trim() ? t('envs.project.cloneAndOpen') : t('envs.project.open') }}
       </UiButton>
     </template>
   </UiDialog>

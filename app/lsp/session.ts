@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.ts'
 import type { ContentChange, InitializeResult, ServerCapabilities } from './protocol.ts'
 import { Rpc, RpcError, isBenign, type RequestOptions } from './rpc.ts'
 import { PendingChanges, syncOptions, type EditorChange } from './sync.ts'
@@ -85,7 +86,7 @@ const MAX_REASON = 300
 export function crashReason(name: string, code: number | null, stderr: string): string {
   const lines = stderr.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').split(/\r?\n/).map(l => l.trim()).filter(Boolean).slice(-30)
   const said = lines.find(l => /\b(error|panicked|fatal|exception|not found|cannot|failed)\b/i.test(l)) ?? lines.at(-1)
-  const ended = code === null ? `${name} stopped.` : `${name} stopped with code ${code}.`
+  const ended = code === null ? t('files.server.stopped', { name }) : t('files.server.stoppedCode', { name, code })
   return said ? `${ended} ${said.slice(0, MAX_REASON)}` : ended
 }
 
@@ -198,7 +199,7 @@ export class Session {
       if (attempt !== this.attempt) return
       const caps = result?.capabilities ?? {}
       if (caps.positionEncoding && caps.positionEncoding !== 'utf-16') {
-        return this.fail(`${this.options.name} counts columns in ${caps.positionEncoding}, which Mango does not support.`)
+        return this.fail(t('files.server.columns', { name: this.options.name, encoding: caps.positionEncoding }))
       }
       this.caps = caps
       this.sync = syncOptions(caps)
@@ -209,7 +210,7 @@ export class Session {
       this.set({ state: 'ready', error: null })
     } catch (e) {
       if (attempt !== this.attempt) return
-      this.crashed(`${this.options.name} could not start: ${e instanceof RpcError ? e.message.slice(0, MAX_REASON) : String(e)}`)
+      this.crashed(t('files.server.couldNotStart', { name: this.options.name, error: e instanceof RpcError ? e.message.slice(0, MAX_REASON) : String(e) }))
     }
   }
 
@@ -466,7 +467,7 @@ export class Session {
     }
     const first = this.progress.values().next().value
     const busy = first
-      ? `${[first.title, first.message].filter(Boolean).join(': ') || 'Working'}`.slice(0, 120) + (first.percentage === null ? '' : ` (${first.percentage}%)`)
+      ? `${[first.title, first.message].filter(Boolean).join(': ') || t('files.server.working')}`.slice(0, 120) + (first.percentage === null ? '' : ` (${first.percentage}%)`)
       : null
     if (busy !== this.view.busy) this.set({ busy })
   }

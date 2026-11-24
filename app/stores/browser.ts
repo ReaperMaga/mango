@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { BrowserBounds } from '~/types/ipc'
 import { call, isTauri, on } from '~/composables/useBackend'
+import { t } from '~/i18n'
 import { overlayOpen } from '~/composables/useOverlay'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
@@ -50,7 +51,7 @@ let frame = 0
 /** Set once `init` has run: webviews are created only after the reset that starts it. */
 let started: Promise<void> | null = null
 
-const errorText = (e: unknown) => (e instanceof Error ? e.message : typeof e === 'string' ? e : 'The browser stopped unexpectedly.')
+const errorText = (e: unknown) => (e instanceof Error ? e.message : typeof e === 'string' ? e : t('terminal.browser.crashed'))
 
 export const useBrowser = defineStore('browser', {
   state: () => ({
@@ -279,9 +280,9 @@ async function send(id: string, want: string, bounds: BrowserBounds) {
 
 /** The tab title: the page's title, its host, or "New tab". */
 export function browserTitle(b: Browser | null | undefined): string {
-  if (!b) return 'Browser'
+  if (!b) return t('terminal.browser.label')
   if (b.title.trim()) return b.title.trim()
   if (!isBlank(b.url)) return hostOf(b.url)
-  return 'New tab'
+  return t('terminal.browser.newTab')
 }
 

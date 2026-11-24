@@ -3,6 +3,7 @@ import { Minimize2 } from 'lucide-vue-next'
 import type { ContextUsage } from '~/types/chat'
 import { contextLevel, contextPercent, formatTokens } from '~/agents/context'
 import { useOverlay } from '~/composables/useOverlay'
+import { contextPart } from '~/utils/chatTexts'
 
 /**
  * How full the chat's context window is: a small meter in the composer, and on click a
@@ -21,6 +22,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ compact: [] }>()
 
+const { t } = useI18n()
 const open = ref(false)
 useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
@@ -37,17 +39,17 @@ const pct = computed(() => contextPercent(props.usage))
 const tone = computed(() => ({ ok: '', high: 'is-high', full: 'is-full' })[contextLevel(u.value)])
 
 const total = computed(() => (u.value.max
-  ? `${formatTokens(u.value.used)} of ${formatTokens(u.value.max)}`
-  : `${formatTokens(u.value.used)} tokens`))
+  ? t('chat.context.of', { used: formatTokens(u.value.used), max: formatTokens(u.value.max) })
+  : t('chat.context.tokens', { used: formatTokens(u.value.used) })))
 /** What the empty ring says. */
 const waiting = computed(() => (props.pending
-  ? `Reading how full this conversation is from ${props.agentName}…`
-  : `No reading yet. It shows after ${props.agentName}'s next reply.`))
+  ? t('chat.context.reading', { agent: props.agentName })
+  : t('chat.context.noReading', { agent: props.agentName })))
 const label = computed(() => (!props.usage
-  ? `Context window: ${waiting.value}`
+  ? t('chat.context.labelEmpty', { text: waiting.value })
   : pct.value === null
-    ? `Context: ${formatTokens(u.value.used)} tokens in use`
-    : `Context: ${pct.value}% full, ${total.value} tokens`))
+    ? t('chat.context.labelUsed', { used: formatTokens(u.value.used) })
+    : t('chat.context.labelFull', { pct: pct.value, total: total.value })))
 
 /** Each part's colour; parts the list does not know share the neutral one. */
 const SWATCH: Record<string, string> = {
@@ -64,10 +66,10 @@ const rows = computed<Row[]>(() => {
   const u = props.usage
   if (!u) return []
   if (u.parts?.length) {
-    return u.parts.map(p => ({ ...p, color: p.kind === 'used' ? SWATCH[p.id] ?? 'var(--fg-subtle)' : '' }))
+    return u.parts.map(p => ({ ...p, label: contextPart(p.label), color: p.kind === 'used' ? SWATCH[p.id] ?? 'var(--fg-subtle)' : '' }))
   }
-  const out: Row[] = [{ id: 'used', label: 'In use', tokens: u.used, kind: 'used', color: 'var(--accent)' }]
-  if (u.max) out.push({ id: 'free', label: 'Free space', tokens: Math.max(0, u.max - u.used), kind: 'free', color: '' })
+  const out: Row[] = [{ id: 'used', label: t('chat.context.inUse'), tokens: u.used, kind: 'used', color: 'var(--accent)' }]
+  if (u.max) out.push({ id: 'free', label: t('chat.context.freeSpace'), tokens: Math.max(0, u.max - u.used), kind: 'free', color: '' })
   return out
 })
 /** The bar: what is in use, then the room kept for compacting. Free space is the track. */
@@ -80,8 +82,8 @@ const partPct = (tokens: number) => {
 }
 
 const note = computed(() => {
-  if (u.value.compactAt) return `${props.agentName} compacts the conversation by itself at ${formatTokens(u.value.compactAt)} tokens.`
-  return `${props.agentName} compacts the conversation by itself when the window fills up.`
+  if (u.value.compactAt) return t('chat.context.compactsAt', { agent: props.agentName, tokens: formatTokens(u.value.compactAt) })
+  return t('chat.context.compactsFull', { agent: props.agentName })
 })
 /** A live reading, taken during the turn: the breakdown follows when it is done. */
 const partial = computed(() => props.busy && !u.value.parts?.length && !!u.value.max)
@@ -118,8 +120,8 @@ function onKey(e: KeyboardEvent) {
   close(true)
 }
 function onDocDown(e: MouseEvent) {
-  const t = e.target as Node
-  if (open.value && !root.value?.contains(t) && !pop.value?.contains(t)) close()
+  const at = e.target as Node
+  if (open.value && !root.value?.contains(at) && !pop.value?.contains(at)) close()
 }
 function onViewportChange(e: Event) {
   if (!open.value || (e.type === 'scroll' && pop.value?.contains(e.target as Node))) return
@@ -165,13 +167,13 @@ onBeforeUnmount(() => {
           ref="pop"
           class="cxp"
           role="dialog"
-          aria-label="Context window"
+          :aria-label="t('chat.context.title')"
           tabindex="-1"
           :style="{ width: `${WIDTH}px`, right: `${pos.right}px`, bottom: `${pos.bottom}px` }"
           @keydown="onKey"
         >
           <div class="cxp__head">
-            <span class="cxp__title">Context window</span>
+            <span class="cxp__title">{{ t('chat.context.title') }}</span>
             <span v-if="usage" class="cxp__value tabular">
               <template v-if="pct !== null"><b :class="tone">{{ pct }}%</b> · </template>{{ total }}
             </span>
@@ -193,17 +195,17 @@ onBeforeUnmount(() => {
               <span class="cxp__pct tabular">{{ partPct(r.tokens) }}</span>
             </li>
           </ul>
-          <p v-if="partial" class="cxp__note">Measured during this turn. The breakdown comes when it is done.</p>
+          <p v-if="partial" class="cxp__note">{{ t('chat.context.partial') }}</p>
           <div v-if="usage" class="cxp__foot">
             <p class="cxp__note">{{ note }}</p>
             <button
               type="button"
               class="cxp__compact"
               :disabled="busy"
-              :title="busy ? 'Wait for the turn to finish' : 'Summarize the conversation so far to free up room (/compact)'"
+              :title="busy ? t('chat.context.compactWait') : t('chat.context.compactTitle')"
               @click="compact"
             >
-              <Minimize2 aria-hidden="true" />Compact
+              <Minimize2 aria-hidden="true" />{{ t('chat.context.compact') }}
             </button>
           </div>
         </div>

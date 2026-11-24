@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { effortLabel } from '~/types/chat'
+import { EFFORT_LABELS } from '~/types/chat'
 
 /**
  * Reasoning effort as a slider: one stop per level the model accepts, lowest on the
@@ -19,6 +19,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [effort: string | null]; done: [] }>()
 
+const { t } = useI18n()
 const range = ref<HTMLInputElement | null>(null)
 
 const last = computed(() => Math.max(1, props.efforts.length - 1))
@@ -32,22 +33,14 @@ const index = computed(() => {
 })
 const fraction = computed(() => index.value / last.value)
 
-const HINTS: Record<string, string> = {
-  none: 'No extra thinking',
-  minimal: 'Barely thinks; fastest',
-  low: 'Quickest answers, least thinking',
-  medium: 'Balanced speed and depth',
-  high: 'Thinks carefully; slower',
-  xhigh: 'Deep thinking for hard problems',
-  max: 'Thinks longest; slowest and uses the most quota',
-}
+const effortLabel = (level: string) => (EFFORT_LABELS[level] ? t(`chat.effort.levels.${level}`) : level)
 const valueText = computed(() => {
   if (!isDefault.value) return effortLabel(props.modelValue!)
-  return props.fallback ? `Default (${effortLabel(props.fallback).toLowerCase()})` : 'Default'
+  return props.fallback ? t('chat.effort.defaultLevel', { level: effortLabel(props.fallback).toLowerCase() }) : t('chat.effort.default')
 })
 const hint = computed(() => {
-  if (isDefault.value) return props.fallback ? `${props.agentName} picks its usual level` : `Whatever ${props.agentName} is set to`
-  return HINTS[props.modelValue!] ?? ''
+  if (isDefault.value) return props.fallback ? t('chat.effort.usual', { agent: props.agentName }) : t('chat.effort.configured', { agent: props.agentName })
+  return EFFORT_LABELS[props.modelValue!] ? t(`chat.effort.hints.${props.modelValue}`) : ''
 })
 
 function set(i: number) {
@@ -73,12 +66,12 @@ defineExpose({ focus: () => range.value?.focus({ preventScroll: true }) })
     class="ef"
     :class="{ 'is-unknown': isUnknown }"
     role="group"
-    aria-label="Reasoning effort"
+    :aria-label="t('chat.effort.reasoning')"
     :style="{ '--f': fraction }"
     @keydown="onKey"
   >
     <div class="ef__head">
-      <span class="ef__title">Effort</span>
+      <span class="ef__title">{{ t('chat.effort.title') }}</span>
       <span class="ef__value" aria-live="polite">{{ valueText }}</span>
     </div>
     <input
@@ -90,7 +83,7 @@ defineExpose({ focus: () => range.value?.focus({ preventScroll: true }) })
       step="1"
       :value="index"
       :aria-valuetext="valueText"
-      aria-label="Effort level"
+      :aria-label="t('chat.effort.level')"
       @input="onInput"
     >
     <div class="ef__ticks">
@@ -113,10 +106,10 @@ defineExpose({ focus: () => range.value?.focus({ preventScroll: true }) })
         type="button"
         class="ef__default"
         :aria-pressed="isDefault"
-        :title="`Let ${agentName} decide`"
+        :title="t('chat.effort.letDecide', { agent: agentName })"
         @click="emit('update:modelValue', null)"
       >
-        Default
+        {{ t('chat.effort.default') }}
       </button>
     </div>
   </div>

@@ -1,3 +1,4 @@
+import { t } from '../i18n/index.ts'
 import type { PanelTabPlace } from '~/plugin-host/ids'
 
 /*
@@ -33,8 +34,8 @@ export function seedBuiltInTabs(
 
 /** Plugins that became part of Mango, by id, with what their page says. They never run, and the catalog leaves them out. */
 const BUILT_IN_PLUGINS = new Map([
-  ['git-log', 'Git log is part of Mango now, so this plugin no longer runs. You can remove it.'],
+  ['git-log', () => t('shell.builtIns.gitLog')],
 ])
 
 /** Why a plugin no longer runs because Mango has it built in, or null. */
-export const builtInPluginNote = (id: string): string | null => BUILT_IN_PLUGINS.get(id) ?? null
+export const builtInPluginNote = (id: string): string | null => BUILT_IN_PLUGINS.get(id)?.() ?? null

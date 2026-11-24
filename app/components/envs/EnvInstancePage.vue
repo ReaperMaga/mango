@@ -3,9 +3,10 @@ import {
   ChevronDown, CircleCheck, CircleDashed, Ellipsis, FolderGit2, Gauge, Info, Link2, MonitorPlay, Pencil, Play, RefreshCw, RotateCw, Share2, Square,
   SquareTerminal, Trash2, TriangleAlert, X,
 } from 'lucide-vue-next'
-import { directProblem, directState, instanceKey, shareDay, useEnvironments } from '~/stores/environments'
+import { directProblem, directState, envComponentName, instanceKey, shareDay, useEnvironments } from '~/stores/environments'
 import type { EnvComponent, EnvComponentId, EnvInstanceAction, EnvLoginTool, EnvVersions } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
+import { formatLocale } from '~/i18n'
 import { useNow } from '~/utils/time'
 import EnvStatus from './EnvStatus.vue'
 import EnvTerminal from './EnvTerminal.vue'
@@ -35,6 +36,7 @@ import { GITLAB_COM } from '~/utils/gitHosts'
  */
 const props = defineProps<{ hostId: string; name: string }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const now = useNow()
 const key = computed(() => instanceKey(props.hostId, props.name))
@@ -65,8 +67,7 @@ async function act(action: EnvInstanceAction) {
   try {
     await envs.act(props.hostId, props.name, action)
   } catch (e) {
-    const verb = { start: 'start', stop: 'stop', restart: 'restart', delete: 'delete' }[action]
-    actionError.value = `Couldn't ${verb} it. ${errorText(e)}.`
+    actionError.value = t(`envs.instance.failed.${action}`, { error: errorText(e) })
   }
 }
 
@@ -75,11 +76,11 @@ const sharing = ref(false)
 const renaming = ref(false)
 const resizing = ref(false)
 const moreItems = computed<MenuItem[]>(() => [
-  { label: 'Restart', icon: RotateCw, disabled: !running.value, onSelect: () => act('restart') },
-  { label: 'Share…', icon: Share2, disabled: !running.value, onSelect: () => { sharing.value = true } },
-  { label: 'Rename…', icon: Pencil, divider: true, disabled: !!busy.value, onSelect: () => { renaming.value = true } },
-  { label: 'Resize…', icon: Gauge, disabled: !!busy.value, onSelect: () => { resizing.value = true } },
-  { label: 'Delete…', icon: Trash2, danger: true, divider: true, disabled: !!busy.value, onSelect: () => { deleting.value = true } },
+  { label: t('envs.instance.restart'), icon: RotateCw, disabled: !running.value, onSelect: () => act('restart') },
+  { label: t('envs.common.share'), icon: Share2, disabled: !running.value, onSelect: () => { sharing.value = true } },
+  { label: t('envs.instance.rename'), icon: Pencil, divider: true, disabled: !!busy.value, onSelect: () => { renaming.value = true } },
+  { label: t('envs.instance.resize'), icon: Gauge, disabled: !!busy.value, onSelect: () => { resizing.value = true } },
+  { label: t('envs.instance.delete'), icon: Trash2, danger: true, divider: true, disabled: !!busy.value, onSelect: () => { deleting.value = true } },
 ])
 
 /* ---------- rename, resize: what to tell afterwards stays with the instance ---------- */
@@ -194,23 +195,24 @@ function closeJob() {
   jobRunning.value = false
 }
 
-const busyTitle = computed(() => (jobRunning.value ? 'Finish or stop the job below first' : undefined))
+const busyTitle = computed(() => (jobRunning.value ? t('envs.job.busy') : undefined))
 
 function install(list: EnvComponent[], versions?: EnvVersions) {
   if (!list.length) return
   const one = list.length === 1 ? list[0]! : null
   const picked = one ? versions?.[one.id] : undefined
-  const names = one ? (picked ? `${one.name} ${picked}` : one.name) : list.length === installedOnes.value.length && list.every(c => c.installed) ? 'everything' : `${list.length} components`
+  const name = one ? envComponentName(one.id) : ''
+  const names = one ? (picked ? `${name} ${picked}` : name) : list.length === installedOnes.value.length && list.every(c => c.installed) ? t('envs.job.everything') : t('envs.job.componentCount', list.length)
   // A picked version other than the installed one replaces it (Node.js) or becomes the default (Java).
   const switching = !!(one?.installed && picked && picked !== one.version)
   const updating = !switching && list.every(c => c.installed)
-  const [doing, done] = switching ? ['Switching', 'Switched'] : updating ? ['Updating', 'Updated'] : ['Installing', 'Installed']
-  const what = switching ? `${one!.name} to ${picked}` : names
+  const kind = switching ? 'switch' : updating ? 'update' : 'install'
+  const params = { what: names, name, version: picked, place: props.name }
   run({
-    title: `${doing} ${what}…`,
-    doneTitle: `${done} ${what}`,
-    failedTitle: `${doing} didn't finish`,
-    label: `${doing} ${what} in ${props.name}`,
+    title: t(`envs.job.${kind}.title`, params),
+    doneTitle: t(`envs.job.${kind}.done`, params),
+    failedTitle: t(`envs.job.${kind}.failed`),
+    label: t(`envs.job.${kind}.label`, params),
     start: (cols, rows) => envs.install(props.hostId, props.name, list.map(c => c.id), cols, rows, versions),
     rows: 12,
     after: () => loadComponents(true),
@@ -227,10 +229,10 @@ const LOGINS: Array<{ tool: EnvLoginTool; name: string; agent?: 'claude' | 'code
 
 function login(tool: EnvLoginTool, name: string) {
   run({
-    title: `Signing in to ${name}…`,
-    doneTitle: `Signed in to ${name}`,
-    failedTitle: 'Sign-in didn\'t finish',
-    label: `${name} sign-in in ${props.name}`,
+    title: t('envs.job.signIn.title', { name }),
+    doneTitle: t('envs.job.signIn.done', { name }),
+    failedTitle: t('envs.job.signIn.failed'),
+    label: t('envs.job.signIn.label', { name, place: props.name }),
     start: (cols, rows) => envs.login(props.hostId, props.name, tool, cols, rows),
     signIn: true,
     rows: 12,
@@ -246,14 +248,14 @@ function loginGitlab(server: string) {
   otherServer.value = false
   const selfManaged = server !== GITLAB_COM
   run({
-    title: `Signing in to ${server}…`,
-    doneTitle: `Signed in to ${server}`,
-    failedTitle: 'Sign-in didn\'t finish',
-    label: `GitLab CLI sign-in to ${server} in ${props.name}`,
+    title: t('envs.job.signIn.title', { name: server }),
+    doneTitle: t('envs.job.signIn.done', { name: server }),
+    failedTitle: t('envs.job.signIn.failed'),
+    label: t('envs.job.signIn.gitlabLabel', { server, place: props.name }),
     start: (cols, rows) => envs.login(props.hostId, props.name, 'glab', cols, rows, server),
     signIn: !selfManaged,
     hint: selfManaged
-      ? `Choose Token, then paste a personal access token from ${server} with the api and write_repository scopes. glab prints where to make one.`
+      ? t('envs.job.signIn.tokenMore', { server })
       : undefined,
     rows: 12,
     after: (code) => { if (code === 0 && selfManaged) void envs.loadGitlabHosts() },
@@ -265,7 +267,7 @@ const otherServer = ref(false)
 const gitlabItems = computed<MenuItem[]>(() => [
   { label: GITLAB_COM, onSelect: () => loginGitlab(GITLAB_COM) },
   ...(envs.gitlabHosts ?? []).map(h => ({ label: h, onSelect: () => loginGitlab(h) })),
-  { label: 'Another server…', divider: true, onSelect: () => { otherServer.value = true } },
+  { label: t('envs.instance.anotherServer'), divider: true, onSelect: () => { otherServer.value = true } },
 ])
 function openGitlabMenu(toggle: () => void) {
   void envs.loadGitlabHosts()
@@ -274,10 +276,10 @@ function openGitlabMenu(toggle: () => void) {
 
 function shell() {
   run({
-    title: `Shell in ${props.name}`,
-    doneTitle: 'Shell closed',
-    failedTitle: 'The shell didn\'t start',
-    label: `Shell in ${props.name}`,
+    title: t('envs.instance.shellIn', { name: props.name }),
+    doneTitle: t('envs.instance.shellClosed'),
+    failedTitle: t('envs.instance.shellFailed'),
+    label: t('envs.instance.shellIn', { name: props.name }),
     start: (cols, rows) => envs.shell(props.hostId, props.name, null, cols, rows),
     shell: true,
     rows: 18,
@@ -312,7 +314,7 @@ onActivated(() => { loadComponents(); takeIntent() })
 const created = computed(() => {
   const ms = inst.value?.createdAt
   if (!ms) return null
-  return new Date(ms).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return new Date(ms).toLocaleDateString(formatLocale(), { year: 'numeric', month: 'short', day: 'numeric' })
 })
 const memory = computed(() => inst.value?.memory?.replace(/([0-9])([A-Za-z])/, '$1 $2') ?? null)
 const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $2') ?? null)
@@ -333,74 +335,71 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
             {{ joinedState.label }}
           </span>
           <span class="ip__actions">
-            <UiIconButton label="Check again" :disabled="probing" @click="reconnect">
+            <UiIconButton :label="t('envs.common.checkAgain')" :disabled="probing" @click="reconnect">
               <RefreshCw :class="{ 'is-turning': probing }" />
             </UiIconButton>
-            <UiButton variant="ghost" size="sm" @click="envs.dialog = { kind: 'host', id: hostId }"><Pencil />Rename</UiButton>
-            <UiButton v-if="!leaving" variant="ghost" size="sm" @click="leaving = true">Leave</UiButton>
+            <UiButton variant="ghost" size="sm" @click="envs.dialog = { kind: 'host', id: hostId }"><Pencil />{{ t('common.actions.rename') }}</UiButton>
+            <UiButton v-if="!leaving" variant="ghost" size="sm" @click="leaving = true">{{ t('envs.instance.leave') }}</UiButton>
           </span>
         </div>
         <p class="ip__meta">
-          <span>Shared with you from</span>
+          <span>{{ t('envs.instance.sharedFrom') }}</span>
           <span class="ip__mono selectable">{{ direct.sharedFrom }}</span>
-          <template v-if="host.name !== name"><span aria-hidden="true">·</span><span class="ip__keep">its name there is {{ name }}</span></template>
+          <template v-if="host.name !== name"><span aria-hidden="true">·</span><span class="ip__keep">{{ t('envs.instance.nameThere', { name }) }}</span></template>
           <template v-if="inst.image"><span aria-hidden="true">·</span><span class="ip__clip" :title="inst.image">{{ inst.image }}</span></template>
         </p>
 
-        <div v-if="leaving" class="ip__confirm" role="group" aria-label="Confirm leaving the environment">
-          <span>Leave {{ host.name }}? This removes it from Mango and deletes its key here; the owner can still revoke it.</span>
+        <div v-if="leaving" class="ip__confirm" role="group" :aria-label="t('envs.instance.leaveLabel')">
+          <span>{{ t('envs.instance.leaveConfirm', { name: host.name }) }}</span>
           <span class="ip__confirm-actions">
-            <UiButton variant="ghost" size="sm" :disabled="leaveBusy" @click="leaving = false">Cancel</UiButton>
-            <UiButton variant="danger" size="sm" :loading="leaveBusy" @click="leave">Leave</UiButton>
+            <UiButton variant="ghost" size="sm" :disabled="leaveBusy" @click="leaving = false">{{ t('common.actions.cancel') }}</UiButton>
+            <UiButton variant="danger" size="sm" :loading="leaveBusy" @click="leave">{{ t('envs.instance.leave') }}</UiButton>
           </span>
         </div>
-        <p v-if="leaveError" class="ip__error selectable" role="alert">Couldn't leave it. {{ leaveError }}.</p>
+        <p v-if="leaveError" class="ip__error selectable" role="alert">{{ t('envs.instance.leaveFailed', { error: leaveError }) }}</p>
       </header>
 
       <!-- can't use it: why, and what to do, calmly -->
       <div v-if="problem" class="ip__problem" role="status">
         <p class="ip__problem-title">
-          <template v-if="problem === 'expired'">Your access ended on {{ accessEnds }}</template>
-          <template v-else-if="problem === 'host-key'">{{ name }} doesn't look like the environment you joined</template>
-          <template v-else-if="problem === 'refused'">{{ name }} no longer accepts your key</template>
-          <template v-else>Can't reach {{ name }} right now</template>
+          <template v-if="problem === 'expired'">{{ t('envs.instance.expired', { day: accessEnds }) }}</template>
+          <template v-else-if="problem === 'host-key'">{{ t('envs.instance.hostKey', { name }) }}</template>
+          <template v-else-if="problem === 'refused'">{{ t('envs.instance.refused', { name }) }}</template>
+          <template v-else>{{ t('envs.instance.unreachable', { name }) }}</template>
         </p>
         <p class="ip__problem-text">
           <template v-if="problem === 'expired'">
-            The link it came from gave access until then. Ask whoever shared it for a new link, and join with that one; it
-            replaces this.
+            {{ t('envs.instance.expiredText') }}
           </template>
           <template v-else-if="problem === 'host-key'">
-            Its identity changed since you joined, which happens when it is rebuilt, so Mango won't connect in case it is
-            something else. If the owner rebuilt it, ask them for a new link.
+            {{ t('envs.instance.hostKeyText') }}
           </template>
           <template v-else-if="problem === 'refused'">
-            The owner may have revoked your access. Ask them for a new link if you still need it.
+            {{ t('envs.instance.refusedText') }}
           </template>
           <template v-else>
-            It may be stopped, or its server offline<template v-if="direct && /^100\./.test(endpoint)">, or this computer not on the
-            owner's tailnet</template>. Check again in a moment, or ask its owner.
+            {{ direct && /^100\./.test(endpoint) ? t('envs.instance.unreachableTailnet') : t('envs.instance.unreachableText') }}
           </template>
         </p>
         <p v-if="probe?.error && problem !== 'expired'" class="ip__problem-raw selectable">{{ probe.error }}</p>
         <div class="ip__problem-actions">
-          <UiButton v-if="problem === 'unreachable'" size="sm" :loading="probing" @click="reconnect">Check again</UiButton>
-          <UiButton v-else size="sm" @click="envs.openJoin()"><Link2 />Join with a new link…</UiButton>
+          <UiButton v-if="problem === 'unreachable'" size="sm" :loading="probing" @click="reconnect">{{ t('envs.common.checkAgain') }}</UiButton>
+          <UiButton v-else size="sm" @click="envs.openJoin()"><Link2 />{{ t('envs.instance.joinNew') }}</UiButton>
         </div>
       </div>
 
       <dl class="ip__facts">
         <div class="ip__fact">
-          <dt>Connects to</dt>
+          <dt>{{ t('envs.common.connectsTo') }}</dt>
           <dd class="ip__mono selectable" :title="endpoint">{{ endpoint }}</dd>
         </div>
         <div class="ip__fact">
-          <dt>Access ends</dt>
+          <dt>{{ t('envs.common.accessEnds') }}</dt>
           <dd v-if="accessEnds" class="tabular" :class="{ 'ip__ended': problem === 'expired' }">{{ accessEnds }}</dd>
-          <dd v-else class="ip__off">When the owner revokes it</dd>
+          <dd v-else class="ip__off">{{ t('envs.common.whenRevoked') }}</dd>
         </div>
         <div v-if="inst.ipv4.length || inst.tailscaleIp" class="ip__fact ip__fact--wide">
-          <dt>Addresses inside</dt>
+          <dt>{{ t('envs.instance.addressesInside') }}</dt>
           <dd class="ip__mono selectable">{{ [inst.tailscaleIp, ...inst.ipv4].filter(Boolean).join(', ') }}</dd>
         </div>
       </dl>
@@ -420,14 +419,14 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
               :disabled="!!busy"
               @click="act('start')"
             >
-              <Play />Start
+              <Play />{{ t('envs.instance.start') }}
             </UiButton>
             <UiButton v-else size="sm" :loading="busy === 'stop'" :disabled="!!busy || inst.status !== 'running'" @click="act('stop')">
-              <Square />Stop
+              <Square />{{ t('envs.common.stop') }}
             </UiButton>
-            <UiMenu :items="moreItems" placement="bottom-end" :width="200" label="More actions">
+            <UiMenu :items="moreItems" placement="bottom-end" :width="200" :label="t('envs.instance.moreActions')">
               <template #default="{ toggle, open }">
-                <UiIconButton label="More actions" :active="open" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+                <UiIconButton :label="t('envs.instance.moreActions')" :active="open" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
                   <Ellipsis />
                 </UiIconButton>
               </template>
@@ -435,42 +434,42 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
           </span>
         </div>
         <p class="ip__meta">
-          <span>{{ inst.kind === 'vm' ? 'Virtual machine' : 'Container' }} on</span>
-          <button type="button" class="ip__link" @click="envs.select(hostId)">{{ host?.name ?? 'its server' }}</button>
+          <span>{{ inst.kind === 'vm' ? t('envs.instance.vmOn') : t('envs.instance.containerOn') }}</span>
+          <button type="button" class="ip__link" @click="envs.select(hostId)">{{ host?.name ?? t('envs.instance.itsServer') }}</button>
           <template v-if="inst.image"><span aria-hidden="true">·</span><span class="ip__clip" :title="inst.image">{{ inst.image }}</span></template>
         </p>
         <p v-if="actionError" class="ip__error selectable" role="alert">{{ actionError }}</p>
         <p v-if="note" class="ip__note" role="status">
           <Info class="ip__note-icon" aria-hidden="true" />
           <span class="selectable">{{ note }}</span>
-          <UiIconButton label="Dismiss" size="sm" @click="dismissNote"><X /></UiIconButton>
+          <UiIconButton :label="t('envs.instance.dismiss')" size="sm" @click="dismissNote"><X /></UiIconButton>
         </p>
       </header>
 
       <dl class="ip__facts">
         <div class="ip__fact">
-          <dt>Addresses</dt>
+          <dt>{{ t('envs.common.addresses') }}</dt>
           <dd class="ip__mono selectable">{{ inst.ipv4.join(', ') || '–' }}</dd>
         </div>
         <div class="ip__fact">
           <dt>Tailscale</dt>
           <dd v-if="inst.tailscaleIp" class="ip__mono selectable">{{ inst.tailscaleIp }}</dd>
-          <dd v-else class="ip__off">{{ host?.tailscale ? 'Not on the tailnet yet' : 'Off for this server' }}</dd>
+          <dd v-else class="ip__off">{{ host?.tailscale ? t('envs.instance.notOnTailnet') : t('envs.instance.tailscaleOff') }}</dd>
         </div>
         <div class="ip__fact">
-          <dt>CPUs</dt>
-          <dd class="tabular">{{ inst.cpus ?? 'Server default' }}</dd>
+          <dt>{{ t('envs.common.cpus') }}</dt>
+          <dd class="tabular">{{ inst.cpus ?? t('envs.instance.serverDefault') }}</dd>
         </div>
         <div class="ip__fact">
-          <dt>Memory</dt>
-          <dd class="tabular">{{ memory ?? 'Server default' }}</dd>
+          <dt>{{ t('envs.common.memory') }}</dt>
+          <dd class="tabular">{{ memory ?? t('envs.instance.serverDefault') }}</dd>
         </div>
         <div class="ip__fact">
-          <dt>Disk</dt>
-          <dd class="tabular">{{ disk ?? 'Pool default' }}</dd>
+          <dt>{{ t('envs.common.disk') }}</dt>
+          <dd class="tabular">{{ disk ?? t('envs.instance.poolDefault') }}</dd>
         </div>
         <div v-if="created" class="ip__fact">
-          <dt>Created</dt>
+          <dt>{{ t('envs.instance.created') }}</dt>
           <dd class="tabular">{{ created }}</dd>
         </div>
       </dl>
@@ -479,17 +478,17 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
       <!-- ways in -->
       <div class="ip__work">
         <UiButton :variant="stopped || (direct && !running) ? 'secondary' : 'primary'" :disabled="!running" @click="projectOpen = true">
-          <FolderGit2 />Open project…
+          <FolderGit2 />{{ t('envs.instance.openProject') }}
         </UiButton>
-        <UiButton :disabled="!running || jobRunning" :title="busyTitle" @click="shell"><SquareTerminal />Shell</UiButton>
+        <UiButton :disabled="!running || jobRunning" :title="busyTitle" @click="shell"><SquareTerminal />{{ t('envs.instance.shell') }}</UiButton>
         <UiButton
           :disabled="!running || desktopInstalled === false"
-          :title="desktopInstalled === false ? 'Install the Desktop component first' : undefined"
+          :title="desktopInstalled === false ? t('envs.instance.desktopFirst') : undefined"
           @click="desktopShown = true"
         >
-          <MonitorPlay />Desktop
+          <MonitorPlay />{{ t('envs.common.desktop') }}
         </UiButton>
-        <span v-if="stopped" class="ip__work-hint">Start it to open a project, a shell or its desktop.</span>
+        <span v-if="stopped" class="ip__work-hint">{{ t('envs.instance.startHint') }}</span>
       </div>
 
       <div v-if="job" ref="jobEl" class="ip__job">
@@ -514,17 +513,17 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
 
       <!-- sign in -->
       <section class="ip__sec" aria-labelledby="ip-signin">
-        <h3 id="ip-signin" class="ip__h3">Sign in</h3>
-        <p v-if="running" class="ip__desc">Each tool runs its own sign-in inside {{ name }}, in a terminal here. Mango never sees your credentials.</p>
-        <p v-else class="ip__desc">{{ direct ? 'Once Mango can reach it, sign in to its tools here.' : 'Start the environment to sign in to its tools.' }}</p>
+        <h3 id="ip-signin" class="ip__h3">{{ t('common.actions.signIn') }}</h3>
+        <p v-if="running" class="ip__desc">{{ t('envs.instance.signInHint', { name }) }}</p>
+        <p v-else class="ip__desc">{{ direct ? t('envs.instance.signInReach') : t('envs.instance.signInStart') }}</p>
         <div class="ip__logins">
           <template v-for="l in LOGINS" :key="l.tool">
-            <UiMenu v-if="l.tool === 'glab'" :items="gitlabItems" :width="240" label="GitLab server">
+            <UiMenu v-if="l.tool === 'glab'" :items="gitlabItems" :width="240" :label="t('envs.instance.gitlabServer')">
               <template #default="{ toggle, open }">
                 <UiButton
                   size="sm"
                   :disabled="!running || jobRunning || installed(l.tool) === false"
-                  :title="installed(l.tool) === false ? `Install ${l.name} first` : busyTitle"
+                  :title="installed(l.tool) === false ? t('envs.instance.installFirst', { name: l.name }) : busyTitle"
                   :aria-expanded="open"
                   aria-haspopup="menu"
                   @click="openGitlabMenu(toggle)"
@@ -537,7 +536,7 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
               v-else
               size="sm"
               :disabled="!running || jobRunning || installed(l.tool) === false"
-              :title="installed(l.tool) === false ? `Install ${l.name} first` : busyTitle"
+              :title="installed(l.tool) === false ? t('envs.instance.installFirst', { name: l.name }) : busyTitle"
               @click="login(l.tool, l.name)"
             >
               <UiAgentIcon v-if="l.agent" :agent="l.agent" class="ip__agent" />{{ l.name }}
@@ -558,9 +557,9 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
       <!-- components -->
       <section class="ip__sec" aria-labelledby="ip-comps">
         <header class="ip__sec-head">
-          <h3 id="ip-comps" class="ip__h3">Components</h3>
+          <h3 id="ip-comps" class="ip__h3">{{ t('envs.common.components') }}</h3>
           <span class="ip__sec-actions">
-            <UiIconButton label="Check again" size="sm" :disabled="!running || loadingComponents" @click="loadComponents(true)">
+            <UiIconButton :label="t('envs.common.checkAgain')" size="sm" :disabled="!running || loadingComponents" @click="loadComponents(true)">
               <RefreshCw :class="{ 'is-turning': loadingComponents }" />
             </UiIconButton>
             <UiButton
@@ -570,17 +569,17 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
               :title="busyTitle"
               @click="install(installedOnes)"
             >
-              Update all
+              {{ t('envs.common.updateAll') }}
             </UiButton>
           </span>
         </header>
 
         <!-- A joined environment that can't be reached: what was installed may no longer be true, so don't show it as current. -->
         <p v-if="!running && (!components || problem)" class="ip__desc">
-          {{ direct ? 'Once Mango can reach it, what is installed shows here.' : 'Start the environment to see what is installed.' }}
+          {{ direct ? t('envs.instance.componentsReach') : t('envs.instance.componentsStart') }}
         </p>
         <p v-else-if="componentError" class="ip__error" role="alert">
-          Couldn't check the components. <span class="selectable">{{ componentError }}</span>
+          {{ t('envs.instance.componentsFailed') }} <span class="selectable">{{ componentError }}</span>
         </p>
 
         <ul v-if="components && !problem" class="comps">
@@ -591,9 +590,9 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
             </span>
             <span class="comp__text">
               <span class="comp__line">
-                <span class="comp__name">{{ c.name }}</span>
+                <span class="comp__name">{{ envComponentName(c.id) }}</span>
                 <span v-if="c.installed && c.version" class="comp__version selectable">{{ c.version }}</span>
-                <span v-if="!c.installed" class="comp__state">Not installed</span>
+                <span v-if="!c.installed" class="comp__state">{{ t('envs.common.notInstalled') }}</span>
               </span>
               <span class="comp__desc">{{ c.description }}</span>
             </span>
@@ -601,7 +600,7 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
               <EnvVersionPicker
                 v-if="c.versioned"
                 :component="c.id"
-                :name="c.name"
+                :name="envComponentName(c.id)"
                 :installed="c.installed ? c.version : null"
                 placement="bottom-end"
                 @pick="(v) => v && install([c], { [c.id]: v })"
@@ -611,12 +610,12 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
                     variant="ghost"
                     size="sm"
                     :disabled="!running || jobRunning"
-                    :title="busyTitle ?? (c.installed ? `Install another ${c.name} version, or switch to one` : `Pick the ${c.name} version to install`)"
+                    :title="busyTitle ?? (c.installed ? t('envs.instance.otherVersion', { name: envComponentName(c.id) }) : t('envs.instance.pickVersion', { name: envComponentName(c.id) }))"
                     aria-haspopup="dialog"
                     :aria-expanded="open"
                     @click="toggle"
                   >
-                    Version<ChevronDown class="comp__chev" />
+                    {{ t('envs.instance.version') }}<ChevronDown class="comp__chev" />
                   </UiButton>
                 </template>
               </EnvVersionPicker>
@@ -627,12 +626,12 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
                 :title="busyTitle"
                 @click="install([c])"
               >
-                {{ c.installed ? 'Update' : 'Install' }}
+                {{ c.installed ? t('envs.common.update') : t('common.actions.install') }}
               </UiButton>
             </span>
           </li>
         </ul>
-        <ul v-else-if="loadingComponents" class="comps" aria-busy="true" aria-label="Checking components">
+        <ul v-else-if="loadingComponents" class="comps" aria-busy="true" :aria-label="t('envs.common.checkingComponents')">
           <li v-for="n in 4" :key="n" class="comp comp--skeleton" aria-hidden="true">
             <span class="bone bone--icon" /><span class="bone bone--text" />
           </li>
@@ -643,10 +642,10 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
     <div v-else class="ip__missing">
       <h2 class="ip__title" data-page-title tabindex="-1">{{ name }}</h2>
       <p class="ip__desc">
-        <template v-if="envs.loadingInstances[hostId]">Looking for it on the server…</template>
-        <template v-else>It isn't on {{ host?.name ?? 'the server' }} any more, or the server can't be reached.</template>
+        <template v-if="envs.loadingInstances[hostId]">{{ t('envs.instance.looking') }}</template>
+        <template v-else>{{ host ? t('envs.instance.gone', { host: host.name }) : t('envs.instance.goneServer') }}</template>
       </p>
-      <UiButton size="sm" @click="envs.select(hostId)">Back to {{ host?.name ?? 'the server' }}</UiButton>
+      <UiButton size="sm" @click="envs.select(hostId)">{{ host ? t('envs.instance.backTo', { host: host.name }) : t('envs.instance.backToServer') }}</UiButton>
     </div>
 
     <EnvShareDialog v-if="!direct" :open="sharing" :host-id="hostId" :instance="name" @close="sharing = false" />

@@ -8,6 +8,7 @@ import type { McpPair } from '~/types/ipc'
  * `-webkit-text-security` like the project's .env fields, so password managers leave them alone,
  * and copying a hidden value hands out nothing.
  */
+const { t } = useI18n()
 const props = defineProps<{
   modelValue: McpPair[]
   /** 'variable' or 'header': what a row is, for labels and checks. */
@@ -23,7 +24,6 @@ const list = ref<HTMLElement | null>(null)
 
 const write = () => emit('update:modelValue', rows.value.map(r => ({ name: r.name, value: r.value })))
 
-const noun = computed(() => (props.kind === 'variable' ? 'variable' : 'header'))
 const valid = (name: string) => (props.kind === 'variable' ? /^[A-Za-z_]\w*$/ : /^[\w!#$%&'*+.^`|~-]+$/).test(name)
 
 const problems = computed(() => {
@@ -32,14 +32,14 @@ const problems = computed(() => {
   for (const r of rows.value) {
     const n = r.name.trim()
     if (!n) {
-      if (r.value) out[r.id] = 'Give it a name, or it isn\'t saved.'
+      if (r.value) out[r.id] = t('settings.mcpPairs.nameless')
       continue
     }
     if (!valid(n)) {
       out[r.id] = props.kind === 'variable'
-        ? 'Use letters, digits and _, not starting with a digit.'
-        : 'A header name has no spaces, colons or quotes.'
-    } else if (seen.has(n.toLowerCase())) out[r.id] = `${n} is set twice.`
+        ? t('settings.mcpPairs.badVariable')
+        : t('settings.mcpPairs.badHeader')
+    } else if (seen.has(n.toLowerCase())) out[r.id] = t('settings.mcpPairs.twice', { name: n })
     seen.add(n.toLowerCase())
   }
   return out
@@ -83,14 +83,14 @@ function onNamePaste(e: ClipboardEvent, row: Row) {
   write()
 }
 
-const label = computed(() => (props.kind === 'variable' ? 'Environment variables' : 'Headers'))
+const label = computed(() => (props.kind === 'variable' ? t('settings.mcpPairs.variables') : t('settings.mcpPairs.headers')))
 </script>
 
 <template>
   <div class="pairs" role="group" :aria-label="label">
     <div v-if="rows.length" ref="list" class="pairs__list">
       <div v-for="(row, i) in rows" :key="row.id" class="pairs__item">
-        <div class="pairs__row" role="group" :aria-label="row.name.trim() || `New ${noun}`">
+        <div class="pairs__row" role="group" :aria-label="row.name.trim() || t(`settings.mcpPairs.new.${kind}`)">
           <input
             v-model="row.name"
             class="pairs__in"
@@ -98,7 +98,7 @@ const label = computed(() => (props.kind === 'variable' ? 'Environment variables
             :data-row="row.id"
             data-part="name"
             type="text"
-            :aria-label="kind === 'variable' ? 'Variable name' : 'Header name'"
+            :aria-label="t(`settings.mcpPairs.name.${kind}`)"
             :placeholder="kind === 'variable' ? 'NAME' : 'Authorization'"
             autocomplete="off"
             autocapitalize="off"
@@ -116,8 +116,8 @@ const label = computed(() => (props.kind === 'variable' ? 'Environment variables
             :data-row="row.id"
             data-part="value"
             type="text"
-            :aria-label="row.shown ? 'Value' : 'Value, hidden'"
-            :placeholder="kind === 'variable' ? 'value' : 'Bearer …'"
+            :aria-label="row.shown ? t('settings.mcpPairs.value') : t('settings.mcpPairs.valueHidden')"
+            :placeholder="kind === 'variable' ? t('settings.mcpPairs.valuePlaceholder') : 'Bearer …'"
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"
@@ -127,15 +127,15 @@ const label = computed(() => (props.kind === 'variable' ? 'Environment variables
             @cut="guardCopy($event, row)"
             @input="write"
           >
-          <UiIconButton size="sm" :label="row.shown ? 'Hide value' : 'Show value'" :active="row.shown" @click="row.shown = !row.shown">
+          <UiIconButton size="sm" :label="row.shown ? t('settings.mcpPairs.hideValue') : t('settings.mcpPairs.showValue')" :active="row.shown" @click="row.shown = !row.shown">
             <EyeOff v-if="row.shown" /><Eye v-else />
           </UiIconButton>
-          <UiIconButton size="sm" :label="`Remove ${noun}`" @click="removeRow(i)"><X /></UiIconButton>
+          <UiIconButton size="sm" :label="t(`settings.mcpPairs.remove.${kind}`)" @click="removeRow(i)"><X /></UiIconButton>
         </div>
         <p v-if="problems[row.id]" :id="`pairs-msg-${row.id}`" class="pairs__msg">{{ problems[row.id] }}</p>
       </div>
     </div>
-    <UiButton size="sm" variant="ghost" class="pairs__add" @click="addRow"><Plus />Add {{ noun }}</UiButton>
+    <UiButton size="sm" variant="ghost" class="pairs__add" @click="addRow"><Plus />{{ t(`settings.mcpPairs.add.${kind}`) }}</UiButton>
   </div>
 </template>
 

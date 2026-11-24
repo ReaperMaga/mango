@@ -5,6 +5,7 @@ import { useFilesSync } from '~/composables/useFilesSync'
 import { draggedPanelItem } from '~/composables/useTabDrag'
 import { useWindows } from '~/stores/windows'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const win = useWindows()
 const column = ref<HTMLElement | null>(null)
@@ -28,7 +29,7 @@ useFilesSync()
         class="workspace__dock-drop"
         data-tab-drop="panel"
       >
-        <ArrowDownToLine aria-hidden="true" />{{ draggedPanelItem()?.kind === 'panelTab' ? 'Move to the bottom panel' : 'Move to the terminal panel' }}
+        <ArrowDownToLine aria-hidden="true" />{{ draggedPanelItem()?.kind === 'panelTab' ? t('shell.workspace.toPanel') : t('shell.workspace.toTerminal') }}
       </div>
     </div>
     <Transition name="tool">

@@ -7,19 +7,20 @@ import McpServerList from './McpServerList.vue'
  * are under Projects. The agents' own settings (Claude Code's ~/.claude.json and .mcp.json, Codex's
  * config.toml) keep working beside these.
  */
+const { t } = useI18n()
 </script>
 
 <template>
   <SettingsSection
-    title="MCP servers"
-    description="Tool servers your agents can use in chats, in every project on this computer. A server is started for each chat that uses it, and changes apply from the next message."
+    :title="t('settings.nav.mcp')"
+    :description="t('settings.mcp.description')"
   >
     <McpServerList :project="null" />
-    <p class="foot">
-      Servers in Claude Code's own settings (<code>~/.claude.json</code>, a project's <code>.mcp.json</code>) and in Codex's
-      <code>config.toml</code> keep working. A server here with the same name takes their place in Mango's chats.
-      Remote projects don't get these: add servers to the project itself under Projects, and they run inside its environment.
-    </p>
+    <i18n-t keypath="settings.mcp.foot" tag="p" scope="global" class="foot">
+      <template #claudeJson><code>~/.claude.json</code></template>
+      <template #mcpJson><code>.mcp.json</code></template>
+      <template #configToml><code>config.toml</code></template>
+    </i18n-t>
   </SettingsSection>
 </template>
 

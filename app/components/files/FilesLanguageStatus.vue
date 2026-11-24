@@ -12,6 +12,7 @@ const props = defineProps<{ server: LspServer; root: string }>()
 
 const BUSY_MS = 800
 
+const { t } = useI18n()
 const store = useLanguageServers()
 const view = computed(() => store.session(props.server.id, props.root))
 
@@ -28,20 +29,20 @@ const label = computed(() => {
   const v = view.value
   if (!v || v.state === 'stopped') return ''
   const { name } = props.server
-  if (v.state === 'starting') return `Starting ${name}…`
-  if (v.state === 'restarting') return `Restarting ${name}…`
+  if (v.state === 'starting') return t('files.server.starting', { name })
+  if (v.state === 'restarting') return t('files.server.restarting', { name })
   // The reason names the server itself.
-  if (v.state === 'failed') return v.error || `${name} failed`
-  return working.value && v.busy ? `${name}: ${v.busy}` : name
+  if (v.state === 'failed') return v.error || t('files.server.failed', { name })
+  return working.value && v.busy ? t('files.server.busy', { name, work: v.busy }) : name
 })
 /** Progress counts up by itself: only the state is announced. */
 const announced = computed(() => {
   const state = view.value?.state
   if (!state || state === 'stopped') return ''
-  if (state === 'ready') return `${props.server.name} is running`
+  if (state === 'ready') return t('files.server.running', { name: props.server.name })
   return label.value
 })
-const hint = computed(() => view.value?.error ?? (view.value?.busy ? label.value : `${props.server.name} is running`))
+const hint = computed(() => view.value?.error ?? (view.value?.busy ? label.value : t('files.server.running', { name: props.server.name })))
 
 function retry() {
   languageService()?.retry({ server: props.server.id, root: props.root })
@@ -52,7 +53,7 @@ function retry() {
   <span v-if="label" class="fls" :class="`is-${view?.state}`" :title="hint">
     <span class="fls__text" aria-hidden="true">{{ label }}</span>
     <span class="sr-only" role="status">{{ announced }}</span>
-    <UiIconButton v-if="view?.state === 'failed'" size="sm" :label="`Start ${server.name} again`" @click="retry"><RotateCw /></UiIconButton>
+    <UiIconButton v-if="view?.state === 'failed'" size="sm" :label="t('files.server.startAgain', { name: server.name })" @click="retry"><RotateCw /></UiIconButton>
   </span>
 </template>
 

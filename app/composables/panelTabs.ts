@@ -1,5 +1,6 @@
 import { GitGraph } from 'lucide-vue-next'
 import { markRaw } from 'vue'
+import { t } from '~/i18n'
 import type { PluginIcon, PluginPanelTab } from '~/plugin-host/types'
 import { pluginNames, read, reg, shown, type Owned } from '~/plugin-host/registry'
 import { GIT_LOG_TAB } from '~/utils/builtIns'
@@ -21,13 +22,13 @@ export interface BuiltInPanelTab {
 export type PanelTab = BuiltInPanelTab | Owned<PluginPanelTab>
 
 const BUILT_IN: readonly BuiltInPanelTab[] = [
-  { fullId: GIT_LOG_TAB, pluginId: null, title: 'Git log', icon: markRaw(GitGraph), shortcut: 'git-log' },
+  { fullId: GIT_LOG_TAB, pluginId: null, get title() { return t('shell.tools.gitLog') }, icon: markRaw(GitGraph), shortcut: 'git-log' },
 ]
 
 export const allPanelTabs = (): PanelTab[] => [...BUILT_IN, ...reg.panelTabs]
 
 export const findPanelTab = (ref: string | null | undefined): PanelTab | null =>
-  (ref ? allPanelTabs().find(t => t.fullId === ref) ?? null : null)
+  (ref ? allPanelTabs().find(tab => tab.fullId === ref) ?? null : null)
 
 /** Offered now: one of Mango's always is, a plugin's while its `when()` holds. */
 export const panelTabOffered = (t: PanelTab) => t.pluginId === null || shown(t)

@@ -1,4 +1,5 @@
 import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServer, LspServerId, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import { t } from '~/i18n'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
@@ -93,7 +94,7 @@ function refuseRemote(cmd: string, args: unknown): Error | null {
   if (!LOCAL_ONLY.test(cmd) || !args || typeof args !== 'object') return null
   const a = args as Record<string, unknown>
   return [a.path, a.root, a.cwd].some(v => typeof v === 'string' && isEnvPath(v))
-    ? new Error('Not available for remote environments yet.')
+    ? new Error(t('shell.backend.remote'))
     : null
 }
 
@@ -119,7 +120,7 @@ export async function on<E extends keyof Events>(event: E, handler: (payload: Ev
 }
 
 /** Native folder picker. Returns null when cancelled. */
-export async function pickFolder(title = 'Open folder', defaultPath?: string): Promise<string | null> {
+export async function pickFolder(title = t('shell.shortcuts.labels.open-folder'), defaultPath?: string): Promise<string | null> {
   if (isTauri()) {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const res = await open({ directory: true, multiple: false, title, defaultPath })
@@ -130,7 +131,7 @@ export async function pickFolder(title = 'Open folder', defaultPath?: string): P
 }
 
 /** Native file picker (several files). Inside the app only; returns [] when cancelled or in the browser. */
-export async function pickFiles(title = 'Attach files'): Promise<string[]> {
+export async function pickFiles(title = t('shell.backend.attach')): Promise<string[]> {
   if (!isTauri()) return []
   const { open } = await import('@tauri-apps/plugin-dialog')
   const res = await open({ multiple: true, directory: false, title })
@@ -264,17 +265,17 @@ const mock = (() => {
   ]
   /** Play a fake installer into a fake terminal, then mark the tool installed. */
   function fakeInstall(id: string, tool: SetupToolId) {
-    const t = setupTools.find(x => x.id === tool)!
+    const found = setupTools.find(x => x.id === tool)!
     const lines = [
-      `\x1b[2m$ ${t.install?.command}\x1b[0m`,
-      `Downloading ${t.name}…`,
+      `\x1b[2m$ ${found.install?.command}\x1b[0m`,
+      `Downloading ${found.name}…`,
       'Verifying checksum… ok',
       `Installing to ${home}/.local/bin`,
-      `\x1b[32m✓\x1b[0m ${t.name} installed \x1b[2m(simulated: the browser preview installs nothing)\x1b[0m`,
+      `\x1b[32m✓\x1b[0m ${found.name} installed \x1b[2m(simulated: the browser preview installs nothing)\x1b[0m`,
     ]
     lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
     setTimeout(() => {
-      Object.assign(t, { installed: true, version: tool === 'codex' ? 'codex-cli 0.98.0' : '1.0.0', path: `${home}/.local/bin/${tool}` })
+      Object.assign(found, { installed: true, version: tool === 'codex' ? 'codex-cli 0.98.0' : '1.0.0', path: `${home}/.local/bin/${tool}` })
       emit('pty://exit', { id, code: 0 })
     }, 250 + lines.length * 420)
   }

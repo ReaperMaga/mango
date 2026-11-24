@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { PlasticReviews } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { t } from '~/i18n'
 
 /**
  * Unity VCS code reviews for the Pull requests tool window, by workspace folder: the branch's own
@@ -20,7 +21,7 @@ const FRESH_MS = 60_000
 /** The latest read started per folder: an older read that finishes later is dropped. */
 const reads = new Map<string, number>()
 
-const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || 'Something went wrong'
+const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim() || t('chat.errors.generic')
 
 export const useReviews = defineStore('reviews', {
   state: () => ({

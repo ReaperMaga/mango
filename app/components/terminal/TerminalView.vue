@@ -28,6 +28,7 @@ const props = defineProps<{
   place?: string
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const host = ref<HTMLElement | null>(null)
 /** The panel's height is animating (maximise, double-click): hold the grid and refit once, when it ends. */
@@ -77,12 +78,12 @@ let resizeTimer: ReturnType<typeof setTimeout> | undefined
 /* Theme: xterm wants hex/rgb, tokens are oklch -> paint & read back    */
 /* ------------------------------------------------------------------ */
 
-/** Mix an opaque #rrggbb toward white (t > 0) or black (t < 0). */
-function shade(hex: string, t: number): string {
+/** Mix an opaque #rrggbb toward white (mix > 0) or black (mix < 0). */
+function shade(hex: string, mix: number): string {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex)
-  if (!m || t === 0) return hex
-  const target = t > 0 ? 255 : 0
-  const k = Math.abs(t)
+  if (!m || mix === 0) return hex
+  const target = mix > 0 ? 255 : 0
+  const k = Math.abs(mix)
   return `#${[m[1], m[2], m[3]].map(c => hex2(parseInt(c!, 16) + (target - parseInt(c!, 16)) * k)).join('')}`
 }
 
@@ -196,16 +197,16 @@ function handleExit(e: PtyExitEvent) {
     quickDrops = lived < QUICK_MS ? quickDrops + 1 : 0
     if (quickDrops < MAX_QUICK_DROPS) {
       waitingFor.value = env.hostId
-      term?.write('\r\n\x1b[2m[connection lost — reconnecting…]\x1b[0m\r\n\x1b[?25l')
+      term?.write(`\r\n\x1b[2m${t('terminal.output.lost')}\x1b[0m\r\n\x1b[?25l`)
       conn.markDown(env.hostId)
       return
     }
   }
   quickDrops = 0
   waitingFor.value = null
-  const what = e.code == null ? '[process exited]' : `[process exited with code ${e.code}]`
+  const what = e.code == null ? t('terminal.output.exited') : t('terminal.output.exitedCode', { code: e.code })
   // Hide the cursor while there's nothing to type into.
-  term?.write(`\r\n\x1b[2m${what} — press Enter to restart\x1b[0m\r\n\x1b[?25l`)
+  term?.write(`\r\n\x1b[2m${what}\x1b[0m\r\n\x1b[?25l`)
 }
 
 async function spawn(auto = false) {
@@ -245,7 +246,7 @@ async function spawn(auto = false) {
     backlog = null
     props.tab.exited = true
     const msg = err instanceof Error ? err.message : String(err)
-    term?.write(`\x1b[31mCould not start a shell:\x1b[0m ${msg}\r\n\x1b[2mpress Enter to retry\x1b[0m\r\n\x1b[?25l`)
+    term?.write(`\x1b[31m${t('terminal.output.couldNotStart')}\x1b[0m ${msg}\r\n\x1b[2m${t('terminal.output.retry')}\x1b[0m\r\n\x1b[?25l`)
   } finally {
     backlog = null
     spawning = false
@@ -335,7 +336,7 @@ watch(settling, (moving) => { if (!moving) scheduleFit() })
 // The server this tab lost is back: a fresh shell, in the same tab.
 watch(() => (waitingFor.value ? conn.backAt[waitingFor.value] ?? 0 : 0), (at, before) => {
   if (!waitingFor.value || !at || at === before || !props.tab.exited) return
-  term?.write('\x1b[2m[reconnected]\x1b[0m\r\n')
+  term?.write(`\x1b[2m${t('terminal.output.reconnected')}\x1b[0m\r\n`)
   void spawn(true)
 })
 
@@ -370,7 +371,7 @@ onBeforeUnmount(() => {
   // closeTerminal() already kills the PTY of a tab it removes; only kill
   // here when we're torn down for another reason (e.g. the workspace unmounts).
   const id = props.tab.ptyId
-  const stillListed = ws.terminalTabs.some(t => t.id === props.tab.id)
+  const stillListed = ws.terminalTabs.some(x => x.id === props.tab.id)
   if (id && !props.tab.exited && stillListed) {
     call('pty_kill', { id }).catch(() => {})
     props.tab.ptyId = null

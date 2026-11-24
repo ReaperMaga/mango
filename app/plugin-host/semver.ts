@@ -2,6 +2,8 @@
  * Just enough semver for `minAppVersion`: `1.2.3`, `v1.2`, `1.2.3-beta.1`. Plain TypeScript (tests/).
  */
 
+import { t } from '../i18n/index.ts'
+
 export interface Version { major: number; minor: number; patch: number; pre: string[] }
 
 export function parseVersion(v: string): Version | null {
@@ -49,9 +51,9 @@ export function devVersion(version: string): string {
 export function incompatibility(appVersion: string, minAppVersion: string | undefined | null): string | null {
   if (!minAppVersion) return null
   const min = parseVersion(minAppVersion)
-  if (!min) return `Its minimum Mango version "${minAppVersion}" is not a version number.`
+  if (!min) return t('plugins.minInvalid', { version: minAppVersion })
   const app = parseVersion(appVersion)
   if (!app) return null
   const c = compareVersions(`${app.major}.${app.minor}.${app.patch}`, minAppVersion)
-  return c !== null && c < 0 ? `Needs Mango ${minAppVersion} or newer (this is ${appVersion}).` : null
+  return c !== null && c < 0 ? t('plugins.minVersion', { min: minAppVersion, version: appVersion }) : null
 }

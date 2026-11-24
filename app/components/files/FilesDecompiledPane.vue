@@ -15,6 +15,7 @@ import { decompiledReveals, decompiledSource } from '~/lsp/decompiled'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t, locale } = useI18n()
 const threads = useThreads()
 
 const tab = computed(() => parseDecompiledTab(props.tabId))
@@ -31,6 +32,8 @@ const failed = ref<string | null>(null)
 const views = new Map<Monaco.editor.ITextModel, Monaco.editor.ICodeEditorViewState | null>()
 
 const fontFamily = () => cssVar('--font-mono') || 'ui-monospace, monospace'
+const readOnlyMessage = () => ({ value: t('files.decompiled.readOnlyHint') })
+watch(locale, () => editor?.updateOptions({ readOnlyMessage: readOnlyMessage() }))
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
 
 function show() {
@@ -69,7 +72,7 @@ async function setUp() {
     editor = monaco.editor.create(host.value, {
       model: null,
       readOnly: true,
-      readOnlyMessage: { value: 'Decompiled library source is read-only.' },
+      readOnlyMessage: readOnlyMessage(),
       theme: MONACO_THEME,
       automaticLayout: true,
       fontFamily: fontFamily(),
@@ -125,25 +128,25 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="dcp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="name ? `${name}, decompiled` : 'Decompiled source'">
+  <section class="dcp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="name ? t('files.decompiled.named', { name }) : t('files.decompiled.source')">
     <header class="dcp__head">
       <h2 class="dcp__name" :title="source?.symbol ?? name">{{ name }}</h2>
-      <span v-if="source?.assembly" class="dcp__from" :title="`Decompiled from the assembly ${source.assembly}`">decompiled from <bdi class="dcp__asm">{{ source.assembly }}</bdi></span>
-      <span v-else-if="source" class="dcp__from">decompiled</span>
+      <i18n-t v-if="source?.assembly" keypath="files.decompiled.from" tag="span" scope="global" class="dcp__from" :title="t('files.decompiled.fromTitle', { assembly: source.assembly })"><template #assembly><bdi class="dcp__asm">{{ source.assembly }}</bdi></template></i18n-t>
+      <span v-else-if="source" class="dcp__from">{{ t('files.decompiled.plain') }}</span>
       <span class="dcp__spacer" />
-      <span v-if="source" class="dcp__note">Read-only</span>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <span v-if="source" class="dcp__note">{{ t('files.decompiled.readOnly') }}</span>
+      <UiIconButton v-if="split" size="sm" :label="t('files.editor.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
 
     <div class="dcp__body">
       <div v-show="source && !failed" ref="host" class="dcp__editor" />
       <div v-if="!source" class="dcp__empty">
         <FileCode aria-hidden="true" />
-        <p>This decompiled source is no longer open. Go to the definition again to see it.</p>
-        <UiButton size="sm" @click="threads.closeTab(tabId)">Close tab</UiButton>
+        <p>{{ t('files.decompiled.gone') }}</p>
+        <UiButton size="sm" @click="threads.closeTab(tabId)">{{ t('files.decompiled.closeTab') }}</UiButton>
       </div>
       <div v-else-if="failed" class="dcp__empty" role="alert">
-        <p>The editor could not load: {{ failed }}</p>
+        <p>{{ t('files.decompiled.failed', { error: failed }) }}</p>
       </div>
     </div>
   </section>

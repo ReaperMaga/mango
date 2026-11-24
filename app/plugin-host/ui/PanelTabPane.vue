@@ -13,6 +13,7 @@ import { useThreads } from '~/stores/threads'
  * shows it, so moving the tab between the panel and the main area keeps its state.
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 
@@ -27,14 +28,14 @@ watch([ref_, host], ([id, el], _old, onCleanup) => {
 </script>
 
 <template>
-  <section class="pnp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab?.title ?? 'Panel tab'">
+  <section class="pnp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab?.title ?? t('plugins.view.panelTab')">
     <header class="pnp__head">
       <PluginIcon :icon="tab?.icon" class="pnp__icon" />
-      <h2 class="pnp__name" :title="tab?.title">{{ tab?.title ?? 'Panel tab' }}</h2>
+      <h2 class="pnp__name" :title="tab?.title">{{ tab?.title ?? t('plugins.view.panelTab') }}</h2>
       <span v-if="plugin" class="pnp__from">{{ plugin }}</span>
       <span class="pnp__spacer" />
-      <UiIconButton size="sm" label="Move to panel" :disabled="!tab" @click="ws.movePanelTabToPanel(ref_)"><ArrowDownToLine /></UiIconButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiIconButton size="sm" :label="t('plugins.view.moveToPanel')" :disabled="!tab" @click="ws.movePanelTabToPanel(ref_)"><ArrowDownToLine /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('plugins.view.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
     <div ref="host" class="pnp__body" />
   </section>

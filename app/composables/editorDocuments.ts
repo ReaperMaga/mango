@@ -4,6 +4,7 @@ import { editorModel, setEditorModel, type EditorModel } from '~/utils/editorMod
 import { reloadModel } from '~/utils/reloadEdits'
 import { fileTabId, parseFileTab } from '~/utils/fileTabs'
 import { relativeTo } from '~/lsp/uri'
+import { t } from '~/i18n'
 import { linkRoute } from '~/lsp/builtins'
 import { decompiledInFolder, decompiledOfUri, openDecompiled } from '~/lsp/decompiled'
 import { ModelUris } from '~/lsp/modelUris'
@@ -36,9 +37,11 @@ export function fileOfUri(uri: { scheme: string; path: string }): { project: str
 /** Monaco's label for a URI, in a peek's header and lists: a model's path inside its project. */
 export function uriLabel(uri: { scheme: string; path: string; fsPath: string }): string {
   const library = decompiledOfUri(uri)
-  if (library) return library.assembly ? `${library.symbol} (decompiled from ${library.assembly})` : `${library.symbol} (decompiled)`
+  if (library) return library.assembly
+    ? t('files.decompiled.symbolFrom', { symbol: library.symbol, assembly: library.assembly })
+    : t('files.decompiled.symbol', { symbol: library.symbol })
   const folder = decompiledInFolder(uri)
-  if (folder) return folder.assembly ? `decompiled from ${folder.assembly}` : 'decompiled'
+  if (folder) return folder.assembly ? t('files.decompiled.from', { assembly: folder.assembly }) : t('files.decompiled.plain')
   return fileOfUri(uri)?.file ?? (uri.scheme === 'file' ? uri.fsPath : uri.path)
 }
 

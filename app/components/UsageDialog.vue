@@ -8,6 +8,7 @@ import { remotePlace } from '~/composables/envProjects'
  * Usage limits of every agent's plan: the 5-hour and weekly windows (and any per-model
  * limit) as each CLI reports them, with when each starts over. Reading spends no quota.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const usage = useUsage()
 const updated = useUsageUpdated()
@@ -28,11 +29,11 @@ function signIn() {
 </script>
 
 <template>
-  <UiDialog :open="open" title="Usage limits" :width="580" @close="close">
-    <p class="use__lede">
-      How much of each plan's allowance is used, as Claude Code and Codex<template v-if="where"> in <strong>{{ where }}</strong></template> report it.
-      Checking spends none of it.
-    </p>
+  <UiDialog :open="open" :title="t('shell.usage.title')" :width="580" @close="close">
+    <i18n-t v-if="where" keypath="shell.usage.ledeIn" tag="p" class="use__lede" scope="global">
+      <template #where><strong>{{ where }}</strong></template>
+    </i18n-t>
+    <p v-else class="use__lede">{{ t('shell.usage.lede') }}</p>
 
     <UsageList @sign-in="signIn" />
 
@@ -40,9 +41,9 @@ function signIn() {
       <span class="use__updated" aria-live="polite">{{ updated }}</span>
       <UiButton :loading="usage.loading" @click="refresh">
         <RefreshCw v-if="!usage.loading" aria-hidden="true" />
-        Refresh
+        {{ t('common.actions.refresh') }}
       </UiButton>
-      <UiButton variant="primary" data-autofocus @click="close">Done</UiButton>
+      <UiButton variant="primary" data-autofocus @click="close">{{ t('common.actions.done') }}</UiButton>
     </template>
   </UiDialog>
 </template>

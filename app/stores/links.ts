@@ -1,9 +1,11 @@
 import { defineStore } from 'pinia'
 import type { ForgeProvider, GhCheck, GhItem, GhJob, GhMergeMethod, GhOpenItems } from '~/types/ipc'
 import type { LinkedItem } from '~/types/chat'
+import { t } from '~/i18n'
 import { call } from '~/composables/useBackend'
 import { useThreads } from '~/stores/threads'
 import { useWorkspace } from '~/stores/workspace'
+import { providerOf } from '~/utils/forge'
 import { linkFromItem } from '~/utils/githubLinks'
 
 /**
@@ -127,7 +129,7 @@ export const useLinks = defineStore('links', {
      */
     async merge(link: Pick<LinkedItem, 'key' | 'url'>, projectPath: string, method: GhMergeMethod) {
       const headSha = this.details[link.key]?.item?.headSha
-      if (!headSha) throw new Error(`Read the ${this.details[link.key]?.item?.provider === 'gitlab' ? 'merge' : 'pull'} request again before merging it.`)
+      if (!headSha) throw new Error(t(`links.merge.readAgain.${providerOf(this.details[link.key]?.item)}`))
       try {
         await call('gh_merge', { path: projectPath, reference: link.url, method, headSha })
       } catch (e) {
@@ -144,7 +146,7 @@ export const useLinks = defineStore('links', {
     async linkByReference(threadId: string, reference: string): Promise<LinkedItem> {
       const threads = useThreads()
       const chat = threads.rootOf(threadId)
-      if (!chat) throw new Error('That chat is gone.')
+      if (!chat) throw new Error(t('links.chatGone'))
       const link = await this.lookup(chat.projectPath, reference)
       threads.link(chat.id, link)
       this.focused = link.key

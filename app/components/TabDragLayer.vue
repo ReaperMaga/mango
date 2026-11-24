@@ -11,6 +11,7 @@ import { useWindows } from '~/stores/windows'
  * line between tabs, or a wash over the pane or panel it would fill). A chat dragged to the window's
  * edge, or past it, says that letting go opens it in a window of its own. Never takes the pointer.
  */
+const { t } = useI18n()
 const threads = useThreads()
 const win = useWindows()
 const at = (b: Box) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` })
@@ -26,9 +27,9 @@ const out = computed(() => !!chat.value && !busy.value && tabDrag.place === 'out
 const edge = computed(() => !!chat.value && !busy.value && tabDrag.place === 'edge')
 const hint = computed(() => {
   if (!chat.value || tabDrag.place === 'inside') return ''
-  if (busy.value) return 'Still working: it stays in this window'
-  if (own.value) return out.value ? 'Let go over another Mango window to return it' : 'Drag onto another Mango window to return it'
-  return out.value ? 'Opens in a new window' : 'Drag out of the window to open it on its own'
+  if (busy.value) return t('shell.drag.busy')
+  if (own.value) return out.value ? t('shell.drag.dropToReturn') : t('shell.drag.dragToReturn')
+  return out.value ? t('shell.drag.opens') : t('shell.drag.dragOut')
 })
 
 /*

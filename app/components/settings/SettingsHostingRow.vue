@@ -30,6 +30,8 @@ const props = defineProps<{
   refresh: () => Promise<HostingCli[] | null>
 }>()
 
+const { t } = useI18n()
+
 type View = 'checking' | 'error' | 'missing' | 'ready'
 const view = computed<View>(() => {
   if (!props.cli) return props.error && !props.loading ? 'error' : 'checking'
@@ -99,9 +101,9 @@ const startJob = computed(() => {
 const jobTitle = computed(() => {
   const j = job.value
   if (!j) return ''
-  if (j.phase === 'checking') return j.kind === 'install' ? `Checking the ${props.name}…` : 'Checking sign-in…'
-  if (j.phase === 'failed') return j.kind === 'install' ? `The ${props.name} isn't installed` : 'Sign-in didn\'t finish'
-  return j.kind === 'install' ? `Installing the ${props.name}…` : `Signing in to ${j.host}…`
+  if (j.phase === 'checking') return j.kind === 'install' ? t('agents.hosting.checkingTool', { name: props.name }) : t('agents.cli.checkingSignIn')
+  if (j.phase === 'failed') return j.kind === 'install' ? t('agents.hosting.toolMissing', { name: props.name }) : t('agents.cli.signInUnfinished')
+  return j.kind === 'install' ? t('agents.hosting.installingTool', { name: props.name }) : t('agents.cli.signingInTo', { name: j.host })
 })
 
 async function onExit(code: number | null) {
@@ -118,22 +120,21 @@ async function onExit(code: number | null) {
     await closeJob()
     return
   }
-  const what = j.kind === 'install' ? 'The installer' : `The ${props.tool} command`
+  const tool = props.tool
+  const installing = j.kind === 'install'
   j.note = code === 0
-    ? j.kind === 'install'
-      ? `The installer finished, but Mango can't find ${props.tool} yet. Restart Mango, then look again.`
-      : `${what} closed without signing in to ${j.host}.`
+    ? installing ? t('agents.cli.installedNotFound', { name: tool }) : t('agents.hosting.closed', { tool, host: j.host })
     : code === null
-      ? `${what} stopped before it finished.`
+      ? installing ? t('agents.cli.installerStopped') : t('agents.hosting.stopped', { tool })
       : code === 130
-        ? `${what} was interrupted before it finished.`
-        : `${what} exited with code ${code}.`
+        ? installing ? t('agents.cli.installerInterrupted') : t('agents.hosting.interrupted', { tool })
+        : installing ? t('agents.cli.installerExited', { code }) : t('agents.hosting.exited', { tool, code })
   j.phase = 'failed'
 }
 
 function onFailed(message: string) {
   if (!job.value) return
-  job.value.note = `Mango couldn't start it: ${message.replace(/\.$/, '')}.`
+  job.value.note = t('agents.cli.cantStart', { message: message.replace(/\.$/, '') })
   job.value.phase = 'failed'
 }
 
@@ -186,7 +187,7 @@ async function cancelHost() {
 function signInOther() {
   const host = normalizeHost(draft.value)
   if (!host) {
-    draftError.value = draft.value.trim() ? `Type a server name like ${props.otherPlaceholder}.` : 'Type the server\'s name.'
+    draftError.value = draft.value.trim() ? t('agents.hosting.typeNameLike', { example: props.otherPlaceholder }) : t('agents.hosting.typeName')
     return
   }
   begin('login', host)
@@ -208,7 +209,7 @@ async function signOut(a: HostingAccount) {
     root.value?.querySelector<HTMLElement>('[data-land]')?.focus()
   } catch (err) {
     const why = err instanceof Error ? err.message : String(err)
-    actionError.value = `Couldn't sign out of ${a.host}: ${why.replace(/\.$/, '')}. Try again, or run "${props.tool} auth logout --hostname ${a.host}" in a terminal.`
+    actionError.value = t('agents.cli.signOutFailed', { name: a.host, why: why.replace(/\.$/, ''), command: `${props.tool} auth logout --hostname ${a.host}` })
   } finally {
     signingOut.value = null
   }
@@ -231,7 +232,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
         <code v-if="cli.path" class="cli__path selectable" :title="cli.path">{{ cli.path }}</code>
       </template>
       <span class="cli__grow" />
-      <UiIconButton size="sm" :label="`Check the ${name} again`" :disabled="rechecking || loading" @click="recheck">
+      <UiIconButton size="sm" :label="t('agents.hosting.recheck', { name })" :disabled="rechecking || loading" @click="recheck">
         <RefreshCw :class="{ 'is-turning': rechecking || loading }" />
       </UiIconButton>
     </div>
@@ -239,18 +240,18 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
     <!-- first look -->
     <p v-if="view === 'checking'" class="cli__state" role="status">
       <span class="cli__lead" aria-hidden="true"><span class="ring" /></span>
-      <span class="cli__more">Checking sign-in…</span>
+      <span class="cli__more">{{ t('agents.cli.checkingSignIn') }}</span>
     </p>
 
     <!-- could not ask -->
     <div v-else-if="view === 'error'" class="cli__state">
       <span class="cli__says" role="status">
         <span class="cli__lead" aria-hidden="true"><TriangleAlert class="cli__icon cli__icon--error" /></span>
-        <span class="cli__word cli__word--error">Couldn't check sign-in</span>
+        <span class="cli__word cli__word--error">{{ t('agents.cli.checkFailed') }}</span>
         <span class="cli__more selectable" :title="checkError ?? undefined">{{ checkError }}</span>
       </span>
       <span class="cli__actions">
-        <UiButton size="sm" data-land :loading="rechecking" @click="recheck">Try again</UiButton>
+        <UiButton size="sm" data-land :loading="rechecking" @click="recheck">{{ t('common.actions.retry') }}</UiButton>
       </span>
     </div>
 
@@ -258,22 +259,27 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
     <template v-else-if="view === 'missing'">
       <p class="cli__state" role="status">
         <span class="cli__lead" aria-hidden="true"><CircleDashed class="cli__icon cli__icon--idle" /></span>
-        <span class="cli__word">Not installed</span>
-        <span class="cli__more">Mango couldn't find the <code>{{ tool }}</code> command on this computer.</span>
+        <span class="cli__word">{{ t('agents.cli.notInstalled') }}</span>
+        <span class="cli__more"><i18n-t keypath="agents.cli.notFound" scope="global"><template #command><code>{{ tool }}</code></template></i18n-t></span>
       </p>
       <div v-if="!job" class="cli__after">
-        <span v-if="cli?.install" class="cli__more">Mango can install it with {{ cli.install.via }}: <code class="selectable">{{ cli.install.command }}</code></span>
-        <span v-else class="cli__more">Install it with the instructions on its page, then check again.</span>
+        <span v-if="cli?.install" class="cli__more">
+          <i18n-t keypath="agents.hosting.canInstall" scope="global">
+            <template #via>{{ cli.install.via }}</template>
+            <template #command><code class="selectable">{{ cli.install.command }}</code></template>
+          </i18n-t>
+        </span>
+        <span v-else class="cli__more">{{ t('agents.hosting.installYourself') }}</span>
         <span class="cli__actions">
-          <UiButton v-if="cli?.install" size="sm" data-land @click="begin('install')">Install</UiButton>
-          <UiButton v-else size="sm" variant="ghost" data-land @click="help"><ExternalLink />How to install</UiButton>
+          <UiButton v-if="cli?.install" size="sm" data-land @click="begin('install')">{{ t('common.actions.install') }}</UiButton>
+          <UiButton v-else size="sm" variant="ghost" data-land @click="help"><ExternalLink />{{ t('agents.cli.howToInstall') }}</UiButton>
         </span>
       </div>
     </template>
 
     <!-- installed: its accounts -->
     <template v-else>
-      <ul v-if="accounts.length" class="cli__accounts" :aria-label="`Signed in with the ${name}`">
+      <ul v-if="accounts.length" class="cli__accounts" :aria-label="t('agents.hosting.accounts', { name })">
         <li v-for="a in accounts" :key="keyOf(a)" class="acct">
           <span class="cli__lead" aria-hidden="true">
             <CircleCheck v-if="a.ok" class="cli__icon cli__icon--ok" />
@@ -282,9 +288,9 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
           <span class="acct__text">
             <span class="acct__host selectable">{{ a.host }}</span>
             <span v-if="a.user" class="acct__user selectable">{{ a.user }}</span>
-            <span class="acct__word" :class="a.ok ? 'acct__word--ok' : 'acct__word--warn'">{{ a.ok ? 'Signed in' : 'Sign-in failed' }}</span>
-            <span v-if="!a.active" class="acct__meta">not in use</span>
-            <span v-if="a.fromEnv" class="acct__meta">from an environment variable</span>
+            <span class="acct__word" :class="a.ok ? 'acct__word--ok' : 'acct__word--warn'">{{ a.ok ? t('agents.cli.signedIn') : t('agents.hosting.signInFailed') }}</span>
+            <span v-if="!a.active" class="acct__meta">{{ t('agents.hosting.notInUse') }}</span>
+            <span v-if="a.fromEnv" class="acct__meta">{{ t('agents.hosting.fromEnv') }}</span>
             <span v-if="!a.ok && a.error" class="acct__meta selectable" :title="a.error">{{ a.error }}</span>
           </span>
           <span class="cli__actions">
@@ -294,27 +300,27 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
               variant="ghost"
               :disabled="!!job && job.phase !== 'failed'"
               @click="begin('login', a.host)"
-            >Sign in again</UiButton>
+            >{{ t('agents.hosting.signInAgain') }}</UiButton>
             <UiButton
               v-if="!a.fromEnv"
               size="sm"
               variant="ghost"
               :loading="signingOut === keyOf(a)"
-              :aria-label="`Sign out of ${a.host}${a.user ? ` as ${a.user}` : ''}`"
+              :aria-label="a.user ? t('agents.hosting.signOutAs', { host: a.host, user: a.user }) : t('agents.cli.signOutOf', { name: a.host })"
               @click="signOut(a)"
-            >Sign out</UiButton>
+            >{{ t('common.actions.signOut') }}</UiButton>
           </span>
         </li>
       </ul>
       <p v-else class="cli__state" role="status">
         <span class="cli__lead" aria-hidden="true"><CircleAlert class="cli__icon cli__icon--warn" /></span>
-        <span class="cli__word cli__word--warn">Not signed in</span>
-        <span class="cli__more">{{ tool === 'gh' ? 'Pull requests, checks and releases need a sign-in.' : 'Merge requests, pipelines and releases need a sign-in.' }}</span>
+        <span class="cli__word cli__word--warn">{{ t('agents.cli.notSignedIn') }}</span>
+        <span class="cli__more">{{ tool === 'gh' ? t('agents.hosting.ghNeeds') : t('agents.hosting.glabNeeds') }}</span>
       </p>
 
       <!-- sign in to another server -->
       <form v-if="adding" class="other" @submit.prevent="signInOther" @keydown.esc.prevent="cancelHost">
-        <label class="other__label" :for="fieldId">Server</label>
+        <label class="other__label" :for="fieldId">{{ t('agents.hosting.server') }}</label>
         <div class="other__line">
           <input
             :id="fieldId"
@@ -330,16 +336,16 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
             :aria-invalid="!!draftError || undefined"
             @input="draftError = null"
           >
-          <UiButton size="sm" type="submit">Sign in</UiButton>
-          <UiButton size="sm" variant="ghost" @click="cancelHost">Cancel</UiButton>
+          <UiButton size="sm" type="submit">{{ t('common.actions.signIn') }}</UiButton>
+          <UiButton size="sm" variant="ghost" @click="cancelHost">{{ t('common.actions.cancel') }}</UiButton>
         </div>
         <p v-if="draftError" :id="hintId" class="other__hint other__hint--error" role="alert">{{ draftError }}</p>
         <p v-else :id="hintId" class="other__hint">{{ otherHint }}</p>
       </form>
 
       <div v-else-if="!job" class="cli__foot">
-        <UiButton v-if="!signedInToDefault" size="sm" data-land @click="begin('login', defaultHost)">Sign in to {{ defaultHost }}</UiButton>
-        <UiButton size="sm" variant="ghost" :data-land="signedInToDefault || undefined" @click="askHost">Sign in to another server…</UiButton>
+        <UiButton v-if="!signedInToDefault" size="sm" data-land @click="begin('login', defaultHost)">{{ t('agents.cli.signInTo', { name: defaultHost }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :data-land="signedInToDefault || undefined" @click="askHost">{{ t('agents.hosting.signInOther') }}</UiButton>
       </div>
     </template>
 
@@ -351,7 +357,7 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       ref="jobEl"
       class="job"
       :class="[`job--${job.phase}`, { 'is-focused': termFocused }]"
-      :aria-label="job.kind === 'install' ? `Install the ${name}` : `Sign in to ${job.host}`"
+      :aria-label="job.kind === 'install' ? t('agents.hosting.installTool', { name }) : t('agents.cli.signInTo', { name: job.host })"
     >
       <header class="job__head">
         <span class="job__status" role="status">
@@ -361,24 +367,24 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
         </span>
         <span v-if="job.phase !== 'checking'" class="job__actions">
           <template v-if="job.phase === 'running' && link">
-            <UiButton variant="ghost" size="sm" :title="link" @click="openExternal(link)"><ExternalLink />Open page</UiButton>
-            <UiButton variant="ghost" size="sm" @click="copyLink"><Check v-if="copied" /><Copy v-else />{{ copied ? 'Copied' : 'Copy link' }}</UiButton>
+            <UiButton variant="ghost" size="sm" :title="link" @click="openExternal(link)"><ExternalLink />{{ t('agents.hosting.openPage') }}</UiButton>
+            <UiButton variant="ghost" size="sm" @click="copyLink"><Check v-if="copied" /><Copy v-else />{{ copied ? t('common.actions.copied') : t('agents.cli.copyLink') }}</UiButton>
           </template>
           <template v-if="job.phase === 'failed'">
-            <UiButton size="sm" @click="retry">Try again</UiButton>
-            <UiButton v-if="job.kind === 'install'" size="sm" variant="ghost" @click="help"><ExternalLink />How to install</UiButton>
+            <UiButton size="sm" @click="retry">{{ t('common.actions.retry') }}</UiButton>
+            <UiButton v-if="job.kind === 'install'" size="sm" variant="ghost" @click="help"><ExternalLink />{{ t('agents.cli.howToInstall') }}</UiButton>
           </template>
-          <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? 'Cancel' : 'Close' }}</UiButton>
+          <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? t('common.actions.cancel') : t('common.actions.close') }}</UiButton>
         </span>
       </header>
 
-      <p v-if="job.phase === 'failed'" class="job__note selectable" role="alert">{{ job.note }} The output is kept below.</p>
+      <p v-if="job.phase === 'failed'" class="job__note selectable" role="alert">{{ job.note }} {{ t('agents.cli.outputKept') }}</p>
 
       <div class="job__term" @focusin="termFocused = true" @focusout="termFocused = false">
         <LoginTerminal
           :key="job.attempt"
           :start="startJob"
-          :label="job.kind === 'install' ? `${name} installer` : `${name} sign-in terminal`"
+          :label="job.kind === 'install' ? t('agents.cli.installer', { name }) : t('agents.cli.signInTerminal', { name })"
           :rows="job.kind === 'install' ? 10 : 14"
           @exit="onExit"
           @failed="onFailed"
@@ -387,11 +393,11 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
       </div>
 
       <p v-if="job.phase === 'running'" class="job__hint">
-        <template v-if="job.kind === 'install'">If the installer asks a question, answer it here.</template>
-        <template v-else>
-          Answer the questions here and finish in your browser. To paste a code or a token, press <kbd>{{ pasteMod }}</kbd><kbd>V</kbd>, then
-          <kbd>Enter</kbd>; it may stay hidden as you paste.
-        </template>
+        <template v-if="job.kind === 'install'">{{ t('agents.cli.answerInstaller') }}</template>
+        <i18n-t v-else keypath="agents.hosting.loginHint" scope="global">
+          <template #keys><kbd>{{ pasteMod }}</kbd><kbd>V</kbd></template>
+          <template #enter><kbd>Enter</kbd></template>
+        </i18n-t>
       </p>
     </section>
   </li>

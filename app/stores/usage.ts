@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { t } from '~/i18n'
 import { AGENTS, type AgentId } from '~/types/chat'
 import type { AgentUsage, UsageWindow } from '~/agents/types'
 import { detectEarlyResets, type UsageReset } from '~/utils/usageReset'
@@ -113,7 +114,7 @@ export const useUsage = defineStore('usage', {
     },
     /** When the oldest shown answer arrived; null before any. */
     oldest(): number | null {
-      const times = Object.values(this.entries).map(e => e.fetchedAt).filter((t): t is number => t !== null)
+      const times = Object.values(this.entries).map(e => e.fetchedAt).filter((at): at is number => at !== null)
       return times.length ? Math.min(...times) : null
     },
   },
@@ -184,9 +185,9 @@ export function useUsageUpdated() {
   const usage = useUsage()
   const now = useNow(15_000)
   return computed(() => {
-    if (usage.loading) return 'Reading usage…'
+    if (usage.loading) return t('shell.usage.readingNow')
     if (!usage.oldest) return ''
-    const ago = shortAgo(usage.oldest, now.value)
-    return ago === 'now' ? 'Updated just now' : `Updated ${ago} ago`
+    if (Math.round((now.value - usage.oldest) / 1000) < 45) return t('shell.usage.updatedNow')
+    return t('shell.usage.updatedAgo', { ago: shortAgo(usage.oldest, now.value) })
   })
 }

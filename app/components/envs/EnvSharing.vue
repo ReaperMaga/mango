@@ -12,6 +12,7 @@ import { useNow } from '~/utils/time'
 const props = defineProps<{ hostId: string; instance: string; running: boolean }>()
 const emit = defineEmits<{ share: [] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const now = useNow()
 const key = computed(() => instanceKey(props.hostId, props.instance))
@@ -42,10 +43,10 @@ async function revoke(s: EnvShare) {
   }
 }
 
-const viaWord = (s: EnvShare) => (s.via === 'public' ? 'Over the internet' : 'Tailscale')
+const viaWord = (s: EnvShare) => (s.via === 'public' ? t('envs.common.overInternet') : 'Tailscale')
 const ends = (s: EnvShare) => {
-  if (!s.expiresAt) return 'No end date'
-  return shareExpired(s.expiresAt, now.value) ? `Expired ${shareDay(s.expiresAt, now.value)}` : `Until ${shareDay(s.expiresAt, now.value)}`
+  if (!s.expiresAt) return t('envs.sharing.noEnd')
+  return shareExpired(s.expiresAt, now.value) ? t('envs.sharing.expired', { day: shareDay(s.expiresAt, now.value) }) : t('envs.sharing.until', { day: shareDay(s.expiresAt, now.value) })
 }
 </script>
 
@@ -53,28 +54,28 @@ const ends = (s: EnvShare) => {
   <section class="shr" aria-labelledby="shr-title">
     <header class="shr__head">
       <h3 id="shr-title" class="shr__h3">
-        Sharing
+        {{ t('envs.common.sharing') }}
         <span v-if="shares?.length" class="shr__count tabular">{{ shares.length }}</span>
       </h3>
       <span class="shr__actions">
-        <UiIconButton label="Check again" size="sm" :disabled="!running || loading" @click="load(true)">
+        <UiIconButton :label="t('envs.common.checkAgain')" size="sm" :disabled="!running || loading" @click="load(true)">
           <RefreshCw :class="{ 'is-turning': loading }" />
         </UiIconButton>
-        <UiButton size="sm" :disabled="!running" :title="running ? undefined : 'Start it first'" @click="emit('share')">
-          <Share2 />Share…
+        <UiButton size="sm" :disabled="!running" :title="running ? undefined : t('envs.sharing.startFirst')" @click="emit('share')">
+          <Share2 />{{ t('envs.common.share') }}
         </UiButton>
       </span>
     </header>
     <p class="shr__desc">
-      Give one person full access to {{ instance }} with a link, and nothing else on the server. They need no server of their own.
+      {{ t('envs.sharing.description', { name: instance }) }}
     </p>
 
-    <p v-if="!running && !shares" class="shr__desc">Start the environment to see who it is shared with.</p>
+    <p v-if="!running && !shares" class="shr__desc">{{ t('envs.sharing.startToSee') }}</p>
     <p v-else-if="listError" class="shr__error" role="alert">
-      Couldn't read its shares. <span class="selectable">{{ listError }}</span>
+      {{ t('envs.sharing.readFailed') }} <span class="selectable">{{ listError }}</span>
     </p>
 
-    <ul v-if="shares?.length" class="rows" aria-label="Shares">
+    <ul v-if="shares?.length" class="rows" :aria-label="t('envs.sharing.shares')">
       <li v-for="s in shares" :key="s.id" class="share">
         <div class="share__row">
           <span class="share__who">
@@ -87,44 +88,43 @@ const ends = (s: EnvShare) => {
           </span>
           <span class="share__when">
             <span class="share__ends tabular" :class="{ 'is-expired': shareExpired(s.expiresAt, now) }">{{ ends(s) }}</span>
-            <span class="share__made tabular">Created {{ shareDay(s.createdAt, now) }}</span>
+            <span class="share__made tabular">{{ t('envs.sharing.created', { day: shareDay(s.createdAt, now) }) }}</span>
           </span>
           <UiButton
             variant="ghost"
             size="sm"
             :disabled="!running || confirming === s.id"
-            :title="running ? undefined : 'Start it to revoke access'"
+            :title="running ? undefined : t('envs.sharing.startToRevoke')"
             @click="confirming = s.id; revokeError = null"
           >
-            {{ shareExpired(s.expiresAt, now) ? 'Remove' : 'Revoke' }}
+            {{ shareExpired(s.expiresAt, now) ? t('envs.server.remove') : t('envs.sharing.revoke') }}
           </UiButton>
         </div>
-        <div v-if="confirming === s.id" class="share__confirm" role="group" :aria-label="`Confirm removing ${s.label}'s access`">
+        <div v-if="confirming === s.id" class="share__confirm" role="group" :aria-label="t('envs.sharing.confirmLabel', { name: s.label })">
           <span v-if="shareExpired(s.expiresAt, now)">
-            Remove {{ s.label }}'s expired share? This deletes its key from {{ instance }}; the link already stopped working.
+            {{ t('envs.sharing.confirmExpired', { name: s.label, instance }) }}
           </span>
           <span v-else>
-            Revoke {{ s.label }}'s access? This removes their key from {{ instance }}: the link stops working and they can't connect
-            again. Anything they left inside stays.
+            {{ t('envs.sharing.confirm', { name: s.label, instance }) }}
           </span>
           <span class="share__confirm-actions">
-            <UiButton variant="ghost" size="sm" :disabled="envs.revoking[s.id]" @click="confirming = null">Cancel</UiButton>
+            <UiButton variant="ghost" size="sm" :disabled="envs.revoking[s.id]" @click="confirming = null">{{ t('common.actions.cancel') }}</UiButton>
             <UiButton variant="danger" size="sm" :loading="envs.revoking[s.id]" @click="revoke(s)">
-              {{ shareExpired(s.expiresAt, now) ? 'Remove' : 'Revoke access' }}
+              {{ shareExpired(s.expiresAt, now) ? t('envs.server.remove') : t('envs.sharing.revokeAccess') }}
             </UiButton>
           </span>
         </div>
         <p v-if="revokeError?.id === s.id" class="shr__error" role="alert">
-          Couldn't revoke it. <span class="selectable">{{ revokeError.message }}.</span>
+          {{ t('envs.sharing.revokeFailed') }} <span class="selectable">{{ revokeError.message }}.</span>
         </p>
       </li>
     </ul>
-    <ul v-else-if="loading" class="rows" aria-busy="true" aria-label="Loading shares">
+    <ul v-else-if="loading" class="rows" aria-busy="true" :aria-label="t('envs.sharing.loading')">
       <li v-for="n in 2" :key="n" class="share share--skeleton" aria-hidden="true">
         <span class="bone bone--name" /><span class="bone bone--when" />
       </li>
     </ul>
-    <p v-else-if="shares" class="shr__empty">Not shared with anyone.</p>
+    <p v-else-if="shares" class="shr__empty">{{ t('envs.sharing.none') }}</p>
   </section>
 </template>
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Box, ChevronDown, CircleAlert, FolderOpen, LogIn, Monitor } from 'lucide-vue-next'
-import { ENV_COMPONENTS, ENV_DEFAULT_VERSION, ENV_IMAGES, instanceKey, useEnvironments } from '~/stores/environments'
+import { ENV_COMPONENTS, ENV_IMAGES, envComponentName, envDefaultVersion, instanceKey, useEnvironments } from '~/stores/environments'
 import type { EnvComponentId, EnvCreateInput, EnvKind, EnvVersions } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import SettingsSegmented from '~/components/settings/SettingsSegmented.vue'
@@ -12,6 +12,7 @@ import EnvVersionPicker from './EnvVersionPicker.vue'
  * install. Creating runs in a terminal inside the dialog so the launch and
  * every installer can be followed (and answered); then it offers next steps.
  */
+const { t } = useI18n()
 const envs = useEnvironments()
 
 const open = computed(() => envs.dialog?.kind === 'create')
@@ -38,10 +39,10 @@ const notice = ref<string | null>(null)
 /** The input of the run in progress (the form may not change under it). */
 const running = ref<EnvCreateInput | null>(null)
 
-const kinds = [
-  { value: 'container' as const, label: 'Container', icon: Box },
-  { value: 'vm' as const, label: 'Virtual machine', icon: Monitor },
-]
+const kinds = computed(() => [
+  { value: 'container' as const, label: t('envs.common.container'), icon: Box },
+  { value: 'vm' as const, label: t('envs.common.vm'), icon: Monitor },
+])
 
 watch(open, (isOpen) => {
   if (!isOpen) return
@@ -76,7 +77,7 @@ function suggestName() {
 /* ---------- image ---------- */
 
 const imageLabel = computed(() =>
-  useCustom.value ? 'Other image' : ENV_IMAGES.find(i => i.id === image.value)?.name ?? image.value)
+  useCustom.value ? t('envs.create.otherImage') : ENV_IMAGES.find(i => i.id === image.value)?.name ?? image.value)
 
 const imageItems = computed<MenuItem[]>(() => [
   ...ENV_IMAGES.map(i => ({
@@ -86,8 +87,8 @@ const imageItems = computed<MenuItem[]>(() => [
     onSelect: () => { useCustom.value = false; image.value = i.id },
   })),
   {
-    label: 'Other image…',
-    hint: 'Any remote:alias the server can pull',
+    label: t('envs.create.otherImageMore'),
+    hint: t('envs.create.otherImageHint'),
     checked: useCustom.value,
     divider: true,
     onSelect: async () => {
@@ -116,7 +117,7 @@ const effective = computed(() => {
 /** The ticked component that needs this one, if any (then it can't be unticked on its own). */
 function neededBy(id: EnvComponentId): string | null {
   for (const c of ENV_COMPONENTS) {
-    if (c.id !== id && effective.value.has(c.id) && c.requires.includes(id)) return c.name
+    if (c.id !== id && effective.value.has(c.id) && c.requires.includes(id)) return envComponentName(c.id)
   }
   return null
 }
@@ -127,7 +128,7 @@ function setVersion(id: EnvComponentId, v: string | null) {
   else delete next[id]
   versions.value = next
 }
-const versionLabel = (id: EnvComponentId) => versions.value[id] ?? ENV_DEFAULT_VERSION[id] ?? 'Default'
+const versionLabel = (id: EnvComponentId) => versions.value[id] ?? envDefaultVersion(id)
 
 function toggle(id: EnvComponentId) {
   const next = new Set(picked.value)
@@ -140,22 +141,22 @@ function toggle(id: EnvComponentId) {
 
 const nameError = computed(() => {
   const n = name.value.trim()
-  if (!n) return 'Enter a name for the environment.'
-  if (!/^[A-Za-z][A-Za-z0-9-]{0,62}$/.test(n) || n.endsWith('-')) return 'Use a letter, then letters, digits and dashes (up to 63), not ending in a dash.'
-  if ((envs.instances[hostId.value] ?? []).some(i => i.name === n)) return `There is already an environment called ${n} on this server.`
+  if (!n) return t('envs.create.nameEmpty')
+  if (!/^[A-Za-z][A-Za-z0-9-]{0,62}$/.test(n) || n.endsWith('-')) return t('envs.common.nameRule')
+  if ((envs.instances[hostId.value] ?? []).some(i => i.name === n)) return t('envs.common.nameTaken', { name: n })
   return null
 })
 const imageError = computed(() => {
   if (!useCustom.value) return null
   const s = customImage.value.trim()
-  if (!s) return 'Enter an image, such as images:fedora/42.'
-  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(s) ? null : 'Images look like remote:alias, e.g. images:fedora/42.'
+  if (!s) return t('envs.create.imageEmpty')
+  return /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(s) ? null : t('envs.create.imageInvalid')
 })
 function sizeError(v: string, max: number) {
   const s = v.trim()
   if (!s) return null
   const n = Number(s)
-  return Number.isInteger(n) && n > 0 && n <= max ? null : `A whole number from 1 to ${max}.`
+  return Number.isInteger(n) && n > 0 && n <= max ? null : t('envs.common.wholeNumber', { min: 1, max })
 }
 const cpusError = computed(() => sizeError(cpus.value, 512))
 const memoryError = computed(() => sizeError(memory.value, 4096))
@@ -196,13 +197,13 @@ function onExit(code: number | null) {
 function stop() {
   // Unmounting the terminal kills the process.
   phase.value = 'form'
-  notice.value = 'Stopped. Part of the environment may already exist; check the list before creating it again.'
+  notice.value = t('envs.create.stopped')
   envs.refreshInstances(hostId.value)
 }
 
 function back() {
   phase.value = 'form'
-  notice.value = 'It didn\'t finish. If the environment was created anyway, open it from the list and install what is missing.'
+  notice.value = t('envs.create.unfinished')
 }
 
 function close() {
@@ -219,13 +220,13 @@ function finish(intent: 'login-claude' | 'open-project' | null) {
   envs.select(input.hostId, input.name)
 }
 
-const title = computed(() => (host.value ? `New environment on ${host.value.name}` : 'New environment'))
+const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host.value.name }) : t('envs.common.newEnvironment')))
 </script>
 
 <template>
   <UiDialog :open="open" :title="title" :width="580" :dismissible="phase !== 'running'" @close="close">
     <form v-if="phase === 'form'" id="env-create-form" class="ec" novalidate @submit.prevent="submit">
-      <UiField label="Name" for="ec-name" :error="touched ? nameError : null">
+      <UiField :label="t('envs.common.name')" for="ec-name" :error="touched ? nameError : null">
         <input
           id="ec-name"
           v-model="name"
@@ -241,8 +242,8 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
       </UiField>
 
       <div class="ec__row">
-        <UiField label="Image" for="ec-image" :error="touched ? imageError : null">
-          <UiMenu :items="imageItems" :width="300" label="Image">
+        <UiField :label="t('envs.common.image')" for="ec-image" :error="touched ? imageError : null">
+          <UiMenu :items="imageItems" :width="300" :label="t('envs.common.image')">
             <template #default="{ toggle: toggleMenu, open: menuOpen }">
               <button
                 id="ec-image"
@@ -265,38 +266,38 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
             class="input ec__mono"
             type="text"
             placeholder="images:fedora/42"
-            aria-label="Image (remote:alias)"
+            :aria-label="t('envs.create.imageLabel')"
             autocomplete="off"
             spellcheck="false"
           >
         </UiField>
 
         <div class="ec__kind">
-          <span id="ec-kind-label" class="ec__label">Type</span>
+          <span id="ec-kind-label" class="ec__label">{{ t('envs.create.type') }}</span>
           <SettingsSegmented v-model="kind" :options="kinds" labelledby="ec-kind-label" />
         </div>
       </div>
       <p class="ec__hint">
         {{ kind === 'container'
-          ? 'Starts in seconds and shares the server\'s kernel.'
-          : 'Fully separate, with its own kernel. Slower to start; uses the image\'s cloud variant.' }}
+          ? t('envs.create.containerHint')
+          : t('envs.create.vmHint') }}
       </p>
 
       <div class="ec__sizes">
-        <UiField label="CPUs" for="ec-cpus" :error="touched ? cpusError : null">
-          <input id="ec-cpus" v-model="cpus" class="input tabular" type="text" inputmode="numeric" placeholder="Default" autocomplete="off">
+        <UiField :label="t('envs.common.cpus')" for="ec-cpus" :error="touched ? cpusError : null">
+          <input id="ec-cpus" v-model="cpus" class="input tabular" type="text" inputmode="numeric" :placeholder="t('envs.common.default')" autocomplete="off">
         </UiField>
-        <UiField label="Memory (GiB)" for="ec-mem" :error="touched ? memoryError : null">
-          <input id="ec-mem" v-model="memory" class="input tabular" type="text" inputmode="numeric" placeholder="Default" autocomplete="off">
+        <UiField :label="t('envs.common.memoryGib')" for="ec-mem" :error="touched ? memoryError : null">
+          <input id="ec-mem" v-model="memory" class="input tabular" type="text" inputmode="numeric" :placeholder="t('envs.common.default')" autocomplete="off">
         </UiField>
-        <UiField label="Disk (GiB)" for="ec-disk" :error="touched ? diskError : null">
-          <input id="ec-disk" v-model="disk" class="input tabular" type="text" inputmode="numeric" placeholder="Default" autocomplete="off">
+        <UiField :label="t('envs.common.diskGib')" for="ec-disk" :error="touched ? diskError : null">
+          <input id="ec-disk" v-model="disk" class="input tabular" type="text" inputmode="numeric" :placeholder="t('envs.common.default')" autocomplete="off">
         </UiField>
       </div>
-      <p class="ec__hint">Empty fields use the server's profile.</p>
+      <p class="ec__hint">{{ t('envs.create.sizesHint') }}</p>
 
       <fieldset class="ec__comps">
-        <legend class="ec__label">Install</legend>
+        <legend class="ec__label">{{ t('envs.create.install') }}</legend>
         <ul class="ec__list">
           <li v-for="c in ENV_COMPONENTS" :key="c.id" class="ec__item">
             <label class="ec__comp" :class="{ 'is-locked': !!neededBy(c.id) }">
@@ -308,11 +309,11 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
                 @change="toggle(c.id)"
               >
               <span class="ec__comp-text">
-                <span class="ec__comp-name">{{ c.name }}</span>
+                <span class="ec__comp-name">{{ envComponentName(c.id) }}</span>
                 <span class="ec__comp-desc">
-                  <template v-if="neededBy(c.id)">Needed by {{ neededBy(c.id) }}.</template>
-                  <template v-else>{{ c.description }}</template>
-                  <template v-if="c.id === 'tailscale' && !host?.tailscale"> Set up Tailscale for this server to give it tags.</template>
+                  <template v-if="neededBy(c.id)">{{ t('envs.create.neededBy', { name: neededBy(c.id) }) }}</template>
+                  <template v-else>{{ t(`envs.components.${c.id}.description`) }}</template>
+                  <template v-if="c.id === 'tailscale' && !host?.tailscale">{{ ` ${t('envs.create.tailscaleTags')}` }}</template>
                 </span>
               </span>
             </label>
@@ -321,7 +322,7 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
               v-if="c.versioned && effective.has(c.id)"
               class="ec__ver-anchor"
               :component="c.id"
-              :name="c.name"
+              :name="envComponentName(c.id)"
               :selected="versions[c.id] ?? null"
               allow-default
               @pick="(v) => setVersion(c.id, v)"
@@ -333,7 +334,7 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
                   :class="{ 'is-open': versionsOpen }"
                   aria-haspopup="dialog"
                   :aria-expanded="versionsOpen"
-                  :aria-label="`${c.name} version: ${versionLabel(c.id)}`"
+                  :aria-label="t('envs.create.versionLabel', { name: envComponentName(c.id), version: versionLabel(c.id) })"
                   @click="toggleVersions"
                 >
                   <span class="ec__ver-label" :class="{ 'is-picked': !!versions[c.id] }">{{ versionLabel(c.id) }}</span>
@@ -354,10 +355,10 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
     <div v-else class="ec__run">
       <EnvTerminal
         :start="start"
-        :title="`Creating ${running?.name}…`"
-        :done-title="`${running?.name} is ready`"
-        failed-title="Creating it didn't finish"
-        :label="`Creating ${running?.name}`"
+        :title="t('envs.create.creatingTitle', { name: running?.name })"
+        :done-title="t('envs.create.ready', { name: running?.name })"
+        :failed-title="t('envs.create.failed')"
+        :label="t('envs.create.creating', { name: running?.name })"
         :rows="14"
         flat
         :closable="false"
@@ -365,32 +366,32 @@ const title = computed(() => (host.value ? `New environment on ${host.value.name
         @exit="onExit"
       >
         <template #hint>
-          The server downloads the image the first time, which can take a few minutes. If an installer asks something, answer it here.
+          {{ t('envs.create.runHint') }}
         </template>
       </EnvTerminal>
 
       <div v-if="phase === 'done'" class="ec__next">
-        <p class="ec__next-lede">Next, sign in to the agents inside it, or open a project there.</p>
+        <p class="ec__next-lede">{{ t('envs.create.next') }}</p>
         <div class="ec__next-actions">
           <UiButton v-if="running?.components.includes('claude')" @click="finish('login-claude')">
-            <LogIn />Sign in to Claude Code
+            <LogIn />{{ t('envs.create.signInClaude') }}
           </UiButton>
-          <UiButton @click="finish('open-project')"><FolderOpen />Open project…</UiButton>
+          <UiButton @click="finish('open-project')"><FolderOpen />{{ t('envs.instance.openProject') }}</UiButton>
         </div>
       </div>
     </div>
 
     <template #footer>
       <template v-if="phase === 'form'">
-        <UiButton variant="ghost" @click="close">Cancel</UiButton>
-        <UiButton variant="primary" type="submit" form="env-create-form" :disabled="!host">Create environment</UiButton>
+        <UiButton variant="ghost" @click="close">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="primary" type="submit" form="env-create-form" :disabled="!host">{{ t('envs.create.submit') }}</UiButton>
       </template>
-      <UiButton v-else-if="phase === 'running'" variant="ghost" @click="stop">Stop</UiButton>
+      <UiButton v-else-if="phase === 'running'" variant="ghost" @click="stop">{{ t('envs.common.stop') }}</UiButton>
       <template v-else-if="phase === 'failed'">
-        <UiButton variant="ghost" @click="close">Close</UiButton>
-        <UiButton @click="back">Back to settings</UiButton>
+        <UiButton variant="ghost" @click="close">{{ t('common.actions.close') }}</UiButton>
+        <UiButton @click="back">{{ t('envs.create.backToSettings') }}</UiButton>
       </template>
-      <UiButton v-else variant="primary" data-autofocus @click="finish(null)">Done</UiButton>
+      <UiButton v-else variant="primary" data-autofocus @click="finish(null)">{{ t('common.actions.done') }}</UiButton>
     </template>
   </UiDialog>
 </template>

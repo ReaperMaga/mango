@@ -14,6 +14,7 @@ import PluginAddDialog from '~/components/plugins/PluginAddDialog.vue'
  * Settings > Plugins: Browse (the official catalog) and Installed, a plugin's detail in place of the
  * lists (with a breadcrumb back, Alt+Left like Environments), and the Add plugin dialog.
  */
+const { t } = useI18n()
 const plugins = usePlugins()
 const runtime = usePluginRuntime()
 const view = usePluginsView()
@@ -22,11 +23,11 @@ onMounted(() => { void plugins.load() })
 
 const tab = computed<PluginsTab>({
   get: () => view.tab ?? (plugins.installed.length ? 'installed' : 'browse'),
-  set: (t) => { view.tab = t },
+  set: (id) => { view.tab = id },
 })
 const tabs = computed(() => [
-  { value: 'browse' as const, label: 'Browse' },
-  { value: 'installed' as const, label: plugins.installed.length ? `Installed (${plugins.installed.length})` : 'Installed' },
+  { value: 'browse' as const, label: t('settings.plugins.browse') },
+  { value: 'installed' as const, label: plugins.installed.length ? t('settings.plugins.installedCount', { n: plugins.installed.length }) : t('settings.plugins.installed') },
 ])
 
 const detailName = computed(() => (view.detail ? plugins.byId(view.detail)?.manifest.name ?? view.detail : ''))
@@ -46,8 +47,8 @@ watch(() => view.detail, async (now) => {
   if (!now) return
   await nextTick()
   root.value?.closest('.settings__scroll')?.scrollTo({ top: 0 })
-  const t = root.value?.querySelector<HTMLElement>('[data-page-title]')
-  if (t && (!document.activeElement || document.activeElement === document.body || root.value?.contains(document.activeElement))) t.focus()
+  const title = root.value?.querySelector<HTMLElement>('[data-page-title]')
+  if (title && (!document.activeElement || document.activeElement === document.body || root.value?.contains(document.activeElement))) title.focus()
 })
 
 function onKey(e: KeyboardEvent) {
@@ -71,23 +72,23 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥' : 'Alt'
 <template>
   <div ref="root">
     <SettingsSection
-      title="Plugins"
-      description="Plugins add commands, tool windows, colour schemes and more to Mango. Install them from the catalog, from a git repository, or from a folder on this computer."
+      :title="t('settings.nav.plugins')"
+      :description="t('settings.plugins.description')"
     >
       <div v-if="runtime.safeMode" class="sp__safe" role="status">
         <PauseCircle aria-hidden="true" />
         <p class="sp__safe-text">
-          <strong>Plugins are paused.</strong>
-          Mango did not finish starting last time, so this time it started without them. Turn off a plugin you suspect, then resume.
+          <strong>{{ t('settings.plugins.paused') }}</strong>
+          {{ t('settings.plugins.pausedHint') }}
         </p>
-        <UiButton size="sm" :loading="resuming" @click="resume">Resume plugins</UiButton>
+        <UiButton size="sm" :loading="resuming" @click="resume">{{ t('settings.plugins.resume') }}</UiButton>
       </div>
 
       <template v-if="view.detail">
-        <nav class="crumbs" aria-label="Breadcrumb">
-          <UiIconButton label="Back" :shortcut="`${modKey}+Left`" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <nav class="crumbs" :aria-label="t('settings.plugins.breadcrumb')">
+          <UiIconButton :label="t('common.actions.back')" :shortcut="`${modKey}+Left`" size="sm" @click="back"><ArrowLeft /></UiIconButton>
           <ol class="crumbs__list">
-            <li class="crumbs__item"><button type="button" class="crumbs__link" @click="back">Plugins</button></li>
+            <li class="crumbs__item"><button type="button" class="crumbs__link" @click="back">{{ t('settings.nav.plugins') }}</button></li>
             <li class="crumbs__item">
               <ChevronRight class="crumbs__sep" aria-hidden="true" />
               <span class="crumbs__here" aria-current="location">{{ detailName }}</span>
@@ -99,8 +100,8 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌥' : 'Alt'
 
       <template v-else>
         <div class="sp__bar">
-          <SettingsSegmented v-model="tab" label="Plugins" :options="tabs" />
-          <UiButton size="sm" class="sp__add" @click="view.addLink = ''; view.addOpen = true"><Plus />Add plugin</UiButton>
+          <SettingsSegmented v-model="tab" :label="t('settings.nav.plugins')" :options="tabs" />
+          <UiButton size="sm" class="sp__add" @click="view.addLink = ''; view.addOpen = true"><Plus />{{ t('settings.plugins.add') }}</UiButton>
         </div>
         <PluginsBrowse v-if="tab === 'browse'" />
         <PluginsInstalled v-else />

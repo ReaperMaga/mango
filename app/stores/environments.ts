@@ -4,6 +4,7 @@ import type {
   EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { formatLocale, t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
@@ -28,27 +29,29 @@ export const ENV_HOME_DIR = '/home/agent'
 
 /**
  * The one-click components, for choosing them before an instance exists (the create dialog).
- * Once an instance runs, `env_components` is the source of truth for names, versions and requirements.
+ * Once an instance runs, `env_components` is the source of truth for versions and requirements.
  */
-export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; description: string; requires: EnvComponentId[]; versioned?: boolean }> = [
+export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; requires: EnvComponentId[]; versioned?: boolean }> = [
   // Same order and requirements as the backend's recipes (src-tauri/src/envs/recipes.rs).
-  { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [] },
-  { id: 'node', name: 'Node.js', description: 'Node.js and npm from nodejs.org.', requires: ['base'], versioned: true },
-  { id: 'java', name: 'Java', description: 'A JDK through SDKMAN, any vendor.', requires: ['base'], versioned: true },
-  { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
-  { id: 'glab', name: 'GitLab CLI', description: 'Merge requests, issues and git sign-in on GitLab.', requires: ['base'] },
-  { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
-  { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
-  { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'] },
-  { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can open from Mango.', requires: ['base'] },
-  { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose, for the agent user. A container gets nesting turned on.', requires: ['base'] },
-  { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
+  { id: 'base', requires: [] },
+  { id: 'node', requires: ['base'], versioned: true },
+  { id: 'java', requires: ['base'], versioned: true },
+  { id: 'gh', requires: ['base'] },
+  { id: 'glab', requires: ['base'] },
+  { id: 'claude', requires: ['base'] },
+  { id: 'codex', requires: ['base'] },
+  { id: 'chromium', requires: ['base', 'node'] },
+  { id: 'desktop', requires: ['base'] },
+  { id: 'docker', requires: ['base'] },
+  { id: 'tailscale', requires: ['base'] },
 ]
 
+/** A component's name, in the interface language. */
+export const envComponentName = (id: EnvComponentId) => t(`envs.components.${id}.name`)
+
 /** What a versioned component installs when no version is picked. */
-export const ENV_DEFAULT_VERSION: Partial<Record<EnvComponentId, string>> = {
-  node: 'Latest LTS',
-  java: 'Temurin LTS',
+export function envDefaultVersion(id: EnvComponentId) {
+  return id === 'node' ? t('envs.versions.node') : id === 'java' ? t('envs.versions.java') : t('envs.common.default')
 }
 
 /**
@@ -73,15 +76,15 @@ export type EnvIntent = 'login-claude' | 'login-gh' | `login-glab:${string}` | '
 /** How a server is doing, for its row and its page: reachability first, then Incus. */
 export type HostTone = 'ready' | 'setup' | 'bad' | 'checking' | 'unknown'
 export function hostState(probe: EnvProbe | null | undefined, probing: boolean): { tone: HostTone; label: string } {
-  if (probing && !probe) return { tone: 'checking', label: 'Checking…' }
-  if (!probe) return { tone: 'unknown', label: 'Not checked' }
-  if (!probe.reachable) return { tone: 'bad', label: 'Can\'t reach it' }
+  if (probing && !probe) return { tone: 'checking', label: t('envs.state.checking') }
+  if (!probe) return { tone: 'unknown', label: t('envs.state.notChecked') }
+  if (!probe.reachable) return { tone: 'bad', label: t('envs.state.cantReach') }
   switch (probe.incus) {
-    case 'ready': return { tone: 'ready', label: probe.incusVersion ? `Incus ${probe.incusVersion}` : 'Ready' }
-    case 'missing': return { tone: 'setup', label: 'Incus not installed' }
-    case 'uninitialised': return { tone: 'setup', label: 'Incus not set up' }
-    case 'no-access': return { tone: 'setup', label: 'No access to Incus' }
-    default: return { tone: probe.ok ? 'ready' : 'setup', label: probe.ok ? 'Ready' : 'Incus not ready' }
+    case 'ready': return { tone: 'ready', label: probe.incusVersion ? `Incus ${probe.incusVersion}` : t('envs.state.ready') }
+    case 'missing': return { tone: 'setup', label: t('envs.state.incusMissing') }
+    case 'uninitialised': return { tone: 'setup', label: t('envs.state.incusNotSetUp') }
+    case 'no-access': return { tone: 'setup', label: t('envs.state.incusNoAccess') }
+    default: return { tone: probe.ok ? 'ready' : 'setup', label: probe.ok ? t('envs.state.ready') : t('envs.state.incusNotReady') }
   }
 }
 
@@ -98,7 +101,7 @@ export const shareExpired = (expiresAt: number | null | undefined, now = Date.no
 export function shareDay(ms: number, now = Date.now()) {
   const d = new Date(ms)
   const sameYear = d.getFullYear() === new Date(now).getFullYear()
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })
+  return d.toLocaleDateString(formatLocale(), { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
 /**
@@ -119,15 +122,15 @@ export function directProblem(host: EnvHost, probe: EnvProbe | null | undefined,
 /** How a joined environment is doing, for its row and its page. */
 export function directState(host: EnvHost, probe: EnvProbe | null | undefined, probing: boolean): { tone: HostTone; label: string } {
   const problem = directProblem(host, probe)
-  if (problem === 'expired') return { tone: 'setup', label: 'Access ended' }
-  if (probing && !probe) return { tone: 'checking', label: 'Checking…' }
-  if (!probe) return { tone: 'unknown', label: 'Not checked' }
+  if (problem === 'expired') return { tone: 'setup', label: t('envs.state.accessEnded') }
+  if (probing && !probe) return { tone: 'checking', label: t('envs.state.checking') }
+  if (!probe) return { tone: 'unknown', label: t('envs.state.notChecked') }
   switch (problem) {
-    case 'host-key': return { tone: 'bad', label: 'Identity changed' }
-    case 'refused': return { tone: 'setup', label: 'Access refused' }
-    case 'unreachable': return { tone: 'bad', label: 'Can\'t reach it' }
+    case 'host-key': return { tone: 'bad', label: t('envs.state.identityChanged') }
+    case 'refused': return { tone: 'setup', label: t('envs.state.accessRefused') }
+    case 'unreachable': return { tone: 'bad', label: t('envs.state.cantReach') }
   }
-  return { tone: 'ready', label: 'Connected' }
+  return { tone: 'ready', label: t('envs.state.connected') }
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))

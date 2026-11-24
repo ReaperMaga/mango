@@ -18,6 +18,7 @@ const props = defineProps<{
   pluginId: string
 }>()
 
+const { t } = useI18n()
 const failed = ref<string | null>(null)
 const el = ref<HTMLElement | null>(null)
 let cleanup: (() => void) | null = null
@@ -83,8 +84,8 @@ function retry() {
 <template>
   <div class="pvh">
     <div v-if="failed" class="pvh__failed" role="status">
-      <p class="pvh__msg">This view stopped working: {{ failed }}</p>
-      <button type="button" class="pvh__retry" @click="retry">Try again</button>
+      <p class="pvh__msg">{{ t('plugins.view.failed', { error: failed }) }}</p>
+      <button type="button" class="pvh__retry" @click="retry">{{ t('common.actions.retry') }}</button>
     </div>
     <component :is="component" v-else-if="component" v-bind="componentProps" />
     <div v-else ref="el" class="pvh__mount" />

@@ -13,15 +13,11 @@ import LoginTerminal from '~/components/settings/LoginTerminal.vue'
  * vendor's own installer (picked by the backend, run in a terminal here so the
  * user can follow it and answer its prompts), then signs in to the agents.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const open = computed(() => ws.dialog === 'setup')
 
 const ORDER: SetupToolId[] = ['claude', 'codex', 'git']
-const ROLE: Record<SetupToolId, string> = {
-  claude: 'Anthropic\'s coding agent',
-  codex: 'OpenAI\'s coding agent',
-  git: 'For the Changes view, commits and cloning',
-}
 const isAgent = (id: SetupToolId): id is AgentId => id !== 'git'
 const isWindows = /Win/.test(navigator.platform)
 const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
@@ -48,7 +44,7 @@ async function refresh() {
     const found = await call('setup_check')
     tools.value = [...found].sort((a, b) => ORDER.indexOf(a.id) - ORDER.indexOf(b.id))
     checkError.value = null
-    await Promise.all(found.filter(t => t.installed && isAgent(t.id)).map(t => checkAuth(t.id as AgentId)))
+    await Promise.all(found.filter(f => f.installed && isAgent(f.id)).map(f => checkAuth(f.id as AgentId)))
   } catch (e) {
     checkError.value = errorText(e)
   } finally {
@@ -57,22 +53,22 @@ async function refresh() {
 }
 
 type RowState = 'checking' | 'missing' | 'installed' | 'signed-in' | 'signed-out'
-function stateOf(t: SetupTool): RowState {
-  if (!t.installed) return 'missing'
-  if (!isAgent(t.id)) return 'installed'
-  const a = auth[t.id]
+function stateOf(tool: SetupTool): RowState {
+  if (!tool.installed) return 'missing'
+  if (!isAgent(tool.id)) return 'installed'
+  const a = auth[tool.id]
   if (a === 'checking' || a === undefined) return 'checking'
   return a?.loggedIn ? 'signed-in' : 'signed-out'
 }
 
-function account(t: SetupTool): string {
-  const a = isAgent(t.id) ? auth[t.id] : null
+function account(tool: SetupTool): string {
+  const a = isAgent(tool.id) ? auth[tool.id] : null
   if (!a || a === 'checking') return ''
-  return a.account ?? (a.method ? `with ${a.method}` : '')
+  return a.account ?? (a.method ? t('agents.cli.withMethod', { method: a.method }) : '')
 }
 
 /** At least one agent can take a chat. */
-const ready = computed(() => tools.value?.some(t => stateOf(t) === 'signed-in') ?? false)
+const ready = computed(() => tools.value?.some(f => stateOf(f) === 'signed-in') ?? false)
 
 /* ---------- running an installer or a sign-in ---------- */
 
@@ -105,9 +101,9 @@ const startInstall = (tool: SetupToolId) => (cols: number, rows: number) => call
 const jobTitle = computed(() => {
   const j = job.value
   if (!j) return ''
-  if (j.phase === 'verifying') return 'Checking…'
-  if (j.phase === 'failed') return j.kind === 'install' ? `${j.tool.name} didn't install` : 'Sign-in didn\'t finish'
-  return j.kind === 'install' ? `Installing ${j.tool.name}…` : `Signing in to ${j.tool.name}…`
+  if (j.phase === 'verifying') return t('start.setup.checking')
+  if (j.phase === 'failed') return j.kind === 'install' ? t('start.setup.installFailed', { name: j.tool.name }) : t('agents.cli.signInUnfinished')
+  return j.kind === 'install' ? t('agents.cli.installing', { name: j.tool.name }) : t('agents.cli.signingInTo', { name: j.tool.name })
 })
 
 async function onExit(code: number | null) {
@@ -116,28 +112,30 @@ async function onExit(code: number | null) {
   j.phase = 'verifying'
   await refresh()
   if (job.value !== j) return
-  const now = tools.value?.find(t => t.id === j.tool.id)
+  const now = tools.value?.find(f => f.id === j.tool.id)
   const bin = isAgent(j.tool.id) ? AGENT_CLI[j.tool.id]?.bin ?? j.tool.name : 'git'
   if (j.kind === 'install') {
     if (now?.installed) return finish()
     j.note = code === 0
-      ? `The installer finished, but Mango can't find the ${bin} command yet. Restart Mango, then open Get started again.`
+      ? t('start.setup.installedNotFound', { bin })
       : code == null
-        ? 'The installer stopped before it finished.'
-        : `The installer exited with code ${code}.`
+        ? t('agents.cli.installerStopped')
+        : t('agents.cli.installerExited', { code })
   } else {
     const a = isAgent(j.tool.id) ? auth[j.tool.id] : null
     if (a && a !== 'checking' && a.loggedIn) return finish()
     j.note = code === 0
-      ? `The ${bin} command closed without signing in.`
-      : `The ${bin} command exited${code == null ? '' : ` with code ${code}`} before sign-in finished.`
+      ? t('agents.cli.closedSignedOut', { bin })
+      : code == null
+        ? t('agents.cli.signInExited', { bin })
+        : t('agents.cli.signInExitedCode', { bin, code })
   }
   j.phase = 'failed'
 }
 
 function onFailed(message: string) {
   if (!job.value) return
-  job.value.note = `Mango couldn't start it: ${message.replace(/\.$/, '')}.`
+  job.value.note = t('agents.cli.cantStart', { message: message.replace(/\.$/, '') })
   job.value.phase = 'failed'
 }
 
@@ -167,20 +165,19 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" title="Get started" :width="600" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('start.setup.title')" :width="600" :dismissible="!busy" @close="close">
     <div class="setup">
       <p class="setup__lede">
-        Mango runs the coding agents installed on this computer. Install at least one and sign in to it.
-        Installers come from each vendor and run in a terminal below, so you can follow along.
+        {{ t('start.setup.lede') }}
       </p>
 
       <p v-if="checkError" class="setup__error" role="alert">
         <TriangleAlert aria-hidden="true" />
-        <span>Couldn't check what is installed: {{ checkError }}.</span>
-        <UiButton size="sm" :loading="checking" @click="refresh">Try again</UiButton>
+        <span>{{ t('start.setup.checkFailed', { message: checkError }) }}</span>
+        <UiButton size="sm" :loading="checking" @click="refresh">{{ t('common.actions.retry') }}</UiButton>
       </p>
 
-      <ul v-else ref="listEl" class="tools" aria-label="Tools" :aria-busy="!tools || undefined">
+      <ul v-else ref="listEl" class="tools" :aria-label="t('start.setup.tools')" :aria-busy="!tools || undefined">
         <template v-if="!tools">
           <li v-for="id in ORDER" :key="id" class="tool tool--skeleton" aria-hidden="true">
             <span class="tool__lead"><span class="ring" /></span>
@@ -192,53 +189,53 @@ function close() {
         </template>
 
         <template v-else>
-        <li v-for="t in tools" :key="t.id" class="tool" :class="`tool--${stateOf(t)}`">
+        <li v-for="tool in tools" :key="tool.id" class="tool" :class="`tool--${stateOf(tool)}`">
           <span class="tool__lead" aria-hidden="true">
-            <span v-if="stateOf(t) === 'checking'" class="ring" />
-            <CircleDashed v-else-if="stateOf(t) === 'missing'" class="tool__icon tool__icon--idle" />
-            <CircleAlert v-else-if="stateOf(t) === 'signed-out'" class="tool__icon tool__icon--warn" />
+            <span v-if="stateOf(tool) === 'checking'" class="ring" />
+            <CircleDashed v-else-if="stateOf(tool) === 'missing'" class="tool__icon tool__icon--idle" />
+            <CircleAlert v-else-if="stateOf(tool) === 'signed-out'" class="tool__icon tool__icon--warn" />
             <CircleCheck v-else class="tool__icon tool__icon--ok" />
           </span>
 
           <div class="tool__main">
             <div class="tool__head">
-              <h3 class="tool__name">{{ t.name }}</h3>
-              <span v-if="t.version" class="tool__version tabular" :title="t.path ?? undefined">{{ shortVersion(t.version) }}</span>
+              <h3 class="tool__name">{{ tool.name }}</h3>
+              <span v-if="tool.version" class="tool__version tabular" :title="tool.path ?? undefined">{{ shortVersion(tool.version) }}</span>
             </div>
             <p class="tool__state" role="status">
-              <span v-if="stateOf(t) === 'checking'" class="tool__word">Checking sign-in…</span>
-              <span v-else-if="stateOf(t) === 'missing'" class="tool__word">Not installed</span>
-              <span v-else-if="stateOf(t) === 'signed-out'" class="tool__word tool__word--warn">Not signed in</span>
-              <span v-else-if="stateOf(t) === 'signed-in'" class="tool__word tool__word--ok">Ready</span>
-              <span v-else class="tool__word tool__word--ok">Installed</span>
+              <span v-if="stateOf(tool) === 'checking'" class="tool__word">{{ t('agents.cli.checkingSignIn') }}</span>
+              <span v-else-if="stateOf(tool) === 'missing'" class="tool__word">{{ t('agents.cli.notInstalled') }}</span>
+              <span v-else-if="stateOf(tool) === 'signed-out'" class="tool__word tool__word--warn">{{ t('agents.cli.notSignedIn') }}</span>
+              <span v-else-if="stateOf(tool) === 'signed-in'" class="tool__word tool__word--ok">{{ t('start.setup.ready') }}</span>
+              <span v-else class="tool__word tool__word--ok">{{ t('agents.cli.installed') }}</span>
               <span class="tool__more">
-                <template v-if="stateOf(t) === 'signed-in' && account(t)">{{ account(t) }}</template>
-                <template v-else>{{ ROLE[t.id] }}</template>
+                <template v-if="stateOf(tool) === 'signed-in' && account(tool)">{{ account(tool) }}</template>
+                <template v-else>{{ t(`start.setup.role.${tool.id}`) }}</template>
               </span>
             </p>
-            <p v-if="!t.installed && t.install" class="tool__cmd">
-              <span class="tool__via">{{ t.install.via }}:</span>
-              <code class="selectable" :title="t.install.command">{{ t.install.command }}</code>
+            <p v-if="!tool.installed && tool.install" class="tool__cmd">
+              <span class="tool__via">{{ tool.install.via }}:</span>
+              <code class="selectable" :title="tool.install.command">{{ tool.install.command }}</code>
             </p>
-            <p v-else-if="!t.installed" class="tool__cmd">
-              Mango can't install it on this computer. Use the download page, then check again.
+            <p v-else-if="!tool.installed" class="tool__cmd">
+              {{ t('start.setup.cantInstall') }}
             </p>
           </div>
 
           <span class="tool__actions">
-            <template v-if="stateOf(t) === 'missing'">
-              <UiButton v-if="t.install" size="sm" :disabled="!!job" @click="run(t, 'install')">Install</UiButton>
-              <UiButton v-else variant="ghost" size="sm" @click="openExternal(t.helpUrl)">
-                <ExternalLink />Download page
+            <template v-if="stateOf(tool) === 'missing'">
+              <UiButton v-if="tool.install" size="sm" :disabled="!!job" @click="run(tool, 'install')">{{ t('common.actions.install') }}</UiButton>
+              <UiButton v-else variant="ghost" size="sm" @click="openExternal(tool.helpUrl)">
+                <ExternalLink />{{ t('start.setup.downloadPage') }}
               </UiButton>
             </template>
             <UiButton
-              v-else-if="stateOf(t) === 'signed-out' && isAgent(t.id) && AGENT_CLI[t.id]"
+              v-else-if="stateOf(tool) === 'signed-out' && isAgent(tool.id) && AGENT_CLI[tool.id]"
               size="sm"
               :disabled="!!job"
-              @click="run(t, 'signin')"
+              @click="run(tool, 'signin')"
             >
-              Sign in
+              {{ t('common.actions.signIn') }}
             </UiButton>
           </span>
         </li>
@@ -262,21 +259,21 @@ function close() {
           <span class="job__actions">
             <template v-if="job.phase === 'running' && job.link">
               <UiButton variant="ghost" size="sm" :title="job.link" @click="openExternal(job.link)">
-                <ExternalLink />Open sign-in page
+                <ExternalLink />{{ t('agents.cli.openSignInPage') }}
               </UiButton>
               <UiButton variant="ghost" size="sm" @click="copyLink(job.link)">
-                <Check v-if="copied" /><Copy v-else />{{ copied ? 'Copied' : 'Copy link' }}
+                <Check v-if="copied" /><Copy v-else />{{ copied ? t('common.actions.copied') : t('agents.cli.copyLink') }}
               </UiButton>
             </template>
-            <UiButton v-if="job.phase === 'failed'" size="sm" @click="run(job.tool, job.kind)">Try again</UiButton>
+            <UiButton v-if="job.phase === 'failed'" size="sm" @click="run(job.tool, job.kind)">{{ t('common.actions.retry') }}</UiButton>
             <UiButton v-if="job.phase !== 'verifying'" variant="ghost" size="sm" @click="finish">
-              {{ job.phase === 'failed' ? 'Close' : job.kind === 'install' ? 'Stop' : 'Cancel' }}
+              {{ job.phase === 'failed' ? t('common.actions.close') : job.kind === 'install' ? t('start.setup.stop') : t('common.actions.cancel') }}
             </UiButton>
           </span>
         </header>
 
         <p v-if="job.phase === 'failed'" class="job__note selectable" role="alert">
-          {{ job.note }} The output is kept below.
+          {{ job.note }} {{ t('agents.cli.outputKept') }}
         </p>
 
         <div class="job__term">
@@ -284,7 +281,7 @@ function close() {
             v-if="job.kind === 'install'"
             :key="`install-${job.attempt}`"
             :start="startInstall(job.tool.id)"
-            :label="`${job.tool.name} installer`"
+            :label="t('agents.cli.installer', { name: job.tool.name })"
             :rows="10"
             @exit="onExit"
             @failed="onFailed"
@@ -293,7 +290,7 @@ function close() {
             v-else-if="isAgent(job.tool.id) && AGENT_CLI[job.tool.id]"
             :key="`signin-${job.attempt}`"
             :command="AGENT_CLI[job.tool.id]!.login"
-            :label="`${job.tool.name} sign-in terminal`"
+            :label="t('agents.cli.signInTerminal', { name: job.tool.name })"
             :rows="10"
             @exit="onExit"
             @failed="onFailed"
@@ -303,21 +300,23 @@ function close() {
 
         <p v-if="job.phase === 'running'" class="job__hint">
           <template v-if="job.kind === 'install'">
-            If the installer asks a question or for your password, answer it here.
-            <template v-if="isWindows">Windows may also ask for permission in a separate window.</template>
+            {{ t('start.setup.answerInstaller') }}
+            <template v-if="isWindows">{{ t('start.setup.windowsAsks') }}</template>
           </template>
-          <template v-else>
-            Finish in your browser. If the page gives you a code, press <kbd>{{ modKey }}</kbd><kbd>V</kbd> to paste it
-            here, then <kbd>Enter</kbd>.
-          </template>
+          <i18n-t v-else keypath="start.setup.signInHint" scope="global">
+            <template #keys><kbd>{{ modKey }}</kbd><kbd>V</kbd></template>
+            <template #enter><kbd>Enter</kbd></template>
+          </i18n-t>
         </p>
       </section>
     </div>
 
     <template #footer>
-      <span class="setup__later">Open this again any time: <kbd>{{ modKey }}</kbd><kbd>K</kbd>, then “Get started”.</span>
-      <UiButton v-if="ready" variant="primary" data-autofocus :disabled="busy" @click="close">Done</UiButton>
-      <UiButton v-else variant="ghost" :disabled="busy" @click="close">Skip for now</UiButton>
+      <i18n-t keypath="start.setup.later" tag="span" scope="global" class="setup__later">
+        <template #keys><kbd>{{ modKey }}</kbd><kbd>K</kbd></template>
+      </i18n-t>
+      <UiButton v-if="ready" variant="primary" data-autofocus :disabled="busy" @click="close">{{ t('common.actions.done') }}</UiButton>
+      <UiButton v-else variant="ghost" :disabled="busy" @click="close">{{ t('start.setup.skip') }}</UiButton>
     </template>
   </UiDialog>
 </template>

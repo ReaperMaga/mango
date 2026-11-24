@@ -11,6 +11,7 @@ import { parsePluginSource } from '~/utils/pluginSource'
  * the plugins found in it to pick from, with a trust notice and the commit that will be installed.
  * "Add local folder" uses a folder on this computer in place instead.
  */
+const { t } = useI18n()
 const plugins = usePlugins()
 const view = usePluginsView()
 
@@ -73,7 +74,7 @@ async function check() {
     const result = await plugins.probe({ kind: 'git', ...p.source }, jobId)
     if (mine !== seq) return
     if (!result.candidates.length) {
-      error.value = 'No plugin was found in that repository: there is no mango-plugin.json in it (a few folders deep). Check the link, or name the folder that holds the plugin.'
+      error.value = t('plugins.add.noneFound')
       step.value = 'link'
       return
     }
@@ -141,15 +142,15 @@ function close() {
 }
 
 const title = computed(() => (step.value === 'pick' || step.value === 'installing') && probe.value && probe.value.candidates.length > 1
-  ? 'Choose plugins to install'
-  : 'Add plugin')
-const installLabel = computed(() => (picked.value.length > 1 ? `Install ${picked.value.length} plugins` : 'Install'))
+  ? t('plugins.add.choose')
+  : t('plugins.add.title'))
+const installLabel = computed(() => (picked.value.length > 1 ? t('plugins.add.installMany', picked.value.length) : t('common.actions.install')))
 </script>
 
 <template>
   <UiDialog :open="view.addOpen" :title="title" :width="560" :dismissible="step !== 'installing'" @close="close">
     <form v-if="step === 'link' || step === 'probing'" id="plugin-add-form" class="pa" @submit.prevent="check">
-      <UiField label="Repository link" :for="linkId" :error="fieldError">
+      <UiField :label="t('plugins.add.link')" :for="linkId" :error="fieldError">
         <input
           :id="linkId"
           v-model="link"
@@ -163,48 +164,51 @@ const installLabel = computed(() => (picked.value.length > 1 ? `Install ${picked
       </UiField>
 
       <!-- What the link is read as, live -->
-      <dl v-if="parsed.ok" class="pa__read" aria-label="Read as">
-        <div><dt>Repository</dt><dd class="selectable">{{ parsed.repo }}</dd></div>
-        <div><dt>Branch or tag</dt><dd :class="{ 'is-default': !parsed.source.ref }">{{ parsed.source.ref ?? 'Default branch' }}</dd></div>
-        <div><dt>Folder</dt><dd :class="{ 'is-default': !parsed.source.subpath }">{{ parsed.source.subpath ?? 'Every plugin in the repository' }}</dd></div>
+      <dl v-if="parsed.ok" class="pa__read" :aria-label="t('plugins.add.readAs')">
+        <div><dt>{{ t('plugins.add.repository') }}</dt><dd class="selectable">{{ parsed.repo }}</dd></div>
+        <div><dt>{{ t('plugins.branchOrTag') }}</dt><dd :class="{ 'is-default': !parsed.source.ref }">{{ parsed.source.ref ?? t('plugins.add.defaultBranch') }}</dd></div>
+        <div><dt>{{ t('plugins.folder') }}</dt><dd :class="{ 'is-default': !parsed.source.subpath }">{{ parsed.source.subpath ?? t('plugins.add.everyPlugin') }}</dd></div>
       </dl>
       <p v-else-if="!fieldError && !parsed.empty" class="pa__hint" :class="{ 'is-local': parsed.local }">{{ parsed.error }}</p>
-      <p v-else-if="!fieldError" class="pa__hint">
-        A repository, or a folder in one: a GitHub, GitLab or Codeberg link to the folder works, as does
-        <code>git@host:owner/repo.git</code>. Add <code>#branch:folder</code> to pick a branch and folder.
-      </p>
+      <i18n-t v-else-if="!fieldError" keypath="plugins.add.hint" tag="p" scope="global" class="pa__hint">
+        <template #ssh><code>git@host:owner/repo.git</code></template>
+        <template #suffix><code>#branch:folder</code></template>
+      </i18n-t>
 
       <button type="button" class="pa__more" :aria-expanded="more" @click="more = !more">
-        <ChevronDown aria-hidden="true" :class="{ 'is-open': more }" />Branch and folder
+        <ChevronDown aria-hidden="true" :class="{ 'is-open': more }" />{{ t('plugins.add.more') }}
       </button>
       <div v-if="more" class="pa__fields">
-        <UiField label="Branch, tag or commit" :for="refId" hint="Empty: the repository's default branch.">
+        <UiField :label="t('plugins.add.ref')" :for="refId" :hint="t('plugins.add.refHint')">
           <input :id="refId" v-model="ref_" class="input mono-input" type="text" placeholder="main" spellcheck="false" autocomplete="off" :disabled="step === 'probing'">
         </UiField>
-        <UiField label="Folder" :for="folderId" hint="Empty: list every plugin in the repository.">
+        <UiField :label="t('plugins.folder')" :for="folderId" :hint="t('plugins.add.folderHint')">
           <input :id="folderId" v-model="folder" class="input mono-input" type="text" placeholder="plugins/my-plugin" spellcheck="false" autocomplete="off" :disabled="step === 'probing'">
         </UiField>
       </div>
 
       <div v-if="step === 'probing'" class="pa__progress" aria-live="polite">
-        <p class="pa__progress-title">Checking the repository…</p>
+        <p class="pa__progress-title">{{ t('plugins.add.checking') }}</p>
         <pre v-if="lines.length" class="pa__lines selectable">{{ lines.join('\n') }}</pre>
       </div>
       <p v-if="error" class="pa__error selectable" role="alert"><CircleAlert aria-hidden="true" /><span>{{ error }}</span></p>
     </form>
 
     <div v-else class="pa">
-      <p class="pa__from">
-        From <span class="mono selectable">{{ parsed.ok ? parsed.repo : probe?.url }}</span><template v-if="probe?.ref"> at <span class="mono">{{ probe.ref }}</span></template>,
-        commit <span class="mono selectable" :title="probe?.commit">{{ probe?.commit.slice(0, 10) }}</span>
-      </p>
+      <i18n-t :keypath="probe?.ref ? 'plugins.add.fromAt' : 'plugins.add.from'" tag="p" scope="global" class="pa__from">
+        <template #repo><span class="mono selectable">{{ parsed.ok ? parsed.repo : probe?.url }}</span></template>
+        <template #ref><span class="mono">{{ probe?.ref }}</span></template>
+        <template #commit><span class="mono selectable" :title="probe?.commit">{{ probe?.commit.slice(0, 10) }}</span></template>
+      </i18n-t>
 
       <div v-if="probe" class="pa__cands">
         <label v-if="probe.candidates.length > 1" class="pa__all">
           <input type="checkbox" :checked="allPicked" :indeterminate="picked.length > 0 && !allPicked" :disabled="step === 'installing'" @change="toggleAll">
-          Select all <span class="tabular">({{ picked.length }} of {{ probe.candidates.length }})</span>
+          <i18n-t keypath="plugins.add.selectAll" tag="span" scope="global">
+            <template #count><span class="tabular">{{ t('plugins.add.picked', { picked: picked.length, total: probe.candidates.length }) }}</span></template>
+          </i18n-t>
         </label>
-        <ul class="pa__list" aria-label="Plugins in the repository">
+        <ul class="pa__list" :aria-label="t('plugins.add.list')">
           <li v-for="c in probe.candidates" :key="c.subpath">
             <label class="pa__cand">
               <input v-model="picked" type="checkbox" :value="c.subpath" :disabled="step === 'installing' || probe.candidates.length === 1">
@@ -212,12 +216,12 @@ const installLabel = computed(() => (picked.value.length > 1 ? `Install ${picked
                 <span class="pa__cand-line">
                   <span class="pa__cand-name">{{ c.manifest.name }}</span>
                   <span class="pa__cand-ver tabular">{{ c.manifest.version }}</span>
-                  <span v-if="c.installed" class="pa__cand-installed">Installed: this replaces it</span>
+                  <span v-if="c.installed" class="pa__cand-installed">{{ t('plugins.add.replaces') }}</span>
                 </span>
                 <span v-if="c.manifest.description" class="pa__cand-desc">{{ c.manifest.description }}</span>
                 <span class="pa__cand-meta">
                   <span class="mono">{{ c.manifest.id }}</span>
-                  <span class="mono" :title="c.subpath || 'Repository root'">{{ c.subpath || '/' }}</span>
+                  <span class="mono" :title="c.subpath || t('plugins.add.root')">{{ c.subpath || '/' }}</span>
                   <span v-if="c.manifest.author">{{ c.manifest.author }}</span>
                 </span>
               </span>
@@ -229,8 +233,7 @@ const installLabel = computed(() => (picked.value.length > 1 ? `Install ${picked
       <div class="pa__trust">
         <ShieldAlert aria-hidden="true" />
         <p>
-          Plugins run inside Mango with full access to Mango, your projects and your chats. Install only from sources you trust;
-          you can read the code at this commit first.
+          {{ t('plugins.add.trust') }}
         </p>
       </div>
       <p v-if="error" class="pa__error selectable" role="alert"><CircleAlert aria-hidden="true" /><span>{{ error }}</span></p>
@@ -238,11 +241,11 @@ const installLabel = computed(() => (picked.value.length > 1 ? `Install ${picked
 
     <template #footer>
       <UiButton v-if="step === 'link' || step === 'probing'" variant="ghost" class="pa__local" :loading="localBusy" :disabled="step === 'probing'" @click="addLocal">
-        <FolderPlus v-if="!localBusy" />Add local folder…
+        <FolderPlus v-if="!localBusy" />{{ t('plugins.add.local') }}
       </UiButton>
-      <UiButton v-if="step === 'pick' || step === 'installing'" variant="ghost" class="pa__local" :disabled="step === 'installing'" @click="back">Back</UiButton>
-      <UiButton variant="ghost" :disabled="step === 'installing'" @click="close">Cancel</UiButton>
-      <UiButton v-if="step === 'link' || step === 'probing'" type="submit" form="plugin-add-form" variant="primary" :loading="step === 'probing'">Check repository</UiButton>
+      <UiButton v-if="step === 'pick' || step === 'installing'" variant="ghost" class="pa__local" :disabled="step === 'installing'" @click="back">{{ t('common.actions.back') }}</UiButton>
+      <UiButton variant="ghost" :disabled="step === 'installing'" @click="close">{{ t('common.actions.cancel') }}</UiButton>
+      <UiButton v-if="step === 'link' || step === 'probing'" type="submit" form="plugin-add-form" variant="primary" :loading="step === 'probing'">{{ t('plugins.add.check') }}</UiButton>
       <UiButton v-else variant="primary" :loading="step === 'installing'" :disabled="!picked.length" @click="install">{{ installLabel }}</UiButton>
     </template>
   </UiDialog>

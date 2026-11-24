@@ -1,4 +1,5 @@
 import type { EnvInstanceStatus, EnvRemote } from '~/types/ipc'
+import { t } from '~/i18n'
 import { directProblem, directState, instanceKey, useEnvironments } from '~/stores/environments'
 import { useWorkspace } from '~/stores/workspace'
 import { parseEnvPath } from '~/utils/envPath'
@@ -24,10 +25,18 @@ export interface RemotePlace {
 /** The labels of an environment, wherever it is shown. Reactive: reads the environments store. */
 export function envLabels(hostId: string, instance: string): Omit<RemotePlace, 'dir'> {
   const saved = useEnvironments().host(hostId)
-  const host = saved?.name ?? 'a server Mango no longer knows'
+  const host = saved?.name ?? t('envs.place.unknownServer')
   // A joined environment has no server of the user's: it is known by its own name ("review, shared").
-  if (saved?.direct) return { hostId, instance, host, where: `${saved.name}, shared`, label: saved.name, sub: 'shared', shared: true }
-  return { hostId, instance, host, where: `${instance} on ${host}`, label: instance, sub: `on ${host}`, shared: false }
+  if (saved?.direct) return { hostId, instance, host, where: t('envs.place.whereShared', { name: saved.name }), label: saved.name, sub: t('envs.place.shared'), shared: true }
+  return {
+    hostId,
+    instance,
+    host,
+    where: saved ? t('envs.place.where', { instance, host }) : t('envs.place.whereUnknown', { instance }),
+    label: instance,
+    sub: saved ? t('envs.place.on', { host }) : t('envs.place.onUnknown'),
+    shared: false,
+  }
 }
 
 /** Null for a project on this computer. Reactive: reads the environments store. */
@@ -52,33 +61,33 @@ export interface EnvState { tone: EnvTone; label: string; status: EnvInstanceSta
 export function envState(hostId: string, instance: string): EnvState {
   const envs = useEnvironments()
   const host = envs.host(hostId)
-  if (envs.loaded && !host) return { tone: 'bad', label: 'No longer saved in Mango', status: 'error' }
+  if (envs.loaded && !host) return { tone: 'bad', label: t('envs.state.notSaved'), status: 'error' }
   const probe = envs.probes[hostId]
   if (host?.direct) {
     const s = directState(host, probe, !!envs.probing[hostId])
     if (directProblem(host, probe)) return { tone: 'bad', label: s.label, status: 'error' }
-    if (s.tone === 'ready') return { tone: 'ready', label: 'Connected', status: 'running' }
+    if (s.tone === 'ready') return { tone: 'ready', label: t('envs.state.connected'), status: 'running' }
     return { tone: 'unknown', label: s.label, status: 'unknown' }
   }
-  if (probe && !probe.reachable) return { tone: 'bad', label: 'Can\'t reach its server', status: 'error' }
-  if (probe && !probe.ok) return { tone: 'bad', label: 'Incus isn\'t ready on its server', status: 'error' }
+  if (probe && !probe.reachable) return { tone: 'bad', label: t('envs.state.serverUnreachable'), status: 'error' }
+  if (probe && !probe.ok) return { tone: 'bad', label: t('envs.state.serverNotReady'), status: 'error' }
   const inst = envs.instance(hostId, instance)
   const busy = envs.busy[instanceKey(hostId, instance)]
-  if (busy === 'start' || busy === 'restart') return { tone: 'moving', label: 'Starting…', status: 'starting' }
-  if (busy === 'stop') return { tone: 'moving', label: 'Stopping…', status: 'stopping' }
-  if (busy === 'rename') return { tone: 'moving', label: 'Renaming…', status: 'stopping' }
+  if (busy === 'start' || busy === 'restart') return { tone: 'moving', label: t('envs.status.starting'), status: 'starting' }
+  if (busy === 'stop') return { tone: 'moving', label: t('envs.status.stopping'), status: 'stopping' }
+  if (busy === 'rename') return { tone: 'moving', label: t('envs.status.renaming'), status: 'stopping' }
   if (!inst) {
-    if (envs.instances[hostId]) return { tone: 'bad', label: 'Not on its server any more', status: 'error' }
-    return { tone: 'unknown', label: envs.probing[hostId] || envs.loadingInstances[hostId] ? 'Checking…' : 'Not checked', status: 'unknown' }
+    if (envs.instances[hostId]) return { tone: 'bad', label: t('envs.state.gone'), status: 'error' }
+    return { tone: 'unknown', label: envs.probing[hostId] || envs.loadingInstances[hostId] ? t('envs.state.checking') : t('envs.state.notChecked'), status: 'unknown' }
   }
   switch (inst.status) {
-    case 'running': return { tone: 'ready', label: 'Running', status: 'running' }
-    case 'starting': return { tone: 'moving', label: 'Starting…', status: 'starting' }
-    case 'stopping': return { tone: 'moving', label: 'Stopping…', status: 'stopping' }
-    case 'stopped': return { tone: 'off', label: 'Stopped', status: 'stopped' }
-    case 'frozen': return { tone: 'off', label: 'Frozen', status: 'frozen' }
-    case 'error': return { tone: 'bad', label: 'In an error state', status: 'error' }
-    default: return { tone: 'unknown', label: 'Not checked', status: 'unknown' }
+    case 'running': return { tone: 'ready', label: t('envs.status.running'), status: 'running' }
+    case 'starting': return { tone: 'moving', label: t('envs.status.starting'), status: 'starting' }
+    case 'stopping': return { tone: 'moving', label: t('envs.status.stopping'), status: 'stopping' }
+    case 'stopped': return { tone: 'off', label: t('envs.status.stopped'), status: 'stopped' }
+    case 'frozen': return { tone: 'off', label: t('envs.status.frozen'), status: 'frozen' }
+    case 'error': return { tone: 'bad', label: t('envs.state.errorState'), status: 'error' }
+    default: return { tone: 'unknown', label: t('envs.state.notChecked'), status: 'unknown' }
   }
 }
 

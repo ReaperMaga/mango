@@ -6,6 +6,7 @@ import UsageList from '~/components/UsageList.vue'
 import { remotePlace } from '~/composables/envProjects'
 
 /** Settings > Agents > Usage: the plan limits and when each one resets. Reading spends no quota. */
+const { t } = useI18n()
 const ws = useWorkspace()
 const usage = useUsage()
 const updated = useUsageUpdated()
@@ -20,18 +21,17 @@ const where = computed(() => remotePlace(ws.activeProjectPath)?.where ?? null)
   <div class="usage">
     <div class="usage__bar">
       <span class="usage__updated" aria-live="polite">
-        <template v-if="where">In {{ where }}<template v-if="updated"> · </template></template>{{ updated }}
+        <template v-if="where">{{ t('agents.usage.in', { where }) }}<template v-if="updated"> · </template></template>{{ updated }}
       </span>
       <UiButton size="sm" :loading="usage.loading" @click="usage.refreshReadable(true)">
         <RefreshCw v-if="!usage.loading" aria-hidden="true" />
-        Refresh
+        {{ t('common.actions.refresh') }}
       </UiButton>
     </div>
     <UsageList @sign-in="ws.agentsTab = 'agents'" />
 
     <p v-if="!usage.hasReset" class="usage__none">
-      No early reset noticed. If a limit is reset before its time, a note appears under the agent's name here,
-      and a dot on the gauge in the title bar.
+      {{ t('agents.usage.noReset') }}
     </p>
   </div>
 </template>

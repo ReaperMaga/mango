@@ -9,83 +9,84 @@ import SettingsSelect from './SettingsSelect.vue'
 import { effectiveScheme } from '~/plugin-host/ids'
 import { isPluginSchemeRegistered, pluginNames, reg } from '~/plugin-host/registry'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 
-const themes: Array<{ value: Theme; label: string; icon: typeof Sun }> = [
-  { value: 'dark', label: 'Dark', icon: Moon },
-  { value: 'light', label: 'Light', icon: Sun },
-  { value: 'system', label: 'System', icon: Monitor },
-]
+const themes = computed<Array<{ value: Theme; label: string; icon: typeof Sun }>>(() => [
+  { value: 'dark', label: t('appearance.theme.dark'), icon: Moon },
+  { value: 'light', label: t('appearance.theme.light'), icon: Sun },
+  { value: 'system', label: t('appearance.theme.system'), icon: Monitor },
+])
 
-const builtinSchemes: Array<{ value: ColorScheme; label: string }> = [
-  { value: 'mango', label: 'Mango' },
-  { value: 'blue', label: 'Blue' },
-  { value: 'teal', label: 'Teal' },
-  { value: 'green', label: 'Green' },
-  { value: 'purple', label: 'Purple' },
-  { value: 'pink', label: 'Pink' },
-  { value: 'red', label: 'Red' },
-  { value: 'slate', label: 'Slate' },
-  { value: 'uchiha', label: 'Uchiha' },
-  { value: 'graphite', label: 'Graphite' },
-  { value: 'ink', label: 'Ink' },
-  { value: 'cocoa', label: 'Cocoa' },
-  { value: 'neon', label: 'Neon' },
-  { value: 'solar', label: 'Solar' },
-]
+const builtinSchemes = computed<Array<{ value: ColorScheme; label: string }>>(() => [
+  { value: 'mango', label: t('appearance.scheme.names.mango') },
+  { value: 'blue', label: t('appearance.scheme.names.blue') },
+  { value: 'teal', label: t('appearance.scheme.names.teal') },
+  { value: 'green', label: t('appearance.scheme.names.green') },
+  { value: 'purple', label: t('appearance.scheme.names.purple') },
+  { value: 'pink', label: t('appearance.scheme.names.pink') },
+  { value: 'red', label: t('appearance.scheme.names.red') },
+  { value: 'slate', label: t('appearance.scheme.names.slate') },
+  { value: 'uchiha', label: t('appearance.scheme.names.uchiha') },
+  { value: 'graphite', label: t('appearance.scheme.names.graphite') },
+  { value: 'ink', label: t('appearance.scheme.names.ink') },
+  { value: 'cocoa', label: t('appearance.scheme.names.cocoa') },
+  { value: 'neon', label: t('appearance.scheme.names.neon') },
+  { value: 'solar', label: t('appearance.scheme.names.solar') },
+])
 /** Mango's schemes, then the ones plugins add (named by their plugin in the tooltip). */
 const schemes = computed<Array<{ value: SchemeId; label: string; swatch?: string; hint?: string }>>(() => [
-  ...builtinSchemes,
+  ...builtinSchemes.value,
   ...reg.schemes.map(s => ({
     value: s.fullId as SchemeId,
     label: s.label,
     ...(typeof s.swatch === 'string' && /^[#\w(),.%\s/-]{1,64}$/.test(s.swatch) ? { swatch: s.swatch } : {}),
-    hint: `From ${pluginNames[s.pluginId] ?? s.pluginId}`,
+    hint: t('appearance.scheme.from', { plugin: pluginNames[s.pluginId] ?? s.pluginId }),
   })),
 ])
 /** A plugin scheme whose plugin is not running shows as what applies: Mango. */
 const schemeShown = computed(() => effectiveScheme(ws.scheme, isPluginSchemeRegistered) as SchemeId)
 
-const uiFonts: Array<{ value: UiFont; label: string }> = [
+const uiFonts = computed<Array<{ value: UiFont; label: string }>>(() => [
   { value: 'inter', label: 'Inter' },
   { value: 'geist', label: 'Geist' },
   { value: 'dm-sans', label: 'DM Sans' },
   { value: 'manrope', label: 'Manrope' },
-  { value: 'system', label: 'System font' },
-]
-const monoFonts: Array<{ value: MonoFont; label: string }> = [
+  { value: 'system', label: t('appearance.fontUi.system') },
+])
+const monoFonts = computed<Array<{ value: MonoFont; label: string }>>(() => [
   { value: 'jetbrains-mono', label: 'JetBrains Mono' },
   { value: 'fira-code', label: 'Fira Code' },
   { value: 'source-code-pro', label: 'Source Code Pro' },
   { value: 'geist-mono', label: 'Geist Mono' },
-  { value: 'system', label: 'System monospace' },
-]
+  { value: 'system', label: t('appearance.fontMono.system') },
+])
 
-const textSizes: Array<{ value: TextSize; label: string }> = [
-  { value: 'small', label: 'Small' },
-  { value: 'default', label: 'Default' },
-  { value: 'large', label: 'Large' },
-  { value: 'xlarge', label: 'Extra large' },
-]
+const textSizes = computed<Array<{ value: TextSize; label: string }>>(() => [
+  { value: 'small', label: t('appearance.textSize.small') },
+  { value: 'default', label: t('appearance.textSize.default') },
+  { value: 'large', label: t('appearance.textSize.large') },
+  { value: 'xlarge', label: t('appearance.textSize.xlarge') },
+])
 
-const corners: Array<{ value: Corners; label: string }> = [
-  { value: 'sharp', label: 'Sharp' },
-  { value: 'default', label: 'Default' },
-  { value: 'round', label: 'Round' },
-]
+const corners = computed<Array<{ value: Corners; label: string }>>(() => [
+  { value: 'sharp', label: t('appearance.corners.sharp') },
+  { value: 'default', label: t('appearance.corners.default') },
+  { value: 'round', label: t('appearance.corners.round') },
+])
 
-const motions: Array<{ value: Motion; label: string }> = [
-  { value: 'system', label: 'System' },
-  { value: 'full', label: 'Full' },
-  { value: 'reduced', label: 'Reduced' },
-]
+const motions = computed<Array<{ value: Motion; label: string }>>(() => [
+  { value: 'system', label: t('appearance.motion.system') },
+  { value: 'full', label: t('appearance.motion.full') },
+  { value: 'reduced', label: t('appearance.motion.reduced') },
+])
 </script>
 
 <template>
-  <SettingsSection title="Appearance" description="How Mango looks on this computer.">
-    <h3 class="head">Color</h3>
+  <SettingsSection :title="t('settings.nav.appearance')" :description="t('appearance.description')">
+    <h3 class="head">{{ t('appearance.color') }}</h3>
     <div class="card">
-      <SettingsRow label="Theme" hint="System follows your computer's light or dark setting.">
+      <SettingsRow :label="t('appearance.theme.label')" :hint="t('appearance.theme.hint')">
         <template #default="{ labelId }">
           <SettingsSegmented
             :model-value="ws.theme"
@@ -95,7 +96,7 @@ const motions: Array<{ value: Motion; label: string }> = [
           />
         </template>
       </SettingsRow>
-      <SettingsRow stacked label="Color scheme" hint="Tints the background and sets the accent color. Status colors stay the same.">
+      <SettingsRow stacked :label="t('appearance.scheme.label')" :hint="t('appearance.scheme.hint')">
         <template #default="{ labelId }">
           <SettingsSchemePicker
             :model-value="schemeShown"
@@ -107,19 +108,19 @@ const motions: Array<{ value: Motion; label: string }> = [
       </SettingsRow>
     </div>
 
-    <h3 class="head">Text</h3>
+    <h3 class="head">{{ t('appearance.text') }}</h3>
     <div class="card">
-      <SettingsRow label="Interface font" hint="The font of menus, chats and settings.">
+      <SettingsRow :label="t('appearance.fontUi.label')" :hint="t('appearance.fontUi.hint')">
         <template #default="{ labelId }">
-          <SettingsSelect :model-value="ws.fontUi" :options="uiFonts" :labelledby="labelId" label="Interface font" @update:model-value="v => ws.setFonts({ ui: v })" />
+          <SettingsSelect :model-value="ws.fontUi" :options="uiFonts" :labelledby="labelId" :label="t('appearance.fontUi.label')" @update:model-value="v => ws.setFonts({ ui: v })" />
         </template>
       </SettingsRow>
-      <SettingsRow label="Code font" hint="The font of code, paths and branches, the editor and the terminal.">
+      <SettingsRow :label="t('appearance.fontMono.label')" :hint="t('appearance.fontMono.hint')">
         <template #default="{ labelId }">
-          <SettingsSelect :model-value="ws.fontMono" :options="monoFonts" :labelledby="labelId" label="Code font" @update:model-value="v => ws.setFonts({ mono: v })" />
+          <SettingsSelect :model-value="ws.fontMono" :options="monoFonts" :labelledby="labelId" :label="t('appearance.fontMono.label')" @update:model-value="v => ws.setFonts({ mono: v })" />
         </template>
       </SettingsRow>
-      <SettingsRow label="Text size" hint="Scales the interface text. The terminal has its own size in Terminal settings.">
+      <SettingsRow :label="t('appearance.textSize.label')" :hint="t('appearance.textSize.hint')">
         <template #default="{ labelId }">
           <SettingsSegmented
             :model-value="ws.textSize"
@@ -131,9 +132,9 @@ const motions: Array<{ value: Motion; label: string }> = [
       </SettingsRow>
     </div>
 
-    <h3 class="head">Shape and motion</h3>
+    <h3 class="head">{{ t('appearance.shape') }}</h3>
     <div class="card">
-      <SettingsRow label="Corners" hint="How rounded buttons, panels and menus are.">
+      <SettingsRow :label="t('appearance.corners.label')" :hint="t('appearance.corners.hint')">
         <template #default="{ labelId }">
           <SettingsSegmented
             :model-value="ws.corners"
@@ -143,7 +144,7 @@ const motions: Array<{ value: Motion; label: string }> = [
           />
         </template>
       </SettingsRow>
-      <SettingsRow label="Animations" hint="Reduced turns transitions off. System follows your computer's setting.">
+      <SettingsRow :label="t('appearance.motion.label')" :hint="t('appearance.motion.hint')">
         <template #default="{ labelId }">
           <SettingsSegmented
             :model-value="ws.motion"

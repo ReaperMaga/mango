@@ -8,6 +8,7 @@ import { FILE_CHANGED, FILE_CREATED, FILE_DELETED, type FileChange } from '~/lsp
 import { joinRoot, relativeTo } from '~/lsp/uri'
 import { PROVIDES, languageProviders, type Feature, type Served } from '~/lsp/providers'
 import { useLanguageServers } from '~/lsp/store'
+import { t } from '~/i18n'
 import { call, on } from '~/composables/useBackend'
 import { useFiles } from '~/stores/files'
 import { useGit } from '~/stores/git'
@@ -83,7 +84,7 @@ function connector(key: PoolKey<LspServerId>): Connect {
   return async (handlers) => {
     await listen()
     // The last word before a process starts: the answer may have changed meanwhile.
-    if (!useLanguageServers().allowed(key.root)) throw new Error('Language servers are off for this project.')
+    if (!useLanguageServers().allowed(key.root)) throw new Error(t('files.server.off'))
     const id = crypto.randomUUID()
     processes.set(id, handlers)
     try {

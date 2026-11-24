@@ -38,14 +38,14 @@ const props = withDefaults(defineProps<{
   flat: false,
   closable: true,
   retryable: true,
-  doneTitle: 'Finished',
-  failedTitle: 'It didn\'t finish',
 })
 
 const emit = defineEmits<{
   exit: [code: number | null]
   close: []
 }>()
+
+const { t } = useI18n()
 
 type Phase = 'running' | 'done' | 'failed'
 const phase = ref<Phase>('running')
@@ -60,8 +60,8 @@ const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 const codeId = useId()
 
 const heading = computed(() => {
-  if (phase.value === 'done') return props.doneTitle
-  if (phase.value === 'failed') return props.failedTitle
+  if (phase.value === 'done') return props.doneTitle ?? t('envs.terminal.finished')
+  if (phase.value === 'failed') return props.failedTitle ?? t('envs.terminal.unfinished')
   return props.title
 })
 
@@ -72,7 +72,7 @@ function onExit(code: number | null) {
     phase.value = 'done'
   } else {
     phase.value = 'failed'
-    note.value = code == null ? 'The process ended unexpectedly.' : `It stopped with exit code ${code}.`
+    note.value = code == null ? t('envs.terminal.ended') : t('envs.terminal.exitCode', { code })
   }
   emit('exit', code)
 }
@@ -211,39 +211,39 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
       <span class="job__actions">
         <template v-if="signIn && phase === 'running' && link">
           <UiButton variant="ghost" size="sm" :title="link" @click="openExternal(link)">
-            <ExternalLink />Open sign-in page
+            <ExternalLink />{{ t('envs.terminal.openPage') }}
           </UiButton>
           <UiButton variant="ghost" size="sm" @click="copyLink">
-            <Check v-if="copied" /><Copy v-else />{{ copied ? 'Copied' : 'Copy link' }}
+            <Check v-if="copied" /><Copy v-else />{{ copied ? t('common.actions.copied') : t('envs.terminal.copyLink') }}
           </UiButton>
         </template>
         <slot name="actions" :phase="phase" />
-        <UiButton v-if="phase === 'failed' && retryable" size="sm" @click="retry">Try again</UiButton>
+        <UiButton v-if="phase === 'failed' && retryable" size="sm" @click="retry">{{ t('common.actions.retry') }}</UiButton>
         <UiButton v-if="closable" variant="ghost" size="sm" @click="emit('close')">
-          {{ phase === 'running' ? (shell ? 'Close' : signIn ? 'Cancel' : 'Stop') : 'Close' }}
+          {{ phase === 'running' ? (shell ? t('common.actions.close') : signIn ? t('common.actions.cancel') : t('envs.common.stop')) : t('common.actions.close') }}
         </UiButton>
       </span>
     </header>
 
     <p v-if="phase === 'failed'" class="job__note selectable" role="alert">
-      {{ note }} The output is kept below.
+      {{ note }} {{ t('envs.terminal.outputKept') }}
     </p>
 
     <div v-if="signIn && phase === 'running'" class="signin">
       <p class="signin__lead">
-        <template v-if="!link">Waiting for the sign-in page…</template>
-        <template v-else-if="sentCode">Code sent. Finishing the sign-in…</template>
-        <template v-else>The sign-in page is open in your browser. Sign in there to continue.</template>
+        <template v-if="!link">{{ t('envs.terminal.waiting') }}</template>
+        <template v-else-if="sentCode">{{ t('envs.terminal.codeSent') }}</template>
+        <template v-else>{{ t('envs.terminal.pageOpen') }}</template>
       </p>
       <div v-if="deviceCode" class="signin__code">
-        <span class="signin__code-label">Enter this code on the page</span>
+        <span class="signin__code-label">{{ t('envs.terminal.enterCode') }}</span>
         <span class="signin__code-value selectable">{{ deviceCode }}</span>
         <UiButton variant="ghost" size="sm" @click="copyCode">
-          <Check v-if="codeCopied" /><Copy v-else />{{ codeCopied ? 'Copied' : 'Copy' }}
+          <Check v-if="codeCopied" /><Copy v-else />{{ codeCopied ? t('common.actions.copied') : t('common.actions.copy') }}
         </UiButton>
       </div>
       <form v-else-if="wantsCode && !sentCode" class="signin__paste" @submit.prevent="sendCode">
-        <label class="signin__code-label" :for="codeId">When the page shows a code, paste it here</label>
+        <label class="signin__code-label" :for="codeId">{{ t('envs.terminal.pasteCode') }}</label>
         <div class="signin__paste-row">
           <input
             :id="codeId"
@@ -251,9 +251,9 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
             class="signin__input"
             autocomplete="off"
             spellcheck="false"
-            placeholder="Code from the browser"
+            :placeholder="t('envs.terminal.codePlaceholder')"
           >
-          <UiButton size="sm" type="submit" :disabled="!pasted.trim()">Continue</UiButton>
+          <UiButton size="sm" type="submit" :disabled="!pasted.trim()">{{ t('envs.terminal.continue') }}</UiButton>
         </div>
       </form>
     </div>
@@ -266,7 +266,7 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
       @click="showOutput = !showOutput"
     >
       <ChevronDown class="job__toggle-icon" :class="{ 'is-open': showOutput }" aria-hidden="true" />
-      {{ showOutput ? 'Hide output' : 'Show output' }}
+      {{ showOutput ? t('envs.terminal.hideOutput') : t('envs.terminal.showOutput') }}
     </button>
 
     <div
@@ -291,8 +291,10 @@ defineExpose({ focus: () => term.value?.focus(), retry, phase })
 
     <p v-if="phase === 'running' && (signIn ? showOutput : $slots.hint)" class="job__hint">
       <slot name="hint">
-        If the page gives you a code, press <kbd>{{ modKey }}</kbd><kbd>V</kbd> to paste it here,
-        then <kbd>Enter</kbd>. The code may stay hidden as you paste.
+        <i18n-t keypath="envs.terminal.hint" scope="global">
+          <template #paste><kbd>{{ modKey }}</kbd><kbd>V</kbd></template>
+          <template #enter><kbd>Enter</kbd></template>
+        </i18n-t>
       </slot>
     </p>
   </section>

@@ -12,6 +12,7 @@ import { shortAgo, useNow } from '~/utils/time'
  */
 const props = withDefaults(defineProps<{ parentId: string; depth?: number }>(), { depth: 0 })
 
+const { t } = useI18n()
 const threads = useThreads()
 const ws = useWorkspace()
 const now = useNow()
@@ -36,20 +37,20 @@ function open(t: Thread) {
 }
 
 /** How it went, in a word; the time once it is over. */
-function state(t: Thread) {
-  if (t.status === 'running' || t.status === 'queued') return 'working'
-  if (t.status === 'error') return 'failed'
-  const last = t.messages[t.messages.length - 1]
-  if (last?.outcome === 'stopped') return 'stopped'
-  return shortAgo(t.updatedAt, now.value)
+function state(chat: Thread) {
+  if (chat.status === 'running' || chat.status === 'queued') return t('shell.chat.stateWorking')
+  if (chat.status === 'error') return t('shell.chat.stateFailed')
+  const last = chat.messages[chat.messages.length - 1]
+  if (last?.outcome === 'stopped') return t('shell.chat.stateStopped')
+  return shortAgo(chat.updatedAt, now.value)
 }
 
 const menus = ref<Record<string, { showAt: (x: number, y: number) => void } | null>>({})
-function menu(t: Thread): MenuItem[] {
-  const busy = t.status === 'running' || t.status === 'queued'
+function menu(chat: Thread): MenuItem[] {
+  const busy = chat.status === 'running' || chat.status === 'queued'
   return [
-    { label: 'Open to the side', icon: Columns2, onSelect: () => threads.split(t.id) },
-    { label: t.forkOf ? 'Delete chat' : 'Delete sub-agent chat', icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => ws.confirmThen('delete', { title: t.forkOf ? 'Delete chat?' : 'Delete sub-agent chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
+    { label: t('shell.chat.toSide'), icon: Columns2, onSelect: () => threads.split(chat.id) },
+    { label: chat.forkOf ? t('shell.chat.delete') : t('shell.chat.deleteSub'), icon: Trash2, danger: true, divider: true, disabled: busy, onSelect: () => ws.confirmThen('delete', { title: chat.forkOf ? t('shell.chat.deleteTitle') : t('shell.chat.deleteSubTitle'), body: t('shell.chat.deleteBody', { title: chat.title }), label: t('shell.chat.delete'), danger: true }, () => threads.remove(chat.id)) },
   ]
 }
 </script>
@@ -62,7 +63,7 @@ function menu(t: Thread): MenuItem[] {
         :class="{ 'is-current': c.id === threads.activePane.threadId, 'is-visible': visibleIds.has(c.id) }"
         role="button"
         tabindex="0"
-        :title="`${c.forkOf ? 'Fork' : (c.agentType ?? 'Sub-agent')}: ${c.title}`"
+        :title="`${c.forkOf ? t('shell.chat.fork') : (c.agentType ?? t('shell.chat.subAgent'))}: ${c.title}`"
         @click="open(c)"
         @keydown.enter.prevent="open(c)"
         @contextmenu.prevent="menus[c.id]?.showAt($event.clientX, $event.clientY)"
@@ -71,7 +72,7 @@ function menu(t: Thread): MenuItem[] {
         <span class="sbs__title">{{ c.title }}</span>
         <span class="sbs__state tabular" :class="`is-${c.status}`">{{ state(c) }}</span>
       </div>
-      <UiMenu :ref="(el: any) => { menus[c.id] = el }" :items="menu(c)" placement="bottom-end" :width="220" label="Sub-agent chat actions" />
+      <UiMenu :ref="(el: any) => { menus[c.id] = el }" :items="menu(c)" placement="bottom-end" :width="220" :label="t('shell.chat.subActions')" />
       <AppSidebarSubagents v-if="threads.childrenOf(c.id).length" :parent-id="c.id" :depth="depth + 1" />
     </li>
   </ul>

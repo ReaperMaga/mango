@@ -4,6 +4,7 @@ import { CircleAlert, Code, Eye, FileWarning, FolderTree, Save, ShieldQuestion, 
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { closeFileTab, useFiles } from '~/stores/files'
+import { failureText } from '~/utils/autoSave'
 import { parseFileTab } from '~/utils/fileTabs'
 import { editorModel, type EditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
@@ -31,6 +32,7 @@ import FilesLanguageStatus from './FilesLanguageStatus.vue'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
@@ -268,14 +270,14 @@ const head = computed(() => (tab.value ? git.status(tab.value.projectPath)?.head
 
 async function loadBase() {
   const id = props.tabId
-  const t = tab.value
-  if (!markers || !t || shownTab !== id) return
-  const at = head.value
+  const at = tab.value
+  if (!markers || !at || shownTab !== id) return
+  const now = head.value
   let entry = bases.get(id)
-  if (!entry || entry.head !== at) {
+  if (!entry || entry.head !== now) {
     // No committed version, or none readable: no markers.
-    const text = await call('git_base', { path: t.projectPath, file: t.file }).catch(() => null)
-    entry = { head: at, text }
+    const text = await call('git_base', { path: at.projectPath, file: at.file }).catch(() => null)
+    entry = { head: now, text }
     bases.set(id, entry)
   }
   if (markers && shownTab === id) markers.setBase(entry.text)
@@ -341,7 +343,7 @@ function revealInTree() {
 }
 
 function formatSize(n: number) {
-  if (n < 1024) return `${n} bytes`
+  if (n < 1024) return t('files.editor.bytes', n)
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
@@ -362,17 +364,17 @@ onBeforeUnmount(() => clearTimeout(slowTimer))
 const state = computed(() => {
   const x = f.value
   if (!x || x.loading && x.disk === null) return ''
-  if (x.saving && (!ws.editorAutoSave || savingSlowly.value)) return 'Saving…'
-  if (files.showsUnsaved(props.tabId)) return 'Modified'
+  if (x.saving && (!ws.editorAutoSave || savingSlowly.value)) return t('files.editor.saving')
+  if (files.showsUnsaved(props.tabId)) return t('files.editor.modified')
   return ''
 })
 
 /* ---------- the language server */
 
 const server = computed(() => {
-  const t = tab.value
-  if (!t || !editable.value || !language.value || isEnvPath(t.projectPath) || !ws.editorLanguageServers) return null
-  return servers.serverFor(lspLanguage(t.file, language.value))
+  const at = tab.value
+  if (!at || !editable.value || !language.value || isEnvPath(at.projectPath) || !ws.editorLanguageServers) return null
+  return servers.serverFor(lspLanguage(at.file, language.value))
 })
 /** What an answer binds (`setConsent`): the project, or a folder that is no worktree of it. Not known until looked at. */
 const consentFor = computed(() => (tab.value ? servers.folders[tab.value.projectPath]?.project : undefined))
@@ -390,14 +392,15 @@ const consent = computed(() => {
   const alone = path === root && threads.ownerOf(root) !== root
   const scope = alone ? 'folder' : 'project'
   const worktrees = !alone && project?.isGit && project.vcs !== 'plastic'
-  // A yes given in a worktree binds that one too.
-  const here = path === root ? ' and the' : ', this worktree and the'
   return {
     scope,
     name: project?.name ?? baseName(path),
     covers: alone
-      ? 'Every language server, in this folder only'
-      : `Every language server, in this project${worktrees ? `${here} git worktrees Mango makes for it` : ''}`,
+      ? t('files.consent.coversFolder')
+      : !worktrees
+          ? t('files.consent.coversProject')
+          // A yes given in a worktree binds that one too.
+          : path === root ? t('files.consent.coversWorktrees') : t('files.consent.coversWorktree'),
   }
 })
 
@@ -408,52 +411,52 @@ function answerConsent(on: boolean) {
 </script>
 
 <template>
-  <section class="fe" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? `Editing ${tab.file}` : 'Editor'">
+  <section class="fe" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? t('files.editor.editing', { file: tab.file }) : t('files.editor.label')">
     <header v-if="tab" class="fe__head">
       <h2 class="fe__name" :title="tab.file">{{ tab.name }}</h2>
       <span v-if="tab.dir" class="fe__dir selectable"><bdi>{{ tab.dir }}</bdi></span>
       <span v-if="state" class="fe__state" :class="{ 'is-dirty': f?.dirty && !f?.saving }">{{ state }}</span>
       <span class="fe__spacer" />
       <FilesLanguageStatus v-if="server" :key="server.id" :server="server" :root="tab.projectPath" />
-      <div v-if="kind === 'svg' && editable" class="fe__view" role="radiogroup" aria-label="Show the SVG as">
+      <div v-if="kind === 'svg' && editable" class="fe__view" role="radiogroup" :aria-label="t('files.editor.svgAs')">
         <button type="button" role="radio" :aria-checked="svgPreview" :class="{ 'is-on': svgPreview }" @click="setView('preview')">
-          <Eye />Preview
+          <Eye />{{ t('files.editor.preview') }}
         </button>
         <button type="button" role="radio" :aria-checked="!svgPreview" :class="{ 'is-on': !svgPreview }" @click="setView('code')">
-          <Code />Code
+          <Code />{{ t('files.editor.code') }}
         </button>
       </div>
-      <UiButton v-if="kind !== 'raster' && !ws.editorAutoSave" size="sm" :disabled="!f?.dirty || f?.saving" :title="ws.withKey('Save', 'save-file')" @click="save"><Save />Save</UiButton>
-      <UiIconButton size="sm" label="Show in Files" @click="revealInTree"><FolderTree /></UiIconButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiButton v-if="kind !== 'raster' && !ws.editorAutoSave" size="sm" :disabled="!f?.dirty || f?.saving" :title="ws.withKey(t('common.actions.save'), 'save-file')" @click="save"><Save />{{ t('common.actions.save') }}</UiButton>
+      <UiIconButton size="sm" :label="t('files.editor.showInFiles')" @click="revealInTree"><FolderTree /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('files.editor.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
 
-    <div v-if="f?.closing" class="fe__bar" role="alertdialog" :aria-label="`Unsaved changes in ${tab?.name}`" @keydown.esc.stop.prevent="files.cancelClose(tabId)">
+    <div v-if="f?.closing" class="fe__bar" role="alertdialog" :aria-label="t('files.editor.unsavedIn', { name: tab?.name })" @keydown.esc.stop.prevent="files.cancelClose(tabId)">
       <FileWarning class="fe__bar-icon is-waiting" aria-hidden="true" />
-      <span v-if="f.saveError" class="fe__bar-text is-error selectable">{{ tab?.name }} could not be saved: {{ f.saveError }}</span>
-      <span v-else class="fe__bar-text">Save the changes to <strong>{{ tab?.name }}</strong> before closing?</span>
-      <UiButton ref="closeSave" size="sm" variant="primary" :loading="f.saving" @click="saveAndClose">Save</UiButton>
-      <UiButton size="sm" variant="danger" @click="discardAndClose">Don't save</UiButton>
-      <UiButton size="sm" variant="ghost" @click="files.cancelClose(tabId)">Cancel</UiButton>
+      <span v-if="f.saveError" class="fe__bar-text is-error selectable">{{ t('files.editor.notSaved', { name: tab?.name, error: failureText(f.saveError) }) }}</span>
+      <i18n-t v-else keypath="files.editor.saveBeforeClosing" tag="span" scope="global" class="fe__bar-text"><template #name><strong>{{ tab?.name }}</strong></template></i18n-t>
+      <UiButton ref="closeSave" size="sm" variant="primary" :loading="f.saving" @click="saveAndClose">{{ t('common.actions.save') }}</UiButton>
+      <UiButton size="sm" variant="danger" @click="discardAndClose">{{ t('files.editor.dontSave') }}</UiButton>
+      <UiButton size="sm" variant="ghost" @click="files.cancelClose(tabId)">{{ t('common.actions.cancel') }}</UiButton>
     </div>
     <div v-else-if="f?.conflict" class="fe__bar" role="alert">
       <FileWarning class="fe__bar-icon is-waiting" aria-hidden="true" />
-      <span class="fe__bar-text">{{ tab?.name }} changed on disk while you were editing it.</span>
-      <UiButton size="sm" variant="danger" @click="reload">Discard my edits</UiButton>
-      <UiButton size="sm" variant="danger" :loading="f.saving" @click="overwrite">Overwrite the file</UiButton>
+      <span class="fe__bar-text">{{ t('files.editor.changedOnDisk', { name: tab?.name }) }}</span>
+      <UiButton size="sm" variant="danger" @click="reload">{{ t('files.editor.discardEdits') }}</UiButton>
+      <UiButton size="sm" variant="danger" :loading="f.saving" @click="overwrite">{{ t('files.editor.overwrite') }}</UiButton>
     </div>
     <div v-else-if="f?.saveError" class="fe__bar" role="alert">
       <CircleAlert class="fe__bar-icon is-error" aria-hidden="true" />
-      <span class="fe__bar-text is-error selectable">{{ f.saveError }}</span>
+      <span class="fe__bar-text is-error selectable">{{ failureText(f.saveError) }}</span>
       <!-- With autosave it stays until the text is saved: nothing else says it is not. -->
-      <UiButton v-if="ws.editorAutoSave" size="sm" :loading="f.saving" @click="save">Try again</UiButton>
-      <UiButton v-else size="sm" variant="ghost" @click="f.saveError = null">Dismiss</UiButton>
+      <UiButton v-if="ws.editorAutoSave" size="sm" :loading="f.saving" @click="save">{{ t('common.actions.retry') }}</UiButton>
+      <UiButton v-else size="sm" variant="ghost" @click="f.saveError = null">{{ t('files.editor.dismiss') }}</UiButton>
     </div>
-    <div v-else-if="asksConsent && consent" class="fe__bar" role="region" :aria-label="`Use language servers in ${consent.name}`">
+    <div v-else-if="asksConsent && consent" class="fe__bar" role="region" :aria-label="t('files.consent.label', { name: consent.name })">
       <ShieldQuestion class="fe__bar-icon is-quiet" aria-hidden="true" />
-      <span class="fe__bar-text">Use language servers in <strong>{{ consent.name }}</strong>? They add completion and errors, and can run this {{ consent.scope }}'s code.</span>
-      <UiButton size="sm" :title="consent.covers" @click="answerConsent(true)">Turn on for this {{ consent.scope }}</UiButton>
-      <UiButton size="sm" variant="ghost" title="You can change this in Settings > Editor" @click="answerConsent(false)">Not for this {{ consent.scope }}</UiButton>
+      <i18n-t :keypath="consent.scope === 'folder' ? 'files.consent.askFolder' : 'files.consent.askProject'" tag="span" scope="global" class="fe__bar-text"><template #name><strong>{{ consent.name }}</strong></template></i18n-t>
+      <UiButton size="sm" :title="consent.covers" @click="answerConsent(true)">{{ consent.scope === 'folder' ? t('files.consent.onFolder') : t('files.consent.onProject') }}</UiButton>
+      <UiButton size="sm" variant="ghost" :title="t('files.consent.offTitle')" @click="answerConsent(false)">{{ consent.scope === 'folder' ? t('files.consent.offFolder') : t('files.consent.offProject') }}</UiButton>
     </div>
 
     <div class="fe__body">
@@ -467,25 +470,25 @@ function answerConsent(on: boolean) {
         :intrinsic="picture.intrinsic"
       />
       <div v-else-if="failed" class="fe__note" role="alert">
-        <p class="fe__note-title">The editor could not start</p>
+        <p class="fe__note-title">{{ t('files.editor.couldNotStart') }}</p>
         <p class="fe__note-sub selectable">{{ failed }}</p>
       </div>
       <template v-else-if="!editable">
-        <div v-if="!f || f.loading" class="fe__skeleton" aria-busy="true" aria-label="Opening file">
+        <div v-if="!f || f.loading" class="fe__skeleton" aria-busy="true" :aria-label="t('files.editor.opening')">
           <span v-for="w in [62, 44, 71, 38, 55, 66, 30]" :key="w" :style="{ width: `${w}%` }" />
         </div>
         <div v-else-if="f.error" class="fe__note" role="alert">
-          <p class="fe__note-title">Could not open {{ tab?.name }}</p>
+          <p class="fe__note-title">{{ t('files.editor.couldNotOpen', { name: tab?.name }) }}</p>
           <p class="fe__note-sub selectable">{{ f.error }}</p>
-          <UiButton size="sm" @click="files.read(tabId)">Try again</UiButton>
+          <UiButton size="sm" @click="files.read(tabId)">{{ t('common.actions.retry') }}</UiButton>
         </div>
         <div v-else-if="f.tooLarge" class="fe__note">
-          <p class="fe__note-title">{{ tab?.name }} is too large to edit here</p>
-          <p class="fe__note-sub">It is {{ formatSize(f.size) }}; the editor opens files up to 5 MB.</p>
+          <p class="fe__note-title">{{ t('files.editor.tooLarge', { name: tab?.name }) }}</p>
+          <p class="fe__note-sub">{{ t('files.editor.tooLargeHint', { size: formatSize(f.size) }) }}</p>
         </div>
         <div v-else-if="f.binary" class="fe__note">
-          <p class="fe__note-title">{{ tab?.name }} is not a text file</p>
-          <p class="fe__note-sub">{{ formatSize(f.size) }} of binary data, or text in an encoding other than UTF-8.</p>
+          <p class="fe__note-title">{{ t('files.editor.binary', { name: tab?.name }) }}</p>
+          <p class="fe__note-sub">{{ t('files.editor.binaryHint', { size: formatSize(f.size) }) }}</p>
         </div>
       </template>
     </div>

@@ -1,20 +1,21 @@
 <script setup lang="ts">
 import { RotateCcw, X } from 'lucide-vue-next'
+import { t } from '~/i18n'
 import type { LineChange } from '~/utils/lineDiff'
 
 /**
  * What a change marker in the editor's gutter stands for, opened under the change: the lines as
- * they were committed, and Revert to put them back (one undo step). Rendered into a Monaco view zone.
+ * they were committed, and Revert to put them back (one undo step). Rendered into a Monaco view zone,
+ * outside the app's tree: `useI18n` has no app to ask there.
  */
 const props = defineProps<{ change: LineChange; lineHeight: number; maxLines: number }>()
 const emit = defineEmits<{ revert: []; close: [] }>()
 
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 const title = computed(() => {
   const c = props.change
-  if (c.kind === 'add') return `Added ${plural(c.count, 'line')}`
-  if (c.kind === 'del') return `Removed ${plural(c.old.length, 'line')}`
-  return `Changed ${plural(c.count, 'line')}, committed as`
+  if (c.kind === 'add') return t('files.peek.added', c.count)
+  if (c.kind === 'del') return t('files.peek.removed', c.old.length)
+  return t('files.peek.changed', c.count)
 })
 </script>
 
@@ -22,14 +23,14 @@ const title = computed(() => {
   <div class="peek" :style="{ '--lh': `${lineHeight}px`, '--rows': Math.min(change.old.length, maxLines) }" @mousedown.stop @keydown.esc.stop="emit('close')">
     <div class="peek__head">
       <span class="peek__title">{{ title }}</span>
-      <button type="button" class="peek__btn" title="Put the committed lines back (undo restores your edit)" @click="emit('revert')">
-        <RotateCcw aria-hidden="true" /><span>Revert</span>
+      <button type="button" class="peek__btn" :title="t('files.peek.revertTitle')" @click="emit('revert')">
+        <RotateCcw aria-hidden="true" /><span>{{ t('files.peek.revert') }}</span>
       </button>
-      <button type="button" class="peek__btn peek__btn--icon" aria-label="Close" title="Close (Esc)" @click="emit('close')">
+      <button type="button" class="peek__btn peek__btn--icon" :aria-label="t('common.actions.close')" :title="t('files.peek.closeTitle')" @click="emit('close')">
         <X aria-hidden="true" />
       </button>
     </div>
-    <div v-if="change.old.length" class="peek__old selectable" role="table" aria-label="Committed lines">
+    <div v-if="change.old.length" class="peek__old selectable" role="table" :aria-label="t('files.peek.lines')">
       <div v-for="(l, i) in change.old" :key="i" class="peek__line" role="row">
         <span class="peek__sign" aria-hidden="true">−</span><span class="peek__text">{{ l || ' ' }}</span>
       </div>

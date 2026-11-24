@@ -5,6 +5,7 @@ import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useWindows } from '~/stores/windows'
 import type { ProjectInfo } from '~/types/ipc'
+import { formatLocale } from '~/i18n'
 
 /**
  * Project hub: shown when no project is open. Four ways in (open, new,
@@ -12,6 +13,7 @@ import type { ProjectInfo } from '~/types/ipc'
  * Delete forgets the focused recent project. With environments saved, "Where" above the actions
  * says where open, new and clone put the project (this computer or an environment).
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 const win = useWindows()
@@ -34,8 +36,8 @@ interface Action {
 const actions = computed<Action[]>(() => [
   {
     id: 'open',
-    title: 'Open folder',
-    description: whereName.value ? `Browse the folders in ${whereName.value}.` : 'Work on a project that is already on disk.',
+    title: t('start.hub.open'),
+    description: whereName.value ? t('start.hub.openHintIn', { place: whereName.value }) : t('start.hub.openHint'),
     icon: FolderOpen,
     keys: [mod, 'O'],
     primary: true,
@@ -43,24 +45,24 @@ const actions = computed<Action[]>(() => [
   },
   {
     id: 'new',
-    title: 'New project',
-    description: whereName.value ? `Create a folder in ${whereName.value}, with git if you want it.` : 'Create an empty folder, with git if you want it.',
+    title: t('start.hub.new'),
+    description: whereName.value ? t('start.hub.newHintIn', { place: whereName.value }) : t('start.hub.newHint'),
     icon: FolderPlus,
     keys: [mod, 'N'],
     run: () => { ws.dialog = 'new' },
   },
   {
     id: 'clone',
-    title: 'Clone repository',
-    description: whereName.value ? `Clone a repo from GitHub or any git remote into ${whereName.value}.` : 'Pull a repo from GitHub or any git remote.',
+    title: t('start.hub.clone'),
+    description: whereName.value ? t('start.hub.cloneHintIn', { place: whereName.value }) : t('start.hub.cloneHint'),
     icon: GitFork,
     keys: [],
     run: () => { ws.dialog = 'clone' },
   },
   {
     id: 'environments',
-    title: 'Remote environment',
-    description: 'Work in a container or VM on your own server.',
+    title: t('start.hub.remote'),
+    description: t('start.hub.remoteHint'),
     icon: Server,
     keys: [],
     run: () => envs.openView(),
@@ -119,21 +121,32 @@ let tick: ReturnType<typeof setInterval> | undefined
 function ago(ms: number): string {
   const diff = Math.max(0, now.value - ms)
   const min = Math.floor(diff / 60_000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min} min ago`
+  if (min < 1) return t('common.time.justNow')
+  if (min < 60) return t('common.time.minAgo', { n: min })
   const then = new Date(ms)
   const today = new Date(now.value)
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()
   const hours = Math.floor(min / 60)
-  if (ms >= startOfToday) return hours === 1 ? '1 hour ago' : `${hours} hours ago`
+  if (ms >= startOfToday) return t('start.hub.hoursAgo', hours)
   const days = Math.ceil((startOfToday - ms) / 86_400_000)
-  if (days <= 1) return 'yesterday'
-  if (days < 7) return `${days} days ago`
-  return then.toLocaleDateString(undefined, {
+  if (days <= 1) return t('common.time.yesterday')
+  if (days < 7) return t('common.time.daysAgo', days)
+  return then.toLocaleDateString(formatLocale(), {
     month: 'short',
     day: 'numeric',
     ...(then.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}),
   })
+}
+
+function rowLabel(p: ProjectInfo): string {
+  const place = remotePlace(p.path)
+  return [
+    t('start.hub.openNamed', { name: p.name }),
+    ...(place ? [t('start.hub.inPlace', { place: place.where })] : []),
+    shownPath(p.path),
+    ...(p.branch ? [t('start.hub.onBranch', { branch: p.branch })] : []),
+    t('start.hub.opened', { ago: ago(p.lastOpened) }),
+  ].join(', ')
 }
 
 /* ---------- agents ---------- */
@@ -186,15 +199,15 @@ onBeforeUnmount(() => {
       <header class="hub__head">
         <UiMangoMark :size="40" class="hub__mark" aria-hidden="true" />
         <h1 class="hub__title">Mango</h1>
-        <p class="hub__lede">Run Claude Code and Codex side by side on your projects.</p>
+        <p class="hub__lede">{{ t('start.hub.lede') }}</p>
       </header>
 
       <div v-if="envs.hosts.length" class="hub__where">
-        <span aria-hidden="true">Projects go to</span>
-        <ProjectWhere variant="quiet" label="Projects go to" :model-value="where" @update:model-value="ws.setWhere" />
+        <span aria-hidden="true">{{ t('start.hub.where') }}</span>
+        <ProjectWhere variant="quiet" :label="t('start.hub.where')" :model-value="where" @update:model-value="ws.setWhere" />
       </div>
 
-      <ul class="actions" aria-label="Start">
+      <ul class="actions" :aria-label="t('start.hub.actions')">
         <li v-for="a in actions" :key="a.id">
           <button
             type="button"
@@ -218,10 +231,12 @@ onBeforeUnmount(() => {
 
       <p v-if="error" class="hub__error" role="alert">
         <span>
-          <template v-if="error.path">Couldn't open <code>{{ tildify(error.path) }}</code>. </template>
-          <template v-else>Couldn't open that folder. </template>
-          <span class="hub__error-detail">{{ error.message }}.</span>
-          <template v-if="error.path"> If it moved, open it from its new location.</template>
+          <i18n-t v-if="error.path" keypath="start.hub.openFailed" scope="global">
+            <template #path><code>{{ tildify(error.path) }}</code></template>
+          </i18n-t>
+          <template v-else>{{ t('start.hub.openFailedPlain') }}</template>
+          {{ ' ' }}<span class="hub__error-detail">{{ error.message }}.</span>
+          <template v-if="error.path">{{ ' ' }}{{ t('start.hub.moved') }}</template>
         </span>
         <span class="hub__error-actions">
           <UiButton
@@ -230,14 +245,14 @@ onBeforeUnmount(() => {
             variant="ghost"
             @click="forget(ws.recent.find(r => r.path === error!.path)!)"
           >
-            Remove from Recent
+            {{ t('start.hub.removeRecent') }}
           </UiButton>
-          <UiIconButton label="Dismiss" size="sm" @click="error = null"><X /></UiIconButton>
+          <UiIconButton :label="t('start.hub.dismiss')" size="sm" @click="error = null"><X /></UiIconButton>
         </span>
       </p>
 
       <section class="recent" aria-labelledby="hub-recent">
-        <h2 id="hub-recent" class="recent__label">Recent</h2>
+        <h2 id="hub-recent" class="recent__label">{{ t('start.hub.recent') }}</h2>
         <ul v-if="ws.listedRecent.length" class="recent__list">
           <li v-for="p in ws.listedRecent" :key="p.path" class="recent__item">
             <button
@@ -247,23 +262,23 @@ onBeforeUnmount(() => {
               data-row
               :data-path="p.path"
               :aria-busy="opening === p.path || undefined"
-              :aria-label="`Open ${p.name}, ${remotePlace(p.path) ? `in ${remotePlace(p.path)!.where}, ` : ''}${shownPath(p.path)}${p.branch ? `, branch ${p.branch}` : ''}, opened ${ago(p.lastOpened)}`"
+              :aria-label="rowLabel(p)"
               @click="open(p)"
             >
               <UiProjectBadge :name="p.name" :path="p.path" :hue="ws.projectPrefs[p.path]?.color" />
               <span class="recent__text">
                 <span class="recent__line">
                   <span class="recent__name">{{ p.name }}</span>
-                  <span v-if="remotePlace(p.path)" class="chip chip--remote" :title="`Remote environment: instance ${remotePlace(p.path)!.instance} on ${remotePlace(p.path)!.host}`">
+                  <span v-if="remotePlace(p.path)" class="chip chip--remote" :title="t('start.hub.instance', { instance: remotePlace(p.path)!.instance, host: remotePlace(p.path)!.host })">
                     <Server aria-hidden="true" />{{ remotePlace(p.path)!.where }}
                   </span>
-                  <span v-else-if="p.isGit && p.branch" class="chip" :title="`Branch ${p.branch}`">
+                  <span v-else-if="p.isGit && p.branch" class="chip" :title="t('start.hub.branch', { branch: p.branch })">
                     <GitBranch aria-hidden="true" />{{ p.branch }}
                   </span>
                 </span>
                 <span class="recent__path" :title="shownPath(p.path)">{{ shownPath(p.path) }}</span>
               </span>
-              <span v-if="win.projectElsewhere(p.path)" class="recent__time">Other window</span>
+              <span v-if="win.projectElsewhere(p.path)" class="recent__time">{{ t('start.hub.otherWindow') }}</span>
               <span v-else class="recent__time tabular">{{ ago(p.lastOpened) }}</span>
             </button>
             <button
@@ -271,8 +286,8 @@ onBeforeUnmount(() => {
               type="button"
               class="recent__forget recent__window"
               tabindex="-1"
-              :aria-label="`Open ${p.name} in a new window`"
-              title="Open in new window"
+              :aria-label="t('start.hub.newWindowNamed', { name: p.name })"
+              :title="t('start.hub.newWindow')"
               @click.stop="win.openInNewWindow(p.path)"
             >
               <AppWindow aria-hidden="true" />
@@ -281,25 +296,25 @@ onBeforeUnmount(() => {
               type="button"
               class="recent__forget"
               tabindex="-1"
-              :aria-label="`Remove ${p.name} from Recent`"
-              title="Remove from Recent (Delete)"
+              :aria-label="t('start.hub.removeRecentNamed', { name: p.name })"
+              :title="t('start.hub.removeRecentKey')"
               @click.stop="forget(p)"
             >
               <X aria-hidden="true" />
             </button>
           </li>
         </ul>
-        <p v-else class="recent__empty">Projects you open show up here.</p>
+        <p v-else class="recent__empty">{{ t('start.hub.empty') }}</p>
       </section>
 
       <footer class="agents">
         <button v-if="noAgents" type="button" class="agents__settings" @click="ws.openSetup()">
           <Download />
-          <span>No agent is installed yet. Install one</span>
+          <span>{{ t('start.hub.noAgents') }}</span>
         </button>
         <button v-else type="button" class="agents__settings" @click="ws.openSettings('agents')">
           <Settings />
-          <span>Settings</span>
+          <span>{{ t('settings.title') }}</span>
         </button>
       </footer>
     </div>

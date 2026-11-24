@@ -14,6 +14,7 @@ import { useThreads } from '~/stores/threads'
  * failed, not loaded yet) says so calmly instead of showing another tool.
  */
 const props = defineProps<{ win: Owned<PluginToolWindow> | null }>()
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const runtime = usePluginRuntime()
@@ -25,17 +26,17 @@ const ctx = computed<ToolWindowContext>(() => ({
 </script>
 
 <template>
-  <section class="ptw" :aria-label="win?.title ?? 'Plugin tool window'">
+  <section class="ptw" :aria-label="win?.title ?? t('plugins.view.toolWindow')">
     <header class="ptw__head">
       <PluginIcon v-if="win" :icon="win.icon" class="ptw__icon" />
-      <h2 class="ptw__title" :title="win?.title">{{ win?.title ?? 'Plugin' }}</h2>
-      <UiIconButton label="Close tool window" size="sm" @click="ws.closeTool()"><PanelRightClose /></UiIconButton>
+      <h2 class="ptw__title" :title="win?.title">{{ win?.title ?? t('plugins.view.plugin') }}</h2>
+      <UiIconButton :label="t('plugins.view.closeTool')" size="sm" @click="ws.closeTool()"><PanelRightClose /></UiIconButton>
     </header>
     <div v-if="win" class="ptw__body">
       <PluginViewHost :view="win.view" :ctx="ctx" :plugin-id="win.pluginId" />
     </div>
     <div v-else-if="runtime.ready" class="ptw__gone">
-      <p>The plugin that adds this tool window is not running. Turn it on in Settings &gt; Plugins, or pick another tool window.</p>
+      <p>{{ t('plugins.view.toolGone') }}</p>
     </div>
   </section>
 </template>

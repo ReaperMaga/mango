@@ -9,6 +9,7 @@ import type { PluginIcon as Icon, PluginStatusItem } from '~/plugin-host/types'
  * side, or a row in the sidebar foot. Quiet chrome like the titlebar's own widgets: subtle ink, the Hover Wash when one
  * can be clicked. Nothing renders while no plugin has one there.
  */
+const { t } = useI18n()
 const props = defineProps<{ location: PluginStatusItem['location'] }>()
 
 interface Row { key: string; text: string; icon: Icon | undefined; tooltip: string; item: Owned<PluginStatusItem> }
@@ -30,7 +31,7 @@ function click(r: Row) {
 </script>
 
 <template>
-  <div v-if="rows.length" class="psi" :class="`psi--${location}`" role="group" aria-label="Plugin status">
+  <div v-if="rows.length" class="psi" :class="`psi--${location}`" role="group" :aria-label="t('plugins.view.statusItems')">
     <component
       :is="r.item.onClick ? 'button' : 'span'"
       v-for="r in rows"

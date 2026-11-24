@@ -13,7 +13,7 @@ import { useFiles } from '~/stores/files'
 import { useThreads } from '~/stores/threads'
 import { shortAgo } from '~/utils/time'
 import { useOverlay } from '~/composables/useOverlay'
-import { resultLines, units, vcsTerms } from '~/utils/vcs'
+import { resultLines, vcsTerms } from '~/utils/vcs'
 
 /**
  * Branch popup in the manner of JetBrains IDEs: one column with a search field,
@@ -29,6 +29,7 @@ import { resultLines, units, vcsTerms } from '~/utils/vcs'
  */
 const props = defineProps<{ path: string | null }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const git = useGit()
 const fileStore = useFiles()
@@ -89,31 +90,32 @@ const actions = computed<Action[]>(() => {
   const tr = tracking.value
   // No remote at all: only known once the list is read (a branch with an upstream implies one).
   const noRemote = !!list.value && !list.value.remotes.length && !tr.upstream
-  const t = terms.value
+  const { remotes: hasRemotes } = terms.value
+  const branch = current.value ?? t('git.thisBranch')
   const all: Action[] = [
-    t.remotes
+    hasRemotes
       ? {
-          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: tr.behind, disabled: !!busy.value || (tr.known && !tr.upstream),
-          title: tr.upstream ? `Pull ${tr.upstream} into ${current.value ?? 'this branch'}` : tr.known ? 'This branch tracks no remote branch yet' : 'Pull the remote branch into this one',
+          id: 'pull', label: t('git.branches.update'), icon: ArrowDownToLine, count: tr.behind, disabled: !!busy.value || (tr.known && !tr.upstream),
+          title: tr.upstream ? t('git.branches.pullInto', { upstream: tr.upstream, branch }) : tr.known ? t('git.branches.noTracking') : t('git.branches.pullRemote'),
           run: () => update(),
         }
       : {
-          id: 'pull', label: 'Update', icon: ArrowDownToLine, count: status.value?.behind, disabled: !!busy.value,
+          id: 'pull', label: t('git.branches.update'), icon: ArrowDownToLine, count: status.value?.behind, disabled: !!busy.value,
           title: status.value?.behind
-            ? `Update to the newest changeset: ${units(status.value.behind, t)} on ${current.value ?? 'the branch'}`
-            : 'Update the workspace to the newest changeset',
+            ? t('git.branches.updateN', { branch: current.value ?? t('git.panel.theBranch') }, status.value.behind)
+            : t('git.branches.updateWorkspace'),
           run: () => update(),
         },
-    { id: 'commit', label: `${t.commit}…`, icon: ListCheck, disabled: !!busy.value, title: `Open the Changes view to ${t.commit.toLowerCase()}`, run: commitView },
+    { id: 'commit', label: hasRemotes ? t('git.branches.commit') : t('git.branches.checkIn'), icon: ListCheck, disabled: !!busy.value, title: hasRemotes ? t('git.branches.commitTitle') : t('git.branches.checkInTitle'), run: commitView },
     {
-      id: 'push', label: tr.upstream ? 'Push' : 'Publish', icon: CloudUpload, count: tr.ahead, disabled: !!busy.value || noRemote,
-      title: tr.upstream ? `Push ${current.value ?? 'this branch'} to ${tr.upstream}` : `Publish ${current.value ?? 'this branch'} to the remote`, run: () => push(),
+      id: 'push', label: tr.upstream ? t('git.branches.push') : t('git.branches.publish'), icon: CloudUpload, count: tr.ahead, disabled: !!busy.value || noRemote,
+      title: tr.upstream ? t('git.branches.pushTitle', { branch, upstream: tr.upstream }) : t('git.branches.publishTitle', { branch }), run: () => push(),
     },
-    { id: 'fetch', label: 'Fetch', icon: CloudDownload, disabled: !!busy.value || noRemote, title: 'Fetch from the remote', run: () => fetchAll() },
-    { id: 'new', label: 'New branch…', icon: GitBranchPlus, divider: true, disabled: !!busy.value, title: current.value ? `New branch from ${current.value}` : undefined, run: () => startName('new', null) },
+    { id: 'fetch', label: t('git.branches.fetch'), icon: CloudDownload, disabled: !!busy.value || noRemote, title: t('git.panel.fetch'), run: () => fetchAll() },
+    { id: 'new', label: t('git.newBranch'), icon: GitBranchPlus, divider: true, disabled: !!busy.value, title: current.value ? t('git.branches.newFrom', { branch: current.value }) : undefined, run: () => startName('new', null) },
   ]
   // Unity VCS checkins go straight to the server: nothing to push or fetch.
-  return all.filter(a => (t.remotes || (a.id !== 'push' && a.id !== 'fetch')) && matches(a.label))
+  return all.filter(a => (hasRemotes || (a.id !== 'push' && a.id !== 'fetch')) && matches(a.label))
 })
 
 /* ---------- branch tree ---------- */
@@ -170,8 +172,8 @@ const rowsByKey = computed(() => new Map([...locals.value, ...remotes.value].map
 
 const nodes = computed<TreeNode[]>(() => {
   const out: TreeNode[] = []
-  const localName = terms.value.remotes ? 'Local' : 'Branches'
-  for (const [key, name, rows] of [['local', localName, locals.value], ['remote', 'Remote', remotes.value]] as const) {
+  const localName = terms.value.remotes ? t('git.branches.local') : t('git.branches.title')
+  for (const [key, name, rows] of [['local', localName, locals.value], ['remote', t('git.branches.remote'), remotes.value]] as const) {
     if (!rows.length) continue
     const open = isOpen(key)
     out.push({ kind: 'section', key, name, open, count: rows.length })
@@ -257,8 +259,8 @@ function toggle() {
 
 function onDocDown(e: MouseEvent) {
   if (!open.value) return
-  const t = e.target as Node
-  if (root.value?.contains(t) || pop.value?.contains(t) || subEl.value?.contains(t)) return
+  const on = e.target as Node
+  if (root.value?.contains(on) || pop.value?.contains(on) || subEl.value?.contains(on)) return
   close()
 }
 function onResize() { if (open.value) { place(); closeSub() } }
@@ -346,17 +348,16 @@ async function checkout(row: Row) {
     : await run('checkout', path => call('git_checkout_remote', { path, branch: row.b.name }))
   if (ok) close()
 }
-const update = () => run('pull', path => call('git_pull', { path }), out => out || 'Already up to date.')
-const fetchAll = () => run('fetch', path => call('git_fetch', { path }), out => out || 'Fetched. Nothing new.')
-const push = () => run('push', path => call('git_push', { path }), out => out || 'Pushed.')
+const update = () => run('pull', path => call('git_pull', { path }), out => out || t('git.result.upToDate'))
+const fetchAll = () => run('fetch', path => call('git_fetch', { path }), out => out || t('git.branches.fetched'))
+const push = () => run('push', path => call('git_push', { path }), out => out || t('git.result.pushed'))
 /** Unity VCS: what the merge in the confirm would do; null while it is read. */
 const mergePlan = ref<MergePreview | null>(null)
-const files = (n: number) => `${n} file${n === 1 ? '' : 's'}`
 
 async function merge(row: Row) {
   if (!terms.value.mergePreview) {
     closeSub(true)
-    return run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+    return run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || t('git.result.merged', { branch: row.b.name }))
   }
   // Unity VCS: confirm first, with what the merge brings and anything that stops it.
   closeSub()
@@ -379,12 +380,12 @@ const mergeReady = computed(() => !!mergePlan.value && !mergePlan.value.blocker 
 async function confirmMerge() {
   const row = target.value
   if (!row || !mergeReady.value) return
-  const ok = await run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || `Merged ${row.b.name}.`)
+  const ok = await run('merge', path => call('git_merge', { path, branch: row.b.name }), out => out || t('git.result.merged', { branch: row.b.name }))
   if (ok) await backToList()
 }
 function rebase(row: Row) {
   closeSub(true)
-  return run('rebase', path => call('git_rebase', { path, onto: row.b.name }), out => out || `Rebased onto ${row.b.name}.`)
+  return run('rebase', path => call('git_rebase', { path, onto: row.b.name }), out => out || t('git.branches.rebased', { branch: row.b.name }))
 }
 
 function commitView() {
@@ -443,7 +444,7 @@ async function submitName() {
     if (ok) close()
   } else if (view.value === 'rename' && row) {
     const full = terms.value.pathBranches && !name.includes('/') ? `${parentOf(row.b.name)}/${name}` : name
-    const ok = await run('rename', path => call('git_branch_rename', { path, from: row.b.name, to: name }), () => `Renamed to ${full}.`)
+    const ok = await run('rename', path => call('git_branch_rename', { path, from: row.b.name, to: name }), () => t('git.branches.renamedTo', { name: full }))
     if (ok) { await backToList(); active.value = `l:${full}` }
   }
 }
@@ -470,8 +471,8 @@ async function deleteBranch(name: string, force: boolean): Promise<boolean> {
   const at = p()
   await treesRead
   const folder = trees.value.byBranch[name]
-  if (folder && threads.threads.some(t => t.worktree === folder && threads.isBusyChat(t.id))) {
-    throw new Error(`A chat is still working in its worktree ${folder}. Stop it first.`)
+  if (folder && threads.threads.some(x => x.worktree === folder && threads.isBusyChat(x.id))) {
+    throw new Error(t('git.branches.chatWorking', { folder }))
   }
   const main = trees.value.main ?? at
   const remove = () => call('git_branch_delete', { path: at, branch: name, force, withWorktree: true })
@@ -484,11 +485,11 @@ async function remove(force: boolean) {
   const row = target.value
   if (!row || row.kind !== 'local') return
   const name = row.b.name
-  const ok = await run('delete', () => deleteBranch(name, force), tree => tree ? `Deleted ${name} and its worktree.` : `Deleted ${name}.`)
+  const ok = await run('delete', () => deleteBranch(name, force), tree => tree ? t('git.branches.deletedWithTree', { name }) : t('git.branches.deletedOne', { name }))
   if (ok) await backToList()
   else if (/not fully merged/i.test(message.value?.text ?? '')) {
     unmerged.value = true
-    message.value = { error: true, text: `${name} has commits that are not merged into any other branch. Deleting it loses them.` }
+    message.value = { error: true, text: t('git.branches.unmergedOne', { name }) }
   }
 }
 
@@ -530,17 +531,18 @@ async function clearLocal(force: boolean) {
     }
   })
   clearUnmerged.value = unmergedNames
-  const branches = (n: number) => `${n} ${n === 1 ? 'branch' : 'branches'}`
-  const andTrees = treesGone ? ` and ${treesGone} ${treesGone === 1 ? 'worktree' : 'worktrees'}` : ''
-  const done = deleted.length ? `Deleted ${branches(deleted.length)}${andTrees}. ` : ''
+  const branches = t('git.branches.count', deleted.length)
+  const result = treesGone
+    ? t('git.branches.deletedAndTrees', { branches, trees: t('git.branches.treeCount', treesGone) })
+    : t('git.branches.deleted', { branches })
+  const done = deleted.length ? `${result} ` : ''
   if (unmergedNames.length) {
-    const has = unmergedNames.length === 1 ? 'has' : 'have'
-    message.value = { error: true, text: `${done}${branches(unmergedNames.length)} ${has} commits not merged anywhere else.\n${unmergedNames.join('\n')}` }
+    message.value = { error: true, text: `${done}${t('git.branches.unmerged', unmergedNames.length)}\n${unmergedNames.join('\n')}` }
   } else if (failed.length) {
-    message.value = { error: true, text: `${done}${branches(failed.length)} could not be deleted.\n${failed.join('\n')}` }
+    message.value = { error: true, text: `${done}${t('git.branches.notDeleted', failed.length)}\n${failed.join('\n')}` }
   } else {
     await backToList()
-    message.value = { error: false, text: `Deleted ${branches(deleted.length)}${andTrees}.` }
+    message.value = { error: false, text: result }
   }
 }
 
@@ -607,7 +609,7 @@ defineExpose({ show, close })
           ref="pop"
           class="bp"
           role="dialog"
-          aria-label="Branches"
+          :aria-label="t('git.branches.title')"
           :style="{ left: `${pos.left}px`, top: `${pos.top}px`, maxHeight: `${pos.maxHeight}px`, width: `min(${WIDTH}px, calc(100vw - 16px))` }"
           @keydown="onKey"
         >
@@ -618,15 +620,15 @@ defineExpose({ show, close })
                 ref="search"
                 v-model="query"
                 type="text"
-                placeholder="Search branches and actions"
-                aria-label="Search branches and actions"
+                :placeholder="t('git.branches.search')"
+                :aria-label="t('git.branches.search')"
                 spellcheck="false"
                 autocomplete="off"
               >
               <span v-if="loading" class="bp__spin" aria-hidden="true" />
             </div>
 
-            <div class="bp__scroll" role="listbox" aria-label="Branches and actions" @scroll="closeSub()">
+            <div class="bp__scroll" role="listbox" :aria-label="t('git.branches.list')" @scroll="closeSub()">
               <template v-for="a in actions" :key="a.id">
                 <div v-if="a.divider" class="bp__sep" role="separator" />
                 <button
@@ -670,7 +672,7 @@ defineExpose({ show, close })
                     v-if="n.key === 'local' && terms.remotes && clearable.length"
                     size="sm"
                     class="bp__row-btn"
-                    label="Delete local branches…"
+                    :label="t('git.branches.clearItem')"
                     :disabled="!!busy"
                     @mousemove="active = n.key"
                     @click="startClear"
@@ -712,97 +714,95 @@ defineExpose({ show, close })
               </template>
 
               <p v-if="!actions.length && !nodes.length" class="bp__empty">
-                {{ loading ? 'Reading branches…' : q ? `No branch or action matches “${query.trim()}”.` : 'No branches yet.' }}
+                {{ loading ? t('git.branches.reading') : q ? t('git.branches.noMatch', { query: query.trim() }) : t('git.branches.none') }}
               </p>
-              <p v-else-if="!nodes.length && loading" class="bp__empty">Reading branches…</p>
+              <p v-else-if="!nodes.length && loading" class="bp__empty">{{ t('git.branches.reading') }}</p>
             </div>
           </template>
 
           <form v-else-if="view === 'new' || view === 'rename'" class="bp__form" @submit.prevent="submitName">
             <label class="bp__form-title" for="bp-name">
-              <template v-if="view === 'new'">New branch from <span class="bp__mono">{{ target?.b.name ?? current ?? 'HEAD' }}</span></template>
-              <template v-else>Rename <span class="bp__mono">{{ target?.b.name }}</span></template>
+              <i18n-t v-if="view === 'new'" keypath="git.branches.newFrom" scope="global"><template #branch><span class="bp__mono">{{ target?.b.name ?? current ?? 'HEAD' }}</span></template></i18n-t>
+              <i18n-t v-else keypath="git.branches.renameTitle" scope="global"><template #branch><span class="bp__mono">{{ target?.b.name }}</span></template></i18n-t>
             </label>
             <input id="bp-name" ref="nameField" :value="nameInput" class="bp__input" :placeholder="terms.pathBranches ? 'task-name' : 'branch-name'" spellcheck="false" autocomplete="off" @input="onNameInput">
-            <p v-if="view === 'new' && newFullName" class="bp__hint">Created as <span class="bp__mono">{{ newFullName }}</span> and switched to right away.</p>
-            <p v-else-if="view === 'new'" class="bp__hint">Created and checked out right away.</p>
-            <p v-else-if="terms.pathBranches" class="bp__hint">Unity VCS renames a branch where it is: only the last part of the name changes.</p>
+            <p v-if="view === 'new' && newFullName" class="bp__hint"><i18n-t keypath="git.branches.createdAs" scope="global"><template #name><span class="bp__mono">{{ newFullName }}</span></template></i18n-t></p>
+            <p v-else-if="view === 'new'" class="bp__hint">{{ t('git.branches.createdHint') }}</p>
+            <p v-else-if="terms.pathBranches" class="bp__hint">{{ t('git.branches.renameHint') }}</p>
             <div class="bp__form-actions">
-              <UiButton v-if="view === 'new'" size="sm" variant="primary" type="submit" :loading="busy === 'create'" :disabled="!nameInput.trim()">Create</UiButton>
-              <UiButton v-else size="sm" variant="primary" type="submit" :loading="busy === 'rename'" :disabled="!nameInput.trim() || nameInput.trim() === renameFrom">Rename</UiButton>
-              <UiButton size="sm" variant="ghost" @click="backToList">Cancel</UiButton>
+              <UiButton v-if="view === 'new'" size="sm" variant="primary" type="submit" :loading="busy === 'create'" :disabled="!nameInput.trim()">{{ t('git.branches.create') }}</UiButton>
+              <UiButton v-else size="sm" variant="primary" type="submit" :loading="busy === 'rename'" :disabled="!nameInput.trim() || nameInput.trim() === renameFrom">{{ t('common.actions.rename') }}</UiButton>
+              <UiButton size="sm" variant="ghost" @click="backToList">{{ t('common.actions.cancel') }}</UiButton>
             </div>
           </form>
 
           <div v-else-if="view === 'delete' && target" class="bp__form">
-            <p class="bp__form-title">Delete <span class="bp__mono">{{ target.b.name }}</span>?</p>
+            <p class="bp__form-title"><i18n-t keypath="git.branches.deleteAsk" scope="global"><template #branch><span class="bp__mono">{{ target.b.name }}</span></template></i18n-t></p>
             <p v-if="terms.remotes" class="bp__hint">
-              Only the local branch is removed. The remote branch, if any, stays.
-              <template v-if="trees.byBranch[target.b.name]">
-                Its worktree <span class="bp__mono">{{ trees.byBranch[target.b.name] }}</span> is removed too, unless it has uncommitted changes.
-              </template>
+              {{ t('git.branches.deleteLocalHint') }}
+              <i18n-t v-if="trees.byBranch[target.b.name]" keypath="git.branches.deleteTreeHint" scope="global">
+                <template #folder><span class="bp__mono">{{ trees.byBranch[target.b.name] }}</span></template>
+              </i18n-t>
             </p>
-            <p v-else class="bp__hint">Removed from the repository for everyone. Unity VCS only deletes a branch that has no changesets or child branches.</p>
+            <p v-else class="bp__hint">{{ t('git.branches.deleteUnityHint') }}</p>
             <div class="bp__form-actions">
-              <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? 'Delete anyway' : 'Delete' }}</UiButton>
-              <UiButton size="sm" variant="ghost" @click="backToList">Cancel</UiButton>
+              <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? t('git.branches.deleteAnyway') : t('common.actions.delete') }}</UiButton>
+              <UiButton size="sm" variant="ghost" @click="backToList">{{ t('common.actions.cancel') }}</UiButton>
             </div>
           </div>
 
           <div v-else-if="view === 'merge' && target" class="bp__form" aria-live="polite">
-            <p class="bp__form-title">Merge <span class="bp__mono">{{ target.b.name }}</span> into <span class="bp__mono">{{ current }}</span>?</p>
-            <p v-if="!mergePlan && !message" class="bp__hint bp__reading"><span class="bp__spin" aria-hidden="true" />Reading what the merge brings…</p>
+            <p class="bp__form-title"><i18n-t keypath="git.branches.mergeAsk" scope="global"><template #from><span class="bp__mono">{{ target.b.name }}</span></template><template #into><span class="bp__mono">{{ current }}</span></template></i18n-t></p>
+            <p v-if="!mergePlan && !message" class="bp__hint bp__reading"><span class="bp__spin" aria-hidden="true" />{{ t('git.branches.mergeReading') }}</p>
             <template v-else-if="mergePlan">
               <p v-if="mergePlan.blocker" class="bp__note"><CircleAlert aria-hidden="true" />{{ mergePlan.blocker }}</p>
               <template v-else-if="mergePlan.conflicts.length">
                 <p class="bp__note">
                   <CircleAlert aria-hidden="true" />
                   <span>
-                    {{ files(mergePlan.conflicts.length) }} changed on both branches.
-                    Mango only merges what needs no resolving by hand: merge this branch in the Unity Version Control app, then check in from here.
+                    {{ t('git.branches.conflicts', mergePlan.conflicts.length) }}
+                    {{ t('git.branches.conflictsHint') }}
                   </span>
                 </p>
                 <ul class="bp__names">
                   <li v-for="f in mergePlan.conflicts" :key="f" class="bp__mono" :title="f">{{ f }}</li>
                 </ul>
               </template>
-              <p v-else-if="!mergePlan.files.length" class="bp__hint">Nothing to merge: <span class="bp__mono">{{ current }}</span> already has everything from it.</p>
+              <p v-else-if="!mergePlan.files.length" class="bp__hint"><i18n-t keypath="git.branches.mergeNothing" scope="global"><template #branch><span class="bp__mono">{{ current }}</span></template></i18n-t></p>
               <template v-else>
                 <ul class="bp__names">
                   <li v-for="f in mergePlan.files" :key="f" class="bp__mono" :title="f">{{ f }}</li>
                 </ul>
                 <p class="bp__hint">
-                  <span class="tabular">{{ files(mergePlan.files.length) }}</span> change.
-                  The merge lands as pending changes, picked for the next checkin: check in to finish it.
+                  <span class="tabular">{{ t('git.branches.filesChange', mergePlan.files.length) }}</span>
+                  {{ t('git.branches.mergeHint') }}
                 </p>
               </template>
             </template>
             <div class="bp__form-actions">
               <UiButton v-if="mergeReady" size="sm" variant="primary" data-merge-go :loading="busy === 'merge'" @click="confirmMerge">
-                Merge {{ files(mergePlan!.files.length) }}
+                {{ t('git.branches.mergeFiles', mergePlan!.files.length) }}
               </UiButton>
-              <UiButton size="sm" variant="ghost" data-cancel :disabled="busy === 'merge'" @click="backToList">{{ mergeReady || !mergePlan ? 'Cancel' : 'Back' }}</UiButton>
+              <UiButton size="sm" variant="ghost" data-cancel :disabled="busy === 'merge'" @click="backToList">{{ mergeReady || !mergePlan ? t('common.actions.cancel') : t('common.actions.back') }}</UiButton>
             </div>
           </div>
 
           <div v-else-if="view === 'clear'" class="bp__form">
             <template v-if="clearUnmerged.length">
-              <p class="bp__form-title">Delete {{ clearUnmerged.length === 1 ? 'it' : 'them' }} anyway?</p>
-              <p class="bp__hint">Their unmerged commits are lost for good.</p>
+              <p class="bp__form-title">{{ t('git.branches.clearAnywayAsk', clearUnmerged.length) }}</p>
+              <p class="bp__hint">{{ t('git.branches.clearLost') }}</p>
             </template>
             <template v-else>
-              <p class="bp__form-title">Delete {{ clearable.length }} local {{ clearable.length === 1 ? 'branch' : 'branches' }}?</p>
+              <p class="bp__form-title">{{ t('git.branches.clearAsk', clearable.length) }}</p>
               <ul class="bp__names">
                 <li v-for="name in clearable" :key="name" class="bp__mono">
-                  {{ name }}<span v-if="trees.byBranch[name]" class="bp__names-note"> + worktree</span>
+                  {{ name }}<span v-if="trees.byBranch[name]" class="bp__names-note">{{ ` ${t('git.branches.plusTree')}` }}</span>
                 </li>
               </ul>
               <p class="bp__hint">
-                Remote branches stay. Branches with unmerged commits are skipped and listed.
-                <template v-if="clearable.some(n => trees.byBranch[n])">
-                  Worktrees on them are removed too, unless they have uncommitted changes.
-                </template>
-                <template v-if="clearKept.length">Kept: <span class="bp__mono">{{ clearKept.join(', ') }}</span>.</template>
+                {{ t('git.branches.clearHint') }}
+                <template v-if="clearable.some(n => trees.byBranch[n])">{{ t('git.branches.clearTrees') }}{{ ' ' }}</template>
+                <i18n-t v-if="clearKept.length" keypath="git.branches.clearKept" scope="global"><template #names><span class="bp__mono">{{ clearKept.join(', ') }}</span></template></i18n-t>
               </p>
             </template>
             <div class="bp__form-actions">
@@ -813,9 +813,9 @@ defineExpose({ show, close })
                 :disabled="!(clearUnmerged.length || clearable.length)"
                 @click="clearLocal(clearUnmerged.length > 0)"
               >
-                {{ clearUnmerged.length ? `Delete ${clearUnmerged.length} anyway` : `Delete ${clearable.length}` }}
+                {{ clearUnmerged.length ? t('git.branches.clearAnyway', { n: clearUnmerged.length }) : t('git.branches.clear', { n: clearable.length }) }}
               </UiButton>
-              <UiButton size="sm" variant="ghost" data-cancel @click="backToList">{{ clearUnmerged.length ? 'Keep them' : 'Cancel' }}</UiButton>
+              <UiButton size="sm" variant="ghost" data-cancel @click="backToList">{{ clearUnmerged.length ? t('git.branches.keepThem') : t('common.actions.cancel') }}</UiButton>
             </div>
           </div>
 
@@ -837,7 +837,7 @@ defineExpose({ show, close })
           ref="subEl"
           class="bp-sub"
           role="menu"
-          :aria-label="`Actions for ${subRow.b.name}`"
+          :aria-label="t('git.branches.actionsFor', { branch: subRow.b.name })"
           :style="{ left: `${sub.left}px`, top: `${sub.top}px`, width: `${SUB_WIDTH}px` }"
           @keydown="onSubKey"
         >
@@ -845,50 +845,50 @@ defineExpose({ show, close })
             <div class="bp-sub__name">{{ subRow.b.name }}</div>
             <div class="bp-sub__meta">
               <template v-if="subRow.kind === 'local'">
-                <span v-if="subRow.b.isCurrent">Current branch</span>
-                <span v-if="subRow.b.upstream">{{ subRow.b.upstreamGone ? `${subRow.b.upstream} deleted on remote` : `tracks ${subRow.b.upstream}` }}</span>
-                <span v-else-if="terms.remotes">not published</span>
+                <span v-if="subRow.b.isCurrent">{{ t('git.branches.current') }}</span>
+                <span v-if="subRow.b.upstream">{{ subRow.b.upstreamGone ? t('git.branches.upstreamGone', { upstream: subRow.b.upstream }) : t('git.branches.tracks', { upstream: subRow.b.upstream }) }}</span>
+                <span v-else-if="terms.remotes">{{ t('git.branches.notPublished') }}</span>
               </template>
-              <span v-else>on {{ subRow.b.remote }}</span>
-              <span v-if="subRow.b.time" class="tabular">{{ shortAgo(subRow.b.time, now()) }} ago</span>
+              <span v-else>{{ t('git.branches.onRemote', { remote: subRow.b.remote }) }}</span>
+              <span v-if="subRow.b.time" class="tabular">{{ t('git.branches.ago', { time: shortAgo(subRow.b.time, now()) }) }}</span>
             </div>
             <p v-if="subRow.b.subject" class="bp-sub__subject">{{ subRow.b.subject }}</p>
           </div>
           <div class="bp__sep" role="separator" />
           <button v-if="!(subRow.kind === 'local' && subRow.b.isCurrent)" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="checkout(subRow)">
             <span class="bp__icon"><span v-if="busy === 'checkout'" class="bp__spin" /><LogIn v-else /></span>
-            <span class="bp__label">Checkout</span>
+            <span class="bp__label">{{ t('git.branches.checkout') }}</span>
           </button>
           <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="startName('new', subRow)">
             <span class="bp__icon"><GitBranchPlus /></span>
-            <span class="bp__label">New branch from here…</span>
+            <span class="bp__label">{{ t('git.branches.newFromHere') }}</span>
           </button>
           <template v-if="!(subRow.kind === 'local' && subRow.b.isCurrent) && current">
             <button v-if="terms.merge" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="merge(subRow)">
               <span class="bp__icon"><GitMerge /></span>
-              <span class="bp__label">Merge into <span class="bp__mono">{{ current }}</span>{{ terms.mergePreview ? '…' : '' }}</span>
+              <i18n-t :keypath="terms.mergePreview ? 'git.branches.mergeIntoAsk' : 'git.branches.mergeInto'" tag="span" class="bp__label" scope="global"><template #branch><span class="bp__mono">{{ current }}</span></template></i18n-t>
             </button>
             <button v-if="terms.rebase" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="rebase(subRow)">
               <span class="bp__icon"><Waypoints /></span>
-              <span class="bp__label">Rebase <span class="bp__mono">{{ current }}</span> onto this</span>
+              <i18n-t keypath="git.branches.rebaseOnto" tag="span" class="bp__label" scope="global"><template #branch><span class="bp__mono">{{ current }}</span></template></i18n-t>
             </button>
           </template>
           <template v-if="subRow.kind === 'local'">
             <div class="bp__sep" role="separator" />
             <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="startName('rename', subRow)">
               <span class="bp__icon"><Pencil /></span>
-              <span class="bp__label">Rename…</span>
+              <span class="bp__label">{{ t('git.branches.renameItem') }}</span>
             </button>
             <button
               type="button"
               role="menuitem"
               class="bp__item is-danger"
               :disabled="!!busy || subRow.b.isCurrent"
-              :title="subRow.b.isCurrent ? 'Switch to another branch first' : undefined"
+              :title="subRow.b.isCurrent ? t('git.branches.switchFirst') : undefined"
               @click="startDelete(subRow)"
             >
               <span class="bp__icon"><Trash2 /></span>
-              <span class="bp__label">Delete…</span>
+              <span class="bp__label">{{ t('git.branches.deleteItem') }}</span>
             </button>
           </template>
         </div>

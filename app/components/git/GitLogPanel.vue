@@ -19,6 +19,7 @@ import { fullDateTime, longAgo, useNow } from '~/utils/time'
  */
 const props = defineProps<{ path: string | null; visible: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const log = useGitLog()
 const git = useGit()
@@ -42,40 +43,44 @@ const listHeight = computed(() => (view.commits.length + Number(view.more)) * vi
 
 /** The branch filter as the toolbar says it. */
 const filterName = computed(() =>
-  (view.refFilter === CURRENT_BRANCH ? view.branch ?? 'Detached HEAD' : view.refFilter ?? 'All branches'))
+  (view.refFilter === CURRENT_BRANCH ? view.branch ?? t('git.refs.head') : view.refFilter ?? t('git.log.allBranches')))
 const filterIsBranch = computed(() => !!view.refFilter && (view.refFilter !== CURRENT_BRANCH || !!view.branch))
 const filterTitle = computed(() => {
-  if (view.refFilter === CURRENT_BRANCH) return `Showing the current branch${view.branch ? ` (${view.branch})` : ''}; pick another branch or all of them`
-  return view.refFilter ? `Showing ${view.refFilter}` : 'Showing all branches; pick one, or go to a branch'
+  if (view.refFilter === CURRENT_BRANCH) return view.branch ? t('git.log.showingCurrentNamed', { branch: view.branch }) : t('git.log.showingCurrent')
+  return view.refFilter ? t('git.log.showing', { ref: view.refFilter }) : t('git.log.showingAll')
 })
 
 const searchSummary = computed(() => {
   if (view.phase !== 'ready' || !view.flat) return ''
-  const n = view.commits.length
-  const what = [view.applied.text && `matching "${view.applied.text}"`, view.applied.author && `by ${view.applied.author}`].filter(Boolean).join(' ')
-  return `${n}${view.more ? '+' : ''} ${n === 1 && !view.more ? 'commit' : 'commits'} ${what}`
+  const count = view.commits.length
+  const { text, author } = view.applied
+  const n = `${count}${view.more ? '+' : ''}`
+  // "1+" is more than one.
+  const plural = view.more ? Math.max(2, count) : count
+  if (text && author) return t('git.log.foundBoth', { n, text, author }, plural)
+  return text ? t('git.log.foundText', { n, text }, plural) : t('git.log.foundAuthor', { n, author }, plural)
 })
 
 const empty = computed<{ title: string; hint?: string; action?: { label: string; run: () => void } } | null>(() => {
   switch (view.phase) {
-    case 'none': return { title: 'No project open', hint: 'Open a project to see its history.' }
-    case 'notRepo': return { title: 'Not a git repository', hint: 'This folder has no git history. Initialize it from the Changes tool window to start one.' }
-    case 'unity': return { title: 'No graph for Unity Version Control', hint: 'The commit graph reads git history. The Changes tool window lists this workspace\'s changesets.' }
-    case 'error': return { title: 'Could not read the history', hint: view.error, action: { label: 'Try again', run: view.refreshNow } }
+    case 'none': return { title: t('git.log.noProject'), hint: t('git.log.noProjectHint') }
+    case 'notRepo': return { title: t('git.log.notRepo'), hint: t('git.log.notRepoHint') }
+    case 'unity': return { title: t('git.log.unity'), hint: t('git.log.unityHint') }
+    case 'error': return { title: t('git.log.couldNotRead'), hint: view.error, action: { label: t('common.actions.retry'), run: view.refreshNow } }
     case 'loading': return null
   }
   if (view.commits.length) return null
   if (view.flat) {
     return {
-      title: 'No commits match',
-      hint: 'Search looks in commit messages; the author filter and author:name narrow it to a person.',
-      action: { label: 'Clear filters', run: () => void view.clearSearch() },
+      title: t('git.log.noMatch'),
+      hint: t('git.log.noMatchHint'),
+      action: { label: t('git.log.clearFilters'), run: () => void view.clearSearch() },
     }
   }
   if (view.refFilter && view.refFilter !== CURRENT_BRANCH) {
-    return { title: `Nothing on ${filterName.value}`, action: { label: 'Show all branches', run: () => void view.setRefFilter(null) } }
+    return { title: t('git.log.nothingOn', { ref: filterName.value }), action: { label: t('git.log.showAll'), run: () => void view.setRefFilter(null) } }
   }
-  return { title: 'No commits yet', hint: 'The graph fills in after the first commit.' }
+  return { title: t('git.noCommits'), hint: t('git.log.noCommitsHint') }
 })
 
 /* ---------- details ---------- */
@@ -153,22 +158,22 @@ async function toggleBranches(toggle: () => void, open: boolean) {
 
 const branchItems = computed<MenuItem[]>(() => {
   const current = branchList.value?.current ?? view.branch
-  const goTo = (name: string) => ({ label: `Go to ${name}`, icon: Locate, onSelect: () => void view.goToRef(name) })
+  const goTo = (name: string) => ({ label: t('git.log.goTo', { name }), icon: Locate, onSelect: () => void view.goToRef(name) })
   const items: MenuItem[] = [
     {
-      label: 'Current branch',
-      aside: current ?? 'detached HEAD',
+      label: t('git.branches.current'),
+      aside: current ?? t('git.log.detached'),
       asideMono: !!current,
       check: 'radio',
       checked: view.refFilter === CURRENT_BRANCH,
       action: goTo(current ?? CURRENT_BRANCH),
       onSelect: () => void view.setRefFilter(CURRENT_BRANCH),
     },
-    { label: 'All branches', check: 'radio', checked: view.refFilter === null, onSelect: () => void view.setRefFilter(null) },
+    { label: t('git.log.allBranches'), check: 'radio', checked: view.refFilter === null, onSelect: () => void view.setRefFilter(null) },
   ]
   const groups = [
-    { group: 'Local branches', list: branchList.value?.local.filter(b => b.name !== current) ?? [] },
-    { group: 'Remote branches', list: branchList.value?.remote ?? [] },
+    { group: t('git.log.localBranches'), list: branchList.value?.local.filter(b => b.name !== current) ?? [] },
+    { group: t('git.log.remoteBranches'), list: branchList.value?.remote ?? [] },
   ]
   for (const { group, list } of groups) {
     list.forEach(({ name }, i) => items.push({
@@ -190,9 +195,9 @@ const authorItems = computed<MenuItem[]>(() => {
   const people = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, AUTHORS_MAX).map(([name]) => name)
   if (view.author && !people.includes(view.author)) people.unshift(view.author)
   return [
-    { label: 'Any author', check: 'radio', checked: !view.author, onSelect: () => void view.setAuthor('') },
+    { label: t('git.log.anyAuthor'), check: 'radio', checked: !view.author, onSelect: () => void view.setAuthor('') },
     ...people.map((name, i): MenuItem => ({
-      ...(i === 0 ? { group: view.flat ? 'Authors' : 'Authors in the loaded history', divider: true } : {}),
+      ...(i === 0 ? { group: view.flat ? t('git.log.authors') : t('git.log.authorsLoaded'), divider: true } : {}),
       label: name,
       check: 'radio',
       checked: view.author === name,
@@ -208,19 +213,19 @@ const rowItems = computed<MenuItem[]>(() => {
   const c = menuCommit.value
   const path = props.path
   if (!c || !path) return []
-  const copy = (text: string, what: string) => {
+  const copy = (text: string, what: 'hash' | 'subject') => {
     void log.copy(text, what)
     view.focusList()
   }
   const items: MenuItem[] = [
-    { label: 'Show details', icon: FileText, onSelect: () => openDetail(c.hash) },
-    { label: 'Copy hash', icon: Copy, divider: true, aside: c.shortHash, asideMono: true, onSelect: () => copy(c.hash, 'hash') },
-    { label: 'Copy subject', icon: Copy, onSelect: () => copy(c.subject, 'subject') },
-    { label: 'New branch here…', icon: GitBranchPlus, divider: true, onSelect: () => void log.newBranchAt(path, c) },
+    { label: t('git.log.showDetails'), icon: FileText, onSelect: () => openDetail(c.hash) },
+    { label: t('git.commit.copyHash'), icon: Copy, divider: true, aside: c.shortHash, asideMono: true, onSelect: () => copy(c.hash, 'hash') },
+    { label: t('git.log.copySubject'), icon: Copy, onSelect: () => copy(c.subject, 'subject') },
+    { label: t('git.log.newBranchHere'), icon: GitBranchPlus, divider: true, onSelect: () => void log.newBranchAt(path, c) },
   ]
   // Not offered for the commit HEAD already sits on without a branch.
   if (c.hash !== view.head || view.branch) {
-    items.push({ label: 'Check out revision', icon: GitCommitHorizontal, aside: c.shortHash, asideMono: true, onSelect: () => log.checkoutCommit(path, c) })
+    items.push({ label: t('git.log.checkoutRevision'), icon: GitCommitHorizontal, aside: c.shortHash, asideMono: true, onSelect: () => log.checkoutCommit(path, c) })
   }
   const locals = new Set(c.refs.filter(r => r.kind === 'branch').map(r => r.name))
   for (const r of sortGitRefs(c.refs)) {
@@ -228,7 +233,7 @@ const rowItems = computed<MenuItem[]>(() => {
     const local = r.kind === 'branch' && !r.current
     const remote = r.kind === 'remote' && tracking !== view.branch && !locals.has(tracking)
     if (!local && !remote) continue
-    items.push({ label: 'Check out', icon: remote ? Cloud : GitBranch, aside: r.name, asideMono: true, onSelect: () => log.checkoutBranch(path, r.name, remote) })
+    items.push({ label: t('git.log.checkout'), icon: remote ? Cloud : GitBranch, aside: r.name, asideMono: true, onSelect: () => log.checkoutBranch(path, r.name, remote) })
   }
   return items
 })
@@ -326,18 +331,18 @@ function onSearchKey(e: KeyboardEvent) {
           ref="searchInput"
           type="text"
           :value="view.query"
-          placeholder="Text or hash"
+          :placeholder="t('git.log.search')"
           spellcheck="false"
           autocomplete="off"
-          aria-label="Search commits by text or hash"
-          title="Commit message text, or a hash to jump to. author:name finds an author."
+          :aria-label="t('git.log.searchLabel')"
+          :title="t('git.log.searchTitle')"
           @input="onSearchInput"
           @keydown="onSearchKey"
         >
-        <button v-if="view.query" type="button" class="gl__clear" aria-label="Clear search" title="Clear (Esc)" @click="clearQuery"><X /></button>
+        <button v-if="view.query" type="button" class="gl__clear" :aria-label="t('git.log.clearSearch')" :title="t('git.log.clearTitle')" @click="clearQuery"><X /></button>
       </label>
 
-      <UiMenu class="gl__pick" :items="branchItems" :width="240" :max-width="360" label="Branches">
+      <UiMenu class="gl__pick" :items="branchItems" :width="240" :max-width="360" :label="t('git.branches.title')">
         <template #default="{ toggle, open }">
           <button
             type="button"
@@ -355,32 +360,32 @@ function onSearchKey(e: KeyboardEvent) {
         </template>
       </UiMenu>
 
-      <UiMenu class="gl__pick" :items="authorItems" :width="220" :max-width="360" label="Authors">
+      <UiMenu class="gl__pick" :items="authorItems" :width="220" :max-width="360" :label="t('git.log.authors')">
         <template #default="{ toggle, open }">
           <button
             type="button"
             class="gl__filter"
             :class="{ 'is-set': view.author, 'is-open': open }"
-            :title="view.author ? `Commits by ${view.author}` : 'Show one author\'s commits'"
+            :title="view.author ? t('git.log.byAuthor', { author: view.author }) : t('git.log.oneAuthor')"
             aria-haspopup="menu"
             :aria-expanded="open"
             @click="toggle"
           >
             <User aria-hidden="true" />
-            <span class="gl__filter-text">{{ view.author || 'Any author' }}</span>
+            <span class="gl__filter-text">{{ view.author || t('git.log.anyAuthor') }}</span>
             <ChevronDown class="gl__chevron" aria-hidden="true" />
           </button>
         </template>
       </UiMenu>
 
       <span class="gl__gap" />
-      <UiIconButton label="Refresh" :class="{ 'gl__busy': view.refreshing }" @click="view.refreshNow()"><RefreshCw /></UiIconButton>
+      <UiIconButton :label="t('common.actions.refresh')" :class="{ 'gl__busy': view.refreshing }" @click="view.refreshNow()"><RefreshCw /></UiIconButton>
     </div>
 
     <p v-if="view.notice" class="gl__note" role="status">{{ view.notice }}</p>
     <p v-else-if="searchSummary" class="gl__note" role="status">
       {{ searchSummary }}
-      <button type="button" class="gl__link" @click="view.clearSearch()">Clear</button>
+      <button type="button" class="gl__link" @click="view.clearSearch()">{{ t('git.log.clear') }}</button>
     </p>
 
     <div v-if="onlyDetail" class="gl__body">
@@ -391,7 +396,7 @@ function onSearchKey(e: KeyboardEvent) {
     <div v-else class="gl__body">
       <div class="gl__main">
         <div v-if="!view.narrow && view.phase === 'ready' && view.commits.length" class="gl__head" :style="{ gridTemplateColumns: columns }" aria-hidden="true">
-          <span /><span>Subject</span><span v-if="view.showAuthor">Author</span><span>Date</span><span>Commit</span><span />
+          <span /><span>{{ t('git.log.subject') }}</span><span v-if="view.showAuthor">{{ t('git.log.author') }}</span><span>{{ t('git.log.date') }}</span><span>{{ t('git.log.commit') }}</span><span />
         </div>
 
         <div
@@ -399,7 +404,7 @@ function onSearchKey(e: KeyboardEvent) {
           class="gl__list"
           role="listbox"
           tabindex="0"
-          aria-label="Commits"
+          :aria-label="t('git.log.commits')"
           :aria-activedescendant="view.index.has(view.selected ?? '') ? `gitlog-${view.selected}` : undefined"
           @scroll.passive="view.onScroll()"
           @keydown="onListKey"
@@ -425,7 +430,7 @@ function onSearchKey(e: KeyboardEvent) {
               :data-index="i"
               role="option"
               :aria-selected="c.hash === view.selected"
-              :aria-label="`${c.subject}, ${c.author}, ${longAgo(c.time, now)}, ${c.shortHash}${c.parents.length > 1 ? ', merge commit' : ''}`"
+              :aria-label="`${c.subject}, ${c.author}, ${longAgo(c.time, now)}, ${c.shortHash}${c.parents.length > 1 ? `, ${t('git.log.mergeCommit')}` : ''}`"
               @click="onRowClick(i)"
               @dblclick="openDetail(c.hash)"
               @contextmenu.prevent="openRowMenu(i, $event.clientX, $event.clientY)"
@@ -453,12 +458,12 @@ function onSearchKey(e: KeyboardEvent) {
                 <span class="gl__cell tabular" :title="fullDateTime(c.time)">{{ longAgo(c.time, now) }}</span>
                 <span class="gl__cell gl__short">{{ c.shortHash }}</span>
               </template>
-              <button type="button" class="gl__more" tabindex="-1" title="More actions" :aria-label="`More actions for ${c.shortHash}`" @click.stop="onMore($event, i)" @dblclick.stop>
+              <button type="button" class="gl__more" tabindex="-1" :title="t('git.log.moreActions')" :aria-label="t('git.log.moreActionsFor', { commit: c.shortHash })" @click.stop="onMore($event, i)" @dblclick.stop>
                 <Ellipsis />
               </button>
             </div>
             <div v-if="view.more" class="gl__loading" :style="{ transform: `translateY(${view.commits.length * view.rowHeight}px)`, height: `${view.rowHeight}px` }">
-              {{ view.loadingMore ? 'Reading more history…' : '' }}
+              {{ view.loadingMore ? t('git.log.readingMore') : '' }}
             </div>
           </div>
         </div>
@@ -470,7 +475,7 @@ function onSearchKey(e: KeyboardEvent) {
           role="separator"
           tabindex="0"
           aria-orientation="vertical"
-          aria-label="Resize the commit details"
+          :aria-label="t('git.log.resize')"
           :aria-valuenow="detailWidth"
           @pointerdown="onSplitDown"
           @pointermove="onSplitMove"
@@ -486,7 +491,7 @@ function onSearchKey(e: KeyboardEvent) {
       </template>
     </div>
 
-    <UiMenu ref="rowMenu" class="gl__context" :items="rowItems" :width="240" :max-width="360" :label="menuCommit ? `Commit ${menuCommit.shortHash}` : 'Commit'" />
+    <UiMenu ref="rowMenu" class="gl__context" :items="rowItems" :width="240" :max-width="360" :label="menuCommit ? t('git.log.commitNamed', { commit: menuCommit.shortHash }) : t('git.log.commit')" />
   </div>
 </template>
 

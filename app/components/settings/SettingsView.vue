@@ -36,44 +36,46 @@ import PluginGlyph from '~/components/plugins/PluginGlyph.vue'
  */
 type Section = NonNullable<ReturnType<typeof useWorkspace>['settings']>
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const build = useBuildInfo()
 
-interface Item { id: Section; label: string; icon: typeof Bot }
+type BuiltIn = Exclude<Section, `plugin:${string}`>
+interface Item { id: BuiltIn; icon: typeof Bot }
 /**
  * The rail: two headlines (not clickable) with their sections as a small tree under them, then Agents and
  * Changelog at the bottom.
  */
-const groups: Array<{ label: string; items: Item[] }> = [
+const groups: Array<{ id: 'general' | 'technical'; items: Item[] }> = [
   {
-    label: 'General',
+    id: 'general',
     items: [
-      { id: 'general', label: 'Preferences', icon: SlidersHorizontal },
-      { id: 'projects', label: 'Projects', icon: Folder },
-      { id: 'appearance', label: 'Appearance', icon: SunMoon },
-      { id: 'editor', label: 'Editor', icon: FilePen },
-      { id: 'notifications', label: 'Notifications', icon: Bell },
-      { id: 'voice', label: 'Voice', icon: Mic },
-      { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+      { id: 'general', icon: SlidersHorizontal },
+      { id: 'projects', icon: Folder },
+      { id: 'appearance', icon: SunMoon },
+      { id: 'editor', icon: FilePen },
+      { id: 'notifications', icon: Bell },
+      { id: 'voice', icon: Mic },
+      { id: 'shortcuts', icon: Keyboard },
     ],
   },
   {
-    label: 'Technical',
+    id: 'technical',
     items: [
-      { id: 'environments', label: 'Environments', icon: Server },
-      { id: 'hosting', label: 'Git hosting', icon: GitPullRequest },
-      { id: 'terminal', label: 'Terminal', icon: SquareTerminal },
-      { id: 'mcp', label: 'MCP servers', icon: Plug },
-      { id: 'plugins', label: 'Plugins', icon: Puzzle },
-      { id: 'behavior', label: 'Behaviour', icon: MessageSquareMore },
-      { id: 'maintenance', label: 'Maintenance', icon: Wrench },
+      { id: 'environments', icon: Server },
+      { id: 'hosting', icon: GitPullRequest },
+      { id: 'terminal', icon: SquareTerminal },
+      { id: 'mcp', icon: Plug },
+      { id: 'plugins', icon: Puzzle },
+      { id: 'behavior', icon: MessageSquareMore },
+      { id: 'maintenance', icon: Wrench },
     ],
   },
 ]
 const bottom: Item[] = [
-  { id: 'agents', label: 'Agents', icon: Bot },
-  { id: 'archive', label: 'Archive', icon: Archive },
-  { id: 'changelog', label: 'Changelog', icon: History },
+  { id: 'agents', icon: Bot },
+  { id: 'archive', icon: Archive },
+  { id: 'changelog', icon: History },
 ]
 
 /** Settings pages plugins registered: a third group in the rail, `plugin:<pluginId>.<pageId>`. */
@@ -240,12 +242,12 @@ onBeforeUnmount(() => {
           aria-hidden="true"
         />
         <header class="settings__head">
-          <h1 :id="titleId" class="settings__title">Settings</h1>
-          <UiIconButton label="Close settings" shortcut="Esc" @click="close"><X /></UiIconButton>
+          <h1 :id="titleId" class="settings__title">{{ t('settings.title') }}</h1>
+          <UiIconButton :label="t('settings.close')" shortcut="Esc" @click="close"><X /></UiIconButton>
         </header>
-        <nav class="settings__nav" aria-label="Settings sections" @keydown="onRailKey">
-          <div v-for="g in groups" :key="g.label" class="settings__group" role="group" :aria-label="g.label">
-            <h2 class="settings__heading" aria-hidden="true">{{ g.label }}</h2>
+        <nav class="settings__nav" :aria-label="t('settings.sections')" @keydown="onRailKey">
+          <div v-for="g in groups" :key="g.id" class="settings__group" role="group" :aria-label="t(`settings.groups.${g.id}`)">
+            <h2 class="settings__heading" aria-hidden="true">{{ t(`settings.groups.${g.id}`) }}</h2>
             <button
               v-for="s in g.items"
               :key="s.id"
@@ -256,12 +258,12 @@ onBeforeUnmount(() => {
               @click="show(s.id)"
             >
               <component :is="s.icon" aria-hidden="true" />
-              <span>{{ s.label }}</span>
+              <span>{{ t(`settings.nav.${s.id}`) }}</span>
             </button>
           </div>
           <!-- Pages plugins registered, under their own headline -->
-          <div v-if="pluginPages.length" class="settings__group" role="group" aria-label="Plugin settings">
-            <h2 class="settings__heading" aria-hidden="true">Plugins</h2>
+          <div v-if="pluginPages.length" class="settings__group" role="group" :aria-label="t('settings.pluginSettings')">
+            <h2 class="settings__heading" aria-hidden="true">{{ t('settings.nav.plugins') }}</h2>
             <button
               v-for="p in pluginPages"
               :key="p.section"
@@ -269,7 +271,7 @@ onBeforeUnmount(() => {
               class="settings__item settings__item--child"
               :class="{ 'is-current': current === p.section }"
               :aria-current="current === p.section ? 'page' : undefined"
-              :title="`${p.title}, from ${pluginName(p.pluginId)}`"
+              :title="t('settings.pluginPage', { title: p.title, plugin: pluginName(p.pluginId) })"
               @click="show(p.section)"
             >
               <PluginGlyph :icon="p.icon" />
@@ -277,7 +279,7 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </nav>
-        <nav class="settings__nav settings__nav--bottom" aria-label="Agents, archive and changelog" @keydown="onRailKey">
+        <nav class="settings__nav settings__nav--bottom" :aria-label="t('settings.bottomSections')" @keydown="onRailKey">
           <button
             v-for="s in bottom"
             :key="s.id"
@@ -288,10 +290,10 @@ onBeforeUnmount(() => {
             @click="show(s.id)"
           >
             <component :is="s.icon" aria-hidden="true" />
-            <span>{{ s.label }}</span>
+            <span>{{ t(`settings.nav.${s.id}`) }}</span>
           </button>
         </nav>
-        <button type="button" class="settings__version tabular" title="About Mango" @click="show('maintenance')">
+        <button type="button" class="settings__version tabular" :title="t('settings.about.title')" @click="show('maintenance')">
           Mango {{ build.version }}<template v-if="build.dev"> · dev</template>
         </button>
       </div>
@@ -328,7 +330,7 @@ onBeforeUnmount(() => {
                   v-else-if="pluginPage"
                   :key="pluginPage.section"
                   :title="pluginPage.title"
-                  :description="`Settings of the ${pluginName(pluginPage.pluginId)} plugin.`"
+                  :description="t('settings.pluginDescription', { plugin: pluginName(pluginPage.pluginId) })"
                 >
                   <PluginViewHost :view="pluginPage.view" :ctx="{}" :plugin-id="pluginPage.pluginId" />
                 </SettingsSection>

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { Check, Copy } from 'lucide-vue-next'
 import { isTauri } from '~/composables/useBackend'
+import { formatLocale } from '~/i18n'
+
+const { t } = useI18n()
 
 /** Settings > Maintenance: the version running, the commit and build it came from. */
 /* ---------- about ---------- */
 const build = useBuildInfo()
-const builtOn = build.dev ? '' : new Date(build.builtAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+const builtOn = computed(() => (build.dev ? '' : new Date(build.builtAt).toLocaleDateString(formatLocale(), { year: 'numeric', month: 'short', day: 'numeric' })))
 /** The desktop shell's runtime; the browser preview has none. */
 const tauri = ref<string | null>(null)
 onMounted(async () => {
@@ -45,23 +48,23 @@ onBeforeUnmount(() => clearTimeout(copiedTimer))
 <template>
     <div class="group about">
       <div class="about__head">
-        <h3 class="group__title">About Mango</h3>
-        <UiButton size="sm" variant="ghost" :aria-label="copied ? 'Version info copied' : 'Copy version info'" @click="copyInfo">
-          <Check v-if="copied" /><Copy v-else />{{ copied ? 'Copied' : 'Copy version info' }}
+        <h3 class="group__title">{{ t('settings.about.title') }}</h3>
+        <UiButton size="sm" variant="ghost" :aria-label="copied ? t('settings.about.infoCopied') : t('settings.about.copyInfo')" @click="copyInfo">
+          <Check v-if="copied" /><Copy v-else />{{ copied ? t('common.actions.copied') : t('settings.about.copyInfo') }}
         </UiButton>
       </div>
       <dl class="about__list">
-        <dt>Version</dt>
+        <dt>{{ t('settings.about.version') }}</dt>
         <dd>
           <span class="tabular selectable">{{ build.version }}</span>
-          <span v-if="build.dev" class="about__tag" title="Running from source with pnpm dev or pnpm app">Development build</span>
+          <span v-if="build.dev" class="about__tag" :title="t('settings.about.devHint')">{{ t('settings.about.dev') }}</span>
         </dd>
         <template v-if="build.commit">
-          <dt>Commit</dt>
+          <dt>{{ t('settings.about.commit') }}</dt>
           <dd class="about__mono selectable">{{ build.commit }}</dd>
         </template>
         <template v-if="builtOn">
-          <dt>Built</dt>
+          <dt>{{ t('settings.about.built') }}</dt>
           <dd class="tabular">{{ builtOn }}</dd>
         </template>
         <template v-if="tauri">

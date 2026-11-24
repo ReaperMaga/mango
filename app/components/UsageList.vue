@@ -4,8 +4,10 @@ import { useWorkspace } from '~/stores/workspace'
 import { useUsage } from '~/stores/usage'
 import { useEnvironments } from '~/stores/environments'
 import { AGENTS, type AgentId } from '~/types/chat'
+import { formatLocale } from '~/i18n'
 import { parseEnvPath } from '~/utils/envPath'
 import { useNow } from '~/utils/time'
+import { limitLabel } from '~/utils/usageSummary'
 
 /**
  * Each agent's plan limits (the 5-hour and weekly windows, any per-model limit) and when each
@@ -14,6 +16,7 @@ import { useNow } from '~/utils/time'
  */
 const emit = defineEmits<{ 'sign-in': [] }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const usage = useUsage()
 const now = useNow(15_000)
@@ -28,25 +31,25 @@ const installed = (id: AgentId) => usage.place !== 'local' || (ws.agents.find(a 
 type Level = 'ok' | 'high' | 'full'
 const level = (percent: number): Level => (percent >= 100 ? 'full' : percent >= 80 ? 'high' : 'ok')
 
-const clock = (t: number) => new Date(t).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+const clock = (at: number) => new Date(at).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' })
 
 /** "Resets in 2 h 36 min", "Resets Wed 21:00", "Resets 16 Dec". */
 function resetText(at: number | null, nowMs: number): string {
   if (at === null) return ''
   const mins = Math.ceil((at - nowMs) / 60_000)
-  if (mins <= 0) return 'Resetting now'
-  if (mins < 60) return `Resets in ${mins} min`
-  if (mins < 24 * 60) return `Resets in ${Math.floor(mins / 60)} h ${mins % 60} min`
-  if (mins < 6 * 24 * 60) return `Resets ${new Date(at).toLocaleDateString(undefined, { weekday: 'short' })} ${clock(at)}`
-  return `Resets ${new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
+  if (mins <= 0) return t('shell.usage.resetting')
+  if (mins < 60) return t('shell.usage.resetsMin', { n: mins })
+  if (mins < 24 * 60) return t('shell.usage.resetsHours', { h: Math.floor(mins / 60), m: mins % 60 })
+  if (mins < 6 * 24 * 60) return t('shell.usage.resetsAt', { when: `${new Date(at).toLocaleDateString(formatLocale(), { weekday: 'short' })} ${clock(at)}` })
+  return t('shell.usage.resetsAt', { when: new Date(at).toLocaleDateString(formatLocale(), { day: 'numeric', month: 'short' }) })
 }
-const resetTitle = (at: number | null) => (at === null ? undefined : new Date(at).toLocaleString(undefined, { dateStyle: 'full', timeStyle: 'short' }))
+const resetTitle = (at: number | null) => (at === null ? undefined : new Date(at).toLocaleString(formatLocale(), { dateStyle: 'full', timeStyle: 'short' }))
 
 /** "today 14:32", or "Wed 14:32" for an older one. */
 function whenText(at: number): string {
   const d = new Date(at)
   const today = d.toDateString() === new Date(now.value).toDateString()
-  return today ? `today ${clock(at)}` : `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${clock(at)}`
+  return today ? t('shell.usage.today', { time: clock(at) }) : `${d.toLocaleDateString(formatLocale(), { weekday: 'short' })} ${clock(at)}`
 }
 
 const needsSignIn = (error: string | null) => !!error && /sign(ed)? in|log ?in|auth/i.test(error)
@@ -65,31 +68,36 @@ function signIn() {
     <section v-for="id in ids" :key="id" class="use__agent" :aria-busy="usage.entries[id].loading || undefined">
       <header class="use__head">
         <h3 class="use__name">{{ AGENTS[id].name }}</h3>
-        <span v-if="usage.entries[id].usage?.plan && !usage.entries[id].error" class="use__plan">{{ usage.entries[id].usage!.plan }} plan</span>
-        <span v-if="usage.entries[id].simulated" class="use__sim" title="The browser preview has no CLI to ask">Simulated</span>
-        <span v-if="usage.entries[id].loading && usage.entries[id].usage" class="use__ring" role="status" aria-label="Reading usage" />
+        <span v-if="usage.entries[id].usage?.plan && !usage.entries[id].error" class="use__plan">{{ t('shell.usage.plan', { plan: usage.entries[id].usage!.plan! }) }}</span>
+        <span v-if="usage.entries[id].simulated" class="use__sim" :title="t('shell.usage.simulatedTitle')">{{ t('shell.usage.simulated') }}</span>
+        <span v-if="usage.entries[id].loading && usage.entries[id].usage" class="use__ring" role="status" :aria-label="t('shell.usage.reading')" />
       </header>
 
       <div v-if="usage.entries[id].resets.length" class="use__reset-note" role="status">
         <RotateCcw class="use__reset-icon" aria-hidden="true" />
         <ul class="use__reset-list">
           <li v-for="r in usage.entries[id].resets" :key="`${r.windowId}-${r.at}`">
-            <strong>{{ r.label }}</strong> was reset early: {{ r.from }}% → {{ r.to }}%
-            <span class="use__reset-when">noticed {{ whenText(r.at) }}</span>
+            <i18n-t keypath="shell.usage.resetEarly" scope="global">
+              <template #window><strong>{{ limitLabel({ id: r.windowId, label: r.label }) }}</strong></template>
+              <template #from>{{ r.from }}</template>
+              <template #to>{{ r.to }}</template>
+            </i18n-t>
+            {{ ' ' }}
+            <span class="use__reset-when">{{ t('shell.usage.noticed', { when: whenText(r.at) }) }}</span>
           </li>
         </ul>
-        <UiButton variant="ghost" size="sm" @click="usage.dismissResets(id)">Dismiss</UiButton>
+        <UiButton variant="ghost" size="sm" @click="usage.dismissResets(id)">{{ t('shell.usage.dismiss') }}</UiButton>
       </div>
 
       <div v-if="!installed(id)" class="use__msg">
-        <span>Not installed.</span>
-        <UiButton variant="ghost" size="sm" @click="ws.openSetup()">Get started</UiButton>
+        <span>{{ t('shell.usage.notInstalled') }}</span>
+        <UiButton variant="ghost" size="sm" @click="ws.openSetup()">{{ t('shell.usage.getStarted') }}</UiButton>
       </div>
 
       <div v-else-if="usage.entries[id].error && !usage.entries[id].loading" class="use__msg use__msg--error" role="alert">
         <CircleAlert class="use__err-icon" aria-hidden="true" />
         <span>{{ usage.entries[id].error }}</span>
-        <UiButton v-if="needsSignIn(usage.entries[id].error)" variant="ghost" size="sm" @click="signIn">Sign in</UiButton>
+        <UiButton v-if="needsSignIn(usage.entries[id].error)" variant="ghost" size="sm" @click="signIn">{{ t('common.actions.signIn') }}</UiButton>
       </div>
 
       <ul v-else-if="!usage.entries[id].usage" class="use__rows" aria-hidden="true">
@@ -104,14 +112,14 @@ function signIn() {
       <template v-else>
         <ul v-if="usage.entries[id].usage!.windows.length" class="use__rows">
           <li v-for="w in usage.entries[id].usage!.windows" :key="w.id" class="use__row" :class="`is-${level(w.percent)}`">
-            <span class="use__label">{{ w.label }}</span>
+            <span class="use__label">{{ limitLabel(w) }}</span>
             <span
               class="use__track"
               role="meter"
               aria-valuemin="0"
               aria-valuemax="100"
               :aria-valuenow="Math.round(w.percent)"
-              :aria-label="`${AGENTS[id].name}, ${w.label} limit used`"
+              :aria-label="t('shell.usage.meter', { agent: AGENTS[id].name, window: limitLabel(w) })"
             >
               <span class="use__fill" :style="{ '--rest': `${100 - w.percent}%` }" />
             </span>

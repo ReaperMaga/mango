@@ -5,19 +5,21 @@ import { openImage } from '~/utils/imageViewer'
 import { useThreads } from '~/stores/threads'
 import { useLinks } from '~/stores/links'
 import { createdBy, linkFromRef, type ItemRef } from '~/utils/githubLinks'
-import { itemNoun, itemNumber } from '~/utils/forge'
+import { itemNumber } from '~/utils/forge'
+import { toolLabel, toolSummary } from '~/utils/chatTexts'
 
 type ToolPart = Extract<Part, { type: 'tool' }>
 const props = defineProps<{ part: ToolPart }>()
+const { t } = useI18n()
 
 const meta = {
-  read: { icon: FileText, done: 'Read', doing: 'Reading' },
-  edit: { icon: FilePen, done: 'Edited', doing: 'Editing' },
-  write: { icon: FilePlus, done: 'Created', doing: 'Creating' },
-  search: { icon: Search, done: 'Searched', doing: 'Searching' },
-  bash: { icon: SquareTerminal, done: 'Ran', doing: 'Running' },
-  web: { icon: Globe, done: 'Fetched', doing: 'Fetching' },
-  other: { icon: Wrench, done: 'Used', doing: 'Using' },
+  read: { icon: FileText },
+  edit: { icon: FilePen },
+  write: { icon: FilePlus },
+  search: { icon: Search },
+  bash: { icon: SquareTerminal },
+  web: { icon: Globe },
+  other: { icon: Wrench },
 } as const
 
 const m = computed(() => meta[props.part.tool])
@@ -31,6 +33,8 @@ const child = computed(() => (props.part.childId ? threads.byId(props.part.child
 /** A pull request, merge request or issue this call opened: linked to the chat, shown in the Pull requests tool window. */
 const created = computed(() => createdBy(props.part))
 const links = useLinks()
+const showTitle = (it: ItemRef) =>
+  t(it.kind === 'issue' ? 'chat.tool.showIssue' : it.provider === 'gitlab' ? 'chat.tool.showMr' : 'chat.tool.showPr', { number: itemNumber(it) })
 function showCreated(item: ItemRef) {
   // Chats from before linking existed get the link now. The pane was focused on mousedown.
   const chat = threads.activeThread
@@ -54,9 +58,9 @@ function showCreated(item: ItemRef) {
         <CircleAlert v-else-if="part.status === 'error'" />
         <component :is="m.icon" v-else />
       </span>
-      <span class="tool__verb">{{ part.label ?? (part.status === 'running' ? m.doing : m.done) }}</span>
+      <span class="tool__verb">{{ part.label ? toolLabel(part.label) : part.status === 'running' ? t(`chat.tool.doing.${part.tool}`) : t(`chat.tool.done.${part.tool}`) }}</span>
       <code class="tool__target">{{ part.target }}</code>
-      <span v-if="part.summary" class="tool__sum tabular">{{ part.summary }}</span>
+      <span v-if="part.summary" class="tool__sum tabular">{{ toolSummary(part.summary) }}</span>
       <ChevronRight v-if="expandable" class="tool__caret" />
     </component>
     <button
@@ -64,20 +68,20 @@ function showCreated(item: ItemRef) {
       :key="it.key"
       type="button"
       class="tool__open"
-      :title="`Show ${itemNoun(it.kind, it.provider)} ${itemNumber(it)} beside the chat`"
+      :title="showTitle(it)"
       @click="showCreated(it)"
     >
       <GitPullRequest v-if="it.kind === 'pr'" aria-hidden="true" /><CircleDot v-else aria-hidden="true" />
       <span class="tabular">{{ itemNumber(it) }}</span>
     </button>
-    <button v-if="child" type="button" class="tool__open" :title="`Open the sub-agent's chat: ${child.title}`" @click="threads.show(child.id)">
-      <span>Open</span><ArrowUpRight aria-hidden="true" />
+    <button v-if="child" type="button" class="tool__open" :title="t('chat.tool.openSub', { title: child.title })" @click="threads.show(child.id)">
+      <span>{{ t('common.actions.open') }}</span><ArrowUpRight aria-hidden="true" />
     </button>
     </div>
 
-    <ul v-if="part.images?.length" class="tool__images" aria-label="Images">
+    <ul v-if="part.images?.length" class="tool__images" :aria-label="t('chat.tool.images')">
       <li v-for="(img, i) in part.images" :key="img.id">
-        <button type="button" class="tool__image" :aria-label="`View ${img.name}`" :title="img.name" @click="openImage(part.images!, i)">
+        <button type="button" class="tool__image" :aria-label="t('chat.view', { name: img.name })" :title="img.name" @click="openImage(part.images!, i)">
           <img v-if="img.thumb" :src="img.thumb" alt="">
         </button>
       </li>
@@ -85,7 +89,7 @@ function showCreated(item: ItemRef) {
 
     <UiReveal>
       <div v-if="open && expandable" class="tool__detail selectable">
-        <div v-if="part.diff?.length" class="diff" role="table" aria-label="Diff">
+        <div v-if="part.diff?.length" class="diff" role="table" :aria-label="t('chat.tool.diff')">
           <div v-for="(l, i) in part.diff" :key="i" class="diff__line" :class="`diff__line--${l.kind}`" role="row">
             <span class="diff__sign" aria-hidden="true">{{ l.kind === 'add' ? '+' : l.kind === 'del' ? '−' : l.kind === 'hunk' ? '⋯' : ' ' }}</span>
             <span class="diff__text">{{ l.text || ' ' }}</span>

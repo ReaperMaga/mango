@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { EnvFile } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 
 /**
@@ -38,14 +39,14 @@ export const isAutoEnvName = (name: string) =>
 
 /** A plain file name (no folders) that is safe on every OS; returns why not, or null. */
 export function envNameProblem(name: string): string | null {
-  if (!name) return 'Give the file a name.'
-  if (name !== name.trim()) return 'The name can\'t start or end with a space.'
-  if (/[/\\]/.test(name)) return 'Only a file name, without folders: the file goes at the root of the project.'
-  if (name === '.' || name === '..') return 'That name is taken by the folder itself.'
+  if (!name) return t('settings.env.nameMissing')
+  if (name !== name.trim()) return t('settings.env.nameSpace')
+  if (/[/\\]/.test(name)) return t('settings.env.nameFolders')
+  if (name === '.' || name === '..') return t('settings.env.nameDots')
   // eslint-disable-next-line no-control-regex
-  if (/[\u0000-\u001f<>:"|?*]/.test(name)) return 'The name can\'t contain < > : " | ? * or control characters.'
-  if (name.endsWith('.')) return 'The name can\'t end with a dot.'
-  if (name.length > 200) return 'That name is too long.'
+  if (/[\u0000-\u001f<>:"|?*]/.test(name)) return t('settings.env.nameChars')
+  if (name.endsWith('.')) return t('settings.env.nameEndDot')
+  if (name.length > 200) return t('settings.env.nameLong')
   return null
 }
 

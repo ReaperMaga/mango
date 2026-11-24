@@ -72,6 +72,7 @@ app/
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
   composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), windowClose.ts (saves before a window goes), useShortcuts.ts
+  i18n/              interface languages: locales.ts (which one shows), messages/ (en is the source and the type de and ru must fill); plugins/i18n.ts applies the `locale` pref
   lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, semanticTokens, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
@@ -221,6 +222,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - The phone speaks SSH itself (`mobile/modules/mango-ssh`, SwiftNIO SSH): Ed25519 keys stay in the Keychain, every
   connection pins the host key. Values from the UI, a link or a chat file reach the remote shell only through
   `quote` (`mobile/src/remote/shell.ts`), after the same validators as `envs/mod.rs`.
+
+### Interface languages
+- New text in a translated component goes into `app/i18n/messages/` in every language and is read with `t()` inside the
+  template or a `computed`, so it follows a change of language. Mango's own words only: never agent, git or terminal output.
 
 ### State
 - Chat statuses are defined in `types/chat.ts` (`ThreadStatus`, `displayStatus`): Idle, Working, Settled,

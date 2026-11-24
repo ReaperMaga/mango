@@ -17,25 +17,27 @@ const props = withDefaults(defineProps<{
   word?: boolean
 }>(), { busy: null, word: false })
 
+const { t } = useI18n()
+
 type Tone = 'on' | 'moving' | 'off' | 'error'
 
 const view = computed<{ tone: Tone; label: string }>(() => {
   switch (props.busy) {
-    case 'start': return { tone: 'moving', label: 'Starting…' }
-    case 'stop': return { tone: 'moving', label: 'Stopping…' }
-    case 'restart': return { tone: 'moving', label: 'Restarting…' }
-    case 'delete': return { tone: 'moving', label: 'Deleting…' }
-    case 'rename': return { tone: 'moving', label: 'Renaming…' }
-    case 'resize': return { tone: 'moving', label: 'Resizing…' }
+    case 'start': return { tone: 'moving', label: t('envs.status.starting') }
+    case 'stop': return { tone: 'moving', label: t('envs.status.stopping') }
+    case 'restart': return { tone: 'moving', label: t('envs.status.restarting') }
+    case 'delete': return { tone: 'moving', label: t('envs.status.deleting') }
+    case 'rename': return { tone: 'moving', label: t('envs.status.renaming') }
+    case 'resize': return { tone: 'moving', label: t('envs.status.resizing') }
   }
   switch (props.status) {
-    case 'running': return { tone: 'on', label: 'Running' }
-    case 'starting': return { tone: 'moving', label: 'Starting…' }
-    case 'stopping': return { tone: 'moving', label: 'Stopping…' }
-    case 'stopped': return { tone: 'off', label: 'Stopped' }
-    case 'frozen': return { tone: 'off', label: 'Frozen' }
-    case 'error': return { tone: 'error', label: 'Error' }
-    default: return { tone: 'off', label: 'Unknown' }
+    case 'running': return { tone: 'on', label: t('envs.status.running') }
+    case 'starting': return { tone: 'moving', label: t('envs.status.starting') }
+    case 'stopping': return { tone: 'moving', label: t('envs.status.stopping') }
+    case 'stopped': return { tone: 'off', label: t('envs.status.stopped') }
+    case 'frozen': return { tone: 'off', label: t('envs.status.frozen') }
+    case 'error': return { tone: 'error', label: t('envs.status.error') }
+    default: return { tone: 'off', label: t('envs.status.unknown') }
   }
 })
 </script>

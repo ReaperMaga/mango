@@ -16,6 +16,7 @@ import { useForge } from '~/stores/forge'
 import { siteName } from '~/utils/forge'
 import { isEnvPath } from '~/utils/envPath'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
@@ -94,7 +95,7 @@ const repoLink = computed(() => {
   const link = ws.activeProject?.isGit && ws.activeProjectPath ? forge.links[ws.activeProjectPath] : null
   if (!link) return null
   const name = `${link.owner}/${link.repo}`
-  return { url: `https://${link.host}/${name}`, label: `Open ${name} on ${siteName(link.provider, link.host)}`, gitlab: link.provider === 'gitlab' }
+  return { url: `https://${link.host}/${name}`, label: t('shell.titlebar.openOn', { name, site: siteName(link.provider, link.host) }), gitlab: link.provider === 'gitlab' }
 })
 
 /* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
@@ -125,7 +126,7 @@ function projectItem(p: ProjectInfo, here: boolean): MenuItem {
   return {
     label: p.name,
     // Under the name: the branch, or for a remote project where it runs.
-    hint: elsewhere ? 'In another window' : place?.where ?? (p.branch || undefined),
+    hint: elsewhere ? t('shell.titlebar.elsewhere') : place?.where ?? (p.branch || undefined),
     hintIcon: elsewhere ? AppWindow : place ? Server : undefined,
     hintMono: !elsewhere && !place && !!p.branch,
     icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
@@ -134,13 +135,13 @@ function projectItem(p: ProjectInfo, here: boolean): MenuItem {
     onSelect: here
       ? () => ws.setActiveProject(p.path)
       : () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
-          ws.notify('Could not open the project', e instanceof Error ? e.message : String(e))),
+          ws.notify(t('shell.titlebar.openFailed'), e instanceof Error ? e.message : String(e))),
     // Open here: close it. A recent one: take it off the list (one open in another window is that window's to close).
     remove: here
-      ? { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) }
-      : elsewhere ? undefined : { label: `Remove ${p.name} from Recent`, onSelect: () => void ws.forgetProject(p.path) },
+      ? { label: t('shell.titlebar.closeProject', { name: p.name }), onSelect: () => ws.closeProject(p.path) }
+      : elsewhere ? undefined : { label: t('shell.titlebar.forget', { name: p.name }), onSelect: () => void ws.forgetProject(p.path) },
     action: ownWindow
-      ? { label: 'Open in new window', icon: AppWindow, disabled: !!blocked, reason: blocked?.hint, onSelect: () => win.openInNewWindow(p.path) }
+      ? { label: t('shell.titlebar.openInNewWindow'), icon: AppWindow, disabled: !!blocked, reason: blocked?.hint, onSelect: () => win.openInNewWindow(p.path) }
       : undefined,
   }
 }
@@ -159,16 +160,16 @@ function toggleProjects(toggle: () => void, open: boolean) {
 
 const projectItems = computed<MenuItem[]>(() => [
   ...listedProjects.value,
-  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: listedProjects.value.length > 0, onSelect: () => win.openInNewWindow(null) },
-  { label: 'Open folder…', icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
-  { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
-  { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
+  { label: t('shell.project.newWindow'), icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: listedProjects.value.length > 0, onSelect: () => win.openInNewWindow(null) },
+  { label: t('shell.project.openFolder'), icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
+  { label: t('shell.project.new'), icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
+  { label: t('shell.project.clone'), icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
-    ? [{ label: 'Projects go to…', aside: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
+    ? [{ label: t('shell.titlebar.goToItem'), aside: where.value ? envLabels(where.value.hostId, where.value.instance).where : t('shell.titlebar.thisComputer'), icon: MapPin, onSelect: chooseWhere }]
     : []),
   ...(ws.activeProject
     ? [
-        { label: 'Project settings…', icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        { label: t('shell.titlebar.projectSettings'), icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
         ...pluginMenuItems('project', { projectPath: ws.activeProject.path }),
       ]
     : []),
@@ -179,14 +180,13 @@ const gitStatus = computed(() => git.status(workdir.value))
 const ahead = computed(() => gitStatus.value?.ahead ?? 0)
 const behind = computed(() => gitStatus.value?.behind ?? 0)
 const changed = computed(() => gitStatus.value?.files.length ?? 0)
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 const branchTitle = computed(() => {
   const bits = [
-    ahead.value ? `${plural(ahead.value, 'commit')} to push` : '',
-    behind.value ? `${plural(behind.value, 'commit')} to pull` : '',
-    changed.value ? `${plural(changed.value, 'changed file')}` : '',
+    ahead.value ? t('shell.titlebar.toPush', ahead.value) : '',
+    behind.value ? t('shell.titlebar.toPull', behind.value) : '',
+    changed.value ? t('shell.titlebar.changed', changed.value) : '',
   ].filter(Boolean)
-  const name = branch.value ? `Branch: ${branch.value}` : 'Branches'
+  const name = branch.value ? t('shell.sidebar.branch', { branch: branch.value }) : t('shell.titlebar.branches')
   return bits.length ? `${name} (${bits.join(', ')})` : name
 })
 </script>
@@ -199,7 +199,7 @@ const branchTitle = computed(() => {
       <UiIconButton
         v-if="!chatWindow && ws.hasProject && !ws.sidebarOpen"
         class="tb__show-sb"
-        label="Show sidebar"
+        :label="t('shell.sidebar.show')"
         :shortcut="ws.keyLabel('sidebar')"
         @click="ws.toggleSidebar()"
       >
@@ -210,17 +210,17 @@ const branchTitle = computed(() => {
       <template v-if="chatWindow">
         <span class="tb__widget tb__project tb__project--still" :title="ws.activeProject?.path">
           <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
-          <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+          <span class="tb__project-name">{{ ws.activeProject?.name ?? t('shell.titlebar.noProject') }}</span>
         </span>
       </template>
-      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" label="Projects">
+      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" :label="t('shell.titlebar.projects')">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
-          <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
+          <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" :label="t('shell.titlebar.goTo')">
             <template #default>
               <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggleProjects(toggle, open)">
                 <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
-                <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+                <span class="tb__project-name">{{ ws.activeProject?.name ?? t('shell.titlebar.noProject') }}</span>
                 <ChevronDown class="tb__chev" />
               </button>
             </template>
@@ -235,8 +235,8 @@ const branchTitle = computed(() => {
         type="button"
         class="tb__widget tb__remote"
         :class="{ 'is-open': ws.toolPanel === 'env', 'is-compact': ws.activeProject?.isGit }"
-        :title="`Remote environment: ${remote.where}, folder ${remote.dir}`"
-        :aria-label="`Remote environment: ${remote.where}`"
+        :title="t('shell.titlebar.remoteFolder', { where: remote.where, dir: remote.dir })"
+        :aria-label="t('shell.titlebar.remote', { where: remote.where })"
         @click="ws.toggleEnv()"
       >
         <Server aria-hidden="true" />
@@ -255,7 +255,7 @@ const branchTitle = computed(() => {
           >
             <GitBranch class="tb__branch-icon" />
             <!-- Unity VCS branches are paths: when space runs out, keep the end (…/feature/x) in view. -->
-            <span class="tb__branch-name" :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? 'detached' }}</bdi></span>
+            <span class="tb__branch-name" :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? t('shell.titlebar.detached') }}</bdi></span>
             <span v-if="ahead || behind || changed" class="tb__sync tabular">
               <span v-if="ahead">↑{{ ahead }}</span>
               <span v-if="behind">↓{{ behind }}</span>
@@ -281,9 +281,9 @@ const branchTitle = computed(() => {
     </div>
 
     <div class="tb__center" data-tauri-drag-region>
-      <button type="button" class="tb__search" aria-label="Search threads or run a command" @click="ws.paletteOpen = true">
+      <button type="button" class="tb__search" :aria-label="t('shell.titlebar.search')" @click="ws.paletteOpen = true">
         <Search />
-        <span class="tb__ph">Search threads or run a command</span>
+        <span class="tb__ph">{{ t('shell.titlebar.search') }}</span>
         <span class="tb__keys"><kbd v-for="k in ws.keyParts('palette')" :key="k">{{ k }}</kbd></span>
       </button>
     </div>
@@ -294,20 +294,20 @@ const branchTitle = computed(() => {
         type="button"
         class="tb__widget tb__return"
         :disabled="ownBusy"
-        aria-label="Return to main window"
-        :title="ownBusy ? 'Still working: it returns once it is done' : 'Close this window and show the chat in the main window again'"
+        :aria-label="t('shell.windows.return')"
+        :title="ownBusy ? t('shell.titlebar.returnBusy') : t('shell.titlebar.returnTitle')"
         @click="win.returnChat()"
       >
-        <Undo2 aria-hidden="true" /><span class="tb__return-label">Return to main window</span>
+        <Undo2 aria-hidden="true" /><span class="tb__return-label">{{ t('shell.windows.return') }}</span>
       </button>
       <PluginStatusItems location="titlebar" class="tb__grp" />
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
 
       <div v-if="native && !mac" class="tb__win">
-        <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
-        <button type="button" class="tb__win-btn" :aria-label="maximized ? 'Restore' : 'Maximize'" @click="appWindow.toggleMaximize()"><Copy v-if="maximized" class="tb__sq" /><Square v-else class="tb__sq" /></button>
-        <button type="button" class="tb__win-btn tb__win-btn--close" aria-label="Close" @click="appWindow.close()"><X /></button>
+        <button type="button" class="tb__win-btn" :aria-label="t('shell.titlebar.minimize')" @click="appWindow.minimize()"><Minus /></button>
+        <button type="button" class="tb__win-btn" :aria-label="maximized ? t('shell.titlebar.restore') : t('shell.titlebar.maximize')" @click="appWindow.toggleMaximize()"><Copy v-if="maximized" class="tb__sq" /><Square v-else class="tb__sq" /></button>
+        <button type="button" class="tb__win-btn tb__win-btn--close" :aria-label="t('common.actions.close')" @click="appWindow.close()"><X /></button>
       </div>
     </div>
   </header>

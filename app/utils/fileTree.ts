@@ -3,6 +3,7 @@
  * folders share a row. Pure, so it runs in plain Node (tests/fileTree.test.ts).
  */
 import type { FsEntry } from '~/types/ipc'
+import { t } from '../i18n/index.ts'
 
 /** The Files view's options, kept with the prefs. */
 export interface FilesView {
@@ -172,12 +173,12 @@ export function layoutTree({ dirs, expanded, view, marks, keep, hidden }: TreeIn
     if (!listing) return
     if (!listing.entries) {
       if (listing.error) rows.push({ type: 'note', key: `err:${dir}`, depth, text: listing.error, error: true })
-      else if (dir) rows.push({ type: 'note', key: `load:${dir}`, depth, text: 'Loading…' })
+      else if (dir) rows.push({ type: 'note', key: `load:${dir}`, depth, text: t('common.actions.loading') })
       return
     }
     const shown = listing.entries.filter(e => isShown(e, above))
-    if (!shown.length && listing.entries.length) rows.push({ type: 'note', key: `hidden:${dir}`, depth, text: 'All files here are hidden' })
-    else if (!shown.length && dir) rows.push({ type: 'note', key: `empty:${dir}`, depth, text: 'Empty folder' })
+    if (!shown.length && listing.entries.length) rows.push({ type: 'note', key: `hidden:${dir}`, depth, text: t('files.tree.allHidden') })
+    else if (!shown.length && dir) rows.push({ type: 'note', key: `empty:${dir}`, depth, text: t('files.tree.emptyFolder') })
 
     for (const head of sortEntries(shown, view)) {
       const excluded = isExcluded(head, above)
@@ -204,7 +205,7 @@ export function layoutTree({ dirs, expanded, view, marks, keep, hidden }: TreeIn
       })
       if (isOpen) walk(last.path, depth + 1, excluded, head.path)
     }
-    if (listing.truncated) rows.push({ type: 'note', key: `more:${dir}`, depth, text: 'Only the first 5000 entries are shown' })
+    if (listing.truncated) rows.push({ type: 'note', key: `more:${dir}`, depth, text: t('files.tree.truncated') })
   }
   walk('', 0, false, '')
   return { rows, chained, unread }

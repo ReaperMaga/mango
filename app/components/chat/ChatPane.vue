@@ -10,14 +10,16 @@ import { attachmentDrafts, drafts } from '~/utils/drafts'
 import { DUR, EASE_OUT, motionMs } from '~/utils/motion'
 import { findRequest } from '~/utils/chatFind'
 import { dayLabel, sameDay } from '~/utils/time'
+import { formatLocale } from '~/i18n'
 
 const props = defineProps<{ pane: Pane; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const thread = computed(() => threads.byId(props.pane.threadId))
 /** "worktree", or "workspace" for a Unity VCS project. */
-const term = computed(() => vcsTerms(ws.openProjects.find(p => p.path === thread.value?.projectPath)?.vcs).worktree)
+const term = computed(() => t(vcsTerms(ws.openProjects.find(p => p.path === thread.value?.projectPath)?.vcs).pathBranches ? 'chat.terms.workspace' : 'chat.terms.worktree'))
 const busy = computed(() => !!thread.value && ['running', 'queued', 'waiting'].includes(thread.value.status))
 /** A sub-agent's chat: filled by its parent's run, so it has no composer of its own. */
 const parent = computed(() => (thread.value?.parentId ? threads.byId(thread.value.parentId) : null))
@@ -63,12 +65,12 @@ watch([() => props.pane.threadId, () => props.active], async ([, active]) => {
 
 async function start(text: string, attachments: Attachment[]) {
   if (!ws.activeProjectPath) return
-  const t = threads.create(ws.activeProjectPath, draft.agent, ws.activeProject?.branch ?? null)
-  threads.setModel(t.id, draft.model)
-  threads.setMode(t.id, draft.mode)
-  threads.setEffort(t.id, draft.effort)
-  if (threads.activePane.id !== props.pane.id) threads.show(t.id, props.pane.id)
-  await threads.send(t.id, text, attachments)
+  const chat = threads.create(ws.activeProjectPath, draft.agent, ws.activeProject?.branch ?? null)
+  threads.setModel(chat.id, draft.model)
+  threads.setMode(chat.id, draft.mode)
+  threads.setEffort(chat.id, draft.effort)
+  if (threads.activePane.id !== props.pane.id) threads.show(chat.id, props.pane.id)
+  await threads.send(chat.id, text, attachments)
 }
 
 /* ---------- scrolling: stick to bottom while new output arrives ---------- */
@@ -85,12 +87,12 @@ function onScroll() {
   lastTop = el.scrollTop
 }
 const contentSig = computed(() => {
-  const t = thread.value
-  if (!t) return ''
-  const last = t.messages[t.messages.length - 1]
+  const chat = thread.value
+  if (!chat) return ''
+  const last = chat.messages[chat.messages.length - 1]
   const lastPart = last?.parts[last.parts.length - 1]
   const len = lastPart && 'text' in lastPart ? lastPart.text.length : 0
-  return `${t.id}:${t.messages.length}:${last?.parts.length ?? 0}:${len}:${t.status}`
+  return `${chat.id}:${chat.messages.length}:${last?.parts.length ?? 0}:${len}:${chat.status}`
 })
 watch(contentSig, async (sig, old) => {
   const switched = sig.split(':')[0] !== old?.split(':')[0]
@@ -183,8 +185,8 @@ const asks = computed(() => (thread.value?.messages ?? []).filter(m => m.role ==
 const pins = computed(() => (thread.value?.messages ?? []).filter(m => m.pinned))
 /** Pinned messages of either side; otherwise your questions. */
 const listed = computed(() => (onlyPinned.value ? pins.value : asks.value))
-const preview = (m: Message) => m.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ').replace(/\s+/g, ' ').trim() || m.attachments?.[0]?.name || 'Attachment'
-const clock = (ts: number) => new Date(ts).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+const preview = (m: Message) => m.parts.map(p => (p.type === 'text' ? p.text : '')).join(' ').replace(/\s+/g, ' ').trim() || m.attachments?.[0]?.name || t('chat.attachment')
+const clock = (ts: number) => new Date(ts).toLocaleTimeString(formatLocale(), { hour: '2-digit', minute: '2-digit' })
 watch(() => thread.value?.id, () => { listOpen.value = false; onlyPinned.value = false; closeFind() })
 
 /* ---------- find in this chat ---------- */
@@ -282,27 +284,27 @@ onBeforeUnmount(unpaint)
             v-model="query"
             class="find__field"
             type="search"
-            placeholder="Find in this chat"
-            aria-label="Find in this chat"
+            :placeholder="t('chat.pane.find')"
+            :aria-label="t('chat.pane.find')"
             autocomplete="off"
             spellcheck="false"
             @keydown="onFindKey"
           >
-          <span class="find__count tabular" aria-live="polite">{{ query.trim() ? (hits.length ? `${at + 1} of ${hits.length}` : 'No matches') : '' }}</span>
-          <UiIconButton size="sm" label="Previous match (Shift+Enter)" @click="step(-1)"><ChevronUp /></UiIconButton>
-          <UiIconButton size="sm" label="Next match (Enter)" @click="step(1)"><ChevronDown /></UiIconButton>
-          <UiIconButton size="sm" label="Close find (Esc)" @click="closeFind"><X /></UiIconButton>
+          <span class="find__count tabular" aria-live="polite">{{ query.trim() ? (hits.length ? t('chat.pane.matchOf', { at: at + 1, total: hits.length }) : t('chat.pane.noMatches')) : '' }}</span>
+          <UiIconButton size="sm" :label="t('chat.pane.prevMatch')" @click="step(-1)"><ChevronUp /></UiIconButton>
+          <UiIconButton size="sm" :label="t('chat.pane.nextMatch')" @click="step(1)"><ChevronDown /></UiIconButton>
+          <UiIconButton size="sm" :label="t('chat.pane.closeFind')" @click="closeFind"><X /></UiIconButton>
         </div>
         <template v-else>
-          <UiIconButton size="sm" label="Find in this chat" @click="openFind"><Search /></UiIconButton>
+          <UiIconButton size="sm" :label="t('chat.pane.find')" @click="openFind"><Search /></UiIconButton>
         </template>
-        <UiIconButton size="sm" label="Message list" :active="listOpen" @click="listOpen = !listOpen"><List /></UiIconButton>
+        <UiIconButton size="sm" :label="t('chat.pane.messageList')" :active="listOpen" @click="listOpen = !listOpen"><List /></UiIconButton>
       </div>
 
-      <div v-if="listOpen" class="mlist" role="dialog" aria-label="Messages in this chat">
+      <div v-if="listOpen" class="mlist" role="dialog" :aria-label="t('chat.pane.messages')">
         <div class="mlist__head">
-          <button type="button" class="mlist__tab" :class="{ 'is-on': !onlyPinned }" @click="onlyPinned = false">Asked <span class="tabular">{{ asks.length }}</span></button>
-          <button type="button" class="mlist__tab" :class="{ 'is-on': onlyPinned }" @click="onlyPinned = true"><Pin aria-hidden="true" /> Pinned <span class="tabular">{{ pins.length }}</span></button>
+          <button type="button" class="mlist__tab" :class="{ 'is-on': !onlyPinned }" @click="onlyPinned = false">{{ t('chat.pane.asked') }} <span class="tabular">{{ asks.length }}</span></button>
+          <button type="button" class="mlist__tab" :class="{ 'is-on': onlyPinned }" @click="onlyPinned = true"><Pin aria-hidden="true" /> {{ t('chat.pane.pinned') }} <span class="tabular">{{ pins.length }}</span></button>
         </div>
         <ul v-if="listed.length" class="mlist__items">
           <li v-for="m in listed" :key="m.id">
@@ -312,19 +314,25 @@ onBeforeUnmount(unpaint)
             </button>
           </li>
         </ul>
-        <p v-else class="mlist__empty">{{ onlyPinned ? 'Nothing pinned yet. Pin a message from its row of buttons.' : 'Nothing asked yet.' }}</p>
+        <p v-else class="mlist__empty">{{ onlyPinned ? t('chat.pane.nothingPinned') : t('chat.pane.nothingAsked') }}</p>
       </div>
 
       <div class="pane__stage">
       <div ref="scroller" class="pane__scroll" @scroll.passive="onScroll">
         <div class="pane__col">
           <div v-if="!thread.messages.length" class="pane__fresh">
-            <p v-if="thread.awaitingWorktree">{{ AGENTS[thread.agent].name }} will start in a new {{ term }}, made when you send your first message. Its branch is named after what you write.</p>
-            <p v-else-if="thread.worktree">
-              {{ AGENTS[thread.agent].name }} is ready in its own {{ term }} <code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code><template v-if="thread.branch">
-                on <code>{{ thread.branch }}</code></template>, beside {{ ws.activeProject?.name }}. Other chats keep working undisturbed. Describe the change you want.
-            </p>
-            <p v-else>{{ AGENTS[thread.agent].name }} is ready in <code>{{ ws.activeProject?.name }}</code>. Describe the change you want.</p>
+            <p v-if="thread.awaitingWorktree">{{ t('chat.pane.awaiting', { agent: AGENTS[thread.agent].name, term }) }}</p>
+            <i18n-t v-else-if="thread.worktree" :keypath="thread.branch ? 'chat.pane.readyBranch' : 'chat.pane.readyWorktree'" tag="p" scope="global">
+              <template #agent>{{ AGENTS[thread.agent].name }}</template>
+              <template #term>{{ term }}</template>
+              <template #name><code :title="thread.worktree">{{ worktreeName(thread.worktree) }}</code></template>
+              <template #branch><code>{{ thread.branch }}</code></template>
+              <template #project>{{ ws.activeProject?.name }}</template>
+            </i18n-t>
+            <i18n-t v-else keypath="chat.pane.ready" tag="p" scope="global">
+              <template #agent>{{ AGENTS[thread.agent].name }}</template>
+              <template #project><code>{{ ws.activeProject?.name }}</code></template>
+            </i18n-t>
           </div>
           <!-- Keyed by chat: opening one shows its history at once, only messages that arrive after rise in. -->
           <TransitionGroup :key="thread.id" name="msg">
@@ -344,18 +352,19 @@ onBeforeUnmount(unpaint)
       </div>
       <Transition name="latest">
         <button v-if="!pinned && thread.messages.length" type="button" class="pane__latest" @click="toLatest">
-          <ArrowDown aria-hidden="true" /> {{ busy ? 'Follow latest' : 'Jump to latest' }}
+          <ArrowDown aria-hidden="true" /> {{ busy ? t('chat.pane.follow') : t('chat.pane.jump') }}
         </button>
       </Transition>
       </div>
 
       <div v-if="thread.parentId" class="pane__composer">
         <div class="pane__sub" role="note">
-          <p class="pane__sub-text">
-            {{ thread.agentType ? `${thread.agentType} sub-agent` : 'Sub-agent' }}, started by <button v-if="parent" type="button" class="pane__sub-parent" @click="threads.show(parent.id)">{{ parent.title }}</button><span v-else>a chat that was deleted</span>. It reports back to that chat, so there is nothing to write here.
-          </p>
-          <UiButton v-if="busy" size="sm" @click="threads.stop(thread.id)"><Square /> Stop</UiButton>
-          <UiButton v-if="parent" size="sm" @click="threads.show(parent.id)"><CornerLeftUp /> Open parent chat</UiButton>
+          <i18n-t keypath="chat.pane.subNote" tag="p" scope="global" class="pane__sub-text">
+            <template #who>{{ thread.agentType ? t('chat.pane.subTyped', { type: thread.agentType }) : t('chat.pane.sub') }}</template>
+            <template #parent><button v-if="parent" type="button" class="pane__sub-parent" @click="threads.show(parent.id)">{{ parent.title }}</button><span v-else>{{ t('chat.pane.deletedChat') }}</span></template>
+          </i18n-t>
+          <UiButton v-if="busy" size="sm" @click="threads.stop(thread.id)"><Square /> {{ t('chat.stop') }}</UiButton>
+          <UiButton v-if="parent" size="sm" @click="threads.show(parent.id)"><CornerLeftUp /> {{ t('chat.pane.openParent') }}</UiButton>
         </div>
       </div>
 
@@ -390,7 +399,7 @@ onBeforeUnmount(unpaint)
     <!-- Empty pane: start a chat right here -->
     <div v-else class="pane__empty">
       <div class="pane__start">
-        <h2 class="pane__hello">What should we work on in <span>{{ ws.activeProject?.name }}</span>?</h2>
+        <i18n-t keypath="chat.pane.hello" tag="h2" scope="global" class="pane__hello"><template #project><span>{{ ws.activeProject?.name }}</span></template></i18n-t>
         <ChatComposer
           ref="composer"
           v-model:text="draftText"

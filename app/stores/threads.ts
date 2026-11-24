@@ -29,6 +29,7 @@ import { adoptRemote, attachRemoteChats, forgetRemote } from '~/utils/remoteChat
 import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
+import { t } from '~/i18n'
 import { normalizeContext } from '~/agents/context'
 import { savedWorktree } from '~/agents/workdir'
 import { transcript } from '~/utils/transcript'
@@ -536,14 +537,14 @@ export const useThreads = defineStore('threads', {
      * back to the project folder. Rejects with the reason (uncommitted changes, unless `force`).
      */
     async removeWorktree(id: string, force = false) {
-      const t = this.byId(id)
-      const folder = t?.worktree
-      if (!t || !folder) return
+      const chat = this.byId(id)
+      const folder = chat?.worktree
+      if (!chat || !folder) return
       const users = this.threads.filter(x => x.worktree === folder)
-      const term = vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
-      if (users.some(isBusy)) throw new Error(`A chat is still working in this ${term}. Stop it first.`)
-      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: t.projectPath, worktree: folder, force }))
-      this.forgetWorktree(t.projectPath, folder)
+      const { pathBranches } = vcsTerms(useWorkspace().openProjects.find(p => p.path === chat.projectPath)?.vcs)
+      if (users.some(isBusy)) throw new Error(t('chat.errors.worktreeBusy', { term: t(pathBranches ? 'chat.terms.workspace' : 'chat.terms.worktree') }))
+      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: chat.projectPath, worktree: folder, force }))
+      this.forgetWorktree(chat.projectPath, folder)
     },
 
     /**

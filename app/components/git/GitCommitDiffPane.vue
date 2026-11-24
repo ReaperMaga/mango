@@ -13,6 +13,7 @@ import { parseCommitDiffTab } from '~/utils/commitDiffTabs'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const log = useGitLog()
@@ -31,17 +32,17 @@ const deleted = computed(() => file.value?.status === 'D')
 
 let token = 0
 watch(() => props.tabId, () => {
-  const t = tab.value
+  const at = tab.value
   const mine = ++token
   text.value = null
   error.value = null
   detail.value = null
-  if (!t) return
-  call('git_commit_diff', { path: t.projectPath, hash: t.hash, file: t.file })
+  if (!at) return
+  call('git_commit_diff', { path: at.projectPath, hash: at.hash, file: at.file })
     .then((diff) => { if (mine === token) text.value = diff })
     .catch((e) => { if (mine === token) error.value = gitLogError(e) })
   // The header's subject and counts; the diff reads fine without them.
-  log.loadDetail(t.projectPath, t.hash)
+  log.loadDetail(at.projectPath, at.hash)
     .then((d) => { if (mine === token) detail.value = d })
     .catch(() => {})
 }, { immediate: true })
@@ -49,11 +50,11 @@ onBeforeUnmount(() => { token++ })
 </script>
 
 <template>
-  <section class="cdp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? `Changes in ${tab.file} at ${tab.short}` : 'Changes'">
+  <section class="cdp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? t('git.diff.changesAt', { file: tab.file, commit: tab.short }) : t('git.changes')">
     <header v-if="tab" class="cdp__head">
       <h2 class="cdp__name" :title="fullPath">{{ tab.name }}</h2>
       <span v-if="dir" class="cdp__dir"><bdi>{{ dir }}</bdi></span>
-      <button type="button" class="cdp__commit" :title="`Show ${tab.short} in the Git log`" @click="log.show(tab.projectPath, tab.hash)">
+      <button type="button" class="cdp__commit" :title="t('git.diff.showInLog', { commit: tab.short })" @click="log.show(tab.projectPath, tab.hash)">
         <span class="cdp__hash">{{ tab.short }}</span>
         <span v-if="detail" class="cdp__subject">{{ detail.subject }}</span>
       </button>
@@ -66,12 +67,12 @@ onBeforeUnmount(() => { token++ })
       <UiButton
         size="sm"
         :disabled="deleted"
-        :title="deleted ? 'This commit deleted the file' : 'Open the file as it is in your working copy'"
+        :title="deleted ? t('git.diff.deletedTitle') : t('git.diff.openFileTitle')"
         @click="log.openFile(tab.projectPath, tab.file)"
       >
-        <SquareArrowOutUpRight />Open file
+        <SquareArrowOutUpRight />{{ t('git.diff.openFile') }}
       </UiButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('git.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
 
     <div class="cdp__body">

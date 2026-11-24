@@ -13,6 +13,7 @@ import { changeTree, folderPaths, turnChanges, type ChangeNode, type ChangedFile
  * a click opens the file's diff (or the file, once it is committed), "Review" opens Changes.
  */
 const props = defineProps<{ message: Message; thread: Thread }>()
+const { t } = useI18n()
 const threads = useThreads()
 const git = useGit()
 const files = useFiles()
@@ -21,7 +22,7 @@ const ws = useWorkspace()
 const changed = computed(() => turnChanges(props.message.parts, id => threads.byId(id)?.messages ?? []))
 const tree = computed(() => changeTree(changed.value))
 const folders = computed(() => folderPaths(tree.value))
-const total = computed(() => changed.value.reduce((t, f) => ({ add: t.add + f.add, del: t.del + f.del }), { add: 0, del: 0 }))
+const total = computed(() => changed.value.reduce((sum, f) => ({ add: sum.add + f.add, del: sum.del + f.del }), { add: 0, del: 0 }))
 
 /** Folders start open while the list stays short; a long one starts at its top level. */
 const SHORT = 12
@@ -77,7 +78,7 @@ async function openFile(f: ChangedFile) {
   }
 }
 
-const plural = (n: number) => `${n} changed file${n === 1 ? '' : 's'}`
+const plural = (n: number) => t('chat.changes.count', n)
 </script>
 
 <template>
@@ -92,14 +93,14 @@ const plural = (n: number) => `${n} changed file${n === 1 ? '' : 's'}`
         <UiIconButton
           v-if="folders.length"
           size="sm"
-          :label="allOpen ? 'Collapse all folders' : 'Expand all folders'"
+          :label="allOpen ? t('chat.changes.collapse') : t('chat.changes.expand')"
           @click="toggleAll"
         >
           <ChevronsDownUp v-if="allOpen" /><ChevronsUpDown v-else />
         </UiIconButton>
-        <button type="button" class="changes__review" title="Open the Changes tool window" @click="ws.openTool('changes')">
+        <button type="button" class="changes__review" :title="t('chat.changes.reviewTitle')" @click="ws.openTool('changes')">
           <GitCompareArrows aria-hidden="true" />
-          <span>Review</span>
+          <span>{{ t('chat.changes.review') }}</span>
         </button>
       </span>
     </header>
@@ -116,7 +117,7 @@ const plural = (n: number) => `${n} changed file${n === 1 ? '' : 's'}`
           class="changes__row"
           :class="{ 'is-file': r.node.file, 'is-outside': r.node.file && !r.node.file.inside }"
           :style="{ '--depth': r.depth }"
-          :title="r.node.file ? (r.node.file.inside ? `Open ${r.node.path}` : `${r.node.path} (outside the chat's folder)`) : r.node.path"
+          :title="r.node.file ? (r.node.file.inside ? t('chat.changes.open', { path: r.node.path }) : t('chat.changes.outside', { path: r.node.path })) : r.node.path"
           :disabled="r.node.file ? !r.node.file.inside : undefined"
           @click="r.node.file ? openFile(r.node.file) : toggle(r.node.path)"
         >

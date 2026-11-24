@@ -6,6 +6,8 @@
  * Everything is by name, inside the entry's own folder.
  */
 
+import { t } from '../i18n/index.ts'
+
 export interface Folder {
   /** Its names as they are spelt; null when it is too big to list whole. Throws when it cannot be read. */
   list(): Promise<ReadonlySet<string> | null>
@@ -63,7 +65,7 @@ export async function renameTogether(folder: Folder, entry: string, to: string, 
     const taken = before
       ? [...before].some(n => n !== m.from && sameButCase(n, m.to))
       : !sameButCase(m.from, m.to) && await folder.has(m.to)
-    if (taken) throw new Error(`${m.to} already exists, and ${m.from} has to take that name. Move or delete it first.`)
+    if (taken) throw new Error(t('files.op.taken', { to: m.to, from: m.from }))
   }
   const done: Move[] = []
   try {
@@ -74,12 +76,12 @@ export async function renameTogether(folder: Folder, entry: string, to: string, 
     return moves
   } catch (e) {
     if (moves.length < 2) throw e
-    const all = moves.map(m => m.from).join(' and ')
+    const all = moves.map(m => m.from).reduce((a, b) => t('files.op.and', { a, b }))
     let now: ReadonlySet<string> | null
     try {
       now = await folder.list()
     } catch {
-      throw new SplitError(`${reason(e)}. It is not known whether ${all} were renamed: check that their names still match.`)
+      throw new SplitError(t('files.op.splitUnknown', { why: reason(e), names: all }))
     }
     // A name that was taken before is someone else's, never a move to undo.
     const moved = now && before ? moves.filter(m => now.has(m.to) && !now.has(m.from) && !before.has(m.to)) : [...done]
@@ -100,9 +102,9 @@ export async function renameTogether(folder: Folder, entry: string, to: string, 
     const stuck = moved.filter(m => (after ? !after.has(m.from) : !back.has(m)))
     const failed = moves.find(m => !moved.includes(m))!
     if (stuck.length) {
-      throw new SplitError(`${failed.from} could not be renamed (${reason(e)}), and ${stuck.map(m => m.to).join(', ')} could not get the old name back. Rename one by hand so they match.`, stuck)
+      throw new SplitError(t('files.op.split', { failed: failed.from, why: reason(e), stuck: stuck.map(m => m.to).join(', ') }), stuck)
     }
-    throw new Error(`Nothing was renamed: ${failed.from} could not be renamed along with it. ${reason(e)}`)
+    throw new Error(t('files.op.nothingRenamed', { failed: failed.from, why: reason(e) }))
   }
 }
 

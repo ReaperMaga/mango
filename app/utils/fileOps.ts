@@ -3,6 +3,8 @@
  * something above it is renamed. Pure, so it runs in plain Node (tests/fileOps.test.ts).
  */
 
+import { t } from '../i18n/index.ts'
+
 /** The folder a project-relative path is in; "" is the project's own. */
 export const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf('/')))
 
@@ -18,11 +20,11 @@ export const movedPath = (path: string, from: string, to: string) => (isWithin(p
 
 /** What is wrong with a name being typed, or null. What only some systems refuse is the backend's to say. */
 export function nameProblem(name: string): string | null {
-  if (!name.trim()) return 'Type a name.'
-  if (/[\\/]/.test(name)) return 'A name cannot contain / or \\.'
-  if (/[\0\r\n]/.test(name)) return 'A name is a single line.'
-  if (name === '.' || name === '..') return `"${name}" is not a name.`
-  if (/^\.(git|plastic)[. ]*$/i.test(name)) return `"${name}" is a name the repository keeps for itself.`
+  if (!name.trim()) return t('files.name.empty')
+  if (/[\\/]/.test(name)) return t('files.name.slash')
+  if (/[\0\r\n]/.test(name)) return t('files.name.oneLine')
+  if (name === '.' || name === '..') return t('files.name.notAName', { name })
+  if (/^\.(git|plastic)[. ]*$/i.test(name)) return t('files.name.reserved', { name })
   return null
 }
 
@@ -34,7 +36,7 @@ export function stemEnd(name: string, isDir: boolean) {
 
 /** A free name for a file's copy: `a copy.ts`, then `a copy 2.ts`. Case does not tell two names apart. */
 export function copyName(name: string, taken: string[]) {
-  const used = new Set(taken.map(t => t.toLowerCase()))
+  const used = new Set(taken.map(x => x.toLowerCase()))
   const cut = stemEnd(name, false)
   for (let n = 1; ; n++) {
     const next = `${name.slice(0, cut)} copy${n > 1 ? ` ${n}` : ''}${name.slice(cut)}`

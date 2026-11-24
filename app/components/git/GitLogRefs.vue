@@ -6,6 +6,7 @@ import { sortGitRefs } from '~/utils/gitLog'
 /** The branches, remote branches and tags on a commit, as chips. `max`: the rest become "+2". */
 const props = defineProps<{ refs: GitRef[]; max?: number; wrap?: boolean }>()
 
+const { t } = useI18n()
 const ICONS = { head: GitCommitHorizontal, branch: GitBranch, remote: Cloud, tag: Tag }
 
 const sorted = computed(() => sortGitRefs(props.refs))
@@ -13,10 +14,10 @@ const chips = computed(() => (props.max ? sorted.value.slice(0, props.max) : sor
 const rest = computed(() => sorted.value.slice(chips.value.length))
 
 function title(r: GitRef) {
-  if (r.kind === 'head') return 'Detached HEAD'
-  if (r.kind === 'tag') return `Tag ${r.name}`
-  if (r.kind === 'remote') return `Remote branch ${r.name}`
-  return r.current ? `${r.name}, the checked-out branch` : `Branch ${r.name}`
+  if (r.kind === 'head') return t('git.refs.head')
+  if (r.kind === 'tag') return t('git.refs.tag', { name: r.name })
+  if (r.kind === 'remote') return t('git.refs.remote', { name: r.name })
+  return r.current ? t('git.refs.current', { name: r.name }) : t('git.refs.branch', { name: r.name })
 }
 </script>
 

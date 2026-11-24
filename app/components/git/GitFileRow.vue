@@ -32,19 +32,21 @@ const emit = defineEmits<{
   discard: []
 }>()
 
+const { t } = useI18n()
+
 type Kind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
 
 const state = computed<{ kind: Kind; letter: string; word: string }>(() => {
   const f = props.file
-  if (f.conflicted) return { kind: 'conflict', letter: 'U', word: 'Merge conflict' }
+  if (f.conflicted) return { kind: 'conflict', letter: 'U', word: t('git.row.conflict') }
   const code = props.staged ? f.index : f.worktree
   switch (code) {
-    case '?': return { kind: 'untracked', letter: '?', word: 'New file, not tracked yet' }
-    case 'A': return { kind: 'added', letter: 'A', word: 'Added' }
-    case 'D': return { kind: 'deleted', letter: 'D', word: 'Deleted' }
-    case 'R': return { kind: 'renamed', letter: 'R', word: f.origPath ? `Renamed from ${f.origPath}` : 'Renamed' }
-    case 'C': return { kind: 'renamed', letter: 'C', word: f.origPath ? `Copied from ${f.origPath}` : 'Copied' }
-    default: return { kind: 'modified', letter: code ?? 'M', word: 'Modified' }
+    case '?': return { kind: 'untracked', letter: '?', word: t('git.row.untracked') }
+    case 'A': return { kind: 'added', letter: 'A', word: t('git.state.added') }
+    case 'D': return { kind: 'deleted', letter: 'D', word: t('git.state.deleted') }
+    case 'R': return { kind: 'renamed', letter: 'R', word: f.origPath ? t('git.renamedFrom', { path: f.origPath }) : t('git.state.renamed') }
+    case 'C': return { kind: 'renamed', letter: 'C', word: f.origPath ? t('git.row.copiedFrom', { path: f.origPath }) : t('git.state.copied') }
+    default: return { kind: 'modified', letter: code ?? 'M', word: t('git.state.modified') }
   }
 })
 
@@ -105,7 +107,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
         class="gf__main"
         :aria-current="expanded ? 'true' : undefined"
         :aria-haspopup="menu?.length ? 'menu' : undefined"
-        :title="`${file.path} · ${state.word}${lock ? `\n${lockText}` : ''}\nOpens the diff`"
+        :title="`${file.path} · ${state.word}${lock ? `\n${lockText}` : ''}\n${t('git.row.opensDiff')}`"
         @click="emit('toggle')"
         @keydown="onMainKey"
       >
@@ -119,21 +121,21 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
       </button>
 
       <div v-if="confirming" ref="confirmBox" class="gf__confirm" @focusout="onConfirmBlur" @keydown.esc.stop.prevent="emit('cancel')">
-        <span class="gf__ask">{{ removes ? 'Delete?' : 'Discard?' }}</span>
+        <span class="gf__ask">{{ removes ? t('git.row.askDelete') : t('git.row.askDiscard') }}</span>
         <button ref="confirmBtn" type="button" class="gf__yes" :disabled="disabled" @click="emit('discard')">
-          {{ removes ? 'Delete file' : 'Discard' }}
+          {{ removes ? t('git.row.deleteFile') : t('git.discard') }}
         </button>
-        <UiIconButton size="sm" label="Keep changes" @click="emit('cancel')"><X /></UiIconButton>
+        <UiIconButton size="sm" :label="t('git.row.keep')" @click="emit('cancel')"><X /></UiIconButton>
       </div>
       <div v-else class="gf__actions">
         <template v-if="staged">
-          <UiIconButton size="sm" :label="`Unstage ${parts.name}`" :disabled="disabled" @click="emit('unstage')"><Minus /></UiIconButton>
+          <UiIconButton size="sm" :label="t('git.row.unstage', { name: parts.name })" :disabled="disabled" @click="emit('unstage')"><Minus /></UiIconButton>
         </template>
         <template v-else>
           <UiIconButton
             v-if="!file.conflicted"
             size="sm"
-            :label="removes ? `Delete ${parts.name}` : `Discard changes to ${parts.name}`"
+            :label="removes ? t('git.row.delete', { name: parts.name }) : t('git.row.discard', { name: parts.name })"
             :disabled="disabled"
             @click="emit('ask')"
           >
@@ -141,7 +143,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
           </UiIconButton>
           <UiIconButton
             size="sm"
-            :label="file.conflicted ? `Mark ${parts.name} as resolved and stage it` : `Stage ${parts.name}`"
+            :label="file.conflicted ? t('git.row.resolve', { name: parts.name }) : t('git.row.stage', { name: parts.name })"
             :disabled="disabled"
             @click="emit('stage')"
           >
@@ -150,7 +152,7 @@ onBeforeUnmount(() => document.removeEventListener('mousedown', onOutsidePress, 
         </template>
       </div>
     </div>
-    <UiMenu v-if="menu?.length" ref="menuRef" :items="menu" :width="232" :label="`${parts.name} actions`" />
+    <UiMenu v-if="menu?.length" ref="menuRef" :items="menu" :width="232" :label="t('git.row.actions', { name: parts.name })" />
   </li>
 </template>
 

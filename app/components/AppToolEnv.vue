@@ -4,7 +4,7 @@ import {
 } from 'lucide-vue-next'
 import type { EnvComponent, EnvLoginTool } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
-import { instanceKey, shareDay, shareExpired, useEnvironments } from '~/stores/environments'
+import { envComponentName, instanceKey, shareDay, shareExpired, useEnvironments } from '~/stores/environments'
 import { useWorkspace } from '~/stores/workspace'
 import { copyToClipboard } from '~/utils/agentCli'
 import EnvTerminal from '~/components/envs/EnvTerminal.vue'
@@ -18,6 +18,7 @@ import { GITLAB_COM } from '~/utils/gitHosts'
  * with. Checked when the window opens (at most once a minute), never polled; installs and sign-ins
  * run in a terminal here, one at a time.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 
@@ -51,12 +52,12 @@ const refresh = () => catchUp(path.value, true)
 
 /* ---------- facts ---------- */
 
-const kind = computed(() => (inst.value?.kind === 'vm' ? 'Virtual machine' : inst.value ? 'Container' : null))
+const kind = computed(() => (inst.value?.kind === 'vm' ? t('envs.common.vm') : inst.value ? t('envs.common.container') : null))
 const subline = computed(() => {
   const p = place.value
   if (!p) return ''
-  if (direct.value) return `Shared with you · from ${direct.value.sharedFrom}`
-  return `${kind.value ?? 'Environment'} on ${p.host}`
+  if (direct.value) return t('envs.tool.sharedFrom', { from: direct.value.sharedFrom })
+  return t('envs.tool.placed', { kind: kind.value ?? t('envs.tool.title'), on: p.sub })
 })
 const accessEnds = computed(() => (direct.value?.expiresAt ? shareDay(direct.value.expiresAt) : null))
 
@@ -73,10 +74,10 @@ const installedOnes = computed(() => (components.value ?? []).filter(c => c.inst
 const shares = computed(() => (key.value ? (envs.shares[key.value] ?? null) : null))
 const activeShares = computed(() => (shares.value ?? []).filter(s => !shareExpired(s.expiresAt)))
 const shareText = computed(() => {
-  if (!shares.value) return running.value ? 'Checking…' : 'Start it to see who has access'
+  if (!shares.value) return running.value ? t('envs.state.checking') : t('envs.tool.startToSee')
   const n = activeShares.value.length
-  if (!n) return 'Only you'
-  return n === 1 ? `You and ${activeShares.value[0]!.label}` : `You and ${n} others`
+  if (!n) return t('envs.tool.onlyYou')
+  return n === 1 ? t('envs.tool.youAnd', { name: activeShares.value[0]!.label }) : t('envs.tool.youAndOthers', n)
 })
 
 /* ---------- jobs: one terminal at a time ---------- */
@@ -108,18 +109,19 @@ function closeJob() {
   job.value = null
   jobRunning.value = false
 }
-const busyTitle = computed(() => (jobRunning.value ? 'Finish or stop the job below first' : undefined))
+const busyTitle = computed(() => (jobRunning.value ? t('envs.job.busy') : undefined))
 
 function install(list: EnvComponent[]) {
   const p = place.value
   if (!p || !list.length) return
   const updating = list.every(c => c.installed)
-  const names = list.length === 1 ? list[0]!.name : updating && list.length === installedOnes.value.length ? 'everything' : `${list.length} components`
+  const names = list.length === 1 ? envComponentName(list[0]!.id) : updating && list.length === installedOnes.value.length ? t('envs.job.everything') : t('envs.job.componentCount', list.length)
+  const doing = updating ? 'update' : 'install'
   run({
-    title: `${updating ? 'Updating' : 'Installing'} ${names}…`,
-    doneTitle: `${updating ? 'Updated' : 'Installed'} ${names}`,
-    failedTitle: `${updating ? 'Updating' : 'Installing'} didn't finish`,
-    label: `${updating ? 'Updating' : 'Installing'} ${names} in ${p.label}`,
+    title: t(`envs.job.${doing}.title`, { what: names }),
+    doneTitle: t(`envs.job.${doing}.done`, { what: names }),
+    failedTitle: t(`envs.job.${doing}.failed`),
+    label: t(`envs.job.${doing}.label`, { what: names, place: p.label }),
     start: (cols, rows) => envs.install(p.hostId, p.instance, list.map(c => c.id), cols, rows),
     after: () => envs.refreshComponents(p.hostId, p.instance),
   })
@@ -135,10 +137,10 @@ function login(tool: EnvLoginTool, name: string) {
   const p = place.value
   if (!p) return
   run({
-    title: `Signing in to ${name}…`,
-    doneTitle: `Signed in to ${name}`,
-    failedTitle: 'Sign-in didn\'t finish',
-    label: `${name} sign-in in ${p.label}`,
+    title: t('envs.job.signIn.title', { name }),
+    doneTitle: t('envs.job.signIn.done', { name }),
+    failedTitle: t('envs.job.signIn.failed'),
+    label: t('envs.job.signIn.label', { name, place: p.label }),
     start: (cols, rows) => envs.login(p.hostId, p.instance, tool, cols, rows),
     signIn: true,
     after: (code) => { if (code === 0 && tool === 'tailscale') envs.refreshInstances(p.hostId) },
@@ -151,14 +153,14 @@ function loginGitlab(server: string) {
   otherServer.value = false
   const selfManaged = server !== GITLAB_COM
   run({
-    title: `Signing in to ${server}…`,
-    doneTitle: `Signed in to ${server}`,
-    failedTitle: 'Sign-in didn\'t finish',
-    label: `GitLab CLI sign-in to ${server} in ${p.label}`,
+    title: t('envs.job.signIn.title', { name: server }),
+    doneTitle: t('envs.job.signIn.done', { name: server }),
+    failedTitle: t('envs.job.signIn.failed'),
+    label: t('envs.job.signIn.gitlabLabel', { server, place: p.label }),
     start: (cols, rows) => envs.login(p.hostId, p.instance, 'glab', cols, rows, server),
     signIn: !selfManaged,
     hint: selfManaged
-      ? `Choose Token, then paste a personal access token from ${server} with the api and write_repository scopes.`
+      ? t('envs.job.signIn.token', { server })
       : undefined,
     after: (code) => { if (code === 0 && selfManaged) void envs.loadGitlabHosts() },
   })
@@ -167,7 +169,7 @@ const otherServer = ref(false)
 const loginItems = computed<MenuItem[]>(() => {
   const items: MenuItem[] = LOGINS.map(l => ({
     label: l.name,
-    hint: installed(l.tool) === false ? 'Not installed' : undefined,
+    hint: installed(l.tool) === false ? t('envs.common.notInstalled') : undefined,
     disabled: installed(l.tool) === false,
     onSelect: () => login(l.tool, l.name),
   }))
@@ -176,11 +178,11 @@ const loginItems = computed<MenuItem[]>(() => {
   servers.forEach((h, i) => items.push({
     label: h,
     group: i === 0 ? 'GitLab CLI' : undefined,
-    hint: noGlab && i === 0 ? 'Not installed' : undefined,
+    hint: noGlab && i === 0 ? t('envs.common.notInstalled') : undefined,
     disabled: noGlab,
     onSelect: () => loginGitlab(h),
   }))
-  items.push({ label: 'Another GitLab server…', disabled: noGlab, onSelect: () => { otherServer.value = true } })
+  items.push({ label: t('envs.tool.anotherGitlab'), disabled: noGlab, onSelect: () => { otherServer.value = true } })
   return items
 })
 function openLogins(toggle: () => void) {
@@ -210,13 +212,13 @@ function openInEnv() {
 </script>
 
 <template>
-  <section class="te" aria-label="Environment">
+  <section class="te" :aria-label="t('envs.tool.title')">
     <header class="te__head">
-      <h2 class="te__title">Environment</h2>
-      <UiIconButton v-if="place" label="Check again" size="sm" :disabled="checking || loadingComponents" @click="refresh">
+      <h2 class="te__title">{{ t('envs.tool.title') }}</h2>
+      <UiIconButton v-if="place" :label="t('envs.common.checkAgain')" size="sm" :disabled="checking || loadingComponents" @click="refresh">
         <RefreshCw :class="{ 'is-turning': checking || loadingComponents }" />
       </UiIconButton>
-      <UiIconButton v-if="place" label="Environment settings" size="sm" @click="settings()"><Settings2 /></UiIconButton>
+      <UiIconButton v-if="place" :label="t('envs.tool.settings')" size="sm" @click="settings()"><Settings2 /></UiIconButton>
     </header>
 
     <div v-if="path" class="te__body">
@@ -225,23 +227,23 @@ function openInEnv() {
         <div class="te__place">
           <Laptop class="te__icon" aria-hidden="true" />
           <div class="te__who">
-            <p class="te__name">This computer</p>
-            <p class="te__sub">Agents and terminals run here.</p>
+            <p class="te__name">{{ t('envs.place.thisComputer') }}</p>
+            <p class="te__sub">{{ t('envs.tool.runsHere') }}</p>
           </div>
         </div>
         <p class="te__path">
           <span class="te__path-text selectable" :title="path"><bdi>{{ shownPath }}</bdi></span>
-          <UiIconButton label="Copy path" size="sm" @click="copyToClipboard(path)"><Copy /></UiIconButton>
+          <UiIconButton :label="t('envs.tool.copyPath')" size="sm" @click="copyToClipboard(path)"><Copy /></UiIconButton>
         </p>
         <div class="te__actions">
-          <UiButton size="sm" @click="ws.newTerminal(path)"><SquareTerminal />Open terminal here</UiButton>
+          <UiButton size="sm" @click="ws.newTerminal(path)"><SquareTerminal />{{ t('envs.tool.openTerminal') }}</UiButton>
         </div>
         <div class="te__sec">
           <p class="te__note">
-            Projects can also run in an environment: a container or VM on your own server, or one someone shared with you.
+            {{ t('envs.tool.about') }}
           </p>
           <UiButton size="sm" variant="ghost" class="te__ghost" @click="openInEnv">
-            <Server />{{ envs.hosts.length ? 'Open a folder in an environment…' : 'Set up an environment…' }}
+            <Server />{{ envs.hosts.length ? t('envs.tool.openInEnv') : t('envs.tool.setUpEnv') }}
           </UiButton>
         </div>
       </template>
@@ -254,36 +256,36 @@ function openInEnv() {
             <p class="te__name-row">
               <span class="te__name">{{ place.label }}</span>
               <EnvsEnvStatus v-if="state && state.tone !== 'unknown'" :status="state.status" word />
-              <span v-else-if="checking" class="te__checking">Checking…</span>
+              <span v-else-if="checking" class="te__checking">{{ t('envs.state.checking') }}</span>
             </p>
             <p class="te__sub">{{ subline }}</p>
           </div>
         </div>
         <p class="te__path">
           <span class="te__path-text selectable" :title="place.dir"><bdi>{{ place.dir }}</bdi></span>
-          <UiIconButton label="Copy path" size="sm" @click="copyToClipboard(place.dir)"><Copy /></UiIconButton>
+          <UiIconButton :label="t('envs.tool.copyPath')" size="sm" @click="copyToClipboard(place.dir)"><Copy /></UiIconButton>
         </p>
 
         <p v-if="state && (state.tone === 'off' || state.tone === 'bad')" class="te__problem" :class="`te__problem--${state.tone}`" role="status">
-          <template v-if="state.tone === 'off'">{{ place.label }} is {{ state.label.toLowerCase() }}. Chats and terminals here wait until it runs. </template>
-          <template v-else>{{ state.label }}. Chats and terminals here can't start until Mango reaches it. </template>
-          <button type="button" class="te__link" @click="settings()">{{ state.tone === 'off' && !direct ? 'Start it in Settings…' : 'See Settings…' }}</button>
+          <template v-if="state.tone === 'off'">{{ `${state.status === 'frozen' ? t('envs.tool.frozen', { name: place.label }) : t('envs.tool.stopped', { name: place.label })} ` }}</template>
+          <template v-else>{{ `${t('envs.tool.bad', { state: state.label })} ` }}</template>
+          <button type="button" class="te__link" @click="settings()">{{ state.tone === 'off' && !direct ? t('envs.tool.startInSettings') : t('envs.tool.seeSettings') }}</button>
         </p>
 
         <div class="te__actions">
-          <UiButton size="sm" :disabled="!running" @click="ws.newTerminal(path)"><SquareTerminal />Open shell here</UiButton>
+          <UiButton size="sm" :disabled="!running" @click="ws.newTerminal(path)"><SquareTerminal />{{ t('envs.tool.openShell') }}</UiButton>
           <UiButton
             v-if="installed('desktop') !== false"
             size="sm"
             :disabled="!running"
             @click="settings('open-desktop')"
           >
-            <MonitorPlay />Desktop
+            <MonitorPlay />{{ t('envs.common.desktop') }}
           </UiButton>
-          <UiMenu :items="loginItems" :width="220" label="Sign in">
+          <UiMenu :items="loginItems" :width="220" :label="t('common.actions.signIn')">
             <template #default="{ toggle, open }">
               <UiButton size="sm" :disabled="!running || jobRunning" :title="busyTitle" :aria-expanded="open" aria-haspopup="menu" @click="openLogins(toggle)">
-                <KeyRound />Sign in…
+                <KeyRound />{{ t('envs.tool.signIn') }}
               </UiButton>
             </template>
           </UiMenu>
@@ -315,17 +317,17 @@ function openInEnv() {
 
         <dl v-if="inst || direct" class="te__facts">
           <template v-if="direct">
-            <dt>Access ends</dt>
-            <dd class="tabular">{{ accessEnds ?? 'When the owner revokes it' }}</dd>
+            <dt>{{ t('envs.common.accessEnds') }}</dt>
+            <dd class="tabular">{{ accessEnds ?? t('envs.common.whenRevoked') }}</dd>
           </template>
           <template v-if="inst">
-            <dt>Addresses</dt>
+            <dt>{{ t('envs.common.addresses') }}</dt>
             <dd class="te__mono selectable">{{ inst.ipv4.join(', ') || '–' }}</dd>
             <dt>Tailscale</dt>
             <dd v-if="inst.tailscaleIp" class="te__mono selectable">{{ inst.tailscaleIp }}</dd>
-            <dd v-else class="te__off">Not on a tailnet</dd>
+            <dd v-else class="te__off">{{ t('envs.tool.notOnTailnet') }}</dd>
             <template v-if="inst.image">
-              <dt>Image</dt>
+              <dt>{{ t('envs.common.image') }}</dt>
               <dd class="te__clip" :title="inst.image">{{ inst.image }}</dd>
             </template>
           </template>
@@ -333,7 +335,7 @@ function openInEnv() {
 
         <section class="te__sec" aria-labelledby="te-comps">
           <header class="te__sec-head">
-            <h3 id="te-comps" class="te__h3">Components</h3>
+            <h3 id="te-comps" class="te__h3">{{ t('envs.common.components') }}</h3>
             <UiButton
               variant="ghost"
               size="sm"
@@ -341,34 +343,34 @@ function openInEnv() {
               :title="busyTitle"
               @click="install(installedOnes)"
             >
-              Update all
+              {{ t('envs.common.updateAll') }}
             </UiButton>
           </header>
-          <p v-if="!running && !components" class="te__note">Once it runs, what is installed shows here.</p>
-          <p v-else-if="componentError" class="te__note te__note--bad selectable" role="alert">Couldn't check. {{ componentError }}</p>
+          <p v-if="!running && !components" class="te__note">{{ t('envs.tool.onceRunning') }}</p>
+          <p v-else-if="componentError" class="te__note te__note--bad selectable" role="alert">{{ t('envs.tool.checkFailed', { error: componentError }) }}</p>
           <ul v-if="components" class="te__comps">
             <li v-for="c in components" :key="c.id" class="te__comp">
               <CircleCheck v-if="c.installed" class="te__comp-icon is-ok" aria-hidden="true" />
               <CircleDashed v-else class="te__comp-icon" aria-hidden="true" />
-              <span class="te__comp-name" :title="c.description">{{ c.name }}</span>
+              <span class="te__comp-name" :title="c.description">{{ envComponentName(c.id) }}</span>
               <!-- The version gives way to Update on hover; something missing always offers Install. -->
               <span class="te__comp-end">
-                <span v-if="c.installed" class="te__comp-ver tabular">{{ c.version ?? 'Installed' }}</span>
+                <span v-if="c.installed" class="te__comp-ver tabular">{{ c.version ?? t('envs.common.installed') }}</span>
                 <button
                   type="button"
                   class="te__comp-act"
                   :class="{ 'is-install': !c.installed }"
                   :disabled="!running || jobRunning"
-                  :title="busyTitle ?? (c.installed ? undefined : 'Not installed')"
-                  :aria-label="`${c.installed ? 'Update' : 'Install'} ${c.name}`"
+                  :title="busyTitle ?? (c.installed ? undefined : t('envs.common.notInstalled'))"
+                  :aria-label="c.installed ? t('envs.tool.updateOne', { name: envComponentName(c.id) }) : t('envs.tool.installOne', { name: envComponentName(c.id) })"
                   @click="install([c])"
                 >
-                  {{ c.installed ? 'Update' : 'Install' }}
+                  {{ c.installed ? t('envs.common.update') : t('common.actions.install') }}
                 </button>
               </span>
             </li>
           </ul>
-          <ul v-else-if="loadingComponents" class="te__comps" aria-busy="true" aria-label="Checking components">
+          <ul v-else-if="loadingComponents" class="te__comps" aria-busy="true" :aria-label="t('envs.common.checkingComponents')">
             <li v-for="n in 4" :key="n" class="te__comp" aria-hidden="true"><span class="te__bone" :style="{ width: `${[52, 38, 60, 44][n - 1]}%` }" /></li>
           </ul>
         </section>
@@ -377,15 +379,15 @@ function openInEnv() {
           <div class="te__share">
             <Share2 class="te__share-icon" aria-hidden="true" />
             <span class="te__share-text">
-              <span class="te__h3">Sharing</span>
+              <span class="te__h3">{{ t('envs.common.sharing') }}</span>
               <span class="te__share-who">{{ shareText }}</span>
             </span>
-            <button type="button" class="te__link" @click="settings()">Manage…</button>
+            <button type="button" class="te__link" @click="settings()">{{ t('envs.tool.manage') }}</button>
           </div>
         </section>
       </template>
     </div>
-    <p v-else class="te__empty">Open a project to see where it runs.</p>
+    <p v-else class="te__empty">{{ t('envs.tool.empty') }}</p>
   </section>
 </template>
 

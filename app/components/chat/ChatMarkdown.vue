@@ -22,6 +22,7 @@ import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
  * once the reply has finished streaming the plugin's view is mounted into it and gets the code as
  * data (never as HTML).
  */
+const { t } = useI18n()
 const props = defineProps<{ text: string; streaming?: boolean; base?: string | null; threadId?: string | null }>()
 
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
@@ -44,7 +45,7 @@ const md = new Marked({
         const i = blocks.push({ code: text, language: name.toLowerCase(), renderer }) - 1
         return `<div class="md__plugin" data-plugin-block="${i}"></div>\n`
       }
-      return `<div class="md__code"><button type="button" class="md__copy" data-copy aria-label="Copy code">Copy</button><pre><code${name ? ` class="language-${escape(name)}"` : ''}>${escape(text)}</code></pre></div>\n`
+      return `<div class="md__code"><button type="button" class="md__copy" data-copy aria-label="${escape(t('chat.markdown.copyCode'))}">${escape(t('common.actions.copy'))}</button><pre><code${name ? ` class="language-${escape(name)}"` : ''}>${escape(text)}</code></pre></div>\n`
     },
     link({ href, text }) {
       const safe = /^(https?:|mailto:)/i.test(href) ? href : '#'
@@ -56,9 +57,9 @@ const md = new Marked({
       const name = text.trim() || baseName(path)
       const s = chatImage(path, props.base ?? null)
       if (s.status === 'loading') return `<span class="md__img-note">${escape(name)}</span>`
-      if (s.status === 'error') return `<span class="md__img-note is-error" title="${escape(s.error)}">${escape(name)}: picture not found</span>`
+      if (s.status === 'error') return `<span class="md__img-note is-error" title="${escape(s.error)}">${escape(t('chat.markdown.notFound', { name }))}</span>`
       const i = shown.push({ id: `md-img-${shown.length}`, name, path, mime: s.mime, size: s.size, kind: 'image', thumb: s.url }) - 1
-      return `<button type="button" class="md__img" data-img="${i}" aria-label="Open picture: ${escape(name)}"><img src="${escape(s.url)}" alt="${escape(text)}"></button>`
+      return `<button type="button" class="md__img" data-img="${i}" aria-label="${escape(t('chat.markdown.openPicture', { name }))}"><img src="${escape(s.url)}" alt="${escape(text)}"></button>`
     },
   },
 })
@@ -100,8 +101,8 @@ function onClick(e: MouseEvent) {
     const code = copy.parentElement?.querySelector('code')?.textContent ?? ''
     void copyText(code).then((ok) => {
       if (!ok) return
-      copy.textContent = 'Copied'
-      setTimeout(() => { if (copy.isConnected) copy.textContent = 'Copy' }, 1600)
+      copy.textContent = t('common.actions.copied')
+      setTimeout(() => { if (copy.isConnected) copy.textContent = t('common.actions.copy') }, 1600)
     })
     return
   }

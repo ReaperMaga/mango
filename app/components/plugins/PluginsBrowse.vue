@@ -13,6 +13,7 @@ import PluginGlyph from './PluginGlyph.vue'
  * searchable and filtered by origin, installed state and tag. Install is one click: the entry's source
  * is checked, then the plugin with the entry's id is installed and switched on.
  */
+const { t } = useI18n()
 const plugins = usePlugins()
 const view = usePluginsView()
 
@@ -20,7 +21,17 @@ onMounted(() => { void plugins.loadCatalog() })
 
 const text = ref('')
 const origin = ref<CatalogOrigin>('all')
+const origins = computed<Array<{ value: CatalogOrigin; label: string }>>(() => [
+  { value: 'all', label: t('plugins.browse.all') },
+  { value: 'official', label: t('plugins.browse.official') },
+  { value: 'community', label: t('plugins.browse.community') },
+])
 const stateFilter = ref<CatalogState>('any')
+const states = computed<Array<{ value: CatalogState; label: string }>>(() => [
+  { value: 'any', label: t('plugins.browse.any') },
+  { value: 'installed', label: t('plugins.browse.installed') },
+  { value: 'available', label: t('plugins.browse.available') },
+])
 const tag = ref<string | null>(null)
 
 const entries = computed(() => plugins.catalog?.catalog.plugins ?? [])
@@ -38,8 +49,8 @@ function clearFilters() {
   stateFilter.value = 'any'
   tag.value = null
 }
-function pickTag(t: string | null) {
-  tag.value = tag.value === t ? null : t
+function pickTag(next: string | null) {
+  tag.value = tag.value === next ? null : next
 }
 
 const installed = (e: PluginCatalogEntry) => plugins.byId(e.id)
@@ -49,6 +60,13 @@ function canUpdate(e: PluginCatalogEntry) {
   if (!p || p.source.kind !== 'git') return false
   return plugins.updates[e.id]?.hasUpdate || p.manifest.version !== e.version
 }
+
+const noMatch = computed(() => {
+  const query = text.value.trim()
+  const filters = !!tag.value || origin.value !== 'all' || stateFilter.value !== 'any'
+  if (query) return filters ? t('plugins.browse.noMatchBoth', { text: query }) : t('plugins.browse.noMatchText', { text: query })
+  return filters ? t('plugins.browse.noMatchFilters') : t('plugins.browse.noMatch')
+})
 
 const fetched = computed(() => (plugins.catalog ? agoText(plugins.catalog.fetchedAt) : ''))
 const searchEl = ref<HTMLInputElement | null>(null)
@@ -71,40 +89,40 @@ function onSearchKey(e: KeyboardEvent) {
           v-model="text"
           type="search"
           class="pb__input"
-          placeholder="Search plugins"
-          aria-label="Search plugins"
+          :placeholder="t('plugins.browse.search')"
+          :aria-label="t('plugins.browse.search')"
           spellcheck="false"
           autocomplete="off"
           @keydown="onSearchKey"
         >
-        <UiIconButton v-if="text" size="sm" label="Clear search" class="pb__clear" @click="text = ''; searchEl?.focus()"><X /></UiIconButton>
+        <UiIconButton v-if="text" size="sm" :label="t('plugins.browse.clearSearch')" class="pb__clear" @click="text = ''; searchEl?.focus()"><X /></UiIconButton>
       </label>
       <SettingsSegmented
         v-model="origin"
-        label="Who maintains it"
-        :options="[{ value: 'all', label: 'All' }, { value: 'official', label: 'Official' }, { value: 'community', label: 'Community' }]"
+        :label="t('plugins.browse.origin')"
+        :options="origins"
       />
       <SettingsSelect
         v-model="stateFilter"
-        label="Installed or not"
-        :options="[{ value: 'any', label: 'Any state' }, { value: 'installed', label: 'Installed' }, { value: 'available', label: 'Not installed' }]"
+        :label="t('plugins.browse.state')"
+        :options="states"
       />
-      <UiIconButton label="Refresh the catalog" :disabled="plugins.catalogLoading" @click="plugins.loadCatalog(true)">
+      <UiIconButton :label="t('plugins.browse.refresh')" :disabled="plugins.catalogLoading" @click="plugins.loadCatalog(true)">
         <RefreshCw :class="{ spin: plugins.catalogLoading }" />
       </UiIconButton>
     </div>
 
-    <div v-if="tags.length" class="pb__tags" role="group" aria-label="Filter by tag">
-      <button type="button" class="chip" :aria-pressed="tag === null" @click="tag = null">All tags</button>
-      <button v-for="t in tags" :key="t" type="button" class="chip" :aria-pressed="tag === t" @click="pickTag(t)">{{ t }}</button>
+    <div v-if="tags.length" class="pb__tags" role="group" :aria-label="t('plugins.browse.filterTag')">
+      <button type="button" class="chip" :aria-pressed="tag === null" @click="tag = null">{{ t('plugins.browse.allTags') }}</button>
+      <button v-for="name in tags" :key="name" type="button" class="chip" :aria-pressed="tag === name" @click="pickTag(name)">{{ name }}</button>
     </div>
 
     <p v-if="plugins.catalog?.stale" class="pb__note" role="status">
-      Showing a saved copy from {{ fetched }}: {{ plugins.catalog.stale }}
+      {{ t('plugins.browse.stale', { ago: fetched, reason: plugins.catalog.stale }) }}
     </p>
 
     <!-- loading the first time: the rows' shape, not a spinner -->
-    <div v-if="!plugins.catalog && plugins.catalogLoading" class="pb__list" aria-busy="true" aria-label="Loading the catalog">
+    <div v-if="!plugins.catalog && plugins.catalogLoading" class="pb__list" aria-busy="true" :aria-label="t('plugins.browse.loading')">
       <div v-for="n in 3" :key="n" class="row row--skeleton">
         <span class="row__tile" />
         <div class="row__text"><span class="sk sk--name" /><span class="sk sk--line" /><span class="sk sk--short" /></div>
@@ -112,71 +130,70 @@ function onSearchKey(e: KeyboardEvent) {
     </div>
 
     <div v-else-if="!plugins.catalog && plugins.catalogError" class="pb__empty">
-      <p class="pb__error selectable" role="alert"><CircleAlert aria-hidden="true" />The catalog could not be loaded. {{ plugins.catalogError }}</p>
+      <p class="pb__error selectable" role="alert"><CircleAlert aria-hidden="true" />{{ t('plugins.browse.loadError', { error: plugins.catalogError }) }}</p>
       <div class="pb__empty-actions">
-        <UiButton size="sm" @click="plugins.loadCatalog(true)">Try again</UiButton>
-        <UiButton size="sm" variant="ghost" @click="openPlugins({ add: true })">Add from a link</UiButton>
+        <UiButton size="sm" @click="plugins.loadCatalog(true)">{{ t('common.actions.retry') }}</UiButton>
+        <UiButton size="sm" variant="ghost" @click="openPlugins({ add: true })">{{ t('plugins.addFromLink') }}</UiButton>
       </div>
     </div>
 
-    <ul v-else-if="shown.length" class="pb__list" aria-label="Plugins in the catalog">
+    <ul v-else-if="shown.length" class="pb__list" :aria-label="t('plugins.browse.list')">
       <li v-for="e in shown" :key="e.id" class="row" :class="{ 'is-installed': !!installed(e) }">
         <span class="row__tile"><PluginGlyph :icon="e.icon" /></span>
         <div class="row__text">
           <div class="row__line">
-            <button v-if="installed(e)" type="button" class="row__name row__name--link" :title="`${e.name}: details`" @click="openPlugins({ detail: e.id })">{{ e.name }}</button>
+            <button v-if="installed(e)" type="button" class="row__name row__name--link" :title="t('plugins.details', { name: e.name })" @click="openPlugins({ detail: e.id })">{{ e.name }}</button>
             <span v-else class="row__name" :title="e.name">{{ e.name }}</span>
-            <span v-if="e.official" class="row__official" title="Maintained in Mango's repository"><BadgeCheck aria-hidden="true" />Official</span>
+            <span v-if="e.official" class="row__official" :title="t('plugins.officialHint')"><BadgeCheck aria-hidden="true" />{{ t('plugins.official') }}</span>
             <span class="row__meta tabular">{{ e.version }}<template v-if="e.author"> · {{ e.author }}</template></span>
           </div>
           <p class="row__desc" :title="e.description">{{ e.description }}</p>
           <div v-if="e.tags.length" class="row__tags">
             <button
-              v-for="t in e.tags"
-              :key="t"
+              v-for="name in e.tags"
+              :key="name"
               type="button"
               class="row__tag"
-              :class="{ 'is-on': tag === t.toLowerCase() }"
-              :title="`Show plugins tagged ${t}`"
-              @click="pickTag(t.toLowerCase())"
+              :class="{ 'is-on': tag === name.toLowerCase() }"
+              :title="t('plugins.browse.tagged', { tag: name })"
+              @click="pickTag(name.toLowerCase())"
             >
-              {{ t }}
+              {{ name }}
             </button>
           </div>
           <p v-if="view.jobs[e.id]?.error" class="row__error selectable" role="alert">
             <CircleAlert aria-hidden="true" /><span>{{ view.jobs[e.id]!.error }}</span>
-            <UiIconButton size="sm" label="Dismiss" @click="dismissJob(e.id)"><X /></UiIconButton>
+            <UiIconButton size="sm" :label="t('plugins.dismiss')" @click="dismissJob(e.id)"><X /></UiIconButton>
           </p>
           <p v-else-if="view.jobs[e.id]" class="row__progress selectable" aria-live="polite">{{ view.jobs[e.id]!.line || jobLabel(view.jobs[e.id]!) }}</p>
         </div>
         <div class="row__action">
           <UiButton v-if="view.jobs[e.id] && !view.jobs[e.id]!.error" size="sm" loading>{{ jobLabel(view.jobs[e.id]!) }}</UiButton>
-          <UiButton v-else-if="canUpdate(e)" size="sm" @click="updatePlugin(e.id)">Update</UiButton>
+          <UiButton v-else-if="canUpdate(e)" size="sm" @click="updatePlugin(e.id)">{{ t('plugins.update') }}</UiButton>
           <template v-else-if="installed(e)">
-            <span class="row__done"><Check aria-hidden="true" />Installed</span>
-            <UiIconButton size="sm" :label="`${e.name}: details`" @click="openPlugins({ detail: e.id })"><ChevronRight /></UiIconButton>
+            <span class="row__done"><Check aria-hidden="true" />{{ t('plugins.installed') }}</span>
+            <UiIconButton size="sm" :label="t('plugins.details', { name: e.name })" @click="openPlugins({ detail: e.id })"><ChevronRight /></UiIconButton>
           </template>
-          <UiButton v-else size="sm" :title="`Install ${e.name}`" @click="installFromCatalog(e)">Install</UiButton>
+          <UiButton v-else size="sm" :title="t('plugins.browse.install', { name: e.name })" @click="installFromCatalog(e)">{{ t('common.actions.install') }}</UiButton>
         </div>
       </li>
     </ul>
 
     <div v-else-if="plugins.catalog" class="pb__empty">
       <p v-if="filtered" class="pb__empty-text">
-        No plugin matches<template v-if="text.trim()"> “{{ text.trim() }}”</template><template v-if="filtered && (tag || origin !== 'all' || stateFilter !== 'any')"> with these filters</template>.
+        {{ noMatch }}
       </p>
-      <p v-else class="pb__empty-text">The catalog has no plugins yet.</p>
+      <p v-else class="pb__empty-text">{{ t('plugins.browse.empty') }}</p>
       <div class="pb__empty-actions">
-        <UiButton v-if="filtered" size="sm" @click="clearFilters">Clear filters</UiButton>
-        <UiButton size="sm" variant="ghost" @click="openPlugins({ add: true })">Add from a link</UiButton>
+        <UiButton v-if="filtered" size="sm" @click="clearFilters">{{ t('plugins.browse.clearFilters') }}</UiButton>
+        <UiButton size="sm" variant="ghost" @click="openPlugins({ add: true })">{{ t('plugins.addFromLink') }}</UiButton>
       </div>
     </div>
 
-    <p v-if="plugins.catalog && shown.length" class="pb__foot">
-      A plugin that isn't listed can be added from its repository:
-      <button type="button" class="pb__link" @click="openPlugins({ add: true })">Add from a link</button>.
-      Updated {{ fetched }}.
-    </p>
+    <i18n-t v-if="plugins.catalog && shown.length" keypath="plugins.browse.foot" tag="p" scope="global" class="pb__foot">
+      <template #link><button type="button" class="pb__link" @click="openPlugins({ add: true })">{{ t('plugins.addFromLink') }}</button></template>
+      <template #ago>{{ fetched }}</template>
+    </i18n-t>
   </div>
 </template>
 

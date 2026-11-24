@@ -10,6 +10,7 @@ import { pluginShortcutDefs } from '~/plugin-host/registry'
  * Settings > Shortcuts: every key Mango answers to. Pick one, press the new combination.
  * While one is being recorded `ws.recordingShortcut` holds the app's own shortcuts still.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const mod = comboParts('Mod')[0]!
 
@@ -19,8 +20,8 @@ const groups = computed(() => {
   const plugins = pluginShortcutDefs()
   const names = [...new Set(plugins.map(s => s.group))]
   return [
-    ...SHORTCUT_GROUPS.map(g => ({ group: g as string, items: SHORTCUTS.filter(s => s.group === g) })),
-    ...names.map(g => ({ group: g, items: plugins.filter(s => s.group === g) })),
+    ...SHORTCUT_GROUPS.map(g => ({ group: g as string, title: t(`shell.shortcuts.groups.${g.toLowerCase()}`), items: SHORTCUTS.filter(s => s.group === g) })),
+    ...names.map(g => ({ group: g, title: g, items: plugins.filter(s => s.group === g) })),
   ]
 })
 const changed = computed(() => Object.keys(ws.shortcuts).length > 0)
@@ -75,7 +76,7 @@ function onKey(e: KeyboardEvent) {
   if (e.key === 'Backspace' || e.key === 'Delete') { assign(id, ''); return stop() }
   const combo = eventCombo(e)
   if (!combo) {
-    problem.value = `Hold ${mod} and press the key.`
+    problem.value = t('shell.shortcuts.hold', { mod })
     return
   }
   const why = refuse(combo, id, ws.bindings, allDefs.value)
@@ -96,22 +97,22 @@ onBeforeUnmount(stop)
 </script>
 
 <template>
-  <SettingsSection title="Shortcuts" description="Every key Mango answers to. Select one, then press the new combination. Backspace clears it, Esc cancels.">
+  <SettingsSection :title="t('shell.shortcuts.title')" :description="t('shell.shortcuts.description')">
     <div class="bar">
       <button type="button" class="reset-all" :disabled="!changed" @click="save({})">
         <RotateCcw aria-hidden="true" />
-        Reset all to defaults
+        {{ t('shell.shortcuts.resetAll') }}
       </button>
     </div>
 
     <template v-for="g in groups" :key="g.group">
-      <h3 class="head">{{ g.group }}</h3>
+      <h3 class="head">{{ g.title }}</h3>
       <div class="card">
         <SettingsRow
           v-for="s in g.items"
           :key="s.id"
           :label="s.label"
-          :hint="recording === s.id ? (problem ?? `Press the new key. It must include ${mod}.`) : undefined"
+          :hint="recording === s.id ? (problem ?? t('shell.shortcuts.press', { mod })) : undefined"
         >
           <template #default="{ labelId }">
             <div class="ctl">
@@ -119,8 +120,8 @@ onBeforeUnmount(stop)
                 v-if="ws.shortcuts[s.id] !== undefined"
                 type="button"
                 class="ctl__reset"
-                :aria-label="`Reset ${s.label} to ${comboLabel(s.key)}`"
-                :title="`Reset to ${comboLabel(s.key)}`"
+                :aria-label="t('shell.shortcuts.reset', { label: s.label, key: comboLabel(s.key) })"
+                :title="t('shell.shortcuts.resetTo', { key: comboLabel(s.key) })"
                 @click="reset(s.id)"
               >
                 <RotateCcw aria-hidden="true" />
@@ -134,11 +135,11 @@ onBeforeUnmount(stop)
                 @click="start(s.id)"
                 @blur="onBlur(s.id)"
               >
-                <span v-if="recording === s.id" class="key__hint">Press keys…</span>
+                <span v-if="recording === s.id" class="key__hint">{{ t('shell.shortcuts.pressKeys') }}</span>
                 <template v-else-if="ws.bindings[s.id]">
                   <kbd v-for="k in ws.keyParts(s.id)" :key="k">{{ k }}</kbd>
                 </template>
-                <span v-else class="key__none">Not set</span>
+                <span v-else class="key__none">{{ t('shell.shortcuts.notSet') }}</span>
               </button>
             </div>
           </template>
@@ -146,7 +147,7 @@ onBeforeUnmount(stop)
       </div>
     </template>
 
-    <h3 class="head">Always on</h3>
+    <h3 class="head">{{ t('shell.shortcuts.alwaysOn') }}</h3>
     <div class="card">
       <SettingsRow v-for="f in FIXED_SHORTCUTS" :key="f.label" :label="f.label">
         <div class="ctl">

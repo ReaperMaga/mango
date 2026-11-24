@@ -9,6 +9,7 @@ import type { EnvJoinPreview } from '~/types/ipc'
  * anything is saved, optionally name it, and join. Mango then connects straight
  * into that one environment; no server of the user's own is involved.
  */
+const { t } = useI18n()
 const envs = useEnvironments()
 
 const open = computed(() => envs.dialog?.kind === 'join')
@@ -60,7 +61,7 @@ async function check() {
   }
   if (!l.startsWith(PREFIX)) {
     preview.value = null
-    previewError.value = `That isn't a Mango share link. Share links start with ${PREFIX}`
+    previewError.value = t('envs.join.notALink', { prefix: PREFIX })
     checking.value = false
     return
   }
@@ -108,14 +109,13 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" title="Join a shared environment" :width="520" :dismissible="!joining" @close="close">
+  <UiDialog :open="open" :title="t('envs.home.joinShared')" :width="520" :dismissible="!joining" @close="close">
     <form id="env-join-form" class="jn" novalidate @submit.prevent="submit">
       <p class="jn__lede">
-        Someone shared one of their environments with you. Paste the link they sent: Mango connects straight into that
-        environment, with no server of your own.
+        {{ t('envs.join.lede') }}
       </p>
 
-      <UiField label="Link" for="jn-link" :error="previewError">
+      <UiField :label="t('envs.join.link')" for="jn-link" :error="previewError">
         <textarea
           id="jn-link"
           v-model="raw"
@@ -134,38 +134,38 @@ function close() {
 
       <!-- what the link leads to, before anything is saved -->
       <div v-if="checking && !preview" class="jn__checking" role="status">
-        <span class="ring" aria-hidden="true" />Reading the link…
+        <span class="ring" aria-hidden="true" />{{ t('envs.join.reading') }}
       </div>
       <div v-else-if="preview" class="jn__preview" :class="{ 'is-expired': expired }" role="status">
         <p class="jn__name">{{ preview.instance }}</p>
         <dl class="jn__facts">
           <div class="jn__fact">
-            <dt>Shared from</dt>
+            <dt>{{ t('envs.join.sharedFrom') }}</dt>
             <dd class="jn__mono selectable">{{ preview.sharedFrom }}</dd>
           </div>
           <div class="jn__fact">
-            <dt>Connects to</dt>
+            <dt>{{ t('envs.common.connectsTo') }}</dt>
             <dd class="jn__mono selectable">{{ preview.endpoint }}</dd>
           </div>
           <div class="jn__fact">
-            <dt>Access ends</dt>
-            <dd v-if="expired" class="jn__expired">Expired {{ shareDay(preview.expiresAt!) }}</dd>
-            <dd v-else class="tabular">{{ preview.expiresAt ? shareDay(preview.expiresAt) : 'When the owner revokes it' }}</dd>
+            <dt>{{ t('envs.common.accessEnds') }}</dt>
+            <dd v-if="expired" class="jn__expired">{{ t('envs.join.expired', { day: shareDay(preview.expiresAt!) }) }}</dd>
+            <dd v-else class="tabular">{{ preview.expiresAt ? shareDay(preview.expiresAt) : t('envs.common.whenRevoked') }}</dd>
           </div>
         </dl>
         <p v-if="expired" class="jn__note">
-          Access through this link has ended. Ask whoever shared it for a new one.
+          {{ t('envs.join.expiredNote') }}
         </p>
         <p v-else-if="preview.alreadyJoined" class="jn__note">
-          <Info aria-hidden="true" />You already have this; joining again replaces its key.
+          <Info aria-hidden="true" />{{ t('envs.join.already') }}
         </p>
       </div>
 
       <UiField
         v-if="preview && !expired"
-        label="Name"
+        :label="t('envs.common.name')"
         for="jn-name"
-        :hint="`How it's listed in Mango. Defaults to ${preview.instance}.`"
+        :hint="t('envs.common.listedName', { name: preview.instance })"
       >
         <input
           id="jn-name"
@@ -181,13 +181,13 @@ function close() {
 
       <p v-if="joinError" class="jn__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't join it. {{ joinError }}.</span>
+        <span class="selectable">{{ t('envs.join.failed', { error: joinError }) }}</span>
       </p>
     </form>
 
     <template #footer>
-      <UiButton variant="ghost" :disabled="joining" @click="close">Cancel</UiButton>
-      <UiButton variant="primary" type="submit" form="env-join-form" :loading="joining" :disabled="!canJoin && !joining">Join</UiButton>
+      <UiButton variant="ghost" :disabled="joining" @click="close">{{ t('common.actions.cancel') }}</UiButton>
+      <UiButton variant="primary" type="submit" form="env-join-form" :loading="joining" :disabled="!canJoin && !joining">{{ t('envs.join.submit') }}</UiButton>
     </template>
   </UiDialog>
 </template>

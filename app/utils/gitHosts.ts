@@ -1,3 +1,5 @@
+import { t } from '../i18n/index.ts'
+
 /**
  * Server names for Settings > Git hosting: what a person types for a GitHub Enterprise or self-managed
  * GitLab server, cleaned up the way the backend stores it (`normalize_host` in src-tauri/src/gitlab.rs;
@@ -30,11 +32,11 @@ export function normalizeHost(input: string): string | null {
 
 /** Why `input` can't be added to the list of GitLab servers, or null when it can. */
 export function gitlabHostProblem(input: string, list: string[]): string | null {
-  if (!input.trim()) return 'Type the server\'s name.'
+  if (!input.trim()) return t('agents.hosting.typeName')
   const host = normalizeHost(input)
-  if (!host) return 'Type a server name like gitlab.example.com.'
-  if (host === GITLAB_COM) return 'gitlab.com is always known.'
-  if (host === GITHUB_COM) return 'github.com is GitHub, not a GitLab server.'
-  if (list.includes(host)) return `${host} is already in the list.`
+  if (!host) return t('agents.hosting.typeNameLike', { example: 'gitlab.example.com' })
+  if (host === GITLAB_COM) return t('agents.hosting.alwaysKnown')
+  if (host === GITHUB_COM) return t('agents.hosting.isGithub')
+  if (list.includes(host)) return t('agents.hosting.inList', { host })
   return null
 }

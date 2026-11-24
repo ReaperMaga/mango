@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import type { PluginCatalogEntry, PluginSource } from '~/types/ipc'
+import { t } from '~/i18n'
 import { on, pickFolder } from '~/composables/useBackend'
 import { pluginJobId, usePlugins } from '~/stores/plugins'
 import { useWorkspace } from '~/stores/workspace'
@@ -89,7 +90,10 @@ export async function installFromCatalog(entry: PluginCatalogEntry): Promise<boo
       const match = probe.candidates.find(c => c.manifest.id === entry.id)
         ?? (probe.candidates.length === 1 ? probe.candidates[0] : undefined)
       if (!match) {
-        throw new Error(`${repoLabel(entry.source.url)} has no plugin with the id ${entry.id}${entry.source.subpath ? ` in ${entry.source.subpath}` : ''}. The catalog may be ahead of the repository; try again later.`)
+        const repo = repoLabel(entry.source.url)
+        throw new Error(entry.source.subpath
+          ? t('plugins.noMatchIn', { repo, id: entry.id, folder: entry.source.subpath })
+          : t('plugins.noMatch', { repo, id: entry.id }))
       }
       job.phase = 'install'
       job.line = ''
@@ -130,17 +134,16 @@ export function dismissJob(id: string) {
 
 /** The words for a job in progress. */
 export function jobLabel(job: PluginJob): string {
-  if (job.phase === 'waiting') return 'Waiting…'
-  if (job.phase === 'probe') return 'Downloading…'
-  if (job.phase === 'install') return 'Installing…'
-  return 'Updating…'
+  return t(`plugins.job.${job.phase}`)
 }
 
 /** "just now", "3h ago", "on 12 Mar". */
 export function agoText(ts: number): string {
-  const s = shortAgo(ts)
-  if (s === 'now') return 'just now'
-  return /^\d+[mhd]$/.test(s) ? `${s} ago` : `on ${s}`
+  const now = Date.now()
+  const s = Math.max(0, Math.round((now - ts) / 1000))
+  if (s < 45) return t('common.time.justNow')
+  const days = Math.round(Math.round(Math.round(s / 60) / 60) / 24)
+  return days < 7 ? t('plugins.ago', { time: shortAgo(ts, now) }) : t('plugins.onDate', { date: shortAgo(ts, now) })
 }
 
 /**
@@ -148,7 +151,7 @@ export function agoText(ts: number): string {
  * plugin's id, null when the picker was cancelled; throws the backend's reason when it can't be added.
  */
 export async function addLocalFolder(): Promise<string | null> {
-  const path = await pickFolder('Add a plugin folder')
+  const path = await pickFolder(t('plugins.pickFolder'))
   if (!path) return null
   const plugin = await usePlugins().addLocal(path)
   return plugin.manifest.id

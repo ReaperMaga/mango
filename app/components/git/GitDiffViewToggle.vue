@@ -3,6 +3,7 @@ import { Columns2, Rows2 } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 
 /** The diff layout switch in a diff pane's header: side by side or one column, remembered for every diff. */
+const { t } = useI18n()
 const ws = useWorkspace()
 
 function setView(view: 'split' | 'unified') {
@@ -12,12 +13,12 @@ function setView(view: 'split' | 'unified') {
 </script>
 
 <template>
-  <div class="dp__view" role="radiogroup" aria-label="Diff layout">
-    <button type="button" role="radio" :aria-checked="ws.diffView === 'split'" :class="{ 'is-on': ws.diffView === 'split' }" title="Side by side" @click="setView('split')">
-      <Columns2 /><span class="sr-only">Side by side</span>
+  <div class="dp__view" role="radiogroup" :aria-label="t('git.diff.layout')">
+    <button type="button" role="radio" :aria-checked="ws.diffView === 'split'" :class="{ 'is-on': ws.diffView === 'split' }" :title="t('git.diff.split')" @click="setView('split')">
+      <Columns2 /><span class="sr-only">{{ t('git.diff.split') }}</span>
     </button>
-    <button type="button" role="radio" :aria-checked="ws.diffView === 'unified'" :class="{ 'is-on': ws.diffView === 'unified' }" title="One column" @click="setView('unified')">
-      <Rows2 /><span class="sr-only">One column</span>
+    <button type="button" role="radio" :aria-checked="ws.diffView === 'unified'" :class="{ 'is-on': ws.diffView === 'unified' }" :title="t('git.diff.unified')" @click="setView('unified')">
+      <Rows2 /><span class="sr-only">{{ t('git.diff.unified') }}</span>
     </button>
   </div>
 </template>

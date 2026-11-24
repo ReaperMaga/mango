@@ -3,6 +3,7 @@ import { AGENTS, type AgentId, type AgentModel } from '~/types/chat'
 import { listAgentModels } from '~/agents'
 import { modelTitle } from '~/utils/modelNames'
 import { placeKey } from '~/utils/envPath'
+import { t } from '~/i18n'
 
 /**
  * The models each agent CLI offers, as the CLI itself reports them (with the
@@ -59,6 +60,20 @@ function load(): Cached {
 /** Codex reports some names in lower case ("gpt-5.4"), and a name may be a raw id: show them like the others. */
 const tidy = (m: AgentModel): AgentModel => ({ ...m, label: modelTitle(m.label.replace(/^gpt(?=-)/, 'GPT')) })
 
+/** Hints of the built-in models (AGENTS); a list from the CLI carries its own. */
+const HINTS: Record<string, string> = { 'fable': 'fable', 'opus': 'opus', 'sonnet': 'sonnet', 'haiku': 'haiku', 'gpt-5.5': 'gpt55', 'gpt-5.4': 'gpt54', 'gpt-5.4-mini': 'gpt54mini' }
+
+/** A model in the interface language: Mango's own words ("Default", the built-in hints); the CLI's stay as they are. */
+function shown(agent: AgentId, m: AgentModel, builtIn: boolean): AgentModel {
+  if (m.id !== 'default') return builtIn && HINTS[m.id] ? { ...m, hint: t(`chat.models.${HINTS[m.id]}`) } : m
+  const name = AGENTS[agent].name
+  const choice = `${name}'s choice: `
+  const hint = m.hint === `Whatever ${name} is configured to use`
+    ? t('chat.models.configured', { agent: name })
+    : m.hint?.startsWith(choice) ? t('chat.models.choice', { agent: name, model: m.hint.slice(choice.length) }) : m.hint
+  return { ...m, label: m.label === 'Default' ? t('chat.models.default') : m.label, hint }
+}
+
 /** Lookups running, by place and agent. */
 const inflight = new Map<string, Promise<void>>()
 
@@ -69,10 +84,16 @@ export const useModels = defineStore('models', {
     /** Models to offer for `agent` in the project at `where`, 'default' first. */
     list: s => (agent: AgentId, where: string | null): AgentModel[] => {
       const live = s.lists[placeKey(where)]?.[agent]
-      return live?.length ? live : AGENTS[agent].models
+      const builtIn = !live?.length
+      return (builtIn ? AGENTS[agent].models : live).map(m => shown(agent, m, builtIn))
     },
     find(): (agent: AgentId, id: string, where: string | null) => AgentModel | null {
-      return (agent, id, where) => this.list(agent, where).find(m => m.id === id) ?? AGENTS[agent].models.find(m => m.id === id) ?? null
+      return (agent, id, where) => {
+        const listed = this.list(agent, where).find(m => m.id === id)
+        if (listed) return listed
+        const own = AGENTS[agent].models.find(m => m.id === id)
+        return own ? shown(agent, own, true) : null
+      }
     },
     label(): (agent: AgentId, id: string, where: string | null) => string {
       return (agent, id, where) => this.find(agent, id, where)?.label ?? modelTitle(id)

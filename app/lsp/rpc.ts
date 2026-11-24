@@ -4,6 +4,8 @@
  * or rejected when the connection closes.
  */
 
+import { t } from '../i18n/index.ts'
+
 const REQUEST_CANCELLED = -32800
 const CONTENT_MODIFIED = -32801
 const SERVER_CANCELLED = -32802
@@ -62,7 +64,7 @@ export class Rpc {
   }
 
   request<T>(method: string, params?: unknown, { timeout = 10_000, token }: RequestOptions = {}): Promise<T> {
-    if (this.closed) return Promise.reject(new RpcError(CLOSED, 'The language server is not running.'))
+    if (this.closed) return Promise.reject(new RpcError(CLOSED, t('files.server.notRunning')))
     if (token?.isCancellationRequested) return Promise.reject(new RpcError(REQUEST_CANCELLED, 'Cancelled.'))
     const id = ++this.seq
     return new Promise<T>((resolve, reject) => {
@@ -78,7 +80,7 @@ export class Rpc {
         this.notify('$/cancelRequest', { id })
         reject(new RpcError(code, message))
       }
-      const timer = setTimeout(() => abandon(TIMED_OUT, `The language server did not answer ${method}.`), timeout)
+      const timer = setTimeout(() => abandon(TIMED_OUT, t('files.server.noAnswer', { method })), timeout)
       this.waiting.set(id, {
         resolve: (value) => { settle(); resolve(value) },
         reject: (error) => { settle(); reject(error) },
@@ -102,7 +104,7 @@ export class Rpc {
       // An answer. A late one (cancelled, timed out) has nobody waiting.
       const waiting = typeof id === 'number' ? this.waiting.get(id) : undefined
       if (!waiting) return
-      if (msg.error) waiting.reject(new RpcError(Number(msg.error.code) || INTERNAL_ERROR, String(msg.error.message ?? 'The language server failed.')))
+      if (msg.error) waiting.reject(new RpcError(Number(msg.error.code) || INTERNAL_ERROR, String(msg.error.message ?? t('files.server.requestFailed'))))
       else waiting.resolve(msg.result ?? null)
       return
     }
@@ -126,6 +128,6 @@ export class Rpc {
   close() {
     if (this.closed) return
     this.closed = true
-    for (const waiting of [...this.waiting.values()]) waiting.reject(new RpcError(CLOSED, 'The language server stopped.'))
+    for (const waiting of [...this.waiting.values()]) waiting.reject(new RpcError(CLOSED, t('files.server.ended')))
   }
 }

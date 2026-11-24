@@ -19,6 +19,7 @@ const props = defineProps<{
   /** The project's name, for the description. */
   name: string
 }>()
+const { t } = useI18n()
 const ws = useWorkspace()
 const env = useProjectEnv()
 const headId = useId()
@@ -87,20 +88,20 @@ function onTabKey(e: KeyboardEvent) {
 
 /* ---------- mode ---------- */
 
-const modes: Array<{ value: EnvEditMode; label: string; icon: typeof List }> = [
-  { value: 'fields', label: 'Fields', icon: List },
-  { value: 'raw', label: 'Raw', icon: TextCursorInput },
-]
+const modes = computed<Array<{ value: EnvEditMode; label: string; icon: typeof List }>>(() => [
+  { value: 'fields', label: t('settings.env.fields'), icon: List },
+  { value: 'raw', label: t('settings.env.raw'), icon: TextCursorInput },
+])
 const invalid = ref(0)
 watch(() => ws.envEditMode, (m) => { if (m === 'raw') invalid.value = 0 })
 
 const rawText = computed({
   get: () => doc.value?.text ?? '',
   /* A textarea hands back bare \n line breaks; keep the file's own CRLF. */
-  set: (t: string) => setText(doc.value?.saved.includes('\r\n') ? t.replace(/\r?\n/g, '\r\n') : t),
+  set: (text: string) => setText(doc.value?.saved.includes('\r\n') ? text.replace(/\r?\n/g, '\r\n') : text),
 })
-function setText(t: string) {
-  if (root.value && selected.value) env.setText(root.value, selected.value, t)
+function setText(text: string) {
+  if (root.value && selected.value) env.setText(root.value, selected.value, text)
 }
 
 /* ---------- save, revert, conflicts ---------- */
@@ -108,8 +109,8 @@ function setText(t: string) {
 /* A conflict is answered in its own prompt; a plain Save would only stop again. */
 const canSave = computed(() => dirty.value && !doc.value?.saving && !doc.value?.conflict && invalid.value === 0)
 const saveTitle = computed(() =>
-  doc.value?.conflict ? 'The file changed on disk: reload it or overwrite it'
-    : invalid.value ? 'Fix the names marked in red to save' : `Save (${mod.value}+S)`)
+  doc.value?.conflict ? t('settings.env.saveConflict')
+    : invalid.value ? t('settings.env.saveInvalid') : t('settings.env.saveShortcut', { shortcut: `${mod.value}+S` }))
 
 async function save(force = false) {
   if (!root.value || !selected.value) return
@@ -198,7 +199,7 @@ async function createFile() {
   if (!r || newBusy.value) return
   const name = newName.value
   const problem = envNameProblem(name)
-    ?? (files.value.some(f => f.name.toLowerCase() === name.toLowerCase()) ? `${name} is already here.` : null)
+    ?? (files.value.some(f => f.name.toLowerCase() === name.toLowerCase()) ? t('settings.env.exists', { name }) : null)
   if (problem) {
     newError.value = problem
     return
@@ -292,8 +293,8 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
 <template>
   <section id="project-env" ref="sectionEl" class="pe" :aria-labelledby="headId" @keydown="onKeydown">
     <header class="pe__head">
-      <h3 :id="headId" class="pe__title">Environment variables</h3>
-      <p class="pe__desc">The .env files at the root of {{ name }}. Changes stay here until you save them; values stay hidden until you show them.</p>
+      <h3 :id="headId" class="pe__title">{{ t('settings.mcpPairs.variables') }}</h3>
+      <p class="pe__desc">{{ t('settings.env.description', { name }) }}</p>
     </header>
     <div>
       <!-- Files, with the actions on files at the end of the row -->
@@ -303,7 +304,7 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           ref="tabsEl"
           class="pe__tabs"
           role="tablist"
-          aria-label="Environment files"
+          :aria-label="t('settings.env.files')"
           @keydown="onTabKey"
         >
           <button
@@ -317,7 +318,7 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
             :aria-selected="f.name === selected"
             :aria-controls="panelId"
             :tabindex="f.name === selected ? 0 : -1"
-            :title="isDirty(f.name) ? `${f.name}, unsaved changes` : f.name"
+            :title="isDirty(f.name) ? t('settings.env.unsavedFile', { name: f.name }) : f.name"
             @click="pick(f.name)"
           >
             <span class="pe__tab-name">{{ f.name }}</span>
@@ -325,23 +326,23 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           </button>
         </div>
         <div class="pe__files-actions">
-          <UiButton v-if="files.length || creating" size="sm" :aria-expanded="creating" @click="creating ? cancelNew() : startNew()"><FilePlus />New file</UiButton>
-          <UiIconButton size="sm" label="Look for files again" :disabled="listing" @click="refresh"><RefreshCw /></UiIconButton>
+          <UiButton v-if="files.length || creating" size="sm" :aria-expanded="creating" @click="creating ? cancelNew() : startNew()"><FilePlus />{{ t('settings.env.newFile') }}</UiButton>
+          <UiIconButton size="sm" :label="t('settings.env.lookAgain')" :disabled="listing" @click="refresh"><RefreshCw /></UiIconButton>
           <UiButton
             v-if="current && doc"
             size="sm"
             variant="ghost"
-            :title="`Delete ${current.name}`"
+            :title="t('settings.env.deleteNamed', { name: current.name })"
             :aria-expanded="confirmDelete"
             @click="confirmDelete = !confirmDelete; creating = false"
           >
-            <Trash2 />Delete file
+            <Trash2 />{{ t('settings.env.deleteFile') }}
           </UiButton>
         </div>
       </div>
 
       <form v-if="creating" class="pe__new" @submit.prevent="createFile" @keydown.esc.stop.prevent="cancelNew">
-        <UiField label="File name" :for="newId" :error="newError" hint="Created empty at the root of the project. An example file that already exists, such as .env.example, is added to the list instead.">
+        <UiField :label="t('settings.env.fileName')" :for="newId" :error="newError" :hint="t('settings.env.fileNameHint')">
           <div class="pe__new-row">
             <input
               :id="newId"
@@ -355,22 +356,21 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
               placeholder=".env.local"
               @input="newError = null"
             >
-            <UiButton size="sm" type="submit" variant="primary" :loading="newBusy">Create</UiButton>
-            <UiButton size="sm" variant="ghost" @click="cancelNew">Cancel</UiButton>
+            <UiButton size="sm" type="submit" variant="primary" :loading="newBusy">{{ t('settings.env.create') }}</UiButton>
+            <UiButton size="sm" variant="ghost" @click="cancelNew">{{ t('common.actions.cancel') }}</UiButton>
           </div>
         </UiField>
       </form>
 
       <p v-if="listError" class="pe__note is-error selectable" role="alert">
-        <CircleAlert aria-hidden="true" />The files could not be listed. {{ listError }}
+        <CircleAlert aria-hidden="true" />{{ t('settings.env.listError') }} {{ listError }}
       </p>
-      <p v-else-if="listing && !files.length" class="pe__note" role="status">Looking for .env files…</p>
+      <p v-else-if="listing && !files.length" class="pe__note" role="status">{{ t('settings.env.looking') }}</p>
       <div v-else-if="!files.length && !creating" class="pe__empty">
         <p>
-          This project has no .env files yet. Existing ones are picked up automatically; example and template files
-          such as .env.example are left out until you add them by name with New file.
+          {{ t('settings.env.empty') }}
         </p>
-        <UiButton size="sm" variant="primary" @click="startNew"><FilePlus />New file</UiButton>
+        <UiButton size="sm" variant="primary" @click="startNew"><FilePlus />{{ t('settings.env.newFile') }}</UiButton>
       </div>
 
       <!-- The file shown -->
@@ -386,31 +386,36 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           v-if="confirmDelete"
           class="pe__msg is-danger pe__ask"
           role="alertdialog"
-          :aria-label="`Delete ${current.name}`"
+          :aria-label="t('settings.env.deleteNamed', { name: current.name })"
           @keydown.esc.stop.prevent="confirmDelete = false"
         >
           <Trash2 class="pe__msg-icon" aria-hidden="true" />
           <p class="pe__msg-text">
-            Delete <code>{{ current.name }}</code> from the project?
-            <template v-if="dirty">Your unsaved changes go with it.</template>
-            This can't be undone.
+            <i18n-t keypath="settings.env.deleteAsk" scope="global">
+              <template #file><code>{{ current.name }}</code></template>
+            </i18n-t>
+            {{ dirty ? t('settings.env.deleteUnsaved') : '' }}
+            {{ t('settings.env.deleteFinal') }}
             <span v-if="deleteError" class="pe__msg-error selectable" role="alert">{{ deleteError }}</span>
           </p>
           <div class="pe__msg-actions">
-            <UiButton size="sm" variant="ghost" data-autofocus @click="confirmDelete = false">Keep</UiButton>
-            <UiButton size="sm" variant="danger" :loading="deleting" @click="deleteFile">Delete file</UiButton>
+            <UiButton size="sm" variant="ghost" data-autofocus @click="confirmDelete = false">{{ t('settings.mcp.keep') }}</UiButton>
+            <UiButton size="sm" variant="danger" :loading="deleting" @click="deleteFile">{{ t('settings.env.deleteFile') }}</UiButton>
           </div>
         </div>
 
         <div v-if="current.ignored === false" class="pe__msg is-waiting" role="note">
           <TriangleAlert class="pe__msg-icon" aria-hidden="true" />
           <p class="pe__msg-text">
-            <span class="pe__msg-lead">Not ignored by git,</span>
-            so <code>{{ current.name }}</code> would be committed with your changes and its values shared with everyone who can read the repository.
+            <i18n-t keypath="settings.env.notIgnored" scope="global">
+              <template #lead><span class="pe__msg-lead">{{ t('settings.env.notIgnoredLead') }}</span></template>
+              <template #file><code>{{ current.name }}</code></template>
+            </i18n-t>
+            {{ ' ' }}
             <span v-if="ignoreError" class="pe__msg-error selectable" role="alert">{{ ignoreError }}</span>
           </p>
           <div class="pe__msg-actions">
-            <UiButton size="sm" :loading="ignoring" @click="addToGitignore">Add to .gitignore</UiButton>
+            <UiButton size="sm" :loading="ignoring" @click="addToGitignore">{{ t('settings.env.addIgnore') }}</UiButton>
           </div>
         </div>
 
@@ -418,7 +423,7 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           <SettingsSegmented
             :model-value="ws.envEditMode"
             :options="modes"
-            label="Edit as"
+            :label="t('settings.env.editAs')"
             @update:model-value="ws.setEnvEditMode"
           />
           <UiButton
@@ -428,14 +433,14 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
             :aria-pressed="revealed"
             @click="revealed = !revealed"
           >
-            <EyeOff v-if="revealed" /><Eye v-else />{{ revealed ? 'Hide values' : 'Show values' }}
+            <EyeOff v-if="revealed" /><Eye v-else />{{ revealed ? t('settings.env.hideValues') : t('settings.env.showValues') }}
           </UiButton>
           <span class="pe__state" aria-live="polite">
-            <template v-if="doc.saving">Saving…</template>
-            <template v-else-if="dirty">Unsaved changes</template>
+            <template v-if="doc.saving">{{ t('settings.env.saving') }}</template>
+            <template v-else-if="dirty">{{ t('settings.env.unsaved') }}</template>
           </span>
           <template v-if="dirty || doc.saving">
-            <UiButton size="sm" variant="ghost" :disabled="doc.saving" @click="revert">Revert</UiButton>
+            <UiButton size="sm" variant="ghost" :disabled="doc.saving" @click="revert">{{ t('settings.env.revert') }}</UiButton>
             <UiButton
               size="sm"
               :variant="creating || doc.conflict ? 'secondary' : 'primary'"
@@ -444,7 +449,7 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
               :title="saveTitle"
               @click="save()"
             >
-              Save
+              {{ t('common.actions.save') }}
             </UiButton>
           </template>
         </div>
@@ -452,34 +457,37 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
         <div v-if="doc.conflict" class="pe__msg is-waiting" role="alert">
           <TriangleAlert class="pe__msg-icon" aria-hidden="true" />
           <p class="pe__msg-text">
-            <span class="pe__msg-lead">Not saved:</span> <code>{{ current.name }}</code> changed on disk since you opened it. Use the version on disk and drop your edits,
-            or overwrite it with your version and lose the change made on disk.
+            <i18n-t keypath="settings.env.conflict" scope="global">
+              <template #lead><span class="pe__msg-lead">{{ t('settings.env.conflictLead') }}</span></template>
+              <template #file><code>{{ current.name }}</code></template>
+            </i18n-t>
+            {{ ' ' }}
             <span v-if="diskDiff && !diffSame" class="pe__diff">
-              <span v-if="diskDiff.added.length" class="pe__diff-row"><span class="pe__diff-label">Only on disk</span><code>{{ diskDiff.added.join(', ') }}</code></span>
-              <span v-if="diskDiff.removed.length" class="pe__diff-row"><span class="pe__diff-label">Only in yours</span><code>{{ diskDiff.removed.join(', ') }}</code></span>
-              <span v-if="diskDiff.changed.length" class="pe__diff-row"><span class="pe__diff-label">Different values</span><code>{{ diskDiff.changed.join(', ') }}</code></span>
+              <span v-if="diskDiff.added.length" class="pe__diff-row"><span class="pe__diff-label">{{ t('settings.env.onlyDisk') }}</span><code>{{ diskDiff.added.join(', ') }}</code></span>
+              <span v-if="diskDiff.removed.length" class="pe__diff-row"><span class="pe__diff-label">{{ t('settings.env.onlyYours') }}</span><code>{{ diskDiff.removed.join(', ') }}</code></span>
+              <span v-if="diskDiff.changed.length" class="pe__diff-row"><span class="pe__diff-label">{{ t('settings.env.different') }}</span><code>{{ diskDiff.changed.join(', ') }}</code></span>
             </span>
-            <span v-else-if="diffSame" class="pe__diff">Both have the same variables and values; only comments or layout differ.</span>
+            <span v-else-if="diffSame" class="pe__diff">{{ t('settings.env.same') }}</span>
             <span v-if="diskError" class="pe__msg-error selectable" role="alert">{{ diskError }}</span>
           </p>
           <div class="pe__msg-actions">
-            <UiButton size="sm" variant="ghost" :loading="diskBusy" :aria-expanded="!!diskDiff" @click="compareWithDisk">{{ diskDiff ? 'Hide differences' : 'Compare with disk' }}</UiButton>
-            <UiButton size="sm" :disabled="doc.saving" @click="reloadFromDisk">Use the disk version</UiButton>
-            <UiButton size="sm" variant="danger" :loading="doc.saving" @click="save(true)">Overwrite the file</UiButton>
+            <UiButton size="sm" variant="ghost" :loading="diskBusy" :aria-expanded="!!diskDiff" @click="compareWithDisk">{{ diskDiff ? t('settings.env.hideDiff') : t('settings.env.compare') }}</UiButton>
+            <UiButton size="sm" :disabled="doc.saving" @click="reloadFromDisk">{{ t('settings.env.useDisk') }}</UiButton>
+            <UiButton size="sm" variant="danger" :loading="doc.saving" @click="save(true)">{{ t('settings.env.overwrite') }}</UiButton>
           </div>
         </div>
         <div v-else-if="doc.error" class="pe__msg is-danger" role="alert">
           <CircleAlert class="pe__msg-icon" aria-hidden="true" />
           <p class="pe__msg-text selectable">{{ doc.error }}</p>
           <div class="pe__msg-actions">
-            <UiButton size="sm" variant="ghost" @click="doc.error = null">Dismiss</UiButton>
+            <UiButton size="sm" variant="ghost" @click="doc.error = null">{{ t('settings.env.dismiss') }}</UiButton>
           </div>
         </div>
 
 
-        <p v-if="doc.loading && !doc.saved && !dirty" class="pe__note" role="status">Reading {{ current.name }}…</p>
+        <p v-if="doc.loading && !doc.saved && !dirty" class="pe__note" role="status">{{ t('settings.env.reading', { name: current.name }) }}</p>
         <p v-else-if="doc.unreadable" class="pe__note">
-          {{ current.name }} {{ doc.unreadable === 'binary' ? 'is not a text file' : 'is too large' }}, so it can't be edited here.
+          {{ doc.unreadable === 'binary' ? t('settings.env.binary', { name: current.name }) : t('settings.env.tooLarge', { name: current.name }) }}
         </p>
         <template v-else>
           <ProjectEnvFields
@@ -492,9 +500,11 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
           />
           <div v-else-if="!revealed" class="pe__msg pe__gate" :style="{ '--rows': rawRows }">
             <EyeOff class="pe__msg-icon" aria-hidden="true" />
-            <p class="pe__msg-text">The values in <code>{{ current.name }}</code> are hidden.</p>
+            <i18n-t keypath="settings.env.hidden" tag="p" scope="global" class="pe__msg-text">
+              <template #file><code>{{ current.name }}</code></template>
+            </i18n-t>
             <div class="pe__msg-actions">
-              <UiButton size="sm" @click="showToEdit"><Eye />Show values to edit</UiButton>
+              <UiButton size="sm" @click="showToEdit"><Eye />{{ t('settings.env.showToEdit') }}</UiButton>
             </div>
           </div>
           <textarea
@@ -503,7 +513,7 @@ const tabId = (name: string) => `${panelId}-tab-${encodeURIComponent(name)}`
             v-model="rawText"
             :rows="rawRows"
             class="pe__raw"
-            :aria-label="`${current.name} as text`"
+            :aria-label="t('settings.env.asText', { name: current.name })"
             autocomplete="off"
             autocapitalize="off"
             spellcheck="false"

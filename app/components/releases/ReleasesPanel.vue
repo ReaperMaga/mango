@@ -22,6 +22,7 @@ import {
  * the open entry's run current.
  */
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const releases = useReleases()
 const links = useLinks()
@@ -43,9 +44,8 @@ const gitlab = computed(() => provider.value === 'gitlab')
 const site = computed(() => siteName(provider.value, data.value?.host))
 /** The releases pages: GitLab keeps them under `/-/`. */
 const releasesUrl = computed(() => (webBase.value ? `${webBase.value}${gitlab.value ? '/-' : ''}/releases` : null))
-/** What the run is called, and its actions: GitLab retries a pipeline's failed jobs, or runs the ref again. */
-const runWord = computed(() => (gitlab.value ? 'pipeline' : 'run'))
-const rerunLabel = (failed: boolean) => (gitlab.value ? (failed ? 'Retry' : 'Run again') : (failed ? 'Re-run failed jobs' : 'Re-run'))
+/** A run's actions: GitLab retries a pipeline's failed jobs, or runs the ref again. */
+const rerunLabel = (failed: boolean) => (failed ? t(`releases.rerunFailed.${provider.value}`) : t(`releases.rerun.${provider.value}`))
 
 /* ---------- the open entry ---------- */
 const focusedKey = computed(() => (releases.focused && releases.focused.path === path.value ? releases.focused.key : null))
@@ -105,7 +105,7 @@ watch(() => `${path.value}|${list.value?.fetchedAt}|${sorted.value?.inProgress.m
 /* ---------- a job's log, over the entry ---------- */
 const backButton = ref<HTMLElement | null>(null)
 async function openJob(j: GhRunJob) {
-  releases.openJob(j, run.value?.workflow ?? 'Release')
+  releases.openJob(j, run.value?.workflow ?? t('releases.workflow'))
   await nextTick()
   backButton.value?.focus()
 }
@@ -163,14 +163,19 @@ function rowTone(e: ReleaseEntry) {
 }
 function rowTitle(e: ReleaseEntry) {
   if (e.kind === 'release') return e.release.name
-  return e.why === 'trial' ? 'Trial build' : (e.run.headBranch ?? 'Release build')
+  return e.why === 'trial' ? t('releases.trialBuild') : (e.run.headBranch ?? t('releases.releaseBuild'))
+}
+/** The state's word of a row in progress. */
+function stateWord(e: ReleaseEntry) {
+  const { mark } = entryState(e)
+  return mark === 'tag' ? t('releases.draft') : t(`releases.state.${mark}`)
 }
 function jobsOf(e: ReleaseEntry) { return path.value ? releases.run(path.value, e.key)?.detail?.jobs ?? null : null }
 function jobsLine(e: ReleaseEntry) {
   const jobs = jobsOf(e)
   if (!jobs?.length) return null
   const done = jobs.filter(j => !isActive(j.state)).length
-  return `${done} of ${jobs.length} jobs`
+  return t('releases.jobsDone', { done, total: jobs.length })
 }
 function elapsed(e: ReleaseEntry) {
   const r = e.run
@@ -182,12 +187,12 @@ function elapsed(e: ReleaseEntry) {
 function filesLine(e: ReleaseEntry) {
   if (e.kind !== 'release') return null
   const n = groupAssets(e.release.assets).files
-  return n ? `${n} file${n === 1 ? '' : 's'}` : null
+  return n ? t('releases.files', n) : null
 }
 function downloadsLine(e: ReleaseEntry) {
   if (e.kind !== 'release') return null
   const n = totalDownloads(e.release.assets)
-  return n ? `${n} download${n === 1 ? '' : 's'}` : null
+  return n ? t('releases.downloads', n) : null
 }
 const when = (e: ReleaseEntry) => (e.kind === 'release' ? shortAgo(Date.parse(e.release.publishedAt ?? e.release.createdAt), now.value) : null)
 const canShowOlder = computed(() => !!data.value && !!list.value && data.value.releases.length >= list.value.count && list.value.count < 100)
@@ -197,21 +202,21 @@ const empty = computed(() => !!sorted.value && !sorted.value.inProgress.length &
 const backLabel = computed(() => {
   const e = entry.value
   if (!e) return ''
-  return e.kind === 'release' ? e.release.tag : e.why === 'trial' ? 'Trial build' : e.run.headBranch ?? ''
+  return e.kind === 'release' ? e.release.tag : e.why === 'trial' ? t('releases.trialBuild') : e.run.headBranch ?? ''
 })
 </script>
 
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
-  <section class="rp" aria-label="Releases" @keydown.esc="releases.job ? closeJob() : undefined">
+  <section class="rp" :aria-label="t('releases.title')" @keydown.esc="releases.job ? closeJob() : undefined">
     <header class="rp__head">
       <button
         v-if="releases.job && entry"
         ref="backButton"
         type="button"
         class="rp__back"
-        :aria-label="`Back to ${backLabel}`"
-        :title="`Back to ${backLabel} (Esc)`"
+        :aria-label="t('releases.back', { name: backLabel })"
+        :title="`${t('releases.back', { name: backLabel })} (Esc)`"
         @click="closeJob"
       >
         <ArrowLeft aria-hidden="true" />
@@ -219,17 +224,17 @@ const backLabel = computed(() => {
         <span class="rp__back-title">{{ releases.job.name }}</span>
       </button>
       <template v-else>
-        <UiIconButton v-if="entry" label="All releases" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <h2 class="rp__title" :title="repoName || undefined">Releases</h2>
+        <UiIconButton v-if="entry" :label="t('releases.all')" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <h2 class="rp__title" :title="repoName || undefined">{{ t('releases.title') }}</h2>
         <div v-if="path" class="rp__tools">
-          <UiIconButton label="Read again" :class="{ 'rp__spinning': refreshing }" :disabled="refreshing || undefined" @click="refresh"><RefreshCw /></UiIconButton>
-          <UiIconButton v-if="releasesUrl && !entry" :label="`Releases on ${site}`" @click="openExternal(releasesUrl)"><ExternalLink /></UiIconButton>
+          <UiIconButton :label="t('releases.readAgain')" :class="{ 'rp__spinning': refreshing }" :disabled="refreshing || undefined" @click="refresh"><RefreshCw /></UiIconButton>
+          <UiIconButton v-if="releasesUrl && !entry" :label="t('releases.onSite', { site })" @click="openExternal(releasesUrl)"><ExternalLink /></UiIconButton>
         </div>
       </template>
     </header>
 
-    <div v-if="plastic" class="rp__quiet"><p>Unity VCS projects have no GitHub or GitLab releases.</p></div>
-    <div v-else-if="!path" class="rp__quiet"><p>Open a project to see its releases.</p></div>
+    <div v-if="plastic" class="rp__quiet"><p>{{ t('releases.plastic') }}</p></div>
+    <div v-else-if="!path" class="rp__quiet"><p>{{ t('releases.noProject') }}</p></div>
 
     <!-- A job's log -->
     <template v-else-if="releases.job && entry">
@@ -237,8 +242,8 @@ const backLabel = computed(() => {
         <LinksCheckLog :key="releases.job.url" :check="releases.job" />
       </div>
       <footer class="rp__foot">
-        <UiButton size="sm" @click="openExternal(jobDetail?.job?.url || releases.job.url)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
+        <UiButton size="sm" @click="openExternal(jobDetail?.job?.url || releases.job.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />{{ t('common.actions.refresh') }}</UiButton>
       </footer>
     </template>
 
@@ -253,19 +258,19 @@ const backLabel = computed(() => {
           <UiButton size="sm" :loading="acting === 'rerun-failed' || acting === 'rerun'" @click="act(run.state === 'failure' ? 'rerun-failed' : 'rerun')">
             <RotateCcw v-if="!acting" aria-hidden="true" />{{ rerunLabel(run.state === 'failure') }}
           </UiButton>
-          <UiButton v-if="pageUrl" size="sm" variant="ghost" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
+          <UiButton v-if="pageUrl" size="sm" variant="ghost" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site }) }}</UiButton>
         </template>
-        <UiButton v-else-if="pageUrl" size="sm" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />Open on {{ site }}</UiButton>
+        <UiButton v-else-if="pageUrl" size="sm" @click="openExternal(pageUrl)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site }) }}</UiButton>
         <UiButton
           v-if="runActive"
           size="sm"
           :variant="confirmCancel ? 'danger' : 'ghost'"
           class="rp__push"
           :loading="acting === 'cancel'"
-          :title="confirmCancel ? `Click again to stop the ${runWord} on ${site}` : `Stop the ${runWord} on ${site}`"
+          :title="confirmCancel ? t(`releases.stopAgain.${provider}`, { site }) : t(`releases.stop.${provider}`, { site })"
           @click="cancelRun"
         >
-          <CircleStop v-if="acting !== 'cancel'" aria-hidden="true" />{{ confirmCancel ? `Cancel the ${runWord}?` : `Cancel ${runWord}` }}
+          <CircleStop v-if="acting !== 'cancel'" aria-hidden="true" />{{ confirmCancel ? t(`releases.cancelAsk.${provider}`) : t(`releases.cancel.${provider}`) }}
         </UiButton>
       </footer>
     </template>
@@ -274,33 +279,32 @@ const backLabel = computed(() => {
     <div v-else-if="!data && list?.error" class="rp__quiet">
       <p class="selectable">{{ list.error }}</p>
       <LinksHostingButton :error="list.error" />
-      <UiButton size="sm" variant="ghost" @click="refresh"><RefreshCw aria-hidden="true" />Try again</UiButton>
+      <UiButton size="sm" variant="ghost" @click="refresh"><RefreshCw aria-hidden="true" />{{ t('common.actions.retry') }}</UiButton>
     </div>
-    <div v-else-if="!data" class="rp__skeleton" aria-busy="true" :aria-label="`Reading from ${forgeName(provider)}`">
+    <div v-else-if="!data" class="rp__skeleton" aria-busy="true" :aria-label="t('links.reading', { forge: forgeName(provider) })">
       <span v-for="w in [58, 74, 49, 66, 54]" :key="w"><i /><b :style="{ width: `${w}%` }" /></span>
     </div>
 
     <!-- No releases -->
     <div v-else-if="empty" class="rp__empty">
-      <h3>No releases yet</h3>
-      <p v-if="gitlab">When you publish a release on {{ site }} it shows here, with its files and notes. If a pipeline builds it from a tag, you can watch that pipeline here too.</p>
-      <p v-else>When you publish a release on {{ site }} it shows here, with its files and notes. If a workflow builds it from a tag, you can watch that run here too.</p>
+      <h3>{{ t('releases.none') }}</h3>
+      <p>{{ t(`releases.noneHint.${provider}`, { site }) }}</p>
       <pre class="rp__cmd selectable"><span class="rp__prompt" aria-hidden="true">$ </span>git tag v1.0.0 &amp;&amp; git push origin v1.0.0</pre>
-      <p>Or start one on {{ site }}, or ask an agent to cut it.</p>
-      <UiButton v-if="releasesUrl" size="sm" @click="openExternal(`${releasesUrl}/new`)"><ExternalLink aria-hidden="true" />New release on {{ site }}</UiButton>
+      <p>{{ t('releases.noneStart', { site }) }}</p>
+      <UiButton v-if="releasesUrl" size="sm" @click="openExternal(`${releasesUrl}/new`)"><ExternalLink aria-hidden="true" />{{ t('releases.new', { site }) }}</UiButton>
     </div>
 
     <!-- The list -->
     <div v-else class="rp__scroll rp__list">
-      <p v-if="list?.error" class="rp__stale" role="alert">Could not refresh: {{ list.error }}</p>
+      <p v-if="list?.error" class="rp__stale" role="alert">{{ t('links.couldNotRefresh', { error: list.error }) }}</p>
       <template v-for="group in (['inProgress', 'releases'] as const)" :key="group">
         <template v-if="sorted && sorted[group].length">
           <button type="button" class="rp__group" :aria-expanded="shown[group]" @click="shown[group] = !shown[group]">
             <component :is="shown[group] ? ChevronDown : ChevronRight" aria-hidden="true" />
-            {{ group === 'inProgress' ? 'In progress' : 'Releases' }}
+            {{ group === 'inProgress' ? t('releases.inProgress') : t('releases.title') }}
             <span class="rp__group-count tabular">{{ sorted[group].length }}</span>
           </button>
-          <ul v-if="shown[group]" class="rp__rows" :aria-label="group === 'inProgress' ? 'In progress' : 'Releases'">
+          <ul v-if="shown[group]" class="rp__rows" :aria-label="group === 'inProgress' ? t('releases.inProgress') : t('releases.title')">
             <li v-for="e in sorted[group]" :key="e.key">
               <button type="button" class="rp__row" @click="open(e)">
                 <component
@@ -312,18 +316,18 @@ const backLabel = computed(() => {
                 <span class="rp__text">
                   <span class="rp__line">
                     <span class="rp__name">{{ rowTitle(e) }}</span>
-                    <span v-if="e.kind === 'release' && e.release.tag === latestTag" class="rp__pill is-latest">Latest</span>
-                    <span v-if="e.kind === 'release' && e.release.prerelease" class="rp__pill is-pre">Pre-release</span>
-                    <span v-if="e.kind === 'release' && e.release.draft" class="rp__pill is-draft">Draft</span>
-                    <span v-else-if="e.kind === 'release' && !e.release.publishedAt" class="rp__pill is-pre" title="Its release date is still to come">Upcoming</span>
+                    <span v-if="e.kind === 'release' && e.release.tag === latestTag" class="rp__pill is-latest">{{ t('releases.latest') }}</span>
+                    <span v-if="e.kind === 'release' && e.release.prerelease" class="rp__pill is-pre">{{ t('releases.prerelease') }}</span>
+                    <span v-if="e.kind === 'release' && e.release.draft" class="rp__pill is-draft">{{ t('releases.draft') }}</span>
+                    <span v-else-if="e.kind === 'release' && !e.release.publishedAt" class="rp__pill is-pre" :title="t('releases.upcomingHint')">{{ t('releases.upcoming') }}</span>
                   </span>
                   <span class="rp__sub">
-                    <span v-if="group === 'inProgress'" class="rp__word" :class="`is-${entryState(e).tone}`">{{ entryState(e).word }}</span>
+                    <span v-if="group === 'inProgress'" class="rp__word" :class="`is-${entryState(e).tone}`">{{ stateWord(e) }}</span>
                     <span v-if="e.kind === 'release'" class="rp__tag">{{ e.release.tag }}</span>
                     <span v-else-if="e.run.headBranch" class="rp__tag">{{ e.run.headBranch }}</span>
                     <template v-if="group === 'inProgress'">
                       <span v-if="jobsLine(e)" class="tabular">{{ jobsLine(e) }}</span>
-                      <span v-else-if="e.kind === 'run' && e.why === 'trial'" class="rp__grow">Run by hand, no release</span>
+                      <span v-else-if="e.kind === 'run' && e.why === 'trial'" class="rp__grow">{{ t('releases.byHand') }}</span>
                     </template>
                     <template v-else>
                       <span v-if="filesLine(e)">{{ filesLine(e) }}</span>
@@ -340,7 +344,7 @@ const backLabel = computed(() => {
           </ul>
         </template>
       </template>
-      <UiButton v-if="canShowOlder" size="sm" variant="ghost" class="rp__older" :loading="loadingOlder" @click="showOlder">Show older</UiButton>
+      <UiButton v-if="canShowOlder" size="sm" variant="ghost" class="rp__older" :loading="loadingOlder" @click="showOlder">{{ t('releases.showOlder') }}</UiButton>
     </div>
   </section>
 </template>

@@ -6,16 +6,17 @@ import SettingsSwitch from './SettingsSwitch.vue'
 import SettingsLanguageServers from './SettingsLanguageServers.vue'
 
 /** Settings > Editor: how file tabs save and move, and whether they may use language servers. */
+const { t } = useI18n()
 const ws = useWorkspace()
 </script>
 
 <template>
-  <SettingsSection title="Editor" description="How files behave when you edit them in Mango.">
-    <h3 class="head">Saving</h3>
+  <SettingsSection :title="t('settings.nav.editor')" :description="t('settings.editor.description')">
+    <h3 class="head">{{ t('settings.editor.saving') }}</h3>
     <div class="card">
       <SettingsRow
-        label="Save files automatically"
-        hint="Saves shortly after you stop typing, when you switch away, and before agents and Git use your files. A file that changed on disk is never overwritten without asking."
+        :label="t('settings.editor.autoSave')"
+        :hint="t('settings.editor.autoSaveHint')"
       >
         <template #default="{ labelId }">
           <SettingsSwitch :model-value="ws.editorAutoSave" :labelledby="labelId" @update:model-value="v => ws.setEditor({ editorAutoSave: v })" />
@@ -23,18 +24,18 @@ const ws = useWorkspace()
       </SettingsRow>
     </div>
 
-    <h3 class="head">Cursor</h3>
+    <h3 class="head">{{ t('settings.terminal.cursor') }}</h3>
     <div class="card">
-      <SettingsRow label="Smooth caret" hint="The caret glides as it moves. It stays still when motion is reduced.">
+      <SettingsRow :label="t('settings.editor.smooth')" :hint="t('settings.editor.smoothHint')">
         <template #default="{ labelId }">
           <SettingsSwitch :model-value="ws.editorSmoothCaret" :labelledby="labelId" @update:model-value="v => ws.setEditor({ editorSmoothCaret: v })" />
         </template>
       </SettingsRow>
     </div>
 
-    <h3 class="head">Code intelligence</h3>
+    <h3 class="head">{{ t('settings.editor.intelligence') }}</h3>
     <div class="card">
-      <SettingsRow label="Language servers" hint="Smarter completion, errors and go to definition. Each project asks first, as a language server can run the project's code.">
+      <SettingsRow :label="t('settings.editor.servers')" :hint="t('settings.editor.serversHint')">
         <template #default="{ labelId }">
           <SettingsSwitch :model-value="ws.editorLanguageServers" :labelledby="labelId" @update:model-value="v => ws.setEditor({ editorLanguageServers: v })" />
         </template>

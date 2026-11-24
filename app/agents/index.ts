@@ -9,6 +9,7 @@ import { mergeContext } from '~/agents/context'
 import { forAgent, forRemoteAgent, makeThumb, type DroppedAttachment } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
+import { t } from '~/i18n'
 import { emitAgentEvent, pluginMcpFor, pluginSystemPrompt } from '~/plugin-host/registry'
 
 /**
@@ -172,7 +173,7 @@ export async function listAgentCommands(agent: AgentId, cwd: string): Promise<Ag
  */
 export async function readAgentUsage(agent: AgentId, remote: EnvRemote | null = null): Promise<AgentUsage> {
   const adapter = await adapters[agent]()
-  if (!adapter.readUsage) throw new Error(`${agent} cannot report its usage.`)
+  if (!adapter.readUsage) throw new Error(t('chat.errors.usage', { agent }))
   // No folder: the agent's home, here or in the environment (`agent_spawn`).
   return adapter.readUsage(spawnAt(agent, { cwd: '', remote }))
 }
