@@ -309,6 +309,9 @@ function startsTurn(line: string): boolean {
   return ['assistant', 'user', 'stream_event', 'control_request', 'result'].includes(m?.type) || (m?.type === 'system' && m.subtype === 'init')
 }
 
+/** A command Claude Code ran without the model, and what it said. */
+const LOCAL_COMMAND = /^<(command-name|local-command-)/
+
 /** What comes after a process's last message is short bookkeeping; the larger read is for a transcript that surprises. */
 const TAIL_BYTES = [256 * 1024, 16 * 1024 * 1024]
 
@@ -323,7 +326,7 @@ function lastMessage(lines: string[]): string | null {
     try { m = JSON.parse(lines[i]!) } catch { continue }
     if ((m?.type !== 'user' && m?.type !== 'assistant') || typeof m.uuid !== 'string' || m.isMeta || m.isSidechain) continue
     const content = m.message?.content
-    if (typeof content === 'string' && /^<(command-name|local-command-)/.test(content)) continue
+    if (typeof content === 'string' && LOCAL_COMMAND.test(content)) continue
     return m.uuid
   }
   return null
@@ -349,13 +352,25 @@ async function missedMessages(p: KeptProcess, read: (maxBytes: number) => Promis
 /** How long a kept process may take to be ready before a new one is started instead. */
 const WAKE_MS = 3000
 
+/** What a turn wants of the process it goes to. */
+interface Wanted { mode: string; model: string; effort: string | null }
+
+/**
+ * Whether a process can be asked to go on at another model or effort. Not back to what Claude Code would pick
+ * by itself: what a running process is given then is not what a new one starts with.
+ */
+const canSwitch = (p: KeptProcess, model: string, effort: string | null) =>
+  (p.model === model || model !== 'default') && (p.effort === effort || effort !== null)
+
 /**
  * Make a kept process ready for a turn. The session may have left the mode it was started in (a plan
- * that was approved, a plan mode the agent entered), so it is always put back. False: use another process
- * (also when `missed` says the session went on without this one).
+ * that was approved, a plan mode the agent entered), so it is always put back. Another model or effort counts
+ * only once the process says it runs at it: an effort it does not know is accepted, and ignored.
+ * False: use another process (also when `missed` says the session went on without this one).
  */
-function wake(p: KeptProcess, mode: string, missed: () => Promise<boolean>): Promise<boolean> {
+function wake(p: KeptProcess, to: Wanted, missed: () => Promise<boolean>): Promise<boolean> {
   return new Promise((resolve) => {
+    const asked = new Map<string, (answer: any) => void>()
     let over = false
     const done = (ok: boolean) => {
       if (over) return
@@ -367,18 +382,39 @@ function wake(p: KeptProcess, mode: string, missed: () => Promise<boolean>): Pro
     const timer = setTimeout(() => done(false), WAKE_MS)
     p.handlers = {
       onLine(line) {
-        if (startsTurn(line)) return done(false)
         let m: any
         try { m = JSON.parse(line) } catch { return }
-        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-wake') return
-        if (m.response.subtype !== 'success' || (m.response.response?.mode ?? mode) !== mode) return done(false)
-        // Last, as close to the prompt as can be.
-        void missed().then(yes => done(!yes))
+        // Its note that the model was set, as the user's own `/model` leaves one. Anything else like a turn is one.
+        if (m?.type === 'user' && m.isReplay && asked.size && LOCAL_COMMAND.test(String(m.message?.content))) return
+        if (startsTurn(line)) return done(false)
+        if (m?.type !== 'control_response') return
+        const answer = asked.get(m.response?.request_id)
+        // Refused: nothing more is asked.
+        if (answer && m.response.subtype !== 'success') done(false)
+        else answer?.(m.response.response ?? {})
       },
       onExit: () => done(false),
     }
-    p.transport.write(JSON.stringify({ type: 'control_request', request_id: 'mango-wake', request: { subtype: 'set_permission_mode', mode } }))
-      .catch(() => done(false))
+    /** The process's answer; a refusal, or none, ends it all. */
+    const ask = (request: Record<string, unknown>) => new Promise<any>((answered) => {
+      const id = `mango-wake-${asked.size}`
+      asked.set(id, answered)
+      p.transport.write(JSON.stringify({ type: 'control_request', request_id: id, request })).catch(() => done(false))
+    })
+    void (async () => {
+      if (((await ask({ subtype: 'set_permission_mode', mode: to.mode })).mode ?? to.mode) !== to.mode) return done(false)
+      if (p.model !== to.model || p.effort !== to.effort) {
+        const named = p.model === to.model ? null : (await ask({ subtype: 'set_model', model: to.model })).model ?? ''
+        if (p.effort !== to.effort) await ask({ subtype: 'apply_flag_settings', settings: { effortLevel: to.effort } })
+        const { applied } = await ask({ subtype: 'get_settings' })
+        if (named !== null && (!named || applied?.model !== named)) return done(false)
+        if (to.effort !== null && applied?.effort !== to.effort) return done(false)
+        p.model = to.model
+        p.effort = to.effort
+      }
+      // Last, as close to the prompt as can be.
+      done(!(await missed()))
+    })()
   })
 }
 
@@ -936,18 +972,23 @@ function run(options: AgentRunOptions): AgentRun {
     '--permission-prompt-tool', 'stdio',
     '--permission-mode', MODES[options.mode] ?? 'default',
   ]
-  if (options.model && options.model !== 'default') args.push('--model', options.model)
-  if (options.effort) args.push('--effort', options.effort)
+  const model = options.model || 'default'
+  const effort = options.effort || null
   // Mango's browser for this chat (tools that only read the page run without asking) and the user's
   // MCP servers, for this session only. Their secrets travel in the environment, not in `args`.
   const mcp = claudeMcp(options.mcpServers ?? [], options.browserMcp)
   args.push(...mcp.args)
   if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
-  /** What a process was started with, and the conversation it holds: a later turn must share all of it. */
+  /**
+   * What a process was started with, and the conversation it holds: a later turn must share all of it. Not the
+   * model and the effort, which a process can be asked to change (`canSwitch`).
+   */
   const processKey = (session: string | null) => JSON.stringify([cwd, args, mcp.env, session])
   const readDirs = options.readDirs ?? []
   const startArgs = [
     ...args,
+    ...(model !== 'default' ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
     ...(options.sessionId ? ['--resume', options.sessionId] : []),
     // Attachments live outside the project: let Claude Code read them without asking.
     ...readDirs.flatMap(dir => ['--add-dir', dir]),
@@ -974,7 +1015,7 @@ function run(options: AgentRunOptions): AgentRun {
 
   const start = () => {
     // Its output goes through `handlers`, which the keeper and then the next run put their own in.
-    const p = { handlers, readDirs, seen: new Set<string>(), costUsd: 0, wakes: startsTurn }
+    const p = { handlers, readDirs, model, effort, seen: new Set<string>(), costUsd: 0, wakes: startsTurn }
     options.spawn(startArgs, {
       onLine: line => p.handlers.onLine(line),
       onStderr: line => p.handlers.onStderr?.(line),
@@ -993,12 +1034,12 @@ function run(options: AgentRunOptions): AgentRun {
   }
 
   let grantedDirs = new Set(readDirs)
-  const kept = options.keeper?.take(processKey(options.sessionId), p => readDirs.every(d => p.readDirs.includes(d)))
+  const kept = options.keeper?.take(processKey(options.sessionId), p => canSwitch(p, model, effort) && readDirs.every(d => p.readDirs.includes(d)))
   if (!kept) start()
   else {
     const { readTranscript, sessionId: session } = options
     const missed = async () => !!readTranscript && !!session && missedMessages(kept, maxBytes => readTranscript(session, maxBytes))
-    void wake(kept, MODES[options.mode] ?? 'default', missed).then((awake) => {
+    void wake(kept, { mode: MODES[options.mode] ?? 'default', model, effort }, missed).then((awake) => {
       if (!awake || ended || interrupted) kept.transport.kill().catch(() => {})
       if (ended) return
       if (interrupted) return end('stopped')
