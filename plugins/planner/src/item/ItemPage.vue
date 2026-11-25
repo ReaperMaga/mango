@@ -74,7 +74,13 @@ function chatMenu(e: MouseEvent) {
   void mango.ui.contextMenu(e.currentTarget as HTMLElement, [...rows, { label: strings.startChat, icon: 'message-square-plus', divider: true, onSelect: chat }])
 }
 function menu(e: MouseEvent) {
-  void itemMenu(planner, props.collection, [props.itemId], e.currentTarget as HTMLElement, { open: null, deleted: () => emit('close') })
+  void itemMenu(planner, props.collection, [props.itemId], e.currentTarget as HTMLElement, {
+    open: null,
+    rows: [body.value?.asMarkdown
+      ? { label: strings.editAsRich, icon: 'pilcrow', onSelect: () => body.value?.toggle() }
+      : { label: strings.editAsMarkdown, icon: 'code', onSelect: () => body.value?.toggle() }],
+    deleted: () => emit('close'),
+  })
 }
 
 /* ---------- focus and Escape */
@@ -165,7 +171,7 @@ const collectionName = computed(() => props.collection.name || strings.untitled)
         </ul>
 
         <hr class="pl-page__rule">
-        <ItemBody :key="item.id" ref="body" :collection="collection" :item="item" :readonly="readonly" />
+        <ItemBody :key="item.id" ref="body" :collection="collection" :item="item" :readonly="readonly" @leave="root?.focus({ preventScroll: true })" />
       </div>
     </div>
 

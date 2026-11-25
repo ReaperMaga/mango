@@ -107,6 +107,9 @@ export function eventCombo(e: KeyboardEvent): string | null {
   return ['Mod', e.altKey ? 'Alt' : '', e.shiftKey ? 'Shift' : '', upper].filter(Boolean).join('+')
 }
 
+/** Whether one of the `data-own-keys` around the focus (`"Mod+B Mod+K"`, innermost first) has this key for itself. */
+export const ownsKey = (claims: readonly string[], combo: string): boolean => claims.some(c => c.split(/\s+/).includes(combo))
+
 /** Binding parts as the platform names them: `['Ctrl', 'Shift', 'G']`, or `['⌘', '⇧', 'G']` on a Mac. */
 export function comboParts(combo: string): string[] {
   const mac = isMac()

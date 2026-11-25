@@ -222,6 +222,14 @@ mango.shortcuts.register({
 })
 ```
 
+An editor of your own can keep keys for itself (since 0.4.2): while the focus is in an element with `data-own-keys`, or
+inside one, Mango's and plugins' shortcuts leave those keys to it. Claim only what the editor uses, written as shortcuts
+are, separated by spaces:
+
+```html
+<div contenteditable="true" data-own-keys="Mod+B Mod+I Mod+K"></div>
+```
+
 ### Chats
 
 Reading and driving chats:

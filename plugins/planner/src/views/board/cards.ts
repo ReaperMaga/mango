@@ -39,6 +39,9 @@ export function stepIndex(items: readonly WithId[], moving: ReadonlySet<string>,
 export function previewText(body: string, max = 180): string {
   const text = body.slice(0, max * 4)
     .replace(/`{3}[^\n]*\n?|~{3}[^\n]*\n?/g, ' ')
+    // Dividers, and a table's rule and bars.
+    .replace(/^[ \t]*(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|(?=.*\|)[|:\- \t]+)$/gm, ' ')
+    .replace(/^[ \t]*\|(.*)\|[ \t]*$/gm, (_, cells: string) => cells.replaceAll('|', ' '))
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
     .replace(/^[ \t]*(?:#{1,6}|>|[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?/gm, '')
     .replace(/[*`~]+|(?<![\p{L}\p{N}])_+|_+(?![\p{L}\p{N}])/gu, '')

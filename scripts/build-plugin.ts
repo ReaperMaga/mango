@@ -48,7 +48,7 @@ export function builtHash(id: string, file: 'main.js' | 'styles.css'): string | 
 
 export async function buildPlugin(id: string): Promise<{ 'main.js': string; 'styles.css': string }> {
   // Only here: the test reads the hashes without loading Vite.
-  const [{ build }, { default: vue }] = await Promise.all([import('vite'), import('@vitejs/plugin-vue')])
+  const [{ build, minifySync }, { default: vue }] = await Promise.all([import('vite'), import('@vitejs/plugin-vue')])
   const hash = sourceHash(id)
   const result = await build({
     configFile: false,
@@ -60,6 +60,19 @@ export async function buildPlugin(id: string): Promise<{ 'main.js': string; 'sty
         name: 'lf',
         enforce: 'pre',
         transform: code => (code.includes('\r\n') ? { code: toLf(code), map: null } : null),
+      },
+      {
+        // What a plugin is built with is there only to run; its own source stays readable.
+        name: 'small-packages',
+        transform: {
+          order: 'post',
+          handler: (code, id) => {
+            if (!/[\/]node_modules[\/][^?]*\.m?js$/.test(id)) return null
+            const out = minifySync('package.mjs', code, { module: true, codegen: { removeWhitespace: true, legalComments: 'none' } })
+            if (out.errors.length) throw new Error(`${id}: ${out.errors[0]!.message}`)
+            return { code: out.code, map: null }
+          },
+        },
       },
       vue({ isProduction: true, features: { componentIdGenerator: 'filepath' } }),
     ],

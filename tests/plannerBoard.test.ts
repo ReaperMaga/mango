@@ -34,3 +34,9 @@ test('the tasks of a body are counted', () => {
   assert.deepEqual(taskCount('- [x] a\n  * [ ] b\n1. [X] c\n[ ] not one\n- plain'), { done: 2, all: 3 })
   assert.equal(taskCount('text'), null)
 })
+
+test('a preview leaves out dividers and the bars of a table', () => {
+  assert.equal(previewText('One\n\n---\n\nTwo'), 'One Two')
+  assert.equal(previewText('| A | B |\n| --- | :-: |\n| 1 | 2 |'), 'A B 1 2')
+  assert.equal(previewText('a | b -- c'), 'a | b -- c')
+})
