@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. d08241a9f2b08f4c98b71e7a5a6b1d9d */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. 94ccb0b9256fea0f58ac0788c9431e40 */
 
 let active = null
 
@@ -1469,6 +1469,103 @@ var __plugin = (function(exports, vue) {
 			};
 		}
 	}), [["__scopeId", "data-v-f8b68696"]]);
+	// plugins/planner/src/ui/colors.ts
+	/** The planner's colours as CSS values that work in both themes, whatever colour the user made up. */
+	/** Categories, not chat states: the file tints, so nothing here reads as a chat's status. */
+	var TOKENS = {
+		blue: "var(--file-blue)",
+		green: "var(--file-green)",
+		yellow: "var(--file-yellow)",
+		orange: "var(--file-orange)",
+		red: "var(--file-red)",
+		purple: "var(--file-purple)",
+		pink: "color-mix(in oklab, var(--file-red) 50%, var(--file-purple))"
+	};
+	/**
+	* How far a colour may go, as OKLCH lightness: text dark enough for light grounds and light enough for dark ones,
+	* marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take the hue, at one
+	* lightness and with more of the colour (a faint mix of a dull one reads brown), so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
+	* tests/plannerColors.test.ts measures the contrast these give.
+	*/
+	var LIMITS = {
+		text: {
+			light: .46,
+			dark: .79,
+			chroma: .15
+		},
+		mark: {
+			light: .63,
+			dark: .56,
+			chroma: .2
+		},
+		fill: .65,
+		fillChroma: .27,
+		tint: 8,
+		strong: 18,
+		line: 28
+	};
+	/** The colour with its lightness held back for each theme (`color-scheme` follows Mango's). */
+	var held = (color, l) => `light-dark(oklch(from ${color} min(l, ${l.light}) min(c, ${l.chroma}) h), oklch(from ${color} max(l, ${l.dark}) min(c, ${l.chroma}) h))`;
+	var NEUTRAL = {
+		dot: "var(--fg-faint)",
+		fg: "var(--fg-muted)",
+		tint: "var(--bg-panel)",
+		line: "var(--line-soft)",
+		strong: "var(--bg-active)"
+	};
+	var made$1 = /* @__PURE__ */ new Map();
+	function colorVar(color) {
+		if (color === "neutral") return NEUTRAL;
+		let vars = made$1.get(color);
+		if (!vars) {
+			const source = isCustomColor(color) ? color : TOKENS[color];
+			const dot = held(source, LIMITS.mark);
+			const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.fillChroma}) h)`;
+			const mix = (percent, ground) => `color-mix(in oklab, ${fill} ${percent}%, var(${ground}))`;
+			vars = {
+				dot,
+				fg: held(source, LIMITS.text),
+				tint: mix(LIMITS.tint, "--bg-panel"),
+				line: mix(LIMITS.line, "--line-soft"),
+				strong: mix(LIMITS.strong, "--bg-panel")
+			};
+			if (made$1.size > 500) made$1.clear();
+			made$1.set(color, vars);
+		}
+		return vars;
+	}
+	/** The colour itself, not held back: in the picker. */
+	var rawColor = (color) => color === "neutral" ? NEUTRAL.dot : isCustomColor(color) ? color : TOKENS[color];
+	// plugins/planner/src/ui/optionIcon.ts
+	var made = /* @__PURE__ */ new Map();
+	/** An option's dot as a menu row's icon; an open ring for no option. The same component for a colour each time. */
+	function optionIcon(color) {
+		let icon = made.get(color);
+		if (!icon) {
+			const style = color === null ? {
+				fill: "none",
+				stroke: "var(--fg-faint)",
+				strokeWidth: "2",
+				strokeDasharray: "2.6 2.6"
+			} : {
+				fill: colorVar(color).dot,
+				stroke: "none"
+			};
+			icon = (0, vue.markRaw)(() => (0, vue.h)("svg", {
+				viewBox: "0 0 24 24",
+				width: 24,
+				height: 24
+			}, [(0, vue.h)("circle", {
+				cx: 12,
+				cy: 12,
+				r: 6.5,
+				style
+			})]));
+			if (made.size > 500) made.clear();
+			made.set(color, icon);
+		}
+		return icon;
+	}
 	// plugins/planner/src/item/itemMenu.ts
 	/** More choices than this do not belong in a menu. */
 	var MAX_OPTIONS = 8;
@@ -1512,6 +1609,7 @@ var __plugin = (function(exports, vue) {
 			const all = (id) => items.every((i) => valueOf(i, status) === id);
 			status.options.forEach((o, i) => rows.push({
 				label: o.name,
+				icon: optionIcon(o.color),
 				checked: all(o.id),
 				...i === 0 ? {
 					divider: true,
@@ -1521,6 +1619,7 @@ var __plugin = (function(exports, vue) {
 			}));
 			rows.push({
 				label: strings$3.none(status.name),
+				icon: optionIcon(null),
 				checked: all(null),
 				onSelect: () => set(null)
 			});
@@ -1948,73 +2047,6 @@ var __plugin = (function(exports, vue) {
 			};
 		}
 	}), [["__scopeId", "data-v-ed65ec1f"]]);
-	// plugins/planner/src/ui/colors.ts
-	/** The planner's colours as CSS values that work in both themes, whatever colour the user made up. */
-	/** Categories, not chat states: the file tints, so nothing here reads as a chat's status. */
-	var TOKENS = {
-		blue: "var(--file-blue)",
-		green: "var(--file-green)",
-		yellow: "var(--file-yellow)",
-		orange: "var(--file-orange)",
-		red: "var(--file-red)",
-		purple: "var(--file-purple)",
-		pink: "color-mix(in oklab, var(--file-red) 50%, var(--file-purple))"
-	};
-	/**
-	* How far a colour may go, as OKLCH lightness: text dark enough for light grounds and light enough for dark ones,
-	* marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take the hue, at one
-	* lightness and with more of the colour (a faint mix of a dull one reads brown), so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
-	* tests/plannerColors.test.ts measures the contrast these give.
-	*/
-	var LIMITS = {
-		text: {
-			light: .46,
-			dark: .79,
-			chroma: .15
-		},
-		mark: {
-			light: .63,
-			dark: .56,
-			chroma: .2
-		},
-		fill: .65,
-		fillChroma: .27,
-		tint: 8,
-		strong: 18,
-		line: 28
-	};
-	/** The colour with its lightness held back for each theme (`color-scheme` follows Mango's). */
-	var held = (color, l) => `light-dark(oklch(from ${color} min(l, ${l.light}) min(c, ${l.chroma}) h), oklch(from ${color} max(l, ${l.dark}) min(c, ${l.chroma}) h))`;
-	var NEUTRAL = {
-		dot: "var(--fg-faint)",
-		fg: "var(--fg-muted)",
-		tint: "var(--bg-panel)",
-		line: "var(--line-soft)",
-		strong: "var(--bg-active)"
-	};
-	var made = /* @__PURE__ */ new Map();
-	function colorVar(color) {
-		if (color === "neutral") return NEUTRAL;
-		let vars = made.get(color);
-		if (!vars) {
-			const source = isCustomColor(color) ? color : TOKENS[color];
-			const dot = held(source, LIMITS.mark);
-			const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.fillChroma}) h)`;
-			const mix = (percent, ground) => `color-mix(in oklab, ${fill} ${percent}%, var(${ground}))`;
-			vars = {
-				dot,
-				fg: held(source, LIMITS.text),
-				tint: mix(LIMITS.tint, "--bg-panel"),
-				line: mix(LIMITS.line, "--line-soft"),
-				strong: mix(LIMITS.strong, "--bg-panel")
-			};
-			if (made.size > 500) made.clear();
-			made.set(color, vars);
-		}
-		return vars;
-	}
-	/** The colour itself, not held back: in the picker. */
-	var rawColor = (color) => color === "neutral" ? NEUTRAL.dot : isCustomColor(color) ? color : TOKENS[color];
 	// plugins/planner/src/ui/hsv.ts
 	function hexToHsv(hex) {
 		const [r, g, b] = [
@@ -5087,7 +5119,7 @@ var __plugin = (function(exports, vue) {
 		create: "Create",
 		cancel: "Cancel",
 		icon: "Icon",
-		colour: "Colour",
+		colour: "Color",
 		description: "Description",
 		itemOne: "One of its items is called",
 		itemMany: "Several are called",
@@ -8793,8 +8825,8 @@ var __plugin = (function(exports, vue) {
 		open: "Open",
 		columnMenu: (group) => `Options of ${group}`,
 		rename: "Rename",
-		colour: "Colour…",
-		colourOf: (group) => `Colour of ${group}`,
+		colour: "Color…",
+		colourOf: (group) => `Color of ${group}`,
 		setDefault: (words) => `Default for new ${words}`,
 		collapse: "Collapse",
 		expand: (group) => `Expand ${group}`,

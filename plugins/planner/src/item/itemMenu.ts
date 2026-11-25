@@ -1,6 +1,7 @@
 import type { Planner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
 import { itemWord, propertyOf, valueOf, type Collection, type Item, type Property } from '../model.ts'
+import { optionIcon } from '../ui/optionIcon.ts'
 import { startChat } from './chats.ts'
 import { strings } from './strings.ts'
 
@@ -59,11 +60,12 @@ export function itemMenu(
     const all = (id: string | null) => items.every(i => valueOf(i, status) === id)
     status.options.forEach((o, i) => rows.push({
       label: o.name,
+      icon: optionIcon(o.color),
       checked: all(o.id),
       ...(i === 0 ? { divider: true, group: status.name } : {}),
       onSelect: () => set(o.id),
     }))
-    rows.push({ label: strings.none(status.name), checked: all(null), onSelect: () => set(null) })
+    rows.push({ label: strings.none(status.name), icon: optionIcon(null), checked: all(null), onSelect: () => set(null) })
   }
 
   rows.push(

@@ -29,7 +29,7 @@ export const shell = {
   cancel: 'Cancel',
 
   icon: 'Icon',
-  colour: 'Colour',
+  colour: 'Color',
   description: 'Description',
   itemOne: 'One of its items is called',
   itemMany: 'Several are called',
