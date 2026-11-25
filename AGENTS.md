@@ -158,7 +158,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   in `claude.ts`), and whatever a kept process must not outlive (its folder going, a sign-out, its chat) calls
   `releaseAgents`. Remote runs are never kept: another device may go on with the chat. Before a kept process is used
   again, the last message in the session's transcript (`agent_transcript`) must be one it printed: the user may have gone on
-  with the session in a terminal. Transcripts are only ever read.
+  with the session in a terminal. Transcripts are only ever read. Model and effort are the exception to the key: a kept process is
+  asked to change them, and used only once `get_settings` says it runs at them (`wake` in `claude.ts`); it is never asked back to
+  a default, which comes out different there. The permission mode stays in the key: a process started with bypassPermissions
+  can fall back to that after an approved plan.
 - Prove adapter changes against the real CLI with `scripts/try-agent.ts` in a scratch folder (never in this
   repo). Keep prompts tiny: every run spends the user's quota.
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.

@@ -3,7 +3,7 @@
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
- *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep] [--between "<text>"]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
+ *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep] [--between "<text>"] [--then-model id] [--then-effort level]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
@@ -21,6 +21,7 @@
  * --then sends a second turn --then-after ms (default 1000) after the first, in the process kept from it, as the app
  *  does for a chat's next message; with --no-keep a new process resumes the session instead. --between first sends
  *  a message to the same session from a `claude -p --resume` of its own, as someone in a terminal would (Claude Code only).
+ *  --then-model and --then-effort give the second turn another model or effort.
  * --task-output-after reads each background task's output that long after it starts (no quota);
  * --stop-task-after stops each background task that long after it starts.
  * --mcp hands the run MCP servers as Settings > MCP servers would: a JSON array of AgentMcpServer
@@ -116,14 +117,14 @@ const readTranscript = async (id: string) => {
   return file ? { lines: readFileSync(file, 'utf8').split('\n').slice(0, -1), whole: true } : null
 }
 
-const turn = (prompt: string) => adapter.run({
+const turn = (prompt: string, second = false) => adapter.run({
   cwd,
   prompt,
   images,
   readDirs: imagePath ? [dirname(imagePath)] : [],
-  model: flag('model') ?? 'default',
+  model: (second && flag('then-model')) || flag('model') || 'default',
   mode: flag('mode') ?? 'ask',
-  effort: flag('effort') ?? null,
+  effort: (second && flag('then-effort')) || flag('effort') || null,
   sessionId: session,
   ...(kept ? { keeper: kept.keeperFor({ chat: 'try', agent: agentId, folder: cwd }, '', () => ''), readTranscript } : {}),
   ...(flag('mcp') ? { mcpServers: JSON.parse(readFileSync(resolve(flag('mcp')!), 'utf8')) } : {}),
@@ -149,7 +150,7 @@ const turn = (prompt: string) => adapter.run({
             console.log('-- between:', answer.trim())
           }
           console.log('-- then', kept?.size ? '(a process is kept)' : '(no process is kept)')
-          run = turn(next)
+          run = turn(next, true)
         }, Number(flag('then-after')) || 1000)
       }
       else setTimeout(async () => { await kept?.release(() => true); process.exit(0) }, 1500)
