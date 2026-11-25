@@ -351,8 +351,13 @@ function run(options: AgentRunOptions): AgentRun {
   let transport: AgentTransport | null = null
   /** The CLI process of this run, for the keeper once the turn is over. */
   let proc: KeptProcess | null = null
-  /** What a kept process had spent before this run. */
-  let spentBefore = 0
+  /**
+   * The process's running cost total from before this run: a kept process counts on, and one that resumes
+   * takes over what its session had spent. Null until the CLI said (`askSpent`).
+   */
+  let spentBefore: number | null = options.sessionId ? null : 0
+  /** The model has answered something: the running total may hold part of this run. */
+  let spending = false
   let sessionId = options.sessionId
   let ended = false
   let interrupted = false
@@ -836,6 +841,7 @@ function run(options: AgentRunOptions): AgentRun {
       if (resolve) { requests.delete(id); resolve(m.response?.subtype === 'success' ? (m.response.response ?? {}) : null) }
       return
     }
+    if (m.type === 'assistant' || m.type === 'result' || (m.type === 'stream_event' && m.event?.type === 'message_delta')) spending = true
     // Sub-agent internals: whole messages whose parent is the Agent call that started the sub-agent.
     if (m.parent_tool_use_id) {
       if (announced.has(m.parent_tool_use_id)) onSubagentMessage(m, m.parent_tool_use_id)
@@ -858,7 +864,9 @@ function run(options: AgentRunOptions): AgentRun {
         // The CLI's total covers every turn its process took: this run's part is what came on top.
         const total = m.total_cost_usd
         if (proc && typeof total === 'number') proc.costUsd = total
-        const spent = addClaudeUsage(runUsage, typeof total === 'number' ? { ...m, total_cost_usd: Math.max(0, total - spentBefore) } : m)
+        // Where it started is not known: no cost rather than the whole session's.
+        const cost = typeof total === 'number' && spentBefore !== null ? Math.max(0, total - spentBefore) : undefined
+        const spent = addClaudeUsage(runUsage, { ...m, total_cost_usd: cost })
         if (spent && spent !== runUsage) { runUsage = spent; emit({ type: 'usage', usage: spent }) }
         if (interrupted) end('stopped')
         // A steering message came too late for this answer: the CLI answers it next, in the same process.
@@ -922,6 +930,19 @@ function run(options: AgentRunOptions): AgentRun {
     },
   }
 
+  /**
+   * What the session a new process resumes had spent. Asked along with the prompt, so nothing waits for it
+   * (the CLI looks up the plan's limits first, over the network): the total is the one from before this run
+   * only while the model has answered nothing.
+   */
+  const askSpent = () => {
+    requests.set('mango-spent', (r) => {
+      const total = r?.session?.total_cost_usd
+      if (!spending && typeof total === 'number') spentBefore = total
+    })
+    send({ type: 'control_request', request_id: 'mango-spent', request: { subtype: 'get_usage', skip_behaviors: true } })
+  }
+
   const sendPrompt = () => {
     // A slash command is not echoed back when the CLI reads it: counting it would wait forever.
     if (!isSlash(options.prompt)) sentMessages++
@@ -942,6 +963,7 @@ function run(options: AgentRunOptions): AgentRun {
       // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
       // the option ignores it (and the answer is not waited for).
       send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
+      if (options.sessionId) askSpent()
       sendPrompt()
     }).catch((err) => {
       end('error', err instanceof Error ? err.message : String(err))

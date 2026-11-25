@@ -102,14 +102,19 @@ test('release waits until the picked ones are gone, and kills one that will not 
 /* ---------- the Claude Code adapter ---------- */
 
 interface FakeCli { args: string[]; got: any[]; closed: boolean; killed: boolean; refuseMode?: boolean }
+/** How a fake process tells what its session had spent: before the answer, too late, or not at all. */
+type Spent = 'early' | 'late' | 'never'
 
-/** Enough of Claude Code to answer: every process counts its own turns and what they cost so far. */
-function fakeClaude() {
+/** Enough of Claude Code to answer: a turn costs 1, and a process that resumes counts on from what its session had spent. */
+function fakeClaude(tells: Spent = 'early') {
   const procs: FakeCli[] = []
+  let spent = 0
   const spawn: AgentRunOptions['spawn'] = async (args, handlers) => {
     const p: FakeCli = { args, got: [], closed: false, killed: false }
     procs.push(p)
     let turns = 0
+    let total = args.includes('--resume') ? spent : 0
+    let spentAsked: string | undefined
     const out = (o: unknown) => handlers.onLine(JSON.stringify(o))
     return {
       async write(line) {
@@ -118,14 +123,21 @@ function fakeClaude() {
         await wait()
         if (m.type === 'control_request') {
           const { subtype, mode } = m.request
+          if (subtype === 'get_usage') {
+            spentAsked = m.request_id
+            if (tells === 'early') out({ type: 'control_response', response: { subtype: 'success', request_id: spentAsked, response: { session: { total_cost_usd: total } } } })
+            return
+          }
           const ok = !(subtype === 'set_permission_mode' && p.refuseMode)
           out({ type: 'control_response', response: { subtype: ok ? 'success' : 'error', request_id: m.request_id, response: mode ? { mode } : {} } })
         } else if (m.type === 'user') {
           turns++
+          spent = ++total
           out({ type: 'system', subtype: 'init', session_id: 's1' })
           out({ type: 'user', isReplay: true, message: m.message })
           out({ type: 'assistant', message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
-          out({ type: 'result', subtype: 'success', session_id: 's1', total_cost_usd: turns, usage: { input_tokens: 1, output_tokens: 1 } })
+          if (spentAsked && tells === 'late') out({ type: 'control_response', response: { subtype: 'success', request_id: spentAsked, response: { session: { total_cost_usd: total } } } })
+          out({ type: 'result', subtype: 'success', session_id: 's1', total_cost_usd: total, usage: { input_tokens: 1, output_tokens: 1 } })
         }
       },
       async closeStdin() { p.closed = true; handlers.onExit?.(0) },
@@ -169,6 +181,26 @@ test('claude: the next turn goes to the kept process, in its mode, with only its
   assert.ok(modeAt < p!.got.findLastIndex(m => m.type === 'user'))
   assert.equal(p!.got.filter(m => m.request?.subtype === 'initialize').length, 1)
   kept.killAll()
+})
+
+test('claude: a new process that resumes shows only its own cost, or none when it cannot tell', async () => {
+  for (const [tells, costs] of [['early', [1, 1, 1]], ['late', [1, undefined, 1]], ['never', [1, undefined, 1]]] as const) {
+    const cli = fakeClaude(tells)
+    const { kept, turn } = chat(cli)
+    const first = await turn({ sessionId: null })
+    await kept.release(() => true)
+    const resumed = await turn()
+    // The process kept from there knows its total, however it began.
+    const third = await turn()
+    assert.deepEqual([first, resumed, third].map(cost), costs, tells)
+    assert.equal(cli.procs.length, 2, tells)
+    assert.ok(!cli.procs[0]!.got.some(m => m.request?.subtype === 'get_usage'))
+    const asked = cli.procs[1]!.got.map(m => m.request?.subtype ?? m.type)
+    assert.ok(asked.indexOf('get_usage') < asked.indexOf('user'))
+    // Tokens show either way.
+    assert.ok(resumed.some(e => e.type === 'usage' && e.usage.output === 1), tells)
+    kept.killAll()
+  }
 })
 
 test('claude: other settings, another session or a folder it cannot read start a new process', async () => {
