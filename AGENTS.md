@@ -79,7 +79,7 @@ app/
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
                      plugins.ts (installed plugins, the catalog, each plugin's settings values)
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
-                     registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
+                     registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts, data.ts (`mango.data`, saved documents) (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, decompiledTabs.ts (decompiled source tabs, the server's answer checked; plain-Node testable), browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, autoSave.ts (when open files save themselves; plain-Node testable), reloadEdits.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
@@ -109,6 +109,7 @@ src-tauri/src/
   browser_mcp.rs     the browser tools agents get: an MCP server on 127.0.0.1, one secret URL per chat
   mcp.rs             the user's own MCP servers (`mcp_servers`, `mcp_servers_save`): mcp-servers.json, owner-only, checked on save
   plugins/           plugins (`plugins_*`): install from a git repository (or a folder in one) or a local folder, updates, confined file reads, the official catalog
+  plugin_data.rs     plugins' saved documents (`mango.data`, `plugin_data_*`): a SQLite file, a rev per document, a seq per plugin, tombstones; kept when a plugin is removed unless asked
   browser_remote.rs  a remote project's browser: SSH tunnels to the environment's localhost, and the reverse forward for its agents
   chats.rs           chat history: `chats_load` / `chats_save` on a SQLite file (rusqlite, bundled)
   chats_remote.rs    remote projects' chats kept inside their environment (`chats_remote_*`), so other computers see them

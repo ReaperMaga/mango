@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { CircleCheck, CircleX, Info, TriangleAlert, X } from 'lucide-vue-next'
 import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
-import { closeDialog, dismissToast, layers, type PluginDialog, type Toast } from '~/plugin-host/uiState'
+import { closeDialog, closeMenu, dismissToast, layers, menuPressed, type PluginContextMenu, type PluginDialog, type Toast } from '~/plugin-host/uiState'
+import { pluginRowItems } from '~/plugin-host/menus'
 import { report } from '~/plugin-host/registry'
 import { useOverlay } from '~/composables/useOverlay'
 
 /**
- * Toasts in the bottom-right corner and the dialogs plugins ask for (confirm, prompt, a view).
+ * Toasts in the bottom-right corner, the dialogs plugins ask for (confirm, prompt, a view) and their menu
+ * (`ui.contextMenu`).
  * Mounted once in app.vue. A toast floats over the browsers' native pages, so they step aside while
  * one shows (like a menu); a dialog registers itself through UiDialog.
  */
@@ -55,6 +57,43 @@ function act(item: Toast) {
   try { run?.() } catch (e) { if (item.pluginId) report(item.pluginId, e, 'toast action') }
 }
 
+/* ---------- a plugin's menu: kept after it closes, so it can fade out */
+
+const menu = shallowRef<PluginContextMenu | null>(null)
+const menuRef = ref<{ show(): void; showAt(x: number, y: number): void; close(): void } | null>(null)
+const menuItems = computed(() => (menu.value ? pluginRowItems(menu.value.pluginId, menu.value.rows) : []))
+/** Over the element it hangs from (UiMenu measures its own root); at a point it needs no place. */
+const menuStyle = computed(() => {
+  const at = menu.value?.at
+  if (!(at instanceof HTMLElement)) return { position: 'fixed', left: '0', top: '0', pointerEvents: 'none' } as const
+  const r = at.getBoundingClientRect()
+  return { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, pointerEvents: 'none' } as const
+})
+watch(() => layers.menu, async (m) => {
+  if (!m) { menuRef.value?.close(); return }
+  menu.value = m
+  await nextTick()
+  if (layers.menu !== m) return
+  if (m.at instanceof HTMLElement) menuRef.value?.show()
+  else menuRef.value?.showAt(m.at.x, m.at.y)
+})
+onBeforeUnmount(() => { if (layers.menu) closeMenu(layers.menu.id) })
+
+/* Pressing the element a menu hangs from closes it: the click that follows is not for opening it again. */
+function onPress(e: Event) {
+  const at = layers.menu?.at
+  menuPressed(at instanceof HTMLElement && at.contains(e.target as Node) ? at : null)
+}
+const onClicked = () => { setTimeout(() => menuPressed(null)) }
+onMounted(() => {
+  window.addEventListener('pointerdown', onPress, true)
+  window.addEventListener('click', onClicked, true)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', onPress, true)
+  window.removeEventListener('click', onClicked, true)
+})
+
 /* ---------- dialogs: one at a time, the oldest first */
 
 const dialog = computed<PluginDialog | null>(() => layers.dialogs[0] ?? null)
@@ -92,6 +131,7 @@ const viewCtx = computed(() => {
         </li>
       </TransitionGroup>
     </section>
+    <UiMenu v-if="menu" :key="menu.id" ref="menuRef" :items="menuItems" :style="menuStyle" :width="220" :max-width="360" @closed="menu && closeMenu(menu.id)" />
   </Teleport>
 
   <UiDialog :open="!!dialog" :title="dialog?.title ?? ''" :width="dialog?.kind === 'view' ? dialog.width ?? 520 : 420" @close="cancel">

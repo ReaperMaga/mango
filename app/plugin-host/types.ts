@@ -151,9 +151,9 @@ export interface PluginChatApi {
   /** Show a chat (in the active pane). */
   show(threadId: string): void
   rename(threadId: string, title: string): void
-  /** Since 0.5.0. What is written in a chat's composer and not sent yet. */
+  /** Since 0.4.2. What is written in a chat's composer and not sent yet. */
   draft(threadId: string): string
-  /** Since 0.5.0. Put text into a chat's composer, replacing what is there; nothing is sent. */
+  /** Since 0.4.2. Put text into a chat's composer, replacing what is there; nothing is sent. */
   setDraft(threadId: string, text: string): void
 
   onBeforeSend(hook: BeforeSendHook): Disposable
@@ -220,7 +220,7 @@ export interface TabContext {
   state: unknown
   projectPath: string | null
   setTitle(title: string): void
-  /** Since 0.5.0. Replace `state` (kept across restarts for a view with `restore`). */
+  /** Since 0.4.2. Replace `state` (kept across restarts for a view with `restore`). */
   setState(state: unknown): void
   close(): void
 }
@@ -231,19 +231,19 @@ export interface PluginTabView {
   icon: PluginIcon
   view: PluginView<TabContext>
   /**
-   * Since 0.5.0. `none`: no header row above the view (icon, title, plugin name); the view draws its own.
+   * Since 0.4.2. `none`: no header row above the view (icon, title, plugin name); the view draws its own.
    * Default `default`.
    */
   header?: 'default' | 'none'
   /**
-   * Since 0.5.0. Open tabs of this view come back after a restart, with their title and `state` (which must
+   * Since 0.4.2. Open tabs of this view come back after a restart, with their title and `state` (which must
    * be JSON). Off by default: the tab closes with the app.
    */
   restore?: boolean
 }
 
 /**
- * Since 0.5.0. A place of the plugin's own in Mango's navigation: a row at the top of the sidebar, under New
+ * Since 0.4.2. A place of the plugin's own in Mango's navigation: a row at the top of the sidebar, under New
  * chat, for a plugin whose main thing is a tab in the main area. While the sidebar is hidden it is an icon in
  * the titlebar, beside the button that brings the sidebar back.
  */
@@ -262,7 +262,7 @@ export interface PluginNavItem {
   run(): void
 }
 
-/** Since 0.5.0. A row of `ui.contextMenu`. Icons as everywhere in the API. */
+/** Since 0.4.2. A row of `ui.contextMenu`. Icons as everywhere in the API. */
 export interface PluginMenuRow {
   label: string
   icon?: PluginIcon
@@ -282,7 +282,7 @@ export interface PluginMenuRow {
 }
 
 /**
- * Since 0.5.0. Mango's own controls, so a plugin's view looks and behaves like the app around it. Props are
+ * Since 0.4.2. Mango's own controls, so a plugin's view looks and behaves like the app around it. Props are
  * those of the components in `app/components/ui` (listed in docs/plugins.md).
  */
 export interface PluginUiComponents {
@@ -458,19 +458,19 @@ export interface PluginUiApi {
     register(view: PluginTabView): Disposable
     /** Open (or focus, for the same `key`) a tab of a registered view. */
     open(viewId: string, opts: { title: string; key?: string; state?: unknown }): void
-    /** Since 0.5.0. This plugin's tab in the active pane, or null. Reactive in a computed or a getter. */
+    /** Since 0.4.2. This plugin's tab in the active pane, or null. Reactive in a computed or a getter. */
     active(): { viewId: string; key: string; state: unknown } | null
-    /** Since 0.5.0. Close a tab of the active project (nothing when it is not open). */
+    /** Since 0.4.2. Close a tab of the active project (nothing when it is not open). */
     close(viewId: string, key: string): void
   }
-  /** Since 0.5.0. */
+  /** Since 0.4.2. */
   navItems: { register(item: PluginNavItem): Disposable }
-  /** Since 0.5.0. Mango's own controls. */
+  /** Since 0.4.2. Mango's own controls. */
   components: PluginUiComponents
-  /** Since 0.5.0. A menu at a point (a right click), or hanging from an element. Resolves when it closes. */
+  /** Since 0.4.2. A menu at a point (a right click), or hanging from an element. Resolves when it closes. */
   contextMenu(at: { x: number; y: number } | HTMLElement, rows: PluginMenuRow[]): Promise<void>
   /**
-   * Since 0.5.0. Call while a layer of the plugin's own floats over the workspace (a popover, a drag): a browser
+   * Since 0.4.2. Call while a layer of the plugin's own floats over the workspace (a popover, a drag): a browser
    * tab's page is a native view drawn over all HTML, and hides until this is disposed. `ui.contextMenu`,
    * `ui.dialog` and the Menu component do it themselves.
    */
@@ -615,7 +615,7 @@ export interface PluginStorageApi {
 }
 
 /**
- * Since 0.5.0. A saved document. `data` is JSON, null once it is deleted: a deleted document stays behind as a
+ * Since 0.4.2. A saved document. `data` is JSON, null once it is deleted: a deleted document stays behind as a
  * tombstone, so a copy kept elsewhere can learn of it.
  */
 export interface PluginDoc<T = unknown> {
@@ -648,7 +648,7 @@ export interface PluginDataChange {
 }
 
 /**
- * Since 0.5.0. Documents kept in a database in Mango's data folder, for what a person makes in the plugin:
+ * Since 0.4.2. Documents kept in a database in Mango's data folder, for what a person makes in the plugin:
  * more than `storage` holds, safe with several windows open, and kept when the plugin is removed unless the
  * user asks for it to go. Collections are just names (letters, digits, `_`, `-`, up to 64); ids are up to 128
  * characters; a document is at most 1 MB of JSON.
@@ -715,7 +715,7 @@ export interface MangoPluginApi {
   agents: PluginAgentsApi
   settings: PluginSettingsApi
   storage: PluginStorageApi
-  /** Since 0.5.0. */
+  /** Since 0.4.2. */
   data: PluginDataApi
   /** Messages between plugins (and to themselves): names are free, use a `<pluginId>:` prefix. */
   events: {

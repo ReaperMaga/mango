@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PluginNavItems from '~/plugin-host/ui/PluginNavItems.vue'
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
 import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, FolderGit2, FolderMinus, MessageSquarePlus, MoreHorizontal, PanelLeftClose, Plus, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
@@ -373,6 +374,7 @@ function endResize() {
       </button>
       <UiIconButton class="sb__hide" :label="t('shell.sidebar.hide')" :shortcut="ws.keyLabel('sidebar')" @click="ws.toggleSidebar()"><PanelLeftClose /></UiIconButton>
     </div>
+    <PluginNavItems place="sidebar" />
 
     <nav class="sb__scroll">
       <section v-for="sec in sections" :key="sec.id" class="sb__group" :class="`sb__group--${sec.id}`">

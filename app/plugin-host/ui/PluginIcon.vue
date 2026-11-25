@@ -1,3 +1,15 @@
+<script lang="ts">
+import { SquareKanban } from 'lucide-vue-next'
+
+/** Names that draw at once: icons that sit in Mango's chrome from the start. */
+const AT_ONCE: Record<string, unknown> = { 'square-kanban': SquareKanban }
+
+/** The whole library, loaded with the first other name. */
+let all: Record<string, unknown> | null = null
+let loading: Promise<Record<string, unknown>> | null = null
+const loadAll = () => (loading ??= (import('lucide-vue-next') as unknown as Promise<Record<string, unknown>>).then(m => (all = m)))
+</script>
+
 <script setup lang="ts">
 import type { Component } from 'vue'
 import { Puzzle } from 'lucide-vue-next'
@@ -5,22 +17,32 @@ import type { PluginIcon } from '~/plugin-host/types'
 
 /**
  * A plugin's icon (`PluginIcon`): a component, a lucide name in kebab-case (`git-branch`), or raw
- * `<svg>` markup. Follows `currentColor`; anything unknown shows the puzzle piece.
+ * `<svg>` markup. Follows `currentColor`; anything unknown shows the puzzle piece
+ * (and a name that is still loading, nothing).
  */
 const props = defineProps<{ icon?: PluginIcon | null }>()
 
-let lucide: Promise<Record<string, unknown>> | null = null
 const named = shallowRef<Component | null>(null)
+const pending = ref(false)
 
 const pascal = (s: string) => s.trim().replace(/(^|[-_\s]+)([a-z0-9])/gi, (_, __, c: string) => c.toUpperCase())
 
+function find(icon: string) {
+  const c = AT_ONCE[icon] ?? all?.[pascal(icon)] ?? all?.[`${pascal(icon)}Icon`]
+  named.value = c ? markRaw(c as Component) : null
+}
+
 watch(() => props.icon, async (icon) => {
   named.value = null
+  pending.value = false
   if (typeof icon !== 'string' || icon.trim().startsWith('<')) return
-  lucide ??= import('lucide-vue-next') as unknown as Promise<Record<string, unknown>>
-  const mod = await lucide
-  const c = mod[pascal(icon)] ?? mod[`${pascal(icon)}Icon`]
-  if (props.icon === icon) named.value = c ? markRaw(c as Component) : null
+  find(icon)
+  if (named.value || all) return
+  pending.value = true
+  try { await loadAll() } catch { loading = null }
+  if (props.icon !== icon) return
+  find(icon)
+  pending.value = false
 }, { immediate: true })
 
 /**
@@ -45,5 +67,6 @@ const component = computed<Component>(() =>
 <template>
   <!-- eslint-disable-next-line vue/no-v-html -- a plugin's own icon markup (plugins are trusted code) -->
   <svg v-if="svg" v-bind="svg.attrs" aria-hidden="true" v-html="svg.body" />
+  <svg v-else-if="pending" width="24" height="24" viewBox="0 0 24 24" aria-hidden="true" />
   <component :is="component" v-else aria-hidden="true" />
 </template>

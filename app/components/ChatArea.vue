@@ -88,7 +88,7 @@ const tabs = computed<Tab[]>(() => {
     const plugin = parsePluginTab(id)
     if (plugin) {
       // Shown while its plugin is away too (the pane says so); it closes when the plugin is turned off.
-      out.push({ id, kind: 'plugin', title: pluginTabs[id]?.title ?? plugin.viewId, icon: pluginTabView(plugin.pluginId, plugin.viewId)?.icon ?? null, plugin: pluginNames[plugin.pluginId] ?? plugin.pluginId })
+      out.push({ id, kind: 'plugin', title: pluginTabs[id]?.title ?? plugin.viewId, icon: pluginTabView(plugin.pluginId, plugin.viewId)?.icon ?? pluginTabs[id]?.icon ?? null, plugin: pluginNames[plugin.pluginId] ?? plugin.pluginId })
       continue
     }
     const term = parseTerminalTab(id)

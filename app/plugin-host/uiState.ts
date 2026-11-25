@@ -1,5 +1,5 @@
 import { markRaw, reactive } from 'vue'
-import type { PluginView, ToastOptions } from './types'
+import type { PluginMenuRow, PluginView, ToastOptions } from './types'
 
 /**
  * What plugins put on screen outside the regular surfaces: toasts (bottom-right) and dialogs
@@ -20,7 +20,17 @@ export type PluginDialog =
   | { id: number; pluginId: string | null; kind: 'prompt'; title: string; body?: string; placeholder?: string; value?: string; resolve(v: string | null): void }
   | { id: number; pluginId: string; kind: 'view'; title: string; view: PluginView<{ close(): void }>; width?: number; resolve(): void }
 
+/** A plugin's menu (`ui.contextMenu`): at a point, or hanging from an element. One at a time. */
+export interface PluginContextMenu {
+  id: number
+  pluginId: string
+  at: { x: number; y: number } | HTMLElement
+  rows: PluginMenuRow[]
+  resolve(): void
+}
+
 export const layers = reactive({
+  menu: null as PluginContextMenu | null,
   toasts: [] as Toast[],
   dialogs: [] as PluginDialog[],
 })
@@ -69,8 +79,27 @@ export function closeDialog(id: number, value?: unknown) {
   ;(d!.resolve as (v: unknown) => void)(value)
 }
 
-/** A plugin went away: its toasts go, its dialogs close unanswered. */
+/** The element a press just closed its menu on: the click that follows does not open it again. */
+let pressed: HTMLElement | null = null
+export function menuPressed(el: HTMLElement | null) { pressed = el }
+
+/** Open a plugin's menu; resolves when it is closed. */
+export function openMenu(m: Omit<PluginContextMenu, 'id' | 'resolve'>): Promise<void> {
+  if (layers.menu) closeMenu(layers.menu.id)
+  if (m.at === pressed) return Promise.resolve()
+  return new Promise((resolve) => { layers.menu = markRaw({ ...m, id: ++seq, resolve }) })
+}
+
+export function closeMenu(id: number) {
+  const m = layers.menu
+  if (m?.id !== id) return
+  layers.menu = null
+  m.resolve()
+}
+
+/** A plugin went away: its toasts go, its menu closes, its dialogs close unanswered. */
 export function dropPluginLayers(pluginId: string) {
+  if (layers.menu?.pluginId === pluginId) closeMenu(layers.menu.id)
   for (const t of layers.toasts.filter(t => t.pluginId === pluginId)) dismissToast(t.id)
   for (const d of layers.dialogs.filter(d => d.pluginId === pluginId)) {
     closeDialog(d.id, d.kind === 'confirm' ? false : d.kind === 'prompt' ? null : undefined)

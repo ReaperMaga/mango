@@ -34,8 +34,8 @@ import { normalizeCache, normalizeContext } from '~/agents/context'
 import { attachmentDrafts, drafts } from '~/utils/drafts'
 import { savedWorktree } from '~/agents/workdir'
 import { transcript } from '~/utils/transcript'
-import { isPanelEditorTab, isPluginTab, parsePanelEditorTab } from '~/plugin-host/ids'
-import { emitThreadCreated, emitTurnEnd, hooks as pluginHooks, pluginBeforeSend, pluginTabs, reg as pluginReg, runPluginSlash } from '~/plugin-host/registry'
+import { isPanelEditorTab, isPluginTab, normalizePluginTabs, parsePanelEditorTab, savedPluginTabs } from '~/plugin-host/ids'
+import { emitThreadCreated, emitTurnEnd, hooks as pluginHooks, pluginBeforeSend, pluginTabs, reg as pluginReg, restorePluginTabs, runPluginSlash } from '~/plugin-host/registry'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -215,9 +215,16 @@ export const useThreads = defineStore('threads', {
         // Anything that was mid-run when the app closed is no longer running.
         this.threads = threads.map(normalizeLoaded)
         if (layout) {
-          this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id))
+          // Plugin tabs that come back; their plugins start later (a tab whose plugin is gone closes then).
+          const plugins = normalizePluginTabs(layout.pluginTabs)
+          restorePluginTabs(plugins)
+          this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id) || plugins.some(p => p.id === id))
           this.panes = Array.isArray(layout.panes) && layout.panes.length ? layout.panes : this.panes
           this.activePaneId = this.panes.some(p => p.id === layout.activePaneId) ? layout.activePaneId : this.panes[0]!.id
+          for (const p of plugins) {
+            const pane = this.tabs.includes(p.id) ? this.panes.find(x => x.id === p.pane) : null
+            if (pane && !pane.threadId) pane.threadId = p.id
+          }
           // Builds before per-pane tab strips saved none: every tab starts in the left pane.
           const groups = layout.groups && typeof layout.groups === 'object' ? layout.groups : {}
           this.groups = Object.fromEntries(Object.entries(groups).filter(([id, pane]) => pane === 'pane-b' && this.tabs.includes(id))) as Record<string, string>
@@ -229,10 +236,11 @@ export const useThreads = defineStore('threads', {
         byId: id => this.byId(id),
         layout: !main ? undefined : () => ({
           // Diff and file tabs are views onto the disk, and a browser's page and a terminal's shell die
-          // with the app: none of them is something to restore next time.
-          tabs: this.tabs.filter(id => !isViewTab(id)),
+          // with the app: none of them is something to restore next time. A plugin's tab is when its view says so.
+          tabs: this.tabs.filter(isKeptTab),
           panes: this.panes.map(p => (isViewTab(p.threadId) ? { ...p, threadId: null } : p)),
-          groups: Object.fromEntries(Object.entries(this.groups).filter(([id]) => !isViewTab(id) && this.tabs.includes(id))),
+          groups: Object.fromEntries(Object.entries(this.groups).filter(([id]) => isKeptTab(id) && this.tabs.includes(id))),
+          pluginTabs: savedPluginTabs(this.tabs, pluginTabs, this.panes),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }),
       })
@@ -1528,8 +1536,11 @@ const contextTried = new Set<string>()
 const folderOfTab = (id: string | null | undefined) =>
   parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath ?? parseDecompiledTab(id)?.projectPath
 
-/** A tab that shows something other than a chat; none of them is saved with the layout. */
+/** A tab that shows something other than a chat: not saved with the layout (but see `isKeptTab`). */
 const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isDecompiledTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
+
+/** A tab the layout saves: a chat, or a plugin's that comes back (`restore`). */
+const isKeptTab = (id: string) => (isPluginTab(id) ? !!pluginTabs[id]?.restore : !isViewTab(id))
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'

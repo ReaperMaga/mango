@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import { DisposableScope, once } from '../app/plugin-host/scope.ts'
 import { compareVersions, devVersion, incompatibility, parseVersion } from '../app/plugin-host/semver.ts'
 import {
-  effectiveScheme, fullId, isPanelEditorTab, isPanelTabRef, isPluginRef, isPluginTab, normalizePanelOrder, normalizePanelPlaces,
+  effectiveScheme, fullId, jsonState, normalizePluginTabs, savedPluginTabs, isPanelEditorTab, isPanelTabRef, isPluginRef, isPluginTab, normalizePanelOrder, normalizePanelPlaces,
   panelEditorTabId, panelStrip, parsePanelEditorTab, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations,
 } from '../app/plugin-host/ids.ts'
 import { capped, emitAll, logText, parseSlash, runBeforeSend } from '../app/plugin-host/hooks.ts'
@@ -243,4 +243,40 @@ test('logs keep their last lines; arguments become one line', () => {
   assert.equal(list[0], 5)
   assert.equal(logText(['a', 1, { b: 2 }]), 'a 1 {"b":2}')
   assert.match(logText([new Error('nope')]), /nope/)
+})
+
+/* ---------- plugin tabs that come back */
+
+const tabOf = (key: string, pluginId = 'planner') => pluginTabId({ projectPath: 'C:\\p', pluginId, viewId: 'board', key })
+
+test('saved plugin tabs: those with restore, in order, with their pane and JSON state', () => {
+  const [a, b, c] = [tabOf('a'), tabOf('b'), tabOf('c')]
+  const circular: Record<string, unknown> = {}
+  circular.self = circular
+  const saved = savedPluginTabs(['chat-1', b, a, c, tabOf('closed')], {
+    [a]: { title: 'A', state: { at: 1, fn: () => {} }, restore: true, icon: 'square-kanban' },
+    [b]: { title: 'B', state: circular, restore: true },
+    [c]: { title: 'C', state: 1 },
+  }, [{ id: 'pane-a', threadId: 'chat-1' }, { id: 'pane-b', threadId: a }])
+  assert.deepEqual(saved, [{ id: b, title: 'B' }, { id: a, title: 'A', state: { at: 1 }, icon: 'square-kanban', pane: 'pane-b' }])
+  assert.deepEqual(normalizePluginTabs(JSON.parse(JSON.stringify(saved))), saved)
+})
+
+test('restored plugin tabs: anything unreadable is dropped', () => {
+  for (const v of [undefined, null, 'x', {}, 3]) assert.deepEqual(normalizePluginTabs(v), [])
+  const ok = tabOf('a:b\u0001c')
+  assert.deepEqual(normalizePluginTabs([
+    null, 'x', { title: 'no id' }, { id: 'chat-1' }, { id: tabOf('') }, { id: tabOf('k', 'Not An Id') }, { id: 'plugin\u0001\u0001planner\u0001board\u0001k' },
+    { id: ok, title: 7, icon: 5, pane: {}, state: [1], later: true }, { id: ok, title: 'again' },
+  ]), [{ id: ok, title: 'board', state: [1] }])
+  assert.equal(parsePluginTab(ok)?.key, 'a:b\u0001c')
+})
+
+test('a tab state that is not JSON, or is too large, is not kept', () => {
+  assert.equal(jsonState(undefined), undefined)
+  assert.equal(jsonState(() => {}), undefined)
+  assert.equal(jsonState(10n), undefined)
+  assert.equal(jsonState('x'.repeat(300_000)), undefined)
+  assert.equal(jsonState(null), null)
+  assert.deepEqual(jsonState({ a: [1, undefined] }), { a: [1, null] })
 })

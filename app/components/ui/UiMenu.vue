@@ -19,8 +19,11 @@ const props = withDefaults(defineProps<{
   maxWidth?: number
 }>(), { placement: 'bottom-start', width: 240 })
 
+const emit = defineEmits<{ closed: [] }>()
+
 const { t } = useI18n()
 const open = ref(false)
+watch(open, (v) => { if (!v) emit('closed') })
 /* An open menu hides the browsers' native pages, which would cover it. */
 useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
@@ -35,7 +38,7 @@ const enabled = computed(() => props.items.map((it, i) => (it.disabled ? -1 : i)
 
 /** Set while the menu is open as a context menu: the pointer position to open at. */
 let point: { x: number; y: number } | null = null
-/** What had focus when it opened as a context menu: Escape gives it back. */
+/** What had focus when it opened: Escape gives it back where the menu has no button of its own. */
 let opener: HTMLElement | null = null
 
 const GAP = 6
@@ -86,7 +89,7 @@ function showAt(x: number, y: number) {
 }
 async function show(at: { x: number; y: number } | null = null) {
   point = at
-  if (!open.value) opener = at ? document.activeElement as HTMLElement | null : null
+  if (!open.value) opener = document.activeElement as HTMLElement | null
   keyed.value = false
   place()
   open.value = true
