@@ -125,6 +125,17 @@ test('claude: says when a request went out and when /compact worked', async () =
   assert.equal(events.filter(e => e.type === 'compacted').length, 1)
 })
 
+test('claude: takes no message while it compacts, so none is lost in it', async () => {
+  for (const [prompt, taken] of [['/compact', false], ['hi', true]] as const) {
+    const run = claudeAdapter.run({
+      cwd: '/p', prompt, model: 'default', mode: 'ask', sessionId: 's1', emit() {},
+      spawn: async () => ({ async write() {}, async closeStdin() {}, async kill() {} }),
+    })
+    await new Promise(resolve => setTimeout(resolve, 5))
+    assert.equal(await run.steer!({ prompt: 'and this' }), taken, prompt)
+  }
+})
+
 test('claude: the last message of a transcript comes with its time', () => {
   const lines = [
     JSON.stringify({ type: 'assistant', uuid: 'a1', timestamp: '2026-11-25T00:48:24.268Z', message: { content: [] } }),

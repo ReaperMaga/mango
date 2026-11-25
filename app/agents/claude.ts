@@ -289,6 +289,9 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
 /** A message that is a slash command (`/compact`, `/review 12`, a skill): the CLI runs it itself. */
 const isSlash = (prompt: string) => /^\/[\w.:-]+(\s|$)/.test(prompt.trim())
 
+/** Replaces the conversation with a summary. */
+const isCompact = (prompt: string) => /^\/compact(\s|$)/.test(prompt.trim())
+
 /** The prompt as message content: attached images first, then the text (an empty text block is refused). */
 function userContent(options: SteerInput): unknown[] {
   const content: unknown[] = (options.images ?? []).map(img => ({
@@ -1025,8 +1028,8 @@ function run(options: AgentRunOptions): AgentRun {
     async steer(input) {
       // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
       if (ended || closing || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
-      // A command runs as a turn of its own, not in the middle of this one.
-      if (isSlash(input.prompt)) return false
+      // A command runs as a turn of its own, not in the middle of this one; nothing is read while the conversation is compacted.
+      if (isSlash(input.prompt) || isCompact(options.prompt)) return false
       // Waiting on background tasks: the message starts the next turn, which the caller already shows as one.
       if (idle) { idle = false; finishedWhileIdle = []; clearTimeout(settleTimer) }
       sentMessages++
