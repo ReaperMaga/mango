@@ -1,4 +1,4 @@
-import type { ContextPart, ContextUsage, TurnUsage } from './types.ts'
+import type { ContextPart, ContextUsage, PromptCache, TurnUsage } from './types.ts'
 
 /**
  * How full a conversation's context window is, read from what each CLI reports. Plain
@@ -133,6 +133,31 @@ export function addClaudeUsage(prev: TurnUsage | null, result: any): TurnUsage |
   if (!input && !output && cost === undefined) return prev
   const costUsd = cost ?? prev?.costUsd
   return { input: (prev?.input ?? 0) + input, output: (prev?.output ?? 0) + output, ...(costUsd !== undefined ? { costUsd } : {}) }
+}
+
+/**
+ * How long a Claude request's prompt stays cached, from its `usage`: an hour on subscriptions, five minutes
+ * otherwise. Undefined for a request that added nothing to the cache: it carries no time of its own.
+ */
+export function claudeCacheTtl(usage: any): number | undefined {
+  const c = usage?.cache_creation
+  if (c?.ephemeral_1h_input_tokens > 0) return 3_600_000
+  if (c?.ephemeral_5m_input_tokens > 0) return 300_000
+  return undefined
+}
+
+/** A request seen now over what was known: without a time of its own it keeps the one before it. Unset until that is known. */
+export function mergeCache(prev: PromptCache | undefined, e: { at: number; ttlMs?: number }, owner: string): PromptCache | undefined {
+  const ttlMs = e.ttlMs ?? (prev?.for === owner ? prev.ttlMs : undefined)
+  return ttlMs ? { at: e.at, ttlMs, for: owner } : undefined
+}
+
+/** What a saved chat says about its cache, checked. */
+export function normalizeCache(c: any): PromptCache | undefined {
+  const at = num(c?.at)
+  const ttlMs = num(c?.ttlMs)
+  if (!at || !ttlMs || typeof c.for !== 'string') return undefined
+  return { at, ttlMs, for: c.for, ...(c.tried === true ? { tried: true as const } : {}) }
 }
 
 /**

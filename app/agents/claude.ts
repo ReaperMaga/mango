@@ -2,7 +2,7 @@ import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, KeptProcess, PermissionMode, SpawnFn, SpawnHandlers, SteerInput, TaskKind, ToolImage, TranscriptTail, TurnUsage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
-import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts'
+import { addClaudeUsage, claudeCacheTtl, claudeContext, claudeRequestTokens } from './context.ts'
 import { movedFrom, resumedFolder } from './workdir.ts'
 
 /**
@@ -313,18 +313,18 @@ function startsTurn(line: string): boolean {
 const TAIL_BYTES = [256 * 1024, 16 * 1024 * 1024]
 
 /**
- * The id of the transcript's last message, null when these lines hold none. Not a message: Claude Code's
+ * The transcript's last message and when it was written, null when these lines hold none. Not a message: Claude Code's
  * bookkeeping, what it adds around one (`isMeta`), sub-agents', and a command it ran without the model, which
  * a process writes down but does not print.
  */
-function lastMessage(lines: string[]): string | null {
+export function lastMessage(lines: string[]): { uuid: string; at: number } | null {
   for (let i = lines.length - 1; i >= 0; i--) {
     let m: any
     try { m = JSON.parse(lines[i]!) } catch { continue }
     if ((m?.type !== 'user' && m?.type !== 'assistant') || typeof m.uuid !== 'string' || m.isMeta || m.isSidechain) continue
     const content = m.message?.content
     if (typeof content === 'string' && /^<(command-name|local-command-)/.test(content)) continue
-    return m.uuid
+    return { uuid: m.uuid, at: Date.parse(m.timestamp) || 0 }
   }
   return null
 }
@@ -340,7 +340,7 @@ async function missedMessages(p: KeptProcess, read: (maxBytes: number) => Promis
     const tail = await read(maxBytes).catch(() => null)
     if (!tail) return false
     const last = lastMessage(tail.lines)
-    if (last) return !p.seen.has(last)
+    if (last) return !p.seen.has(last.uuid)
     if (tail.whole) break
   }
   return true
@@ -545,7 +545,12 @@ function run(options: AgentRunOptions): AgentRun {
         onTurnActivity()
         // Every request carries the whole conversation: its prompt size is the context in use now.
         const used = claudeRequestTokens(e.message?.usage)
-        if (used !== null) emit({ type: 'context', usage: { used, max: 0, at: Date.now() } })
+        if (used !== null) {
+          const at = Date.now()
+          emit({ type: 'context', usage: { used, max: 0, at } })
+          const ttlMs = claudeCacheTtl(e.message?.usage)
+          emit({ type: 'cache', at, ...(ttlMs ? { ttlMs } : {}) })
+        }
         messageId = e.message?.id ?? `m${++seq}`
         streamedMessages.add(messageId)
         blocks.clear()
@@ -711,6 +716,10 @@ function run(options: AgentRunOptions): AgentRun {
           if (folder) moveTo(folder, null)
         }
         onTurnActivity()
+        break
+      case 'compact_boundary':
+        // One the CLI makes by itself mid-turn is part of that turn.
+        if (m.compact_metadata?.trigger === 'manual') emit({ type: 'compacted' })
         break
       case 'task_started': {
         const id = typeof m.task_id === 'string' ? m.task_id : ''

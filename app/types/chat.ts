@@ -1,4 +1,4 @@
-import type { AgentQuestion, ContextUsage, PermissionMode, QuestionAnswers } from '~/agents/types'
+import type { AgentQuestion, ContextUsage, PermissionMode, PromptCache, QuestionAnswers } from '~/agents/types'
 
 export type { AgentQuestion, ContextUsage, PermissionMode, QuestionAnswers }
 export type AgentId = 'claude' | 'codex'
@@ -95,6 +95,8 @@ export interface Message {
   outcome?: 'done' | 'stopped' | 'error'
   /** User messages in a sub-agent's chat: the task the parent agent wrote, not the person. */
   fromAgent?: boolean
+  /** Agent messages: Mango compacted the chat during a break (Settings > Behaviour); nobody asked for it. */
+  idle?: true
   /** Kept by the user: listed under "Pinned" in the message list. */
   pinned?: true
   /** Agent messages: what the turn used (tokens in, with cached ones, and out; the cost when the CLI says). */
@@ -208,6 +210,10 @@ export interface Thread {
   history?: string
   /** How full the conversation's context window was at its last reading; unset before the first reply or after `/clear`. */
   context?: ContextUsage
+  /** The conversation's prompt cache, as of its last request; unset when unknown, and once it was compacted. */
+  cache?: PromptCache
+  /** Never offer to compact this chat after a break, nor do it. */
+  keepContext?: true
 }
 
 export interface AgentModel {

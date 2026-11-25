@@ -1,7 +1,8 @@
 import type { Message, Part, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
 import type { AgentEvent } from '~/agents/types'
-import { mergeContext } from '~/agents/context'
+import { mergeCache, mergeContext } from '~/agents/context'
+import { cacheOwner } from '~/utils/idleCompaction'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import type { ThreadsState } from '@/state/threads'
 
@@ -141,6 +142,13 @@ export function createTurn(store: Store, threadId: string, first: Message, workd
       case 'context':
         // Kept with the chat, so the desktop shows it too; the phone does not draw it yet.
         store.edit(threadId, (d) => { d.context = mergeContext(d.context, e.usage) })
+        break
+      case 'cache':
+        // Like the desktop, which offers to compact a large chat after a break: it must know of requests made here.
+        store.edit(threadId, (d) => { d.cache = mergeCache(d.cache, e, cacheOwner(d)) })
+        break
+      case 'compacted':
+        store.edit(threadId, (d) => { delete d.cache })
         break
       case 'usage':
         runUsage = e.usage

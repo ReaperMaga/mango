@@ -16,6 +16,7 @@ import { useLanguageServers } from '~/lsp/store'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
+import type { IdleCompaction } from '~/utils/idleCompaction'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
 import { filesViewOf, type FilesView } from '~/utils/fileTree'
@@ -246,7 +247,7 @@ let tabSeq = 0
  */
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['locale', 'theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
-  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
+  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'idleCompaction', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
   'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
 /** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
 const KNOWN_TABS_KEY = 'builtInTabs'
@@ -348,6 +349,7 @@ const initialState = () => {
       sendKey: (prefs.sendKey === 'mod-enter' ? 'mod-enter' : 'enter') as SendKey,
       followUp: (prefs.followUp === 'steer' ? 'steer' : 'queue') as FollowUp,
       toolCalls: (['all', 'hide-ok', 'hide', 'zen'].includes(prefs.toolCalls) ? prefs.toolCalls : 'all') as ToolCalls,
+      idleCompaction: (['ask', 'auto', 'off'].includes(prefs.idleCompaction) ? prefs.idleCompaction : 'ask') as IdleCompaction,
       notify: notifyOf(prefs.notify),
       /** Keys the user changed, by action id (Settings > Shortcuts); `''` is a cleared key. Defaults live in utils/shortcuts. */
       shortcuts: cleanOverrides(prefs.shortcuts),
@@ -478,6 +480,7 @@ export const useWorkspace = defineStore('workspace', {
           sendKey: this.sendKey,
           followUp: this.followUp,
           toolCalls: this.toolCalls,
+          idleCompaction: this.idleCompaction,
           notify: this.notify,
           shortcuts: this.shortcuts,
           confirmArchive: this.confirmArchive,

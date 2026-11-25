@@ -56,6 +56,16 @@ const files = computed({
   set: (v: Attachment[]) => { if (thread.value) v.length ? attachmentDrafts.set(thread.value.id, v) : attachmentDrafts.delete(thread.value.id) },
 })
 
+/** After a break: the conversation is compacted, then what is written here goes out. */
+function compactFirst() {
+  const chat = thread.value
+  if (!chat) return
+  const then = { text: text.value, attachments: files.value }
+  text.value = ''
+  files.value = []
+  void threads.compact(chat.id, 'asked', then)
+}
+
 const composer = ref<{ focus: () => void } | null>(null)
 watch([() => props.pane.threadId, () => props.active], async ([, active]) => {
   if (!active) return
@@ -371,6 +381,7 @@ onBeforeUnmount(unpaint)
       <div v-else class="pane__composer">
         <ChatQueue :thread="thread" />
         <ChatTasks :thread="thread" />
+        <ChatBreak :thread="thread" :written="!!text.trim() || files.length > 0" @compact="compactFirst" />
         <ChatComposer
           ref="composer"
           v-model:text="text"

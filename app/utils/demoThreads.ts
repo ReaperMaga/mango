@@ -10,6 +10,24 @@ export function demoThreads(projectPath: string): Thread[] {
   return [
     {
       ...base,
+      id: id('long'),
+      title: 'Split the editor into modules',
+      agent: 'claude',
+      model: 'opus',
+      status: 'working',
+      branch: 'main',
+      sessionId: id('session'),
+      createdAt: now - 5 * 60 * min,
+      updatedAt: now - 3 * 60 * min,
+      context: { used: 462_000, max: 1_000_000, at: now - 3 * 60 * min },
+      cache: { at: now - 3 * 60 * min, ttlMs: 60 * min, for: 'opus ' },
+      messages: [
+        { id: id('m'), role: 'user', createdAt: now - 185 * min, parts: [{ type: 'text', text: 'Move the completion and hover code into their own modules.' }] },
+        { id: id('m'), role: 'agent', createdAt: now - 180 * min, outcome: 'done', elapsedMs: 5 * min, parts: [{ type: 'text', text: 'Both now live in their own modules, and the editor only wires them up. The tests pass.' }] },
+      ],
+    },
+    {
+      ...base,
       id: id('term'),
       title: 'Wire the terminal panel to a real PTY',
       agent: 'claude',

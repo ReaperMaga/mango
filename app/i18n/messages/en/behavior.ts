@@ -12,6 +12,14 @@ export const behavior = {
     queue: 'Queue',
     steer: 'Steer',
   },
+  breaks: {
+    title: 'Long breaks',
+    label: 'Large Claude Code chats after a break',
+    hint: 'After about an hour, a chat’s next message has the whole conversation read again. Above {tokens} tokens, Mango can ask to compact it first, or compact it just before that. Automatic uses some of your limit without asking. Compacting keeps a summary and can lose details.',
+    ask: 'Ask when I return',
+    auto: 'Compact automatically',
+    off: 'Off',
+  },
   activity: 'Activity',
   toolCalls: {
     label: 'Tool calls in chat',

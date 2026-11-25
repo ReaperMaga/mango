@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { useWorkspace, type FollowUp, type SendKey, type ToolCalls } from '~/stores/workspace'
+import { MIN_TOKENS, type IdleCompaction } from '~/utils/idleCompaction'
+import { formatTokens } from '~/agents/context'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSelect from './SettingsSelect.vue'
@@ -24,9 +26,14 @@ const toolCalls = computed<Array<{ value: ToolCalls; label: string }>>(() => [
   { value: 'hide', label: t('behavior.toolCalls.hide') },
   { value: 'zen', label: t('behavior.toolCalls.zen') },
 ])
+const breaks = computed<Array<{ value: IdleCompaction; label: string }>>(() => [
+  { value: 'ask', label: t('behavior.breaks.ask') },
+  { value: 'auto', label: t('behavior.breaks.auto') },
+  { value: 'off', label: t('behavior.breaks.off') },
+])
 const opposite = computed(() => (ws.sendKey === 'enter' ? `${mod} + Enter` : `${mod} + Shift + Enter`))
 
-function persist<K extends 'sendKey' | 'followUp' | 'toolCalls'>(key: K, value: (typeof ws)[K]) {
+function persist<K extends 'sendKey' | 'followUp' | 'toolCalls' | 'idleCompaction'>(key: K, value: (typeof ws)[K]) {
   ws[key] = value
   ws.persist()
 }
@@ -51,6 +58,15 @@ function persist<K extends 'sendKey' | 'followUp' | 'toolCalls'>(key: K, value: 
       >
         <template #default="{ labelId }">
           <SettingsSelect :model-value="ws.followUp" :options="followUps" :labelledby="labelId" @update:model-value="v => persist('followUp', v)" />
+        </template>
+      </SettingsRow>
+    </div>
+
+    <h3 class="head">{{ t('behavior.breaks.title') }}</h3>
+    <div class="card">
+      <SettingsRow :label="t('behavior.breaks.label')" :hint="t('behavior.breaks.hint', { tokens: formatTokens(MIN_TOKENS) })">
+        <template #default="{ labelId }">
+          <SettingsSelect :model-value="ws.idleCompaction" :options="breaks" :labelledby="labelId" @update:model-value="v => persist('idleCompaction', v)" />
         </template>
       </SettingsRow>
     </div>

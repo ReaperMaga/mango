@@ -1,6 +1,7 @@
 import type { AgentId, ContextUsage, Part } from '~/types/chat'
 import { approvalWaiters, stopFlags, type useThreads } from '~/stores/threads'
 import { simulatedTasks } from '~/agents'
+import { formatTokens } from '~/agents/context'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -26,6 +27,18 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
   store._setStatus(threadId, 'running')
   const msg = store._pushAgentMessage(threadId)
   if (!msg) return
+  if (/^\/compact(\s|$)/.test(prompt.trim())) {
+    const before = thread()?.context?.used ?? 0
+    await sleep(2500)
+    const t = thread()
+    if (stopped() || !t) return
+    t.context = { ...mockContext(t.agent), used: 38_000, max: t.context?.max ?? 200_000, parts: undefined }
+    delete t.cache
+    store._pushPart(threadId, msg, { type: 'notice', level: 'info', text: before > 38_000 ? `Compacted: ${formatTokens(before)} to ${formatTokens(38_000)} tokens.` : 'Compacted.' })
+    store._clearLive(threadId)
+    store._setStatus(threadId, 'working', 'done')
+    return
+  }
 
   const think = store._pushPart(threadId, msg, { type: 'thinking', text: '', seconds: 0 }) as Extract<Part, { type: 'thinking' }>
   const thoughts = `The request is “${prompt.trim().slice(0, 80)}”. I'll look at how the project is laid out first, find the code this touches, then make the smallest change that does it and run the checks.`
