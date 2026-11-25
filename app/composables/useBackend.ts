@@ -485,6 +485,7 @@ const mock = (() => {
       // Local or in a remote environment (`remote`), the preview has no CLI: runAgentTurn simulates instead.
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': case 'agent_reconnect_now': return
+      case 'agent_transcript': return null
       case 'update_check': return {
         version: '0.2.0',
         currentVersion: '0.1.0',

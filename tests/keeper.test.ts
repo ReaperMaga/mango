@@ -19,6 +19,9 @@ function fakeProcess(stuck = false) {
     did,
     handlers: { onLine: () => {} },
     readDirs: [],
+    model: 'default',
+    effort: null,
+    seen: new Set(),
     costUsd: 0,
     wakes: line => line === 'wake',
     transport: {
@@ -101,13 +104,26 @@ test('release waits until the picked ones are gone, and kills one that will not 
 
 /* ---------- the Claude Code adapter ---------- */
 
-interface FakeCli { args: string[]; got: any[]; closed: boolean; killed: boolean; refuseMode?: boolean }
+interface FakeCli {
+  args: string[]
+  got: any[]
+  closed: boolean
+  killed: boolean
+  refuseMode?: boolean
+  /** Control requests it does not know. */
+  unknown?: string[]
+  /** Says yes to a model or effort and does not change it. */
+  ignores?: boolean
+  model?: string
+  effort?: string
+}
 
 /** Enough of Claude Code to answer: every process counts its own turns and what they cost so far. */
 function fakeClaude() {
   const procs: FakeCli[] = []
   const spawn: AgentRunOptions['spawn'] = async (args, handlers) => {
-    const p: FakeCli = { args, got: [], closed: false, killed: false }
+    const arg = (name: string) => (args.includes(name) ? args[args.indexOf(name) + 1] : undefined)
+    const p: FakeCli = { args, got: [], closed: false, killed: false, model: `claude-${arg('--model') ?? 'default'}`, effort: arg('--effort') ?? 'high' }
     procs.push(p)
     let turns = 0
     const out = (o: unknown) => handlers.onLine(JSON.stringify(o))
@@ -118,13 +134,19 @@ function fakeClaude() {
         await wait()
         if (m.type === 'control_request') {
           const { subtype, mode } = m.request
-          const ok = !(subtype === 'set_permission_mode' && p.refuseMode)
-          out({ type: 'control_response', response: { subtype: ok ? 'success' : 'error', request_id: m.request_id, response: mode ? { mode } : {} } })
+          const { model, settings } = m.request
+          const ok = !(subtype === 'set_permission_mode' && p.refuseMode) && !p.unknown?.includes(subtype) && model !== 'none-such'
+          // Any effort is accepted; one it does not know leaves it where it was.
+          if (ok && subtype === 'set_model' && !p.ignores) p.model = `claude-${model}`
+          if (ok && subtype === 'apply_flag_settings' && !p.ignores && ['low', 'medium', 'high'].includes(settings.effortLevel)) p.effort = settings.effortLevel
+          if (ok && subtype === 'set_model') out({ type: 'user', isReplay: true, uuid: `note-${model}`, message: { role: 'user', content: `<local-command-stdout>Set model to ${model}</local-command-stdout>` } })
+          const response = mode ? { mode } : subtype === 'set_model' ? { model: `claude-${model}` } : subtype === 'get_settings' ? { applied: { model: p.model, effort: p.effort } } : {}
+          out({ type: 'control_response', response: { subtype: ok ? 'success' : 'error', request_id: m.request_id, ...(ok ? { response } : { error: 'no' }) } })
         } else if (m.type === 'user') {
           turns++
           out({ type: 'system', subtype: 'init', session_id: 's1' })
-          out({ type: 'user', isReplay: true, message: m.message })
-          out({ type: 'assistant', message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
+          out({ type: 'user', isReplay: true, uuid: `u${procs.length}-${turns}`, message: m.message })
+          out({ type: 'assistant', uuid: `r${procs.length}-${turns}`, message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
           out({ type: 'result', subtype: 'success', session_id: 's1', total_cost_usd: turns, usage: { input_tokens: 1, output_tokens: 1 } })
         }
       },
@@ -173,7 +195,7 @@ test('claude: the next turn goes to the kept process, in its mode, with only its
 
 test('claude: other settings, another session or a folder it cannot read start a new process', async () => {
   const others: Partial<AgentRunOptions>[] = [
-    { mode: 'auto' }, { model: 'opus' }, { effort: 'low' }, { sessionId: 's2' }, { sessionId: null }, { cwd: '/q' },
+    { mode: 'auto' }, { sessionId: 's2' }, { sessionId: null }, { cwd: '/q' },
     { appendSystemPrompt: 'x' }, { readDirs: ['/files'] },
     { mcpServers: [{ name: 'm', transport: 'http', url: 'https://example.com', headers: { A: 'b' } }] },
   ]
@@ -189,6 +211,76 @@ test('claude: other settings, another session or a folder it cannot read start a
   }
 })
 
+/** A chat's turns one after another, each at its own model and effort; how many processes there were after each. */
+async function switching(turns: Partial<AgentRunOptions>[], prepare: (p: FakeCli) => void = () => {}) {
+  const cli = fakeClaude()
+  const { kept, turn } = chat(cli)
+  const counts: number[] = []
+  for (const over of turns) {
+    const events = await turn({ sessionId: counts.length ? 's1' : null, ...over })
+    assert.deepEqual(endings(events), ['done'])
+    if (!counts.length) prepare(cli.procs[0]!)
+    counts.push(cli.procs.length)
+  }
+  kept.killAll()
+  return { counts, procs: cli.procs }
+}
+const asked = (p: FakeCli) => p.got.flatMap(m => (m.type === 'user' ? ['prompt'] : ['set_model', 'apply_flag_settings', 'get_settings'].includes(m.request.subtype) ? [m.request.subtype] : []))
+
+test('claude: another model or effort goes to the kept process, and is made sure of before the prompt', async () => {
+  const { counts, procs: [p] } = await switching([
+    { model: 'haiku' }, { model: 'opus' }, { model: 'opus', effort: 'low' }, { model: 'sonnet', effort: 'medium' }, { model: 'sonnet', effort: 'medium' },
+  ])
+  assert.deepEqual(counts, [1, 1, 1, 1, 1])
+  assert.deepEqual([p!.model, p!.effort], ['claude-sonnet', 'medium'])
+  assert.deepEqual(asked(p!), [
+    'prompt',
+    'set_model', 'get_settings', 'prompt',
+    'apply_flag_settings', 'get_settings', 'prompt',
+    'set_model', 'apply_flag_settings', 'get_settings', 'prompt',
+    'prompt',
+  ])
+  assert.deepEqual(p!.args.slice(p!.args.indexOf('--model'), p!.args.indexOf('--model') + 2), ['--model', 'haiku'])
+})
+
+test('claude: back to what Claude Code picks by itself starts a new process', async () => {
+  for (const [from, to] of [[{ model: 'opus' }, {}], [{ effort: 'low' }, {}], [{ model: 'opus', effort: 'low' }, { model: 'sonnet' }]] as Partial<AgentRunOptions>[][]) {
+    const { counts, procs } = await switching([from!, to!])
+    assert.deepEqual(counts, [1, 2], JSON.stringify([from, to]))
+    assert.deepEqual(asked(procs[0]!), ['prompt'])
+    assert.ok(procs[0]!.closed)
+    assert.equal(procs[1]!.args.includes('--effort'), false)
+    assert.equal(procs[1]!.args.includes('--model'), !!to!.model)
+  }
+  // Leaving it for the first time is fine, and so is switching once the effort was set.
+  assert.deepEqual((await switching([{}, { model: 'opus' }, { model: 'opus', effort: 'low' }])).counts, [1, 1, 1])
+})
+
+test('claude: a switch that is refused, or cannot be made sure of, starts a new process at it', async () => {
+  const cases: [string, (p: FakeCli) => void, Partial<AgentRunOptions>][] = [
+    ['no set_model', (p) => { p.unknown = ['set_model'] }, { model: 'opus' }],
+    ['no apply_flag_settings', (p) => { p.unknown = ['apply_flag_settings'] }, { effort: 'low' }],
+    ['no get_settings', (p) => { p.unknown = ['get_settings'] }, { model: 'opus' }],
+    ['a yes that changes no model', (p) => { p.ignores = true }, { model: 'opus' }],
+    ['a yes that changes no effort', (p) => { p.ignores = true }, { effort: 'low' }],
+    ['an effort it does not know', () => {}, { effort: 'nonsense' }],
+    ['a model it does not know', () => {}, { model: 'none-such' }],
+  ]
+  for (const [what, prepare, to] of cases) {
+    const { counts, procs } = await switching([{}, to], prepare)
+    assert.deepEqual(counts, [1, 2], what)
+    assert.ok(procs[0]!.killed, what)
+    assert.equal(prompts(procs[0]!), 1, what)
+    for (const v of [to.model ?? [], to.effort ?? []].flat()) assert.ok(procs[1]!.args.includes(v!), what)
+    assert.ok(procs[1]!.args.includes('--resume'), what)
+  }
+})
+
+test('claude: another mode always starts a new process, whatever else changes', async () => {
+  const { counts } = await switching([{ mode: 'auto', model: 'haiku' }, { mode: 'ask', model: 'opus' }, { mode: 'plan', model: 'opus' }])
+  assert.deepEqual(counts, [1, 2, 3])
+})
+
 test('claude: a process that refuses the mode is replaced, and the turn still runs', async () => {
   const cli = fakeClaude()
   const { kept, turn } = chat(cli)
@@ -200,6 +292,101 @@ test('claude: a process that refuses the mode is replaced, and the turn still ru
   assert.equal(prompts(cli.procs[1]!), 1)
   assert.deepEqual(endings(events), ['done'])
   kept.killAll()
+})
+
+/** Transcript lines as Claude Code writes them, what a kept process does not print among them. */
+const said = (type: 'user' | 'assistant', uuid: string, content: unknown = [{ type: 'text', text: 'x' }], extra = {}) =>
+  JSON.stringify({ type, uuid, message: { role: type, content }, ...extra })
+const ownTurn = [said('user', 'u1-1'), said('assistant', 'r1-1')]
+const bookkeeping = [
+  JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', uuid: 'h1' }),
+  JSON.stringify({ type: 'attachment', uuid: 'at1', attachment: { type: 'date' } }),
+  JSON.stringify({ type: 'last-prompt', leafUuid: 'h1' }),
+  JSON.stringify({ type: 'cost-state', totalCostUSD: 1 }),
+  said('user', 'cv1', '<local-command-caveat>…', { isMeta: true }),
+  said('user', 'cv2', '<command-name>/context</command-name>'),
+  said('user', 'cv3', '<local-command-stdout>(no content)</local-command-stdout>'),
+  said('assistant', 'sub1', [], { isSidechain: true }),
+  'not json',
+]
+
+test('claude: a session that went on elsewhere is resumed in a new process', async () => {
+  const missed: [string, string[]][] = [
+    ['an answer', [...ownTurn, said('user', 'x1', 'typed in a terminal'), said('assistant', 'x2'), ...bookkeeping]],
+    ['a prompt not answered yet', [...ownTurn, said('user', 'x1', 'typed in a terminal')]],
+    ['a compaction', [...ownTurn, said('user', 'x1', 'This session is being continued…', { isCompactSummary: true }), ...bookkeeping]],
+    ['nothing it knows', [said('user', 'old1'), said('assistant', 'old2')]],
+    ['no message at all', bookkeeping],
+  ]
+  for (const [what, lines] of missed) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    const events = await turn({ readTranscript: async () => ({ lines, whole: true }) })
+    assert.equal(cli.procs.length, 2, what)
+    assert.ok(cli.procs[0]!.killed, what)
+    assert.equal(prompts(cli.procs[0]!), 1, what)
+    assert.deepEqual(cli.procs[1]!.args.slice(-2), ['--resume', 's1'], what)
+    assert.equal(prompts(cli.procs[1]!), 1, what)
+    assert.deepEqual(endings(events), ['done'], what)
+    kept.killAll()
+  }
+})
+
+test('claude: bookkeeping, a late flush and a transcript that cannot be read keep the process', async () => {
+  const fine: [string, AgentRunOptions['readTranscript']][] = [
+    ['bookkeeping', async () => ({ lines: [...ownTurn, ...bookkeeping], whole: true })],
+    ['answer not written yet', async () => ({ lines: [said('assistant', 'old'), ownTurn[0]!], whole: false })],
+    ['missing', async () => null],
+    ['unreadable', async () => { throw new Error('denied') }],
+    ['none to read', undefined],
+  ]
+  for (const [what, readTranscript] of fine) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    assert.deepEqual(endings(await turn({ readTranscript })), ['done'], what)
+    assert.equal(cli.procs.length, 1, what)
+    assert.equal(prompts(cli.procs[0]!), 2, what)
+    kept.killAll()
+  }
+})
+
+test('claude: a tail without a message is read again, wider, and then no more', async () => {
+  for (const found of [true, false]) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    const asked: number[] = []
+    await turn({
+      async readTranscript(session, maxBytes) {
+        assert.equal(session, 's1')
+        asked.push(maxBytes)
+        return { lines: found && asked.length === 2 ? [...ownTurn, ...bookkeeping] : bookkeeping, whole: false }
+      },
+    })
+    assert.equal(asked.length, 2)
+    assert.ok(asked[1]! > asked[0]!)
+    assert.equal(cli.procs.length, found ? 1 : 2)
+    kept.killAll()
+  }
+})
+
+test('claude: a turn stopped while the transcript is read never sends its prompt', async () => {
+  const cli = fakeClaude()
+  const { kept, turn } = chat(cli)
+  await turn({ sessionId: null })
+  const events: AgentEvent[] = []
+  const run = claudeAdapter.run({
+    cwd: '/p', prompt: 'two', model: 'default', mode: 'ask', sessionId: 's1', spawn: cli.spawn,
+    keeper: kept.keeperFor(owner('c'), '', () => ''), emit: e => events.push(e),
+    readTranscript: async () => { run.interrupt(); await wait(10); return { lines: ownTurn, whole: true } },
+  })
+  await wait(50)
+  assert.deepEqual(endings(events), ['stopped'])
+  assert.equal(prompts(cli.procs[0]!), 1)
+  assert.equal(cli.procs.length, 1)
+  assert.ok(cli.procs[0]!.killed)
 })
 
 test('claude: a turn stopped while the kept process wakes never sends its prompt', async () => {

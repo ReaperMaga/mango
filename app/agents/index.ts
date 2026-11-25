@@ -614,6 +614,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
               const t = store.byId(threadId)
               return t ? lastReply(t) : null
             }),
+            readTranscript: (sessionId: string, maxBytes: number) => call('agent_transcript', { sessionId, maxBytes }),
           }),
       // Through a drop the run goes on in its environment: the chat says it is reconnecting, and stays Working.
       spawn: spawnFor(thread.agent, workdir, (state) => { if (!over) store._setReconnecting(threadId, state === 'lost') }),
