@@ -17,8 +17,9 @@
  *   have no portable form: a remote source strips `chats` (data, and patches to `['chats', …]`) before sending, and
  *   keeps them on this computer.
  * - Errors are `SourceError`s: what the store does with a change depends on their kind.
- * - Several sources at once (local and a team's): one store per source is enough, or a source that routes by
- *   collection id. Documents never refer to their source.
+ * - Several sources at once: `RoutedSource` (`routed.ts`) routes by collection id between this computer's and a
+ *   planner server's (`remote.ts`), and says so through the optional `places` methods. Documents never refer to
+ *   their source.
  */
 
 import type { JsonObject, Patch } from '../patch.ts'
@@ -69,6 +70,13 @@ export class SourceError extends Error {
   }
 }
 
+/** Where collections can live, for a source that holds several (`RoutedSource`). */
+export interface SourcePlace {
+  readonly id: string
+  readonly label: string
+  readonly status: SourceStatus
+}
+
 export interface PlannerSource {
   /** Names the source in the UI once there are several. */
   readonly label: string
@@ -90,4 +98,12 @@ export interface PlannerSource {
   status(): SourceStatus
   onStatus(handler: (status: SourceStatus) => void): () => void
   dispose(): void
+
+  /* ---- only a source of several places has these */
+  places?(): SourcePlace[]
+  placeOfCollection?(collectionId: string): string
+  /** The next create of this collection goes there. */
+  place?(collectionId: string, place: string): void
+  /** Of the place the collection is in. */
+  statusOf?(collectionId: string): SourceStatus
 }

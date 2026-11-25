@@ -27,8 +27,27 @@ called (task, note, bug) and its properties.
 - CSV in and out, Markdown out.
 - Undo and redo, deletions too.
 
-Everything stays on this computer, in Mango's data folder, and is kept when the plugin is removed unless you ask for it
-to go. Nothing is sent anywhere.
+Collections stay on this computer, in Mango's data folder, and are kept when the plugin is removed unless you ask for
+them to go. Nothing is sent anywhere unless you connect a planner server.
+
+## Sharing through a planner server
+
+A [planner server](../../planner-server/README.md) keeps collections for every computer and person connected to one of
+its spaces. You run it yourself, and the server's own command line makes the spaces and their access tokens. A token
+either edits or only reads.
+
+- Connect in **Settings > Planner server** (or **Connect to a planner server…** in the command palette) with the
+  server's address and an access token.
+- Each collection lives in one place. **Kept on** in a new collection's dialog chooses this computer or the server, and
+  **Move to …** in a collection's menu moves one with all its items. The move can be undone. Moving one off the server
+  takes it away from everyone else, so that is asked first. A cloud icon in the collection list marks the server's
+  collections.
+- Everyone's changes show as they are made. Two people who change different fields of an item both keep their
+  change. When two people change the same field, the later change wins.
+- When the server cannot be reached, its collections stay in view and changes wait to be sent. They are lost if
+  Mango is closed before the server is back.
+- Chat links are never sent: an item's linked chats show only on the computer that linked them. A collection that
+  belongs to a project is matched on other computers by the project's git remote.
 
 ## Building it
 
@@ -44,5 +63,6 @@ pnpm test                     # says so when the built files do not match src/
 The notes' editor is [TipTap](https://tiptap.dev) (MIT, like the rest that is bundled: `THIRD-PARTY.txt`); Markdown in and
 out of it is `src/item/notes/markdown.ts`.
 
-Where documents live is behind `PlannerSource` (`src/data/source.ts`, which also says how a remote one would plug in);
+Where documents live is behind `PlannerSource` (`src/data/source.ts`): `local.ts` on this computer, `remote.ts` on a
+planner server (its protocol is `planner-server/PROTOCOL.md`), and `routed.ts` puts each collection in one of them.
 `src/store.ts` is all the interface uses.

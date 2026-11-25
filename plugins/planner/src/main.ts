@@ -1,8 +1,12 @@
 import { computed, type Component } from 'vue'
 import App from './App.vue'
 import { readRoute, TAB_KEY, VIEW_ID, type Planner, type Route } from './context.ts'
+import { createConnection } from './data/connection.ts'
+import { LocalSource } from './data/local.ts'
+import { RoutedSource } from './data/routed.ts'
 import type { MangoPluginApi } from './host.ts'
 import { askCollection, askNewCollection, askNewItem } from './shell/dialogs.ts'
+import ServerSettings from './shell/ServerSettings.vue'
 import { identifyProjects } from './shell/repository.ts'
 import './shell/shell.css'
 import { shell } from './shell/strings.ts'
@@ -14,7 +18,10 @@ const ICON = 'square-kanban'
 let current: PlannerStore | null = null
 
 export function activate(mango: MangoPluginApi) {
-  const store = createStore(mango)
+  // This computer's collections, and a planner server's once one is connected.
+  const source = new RoutedSource(new LocalSource(mango.data))
+  const store = createStore(mango, { source })
+  const server = createConnection(mango, source)
   current = store
   const stopIdentifying = identifyProjects(mango, store)
   mango.onBeforeClose(() => store.flushAll())
@@ -62,6 +69,12 @@ export function activate(mango: MangoPluginApi) {
     restore: true,
     view: { component: App as Component, props: { mango, store } },
   })
+  mango.ui.settingsPages.register({
+    id: 'server',
+    title: strings.server.title,
+    icon: 'cloud',
+    view: { component: ServerSettings as Component, props: { planner, server } },
+  })
   mango.ui.navItems.register({ id: 'planner', title: strings.planner, icon: ICON, shortcut: 'planner', active: isOpen, run: () => open() })
   mango.shortcuts.register({ id: 'planner', label: strings.commands.open, key: 'Mod+Shift+D', run: toggle })
 
@@ -94,6 +107,13 @@ export function activate(mango: MangoPluginApi) {
       const collection = await askNewCollection(planner)
       if (collection) open({ collectionId: collection.id })
     },
+  })
+  mango.commands.register({
+    id: 'server',
+    title: strings.commands.server,
+    icon: 'cloud',
+    keywords: 'planner sync share team remote',
+    run: () => mango.ui.openSettings('server'),
   })
   mango.ui.menus.register('thread', {
     id: 'add',

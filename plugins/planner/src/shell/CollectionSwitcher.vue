@@ -34,6 +34,8 @@ const rows = computed<PickRow[]>(() => [
   { id: NEW, label: shell.newCollectionRow, always: true },
 ])
 
+const placeLabel = (id: string) => store.places.value.find(p => p.id === store.placeOf(id))?.label ?? ''
+
 /** The collections of its group: it only moves among those. */
 const group = (id: string) => list.value.filter(c => c.scope.kind === byId.value.get(id)?.scope.kind).map(c => c.id)
 const reorder = useReorder({
@@ -81,6 +83,12 @@ function pick(id: string) {
         <Icon v-else name="plus" />
       </template>
       <template #end="{ row }">
+        <span
+          v-if="byId.get(row.id) && store.placeOf(row.id) !== 'local'"
+          class="pl-switch__place"
+          :title="shell.keptOn(placeLabel(row.id))"
+          :aria-label="shell.keptOn(placeLabel(row.id))"
+        ><Icon :name="store.statusOf(row.id).online ? 'cloud' : 'cloud-off'" /></span>
         <component
           :is="IconButton"
           v-if="byId.get(row.id)"
@@ -97,6 +105,8 @@ function pick(id: string) {
 </template>
 
 <style scoped>
+.pl-switch__place { display: inline-flex; color: var(--fg-faint); }
+.pl-switch__place svg { width: 13px; height: 13px; stroke-width: 1.85; }
 .pl-switch__more { opacity: 0; margin-right: -4px; }
 :deep(.pl-pick__row.is-active) .pl-switch__more { opacity: 1; }
 </style>

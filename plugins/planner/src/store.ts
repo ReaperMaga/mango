@@ -12,7 +12,7 @@ import { computed, ref, shallowReactive, shallowRef, type ComputedRef, type Ref,
 import { convertProperty } from './convert.ts'
 import { parseCsv, planImport, toCsv, toMarkdown } from './csv.ts'
 import { LocalSource } from './data/local.ts'
-import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourceStatus } from './data/source.ts'
+import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourcePlace, type SourceStatus } from './data/source.ts'
 import type { MangoPluginApi } from './host.ts'
 import {
   colorAt, isGroupable, isInScope, itemWord, newId, normalizeCollection, normalizeItem, ordered, projectKey, propertyOf,
@@ -44,6 +44,8 @@ export interface NewCollection {
   scope?: Scope
   icon?: string
   color?: Color
+  /** Where it lives (`places`): this computer when left out. */
+  place?: string
 }
 export type CollectionChange = Partial<Pick<Collection, 'name' | 'icon' | 'color' | 'scope' | 'description' | 'itemName'>>
 export type PropertyChange = Partial<Pick<Property, 'name' | 'defaultOption'>>
@@ -94,6 +96,12 @@ export interface PlannerStore {
   readonly status: Readonly<Ref<LoadStatus>>
   readonly error: Readonly<Ref<string | null>>
   readonly sourceStatus: Readonly<Ref<SourceStatus>>
+  /** Where collections can live: one place, this computer, unless a planner server is connected. */
+  readonly places: Readonly<Ref<readonly SourcePlace[]>>
+  /** The place a collection lives in (reactive). */
+  placeOf(collectionId: string): string
+  /** Of the place a collection lives in (reactive). */
+  statusOf(collectionId: string): SourceStatus
   readonly projectPath: Readonly<Ref<string | null>>
   /** Every collection there is, other projects' too, in order. */
   readonly allCollections: Readonly<Ref<readonly Collection[]>>
@@ -119,6 +127,11 @@ export interface PlannerStore {
   updateCollection(id: string, change: CollectionChange, options?: ChangeOptions): void
   moveCollection(id: string, position: Position): void
   duplicateCollection(id: string, options?: { items?: boolean }): Promise<Collection | null>
+  /**
+   * To another place, with its items: copied there under new ids, then deleted where it was, as one step to undo.
+   * Chat links come along on this computer. The copy, or null when it could not be moved.
+   */
+  moveCollectionTo(id: string, place: string): Promise<Collection | null>
   deleteCollection(id: string): Promise<boolean>
 
   /* ---- items */
@@ -167,7 +180,7 @@ export interface PlannerStore {
    */
   importCsv(collectionId: string, csv: string): Promise<number>
   /** Null when it could not be written. */
-  importCsvAsCollection(csv: string, name: string, scope?: Scope): Promise<Collection | null>
+  importCsvAsCollection(csv: string, name: string, scope?: Scope, place?: string): Promise<Collection | null>
 
   /* ---- undo */
   readonly canUndo: ComputedRef<boolean>
@@ -314,12 +327,14 @@ function withoutLayout(data: JsonObject): JsonObject {
 /* ---------------------------------------------------------------- the store */
 
 export function createStore(mango: StoreHost, options: StoreOptions = {}): PlannerStore {
-  const source = options.source ?? new LocalSource(mango.data)
+  const source: PlannerSource = options.source ?? new LocalSource(mango.data)
   const deferMs = options.deferMs ?? DEFER_MS
 
   const status = ref<LoadStatus>('idle')
   const error = ref<string | null>(null)
   const sourceStatus = shallowRef<SourceStatus>(source.status())
+  const onePlace = (status: SourceStatus): SourcePlace[] => [{ id: 'local', label: source.label, status }]
+  const places = shallowRef<readonly SourcePlace[]>(source.places?.() ?? onePlace(sourceStatus.value))
   const projectPath = ref<string | null>(mango.workspace.activeProject())
   const now = ref(Date.now())
   const saving = ref(false)
@@ -530,6 +545,29 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     return inverse
   }
 
+  function placeOf(collectionId: string): string {
+    void places.value
+    void allCollections.value
+    return source.placeOfCollection?.(collectionId) ?? 'local'
+  }
+
+  function statusOf(collectionId: string): SourceStatus {
+    void places.value
+    void allCollections.value
+    return source.statusOf?.(collectionId) ?? sourceStatus.value
+  }
+
+  /** The status of a read-only place these change, if any. */
+  function readonlyFor(ops: readonly SourceOp[]): SourceStatus | null {
+    if (sourceStatus.value.readonly) return sourceStatus.value
+    if (!source.statusOf) return null
+    for (const id of new Set(ops.map(o => o.collectionId))) {
+      const s = source.statusOf(id)
+      if (s.readonly) return s
+    }
+    return null
+  }
+
   /** Makes a change. False when it may not be made. */
   function mutate(ops: SourceOp[], label: string | null, opts: ChangeOptions = {}, settle?: (ok: boolean) => void): boolean {
     ops = ops.filter(o => o.op !== 'patch' || o.patch.length)
@@ -537,8 +575,9 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       settle?.(true)
       return true
     }
-    if (sourceStatus.value.readonly) {
-      toast(strings.readonly, sourceStatus.value.message)
+    const locked = readonlyFor(ops)
+    if (locked) {
+      toast(strings.readonly, locked.message)
       return false
     }
     if (opts.defer) {
@@ -784,7 +823,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     settleDeferred()
     const entry = from.value.at(-1)
     if (!entry) return
-    if (sourceStatus.value.readonly) return toast(strings.readonly, sourceStatus.value.message)
+    const locked = readonlyFor(entry[which])
+    if (locked) return toast(strings.readonly, locked.message)
     from.value = from.value.slice(0, -1)
     const { ops, kept } = stillApplies(entry, which)
     tellKept(kept)
@@ -828,6 +868,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const data = templateData(template)
     const scope: Scope = input.scope ?? (projectPath.value ? { kind: 'project', path: projectPath.value } : { kind: 'everywhere' })
     const id = newId()
+    if (input.place) source.place?.(id, input.place)
     const place = placeAt(allCollections.value, [id], 'end')
     const ops: SourceOp[] = [{
       ...collectionTarget(id),
@@ -853,7 +894,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   /** Patches for collections whose order changed around a new one. */
   function reorderOps(place: ReadonlyMap<string, string>, except?: string): SourceOp[] {
-    return [...place].filter(([id]) => id !== except)
+    // A collection in a read-only place keeps its order: the change it is part of can still be made.
+    return [...place].filter(([id]) => id !== except && !(source.statusOf?.(id).readonly ?? false))
       .map(([id, order]) => ({ ...collectionTarget(id), op: 'patch', patch: [{ path: ['order'], value: order }] }))
   }
 
@@ -871,6 +913,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const model = collection(id)
     if (!list || !raw || !model) return null
     const copy = newId()
+    source.place?.(copy, placeOf(id))
     const at = Date.now()
     const place = placeAt(allCollections.value, [copy], { after: id })
     const ops: SourceOp[] = [
@@ -883,6 +926,41 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     ]
     startEmpty(copy)
     return mutate(ops, strings.did.duplicate) ? collection(copy) : null
+  }
+
+  async function moveCollectionTo(id: string, to: string): Promise<Collection | null> {
+    if (placeOf(id) === to) return collection(id)
+    const target = places.value.find(p => p.id === to)
+    if (!target) return null
+    if (!target.status.online || target.status.readonly) {
+      toast(strings.moveFailed(target.label), target.status.message)
+      return null
+    }
+    const list = await withItems(id)
+    const raw = rawCollection(id)
+    if (!list || !raw) return null
+    const copy = newId()
+    source.place?.(copy, to)
+    const ops: SourceOp[] = [
+      { ...collectionTarget(copy), op: 'create', data: raw },
+      ...list.flatMap((i): SourceOp[] => {
+        const data = rawItem(id, i.id)
+        return data ? [{ ...itemTarget(copy, newId()), op: 'create', data }] : []
+      }),
+      { ...collectionTarget(id), op: 'delete' },
+      ...list.map((i): SourceOp => ({ ...itemTarget(id, i.id), op: 'delete' })),
+    ]
+    startEmpty(copy)
+    if (!await mutateAndWait(ops, strings.did.moveCollection)) return null
+    // What was open stays open.
+    const before = ui()
+    const view = before.views?.[id]
+    mango.storage.set(uiKey(), {
+      ...before,
+      ...(before.collection === id ? { collection: copy } : {}),
+      ...(view ? { views: { ...before.views, [copy]: view } } : {}),
+    })
+    return collection(copy)
   }
 
   async function deleteCollection(id: string): Promise<boolean> {
@@ -1349,8 +1427,9 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     return await mutateAndWait([{ ...collectionTarget(collectionId), op: 'patch', patch }, ...ops], strings.did.import) ? plan.items.length : 0
   }
 
-  async function importCsvAsCollection(csv: string, name: string, scope?: Scope): Promise<Collection | null> {
+  async function importCsvAsCollection(csv: string, name: string, scope?: Scope, where?: string): Promise<Collection | null> {
     const id = newId()
+    if (where) source.place?.(id, where)
     const { plan, ops } = importOps(id, csv, [], [])
     if (!ops.length) {
       toast(strings.importEmpty)
@@ -1390,6 +1469,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   const unsubscribeStatus = source.onStatus((s) => {
     const back = s.online && !sourceStatus.value.online
     sourceStatus.value = s
+    places.value = source.places?.() ?? onePlace(s)
     if (back && unsaved.length) settleDeferred()
   })
   const project = mango.workspace.onProjectChange((path) => { projectPath.value = path })
@@ -1441,11 +1521,11 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   void load()
 
   return {
-    status, error, sourceStatus, projectPath, allCollections, collections, now, saving,
+    status, error, sourceStatus, places, placeOf, statusOf, projectPath, allCollections, collections, now, saving,
     collection, items, item, load, loadItems,
     itemsForChat: threadId => [...itemStates.values()].flatMap(s => s.items.filter(i => i.chats.includes(threadId))),
 
-    createCollection, updateCollection, moveCollection, duplicateCollection, deleteCollection,
+    createCollection, updateCollection, moveCollection, duplicateCollection, moveCollectionTo, deleteCollection,
     createItem,
     updateItem: (c, id, change, opts) => changeItems(c, [id], change, opts),
     updateItems: (c, ids, change) => changeItems(c, ids, change),

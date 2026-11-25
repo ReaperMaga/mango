@@ -1,0 +1,7 @@
+# The database, with its WAL and shared-memory files
+*.db
+*.db-*
+
+# The built binary
+/planner-server
+/planner-server.exe

@@ -46,7 +46,9 @@ const view = computed(() => {
   return c && (viewOf(c, route.value.viewId) ?? viewOf(c, props.store.lastView(c.id)) ?? c.views[0] ?? null)
 })
 const list = computed(() => (collection.value ? props.store.items(collection.value.id) : null))
-const readonly = computed(() => sourceStatus.value.readonly)
+/** Of the place the collection on screen lives in. */
+const here = computed(() => (collection.value ? props.store.statusOf(collection.value.id) : sourceStatus.value))
+const readonly = computed(() => here.value.readonly)
 
 // The one shown for want of another too: it stays when the list changes.
 watchEffect(() => {
@@ -158,7 +160,7 @@ watch(saving, (on) => {
 })
 
 const banner = computed(() => {
-  const s = sourceStatus.value
+  const s = here.value
   if (!s.online) return { icon: 'cloud-off', title: shell.offline, body: s.message || shell.offlineBody }
   if (s.readonly) return { icon: 'lock', title: shell.readonly, body: s.message || shell.readonlyBody }
   return null

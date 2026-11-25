@@ -30,7 +30,7 @@ const { Button, Field, IconButton } = mango.ui.components
 
 const collection = computed(() => store.collection(props.collectionId))
 watch(collection, (c) => { if (!c) emit('done') })
-const readonly = computed(() => store.sourceStatus.value.readonly)
+const readonly = computed(() => store.statusOf(props.collectionId).readonly)
 onBeforeUnmount(() => { void store.flush() })
 
 const name = ref(collection.value?.name ?? '')
