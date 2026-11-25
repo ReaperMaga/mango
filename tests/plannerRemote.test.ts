@@ -427,3 +427,17 @@ test('a server that cannot be reached at the start shows its collections once it
   server.down = false
   await until(() => !!store.collection('shared'), 2000)
 })
+
+test('a saved server connected while this computer\'s collections still load shows its collections', async () => {
+  const server = new FakeServer()
+  server.others([collection('shared', { name: 'Shared', scope: { kind: 'everywhere' } })])
+  // This computer's data is slower to read than the server is to answer, as at the app's start.
+  const local = new MemorySource()
+  const read = local.loadCollections.bind(local)
+  local.loadCollections = async () => { await tick(60); return read() }
+  const routed = new RoutedSource(local)
+  const { store } = storeOver(routed)
+  // As the plugin starts: the store first, then the saved server.
+  routed.setServer(new RemoteSource({ url: URL_, token: 'pls_write' }, { storage: new Storage(), log: { warn() {} }, fetch: server.fetch }, { retryMs: 5 }))
+  await until(() => store.allCollections.value.some(c => c.id === 'shared'), 2000)
+})

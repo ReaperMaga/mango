@@ -431,13 +431,21 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   /* ---- loading */
 
+  /** A source asked to be read again while the collections were loading: what it said may have come too late for that load. */
+  let resyncWaiting = false
+
   async function load() {
     if (status.value === 'loading') return
     status.value = 'loading'
     error.value = null
+    resyncWaiting = false
     try {
       publish(take(await source.loadCollections()))
       status.value = 'ready'
+      if (resyncWaiting) {
+        resyncWaiting = false
+        void resync()
+      }
     } catch (e) {
       status.value = 'error'
       error.value = messageOf(e)
@@ -447,6 +455,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   /** Reads everything loaded again: what is not listed any more is gone, unless it was heard of meanwhile. */
   async function resync() {
+    if (status.value === 'loading') resyncWaiting = true
     const read = async (kind: SourceDoc['kind'], collectionId: string | null, list: () => Promise<SourceDoc[]>) => {
       const before = [...entries.values()].filter(e => e.kind === kind && (collectionId === null || e.collectionId === collectionId) && e.base?.data)
         .map(e => ({ e, base: e.base! }))

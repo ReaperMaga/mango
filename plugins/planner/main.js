@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. 555e1dec15c423eae11b3ff88936e612 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. 451e6b8baf0ab6f10554e1f3b29c5615 */
 
 let active = null
 
@@ -1040,7 +1040,7 @@ var __plugin = (function(exports, vue) {
 		(0, vue.onMounted)(() => EVENTS.forEach((e) => window.addEventListener(e, commit)));
 		(0, vue.onBeforeUnmount)(() => EVENTS.forEach((e) => window.removeEventListener(e, commit)));
 	}
-	// node_modules/.pnpm/marked@18.2.0/node_modules/marked/lib/marked.esm.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/marked@18.2.0/node_modules/marked/lib/marked.esm.js
 	function e$6() {
 		return {
 			async: !1,
@@ -3671,7 +3671,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			};
 		}
 	}), [["__scopeId", "data-v-4de39441"]]);
-	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/rolldown-runtime-D7D4PA-g.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/rolldown-runtime-D7D4PA-g.js
 	var e$5 = Object.defineProperty;
 	var t$8 = (t, n) => {
 		let r = {};
@@ -3681,7 +3681,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		});
 		return n || e$5(r, Symbol.toStringTag, { value: `Module` }), r;
 	};
-	// node_modules/.pnpm/orderedmap@2.1.1/node_modules/orderedmap/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/orderedmap@2.1.1/node_modules/orderedmap/dist/index.js
 	function e$4(e) {
 		this.content = e;
 	}
@@ -3746,7 +3746,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		if (t) for (var r in t) n.push(r, t[r]);
 		return new e$4(n);
 	};
-	// node_modules/.pnpm/prosemirror-model@1.25.13/node_modules/prosemirror-model/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-model@1.25.13/node_modules/prosemirror-model/dist/index.js
 	function t$7(e, n, a) {
 		for (let o = 0;; o++) {
 			if (o == e.childCount || o == n.childCount) return e.childCount == n.childCount ? null : a;
@@ -5541,7 +5541,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			contentDOM: s
 		};
 	}
-	// node_modules/.pnpm/prosemirror-transform@1.12.7/node_modules/prosemirror-transform/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-transform@1.12.7/node_modules/prosemirror-transform/dist/index.js
 	var a$4 = 65535;
 	var o$7 = 2 ** 16;
 	function s$10(e, t) {
@@ -6754,7 +6754,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return E$9(this, e, t, n), this;
 		}
 	};
-	// node_modules/.pnpm/prosemirror-state@1.4.4/node_modules/prosemirror-state/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-state@1.4.4/node_modules/prosemirror-state/dist/index.js
 	var s$9 = Object.create(null);
 	var c$7 = class {
 		constructor(e, t, n) {
@@ -7283,7 +7283,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return e[this.key];
 		}
 	};
-	// node_modules/.pnpm/prosemirror-commands@1.7.2/node_modules/prosemirror-commands/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-commands@1.7.2/node_modules/prosemirror-commands/dist/index.js
 	var h$8 = (e, t) => !e.selection.empty && (t && t(e.tr.deleteSelection().scrollIntoView()), !0);
 	function g$5(e, t) {
 		let { $cursor: n } = e.selection;
@@ -7627,7 +7627,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	};
 	for (let e in Q$4) $$4[e] = Q$4[e];
 	typeof navigator < `u` ? /Mac|iP(hone|[oa]d)/.test(navigator.platform) : typeof os < `u` && os.platform && os.platform();
-	// node_modules/.pnpm/prosemirror-schema-list@1.6.1/node_modules/prosemirror-schema-list/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-schema-list@1.6.1/node_modules/prosemirror-schema-list/dist/index.js
 	function v$4(e, t = null) {
 		return function(n, r) {
 			let { $from: i, $to: a } = n.selection, o = i.blockRange(a);
@@ -7699,7 +7699,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return !0;
 		};
 	}
-	// node_modules/.pnpm/prosemirror-view@1.44.0/node_modules/prosemirror-view/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-view@1.44.0/node_modules/prosemirror-view/dist/index.js
 	var u$2 = function(e) {
 		for (var t = 0;; t++) if (e = e.previousSibling, !e) return t;
 	};
@@ -11177,7 +11177,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	function Ir$1(e) {
 		if (e.spec.state || e.spec.filterTransaction || e.spec.appendTransaction) throw RangeError(`Plugins passed directly to the view must not have a state component`);
 	}
-	// node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
 	var base = {
 		8: `Backspace`,
 		9: `Tab`,
@@ -11266,7 +11266,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		var r = !(e$3 && n.metaKey && n.shiftKey && !n.ctrlKey && !n.altKey || t$6 && n.shiftKey && n.key && n.key.length == 1 || n.key == `Unidentified`) && n.key || (n.shiftKey ? shift : base)[n.keyCode] || n.key || `Unidentified`;
 		return r == `Esc` && (r = `Escape`), r == `Del` && (r = `Delete`), r == `Left` && (r = `ArrowLeft`), r == `Up` && (r = `ArrowUp`), r == `Right` && (r = `ArrowRight`), r == `Down` && (r = `ArrowDown`), r;
 	}
-	// node_modules/.pnpm/prosemirror-keymap@1.2.3/node_modules/prosemirror-keymap/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-keymap@1.2.3/node_modules/prosemirror-keymap/dist/index.js
 	var r$4 = typeof navigator < `u` && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 	var i$3 = typeof navigator < `u` && /Win/.test(navigator.platform);
 	function a$3(e) {
@@ -11313,7 +11313,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return !1;
 		};
 	}
-	// node_modules/.pnpm/rope-sequence@1.3.4/node_modules/rope-sequence/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/rope-sequence@1.3.4/node_modules/rope-sequence/dist/index.js
 	var e$2 = function() {};
 	e$2.prototype.append = function(t) {
 		return t.length ? (t = e$2.from(t), !this.length && t || t.length < 200 && this.leafAppend(t) || this.length < 200 && t.leafPrepend(this) || this.appendInner(t)) : this;
@@ -11394,7 +11394,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return this.left.depth >= Math.max(this.right.depth, e.depth) + 1 ? new t(this.left, new t(this.right, e)) : new t(this, e);
 		}, t;
 	}(e$2);
-	// node_modules/.pnpm/prosemirror-history@1.5.2/node_modules/prosemirror-history/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-history@1.5.2/node_modules/prosemirror-history/dist/index.js
 	var s$7 = class s$7 {
 		constructor(e, t) {
 			this.items = e, this.eventCount = t;
@@ -11620,7 +11620,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	}
 	var E$4 = T$4(!1, !0);
 	var D$5 = T$4(!0, !0);
-	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/index.js
 	function D$4(e) {
 		let { state: t, transaction: n } = e, { selection: r } = n, { doc: i } = n, { storedMarks: a } = n;
 		return {
@@ -15566,7 +15566,7 @@ img.ProseMirror-separator {
 			}
 		});
 	}
-	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
 	var e$1 = /* @__PURE__ */ new WeakSet();
 	var t$4 = /* @__PURE__ */ new WeakSet();
 	function n$3(t) {
@@ -15608,7 +15608,7 @@ img.ProseMirror-separator {
 		]);
 	}
 	var s$6 = (e, t) => o$5(e, t);
-	// node_modules/.pnpm/@tiptap+extension-blockquot_e35ea30a2a17670379b3a9dc1d7978aa/node_modules/@tiptap/extension-blockquote/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-blockquote@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-blockquote/dist/index.js
 	var o$4 = (e, t) => {
 		let { state: n } = e, { selection: a } = n;
 		if (!a.empty) return !1;
@@ -15682,7 +15682,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-bold@3.35_2717a975dd206978ac5ff29f1386c2fb/node_modules/@tiptap/extension-bold/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-bold@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-bold/dist/index.js
 	var a$2 = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))$/;
 	var o$3 = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))/g;
 	var s$4 = /(?:^|\s)(__(?!\s+__)((?:[^_]+))__(?!\s+__))$/;
@@ -15754,7 +15754,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-code@3.35_65d5e0a73a5df0b41e4ff962f6c4d690/node_modules/@tiptap/extension-code/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-code@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-code/dist/index.js
 	var o$2 = (e) => {
 		let t = /`([^`]+)`(?!`)$/.exec(e);
 		return !t || t.index > 0 && e[t.index - 1] === "`" ? null : {
@@ -15829,7 +15829,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-code-bloc_7efec69be33d7b4a8d5e9223308b5bdd/node_modules/@tiptap/extension-code-block/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-code-block@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-code-block/dist/index.js
 	var s$2 = /^```([a-z]+)?[\s\n]$/;
 	var c$1 = /^~~~([a-z]+)?[\s\n]$/;
 	var l$1 = Ja.create({
@@ -15998,7 +15998,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-document@_5c60a3947ecc05438f9d6f2e0e0c1540/node_modules/@tiptap/extension-document/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-document@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-document/dist/index.js
 	var t$3 = Ja.create({
 		name: `doc`,
 		topNode: !0,
@@ -16007,7 +16007,7 @@ img.ProseMirror-separator {
 
 `) : ``
 	});
-	// node_modules/.pnpm/@tiptap+extension-hard-brea_68c3fc05655b7601b2960a205629e760/node_modules/@tiptap/extension-hard-break/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-hard-break@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-hard-break/dist/index.js
 	var n$2 = Ja.create({
 		name: `hardBreak`,
 		markdownTokenName: `br`,
@@ -16055,7 +16055,7 @@ img.ProseMirror-separator {
 			};
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-heading@3_47e5fab0865adb422d880bd4879a2557/node_modules/@tiptap/extension-heading/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-heading@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-heading/dist/index.js
 	var r$2 = Ja.create({
 		name: `heading`,
 		addOptions() {
@@ -16121,7 +16121,7 @@ img.ProseMirror-separator {
 			}));
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-horizonta_f636d9c7e71c7fd2a32cf793575b3ffa/node_modules/@tiptap/extension-horizontal-rule/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-horizontal-rule@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-horizontal-rule/dist/index.js
 	var s$1 = Ja.create({
 		name: `horizontalRule`,
 		addOptions() {
@@ -16165,7 +16165,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-italic@3._dca8cabe090d2baf74985e1423f88d88/node_modules/@tiptap/extension-italic/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-italic@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-italic/dist/index.js
 	var i$1 = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))$/;
 	var a$1 = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))/g;
 	var o$1 = /(?:^|\s)(_(?!\s+_)((?:[^_]+))_(?!\s+_))$/;
@@ -16235,7 +16235,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-list@3.35_e16b339ae7d232fcf048ce525afb71d4/node_modules/@tiptap/extension-list/dist/rolldown-runtime-D7D4PA-g.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/rolldown-runtime-D7D4PA-g.js
 	var e = Object.defineProperty;
 	var t$2 = (t, n) => {
 		let r = {};
@@ -16245,7 +16245,7 @@ img.ProseMirror-separator {
 		});
 		return n || e(r, Symbol.toStringTag, { value: `Module` }), r;
 	};
-	// node_modules/.pnpm/@tiptap+extension-list@3.35_e16b339ae7d232fcf048ce525afb71d4/node_modules/@tiptap/extension-list/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/index.js
 	var y$2 = `textStyle`;
 	var b$2 = /^\s*([-+*])\s$/;
 	var x$2 = Ja.create({
@@ -17269,7 +17269,7 @@ img.ProseMirror-separator {
 			return this.options.bulletList !== !1 && e.push(x$2.configure(this.options.bulletList)), this.options.listItem !== !1 && e.push(I$2.configure(this.options.listItem)), this.options.listKeymap !== !1 && e.push(G$3.configure(this.options.listKeymap)), this.options.orderedList !== !1 && e.push(Te.configure(this.options.orderedList)), this.options.taskItem !== !1 && e.push(Oe$1.configure(this.options.taskItem)), this.options.taskList !== !1 && e.push($$2.configure(this.options.taskList)), e;
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-paragraph_b3b0738add533b3fd5d9cda2ab73b3cb/node_modules/@tiptap/extension-paragraph/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-paragraph@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-paragraph/dist/index.js
 	var n$1 = `&nbsp;`;
 	var r$1 = Ja.create({
 		name: `paragraph`,
@@ -17312,7 +17312,7 @@ img.ProseMirror-separator {
 			return { "Mod-Alt-0": () => this.editor.commands.setParagraph() };
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-strike@3._06f0fcb3399362676ad27eb25bb7bf56/node_modules/@tiptap/extension-strike/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-strike@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-strike/dist/index.js
 	var i = /(?:^|\s)(~~(?!\s+~~)((?:[^~]+))~~(?!\s+~~))$/;
 	var a = /(?:^|\s)(~~(?!\s+~~)((?:[^~]+))~~(?!\s+~~))/g;
 	var o = na.create({
@@ -17365,7 +17365,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// node_modules/.pnpm/prosemirror-tables@1.8.5/node_modules/prosemirror-tables/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-tables@1.8.5/node_modules/prosemirror-tables/dist/index.js
 	var f$1;
 	var p$1;
 	if (typeof WeakMap < `u`) {
@@ -18714,7 +18714,7 @@ img.ProseMirror-separator {
 			}
 		});
 	}
-	// node_modules/.pnpm/@tiptap+extension-table@3.3_56fac7794b91676622f0de6c002a257c/node_modules/@tiptap/extension-table/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-table@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-table/dist/index.js
 	function T$1(e) {
 		return e === `left` || e === `right` || e === `center` ? e : null;
 	}
@@ -19260,7 +19260,7 @@ img.ProseMirror-separator {
 			return this.options.table !== !1 && e.push($.configure(this.options.table)), this.options.tableCell !== !1 && e.push(P$1.configure(this.options.tableCell)), this.options.tableHeader !== !1 && e.push(F$1.configure(this.options.tableHeader)), this.options.tableRow !== !1 && e.push(I$1.configure(this.options.tableRow)), e;
 		}
 	});
-	// node_modules/.pnpm/@tiptap+extension-text@3.35_226b06f9a9e4b06c50a0372d2e0390ec/node_modules/@tiptap/extension-text/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-text@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-text/dist/index.js
 	var t$1 = Ja.create({
 		name: `text`,
 		group: `inline`,
@@ -19270,7 +19270,7 @@ img.ProseMirror-separator {
 		}),
 		renderMarkdown: (e) => e.text || ``
 	});
-	// node_modules/.pnpm/prosemirror-dropcursor@1.8.4/node_modules/prosemirror-dropcursor/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-dropcursor@1.8.4/node_modules/prosemirror-dropcursor/dist/index.js
 	function n(t = {}) {
 		return new D$9({ view(e) {
 			return new r(e, t);
@@ -19377,7 +19377,7 @@ img.ProseMirror-separator {
 			this.editorView.dom.contains(e.relatedTarget) || this.setCursor(null);
 		}
 	};
-	// node_modules/.pnpm/prosemirror-gapcursor@1.4.1/node_modules/prosemirror-gapcursor/dist/index.js
+	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-gapcursor@1.4.1/node_modules/prosemirror-gapcursor/dist/index.js
 	var l = class l extends c$7 {
 		constructor(e) {
 			super(e, e);
@@ -34199,13 +34199,20 @@ img.ProseMirror-separator {
 			}
 			return changed;
 		}
+		/** A source asked to be read again while the collections were loading: what it said may have come too late for that load. */
+		let resyncWaiting = false;
 		async function load() {
 			if (status.value === "loading") return;
 			status.value = "loading";
 			error.value = null;
+			resyncWaiting = false;
 			try {
 				publish(take(await source.loadCollections()));
 				status.value = "ready";
+				if (resyncWaiting) {
+					resyncWaiting = false;
+					resync();
+				}
 			} catch (e) {
 				status.value = "error";
 				error.value = messageOf(e);
@@ -34214,6 +34221,7 @@ img.ProseMirror-separator {
 		}
 		/** Reads everything loaded again: what is not listed any more is gone, unless it was heard of meanwhile. */
 		async function resync() {
+			if (status.value === "loading") resyncWaiting = true;
 			const read = async (kind, collectionId, list) => {
 				const before = [...entries.values()].filter((e) => e.kind === kind && (collectionId === null || e.collectionId === collectionId) && e.base?.data).map((e) => ({
 					e,
