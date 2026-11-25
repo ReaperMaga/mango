@@ -20,9 +20,11 @@ How to write a plugin is in [docs/plugins.md](../docs/plugins.md).
 | [turn-chime](turn-chime/) | A chime when an agent finishes | `onTurnEnd`, WebAudio |
 | [copy-as-markdown](copy-as-markdown/) | Copy a reply or a chat as Markdown | message actions, menus |
 | [unity](unity/) | Unity projects: hidden `.meta` files that follow their assets, icons, project details, checks | `ui.files`, project status item, `appendSystemPrompt` |
+| [planner](planner/) | Boards, tables and pages of your own items, linked to chats | `data`, navigation, own-drawn tabs, Vue components, a build |
 
-The official plugins are plain JavaScript with no build step. `pnpm test` checks them and the catalog
-(`tests/officialPlugins.test.ts`). In `pnpm dev` the mock backend serves them straight from this folder.
+The official plugins are plain JavaScript with no build step, except `planner`: its `main.js` and `styles.css` are built
+from `planner/src/` with `pnpm plugins:build` and committed (`pnpm plugins:check` typechecks it). `pnpm test` checks them
+and the catalog (`tests/officialPlugins.test.ts`). In `pnpm dev` the mock backend serves them straight from this folder.
 
 ## Adding a plugin to the catalog
 

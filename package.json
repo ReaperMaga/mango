@@ -15,6 +15,8 @@
     "app:build": "tauri build",
     "bump": "node scripts/version.ts",
     "version:check": "node scripts/version.ts --check",
+    "plugins:build": "node scripts/build-plugin.ts",
+    "plugins:check": "vue-tsc --noEmit -p plugins/planner/tsconfig.json",
     "docs:dev": "vitepress dev docs",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
@@ -49,7 +51,9 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.4",
+    "@vitejs/plugin-vue": "6.0.11",
     "typescript": "^5.9.3",
+    "vite": "8.3.8",
     "vitepress": "^1.6.4",
     "vue-tsc": "^3.3.14"
   }
