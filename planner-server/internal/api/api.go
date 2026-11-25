@@ -57,6 +57,8 @@ func New(st *store.Store, broker *live.Broker, name, allowOrigin string, log *sl
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/hello", s.auth(false, s.hello))
+	mux.HandleFunc("GET /v1/people", s.auth(false, s.people))
+	mux.HandleFunc("POST /v1/me", s.auth(false, s.rename))
 	mux.HandleFunc("GET /v1/collections", s.auth(false, s.collections))
 	mux.HandleFunc("GET /v1/collections/{collectionId}/items", s.auth(false, s.items))
 	mux.HandleFunc("POST /v1/write", s.auth(true, s.write))
@@ -224,11 +226,25 @@ type helloBody struct {
 		Name string `json:"name"`
 	} `json:"space"`
 	Role string `json:"role"`
-	Seq  int64  `json:"seq"`
+	// Me is the person this token is for.
+	Me  *meBody `json:"me,omitempty"`
+	Seq int64   `json:"seq"`
+}
+
+type meBody struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+func meOf(p *store.Principal) *meBody {
+	if p.PersonID == "" {
+		return nil
+	}
+	return &meBody{ID: p.PersonID, Name: p.Name}
 }
 
 func (s *Server) helloOf(p *store.Principal, seq int64) helloBody {
-	b := helloBody{Protocol: Protocol, Server: s.Name, Role: p.Role, Seq: seq}
+	b := helloBody{Protocol: Protocol, Server: s.Name, Role: p.Role, Me: meOf(p), Seq: seq}
 	b.Space.ID, b.Space.Name = p.SpaceID, p.SpaceName
 	return b
 }
@@ -240,6 +256,65 @@ func (s *Server) hello(w http.ResponseWriter, r *http.Request, p *store.Principa
 		return
 	}
 	writeJSON(w, http.StatusOK, s.helloOf(p, seq))
+}
+
+type peopleBody struct {
+	Me     *meBody        `json:"me"`
+	People []store.Person `json:"people"`
+}
+
+func (s *Server) peopleOf(r *http.Request, p *store.Principal) (peopleBody, error) {
+	list, err := s.Store.People(r.Context(), p.SpaceID)
+	if err != nil {
+		return peopleBody{}, err
+	}
+	me := meOf(p)
+	for _, person := range list {
+		if me != nil && person.ID == me.ID {
+			me.Name = person.Name
+		}
+	}
+	return peopleBody{Me: me, People: list}, nil
+}
+
+// people is everyone in the space: who may be assigned (active), and who was.
+func (s *Server) people(w http.ResponseWriter, r *http.Request, p *store.Principal) {
+	body, err := s.peopleOf(r, p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// rename is POST /v1/me: the person a token is for gives themselves a new name. A read token may too.
+func (s *Server) rename(w http.ResponseWriter, r *http.Request, p *store.Principal) {
+	var body struct {
+		Name *string `json:"name"`
+	}
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
+	if err := d.Decode(&body); err != nil || body.Name == nil {
+		writeError(w, http.StatusBadRequest, "invalid", "Send your new name: {\"name\": \"…\"}.")
+		return
+	}
+	if p.PersonID == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "This token is for nobody in particular.")
+		return
+	}
+	changed, err := s.Store.RenamePerson(r.Context(), p.SpaceID, p.PersonID, *body.Name)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if changed {
+		s.Broker.Publish(p.SpaceID, live.Event{People: true})
+	}
+	out, err := s.peopleOf(r, p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type docsBody struct {

@@ -3,11 +3,7 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -68,8 +64,16 @@ CREATE TABLE IF NOT EXISTS tokens (
 	hash TEXT NOT NULL UNIQUE,
 	created_at INTEGER NOT NULL,
 	last_used_at INTEGER,
-	revoked_at INTEGER
+	revoked_at INTEGER,
+	person_id TEXT
 );
+CREATE TABLE IF NOT EXISTS people (
+	id TEXT PRIMARY KEY,
+	space_id TEXT NOT NULL,
+	name TEXT NOT NULL,
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS people_by_space ON people (space_id);
 CREATE TABLE IF NOT EXISTS docs (
 	space_id TEXT NOT NULL,
 	kind TEXT NOT NULL,
@@ -91,7 +95,6 @@ CREATE TABLE IF NOT EXISTS mutations (
 	PRIMARY KEY (space_id, mutation_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS mutations_by_age ON mutations (created_at);
-PRAGMA user_version = 1;
 `
 
 func dsn(path string, txlock string) string {
@@ -114,6 +117,10 @@ func Open(path string) (*Store, error) {
 	// half way because another connection wrote first.
 	w.SetMaxOpenConns(1)
 	if _, err := w.Exec(schema); err != nil {
+		w.Close()
+		return nil, fmt.Errorf("open %s: %w", path, err)
+	}
+	if err := migrate(w); err != nil {
 		w.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -208,113 +215,12 @@ func (s *Store) RemoveSpace(ctx context.Context, id string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	for _, q := range []string{`DELETE FROM docs WHERE space_id = ?`, `DELETE FROM tokens WHERE space_id = ?`, `DELETE FROM mutations WHERE space_id = ?`} {
+	for _, q := range []string{`DELETE FROM docs WHERE space_id = ?`, `DELETE FROM tokens WHERE space_id = ?`, `DELETE FROM people WHERE space_id = ?`, `DELETE FROM mutations WHERE space_id = ?`} {
 		if _, err := tx.ExecContext(ctx, q, id); err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
-}
-
-// Token is an access token as listed: never the token itself, which only its maker sees.
-type Token struct {
-	ID         string
-	SpaceID    string
-	Name       string
-	Role       string
-	CreatedAt  int64
-	LastUsedAt int64 // 0: never
-	RevokedAt  int64 // 0: not revoked
-}
-
-// Principal is who a request comes from.
-type Principal struct {
-	TokenID   string
-	SpaceID   string
-	SpaceName string
-	Role      string
-}
-
-func (p *Principal) CanWrite() bool { return p.Role == "write" }
-
-func hashToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
-// AddToken makes a token for a space and returns it; only its SHA-256 is stored.
-func (s *Store) AddToken(ctx context.Context, spaceID, name, role string) (string, Token, error) {
-	if role != "read" && role != "write" {
-		return "", Token{}, invalid("A role is read or write, not %q.", role)
-	}
-	if name == "" {
-		return "", Token{}, invalid("A token needs a name, to tell it from others when it is listed.")
-	}
-	secret := make([]byte, 32)
-	idBytes := make([]byte, 6)
-	if _, err := rand.Read(secret); err != nil {
-		return "", Token{}, err
-	}
-	if _, err := rand.Read(idBytes); err != nil {
-		return "", Token{}, err
-	}
-	token := "pls_" + base64.RawURLEncoding.EncodeToString(secret)
-	t := Token{ID: "tok_" + hex.EncodeToString(idBytes), SpaceID: spaceID, Name: name, Role: role, CreatedAt: s.Now()}
-	res, err := s.w.ExecContext(ctx, `INSERT INTO tokens (id, space_id, name, role, hash, created_at)
-		SELECT ?, id, ?, ?, ?, ? FROM spaces WHERE id = ?`, t.ID, name, role, hashToken(token), t.CreatedAt, spaceID)
-	if err != nil {
-		return "", Token{}, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return "", Token{}, ErrNotFound
-	}
-	return token, t, nil
-}
-
-// Tokens lists the tokens of a space, or of all spaces when spaceID is "".
-func (s *Store) Tokens(ctx context.Context, spaceID string) ([]Token, error) {
-	rows, err := s.r.QueryContext(ctx, `SELECT id, space_id, name, role, created_at, COALESCE(last_used_at, 0), COALESCE(revoked_at, 0)
-		FROM tokens WHERE ? = '' OR space_id = ? ORDER BY space_id, created_at, id`, spaceID, spaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []Token
-	for rows.Next() {
-		var t Token
-		if err := rows.Scan(&t.ID, &t.SpaceID, &t.Name, &t.Role, &t.CreatedAt, &t.LastUsedAt, &t.RevokedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-func (s *Store) RevokeToken(ctx context.Context, id string) error {
-	res, err := s.w.ExecContext(ctx, `UPDATE tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`, s.Now(), id)
-	if err != nil {
-		return err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
-
-// Authenticate finds who a token belongs to. It is looked up by its SHA-256, so how long a lookup takes
-// says nothing about the token. ErrNotFound: unknown or revoked.
-func (s *Store) Authenticate(ctx context.Context, token string) (*Principal, error) {
-	var p Principal
-	err := s.r.QueryRowContext(ctx, `SELECT t.id, t.space_id, s.name, t.role FROM tokens t JOIN spaces s ON s.id = t.space_id
-		WHERE t.hash = ? AND t.revoked_at IS NULL`, hashToken(token)).Scan(&p.TokenID, &p.SpaceID, &p.SpaceName, &p.Role)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
-	if err != nil {
-		return nil, err
-	}
-	s.touch(p.TokenID)
-	return &p, nil
 }
 
 // touch notes when a token was used, at most once a minute per token, without making the request wait.

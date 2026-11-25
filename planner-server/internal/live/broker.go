@@ -7,10 +7,12 @@ import (
 	"github.com/ReaperMaga/mango/planner-server/internal/store"
 )
 
-// Event is one committed write: the documents it changed.
+// Event is one committed write: the documents it changed. Or, with People, word that the space's people
+// changed (a rename): no documents, no seq.
 type Event struct {
-	Seq  int64       `json:"seq"`
-	Docs []store.Doc `json:"docs"`
+	Seq    int64       `json:"seq"`
+	Docs   []store.Doc `json:"docs"`
+	People bool        `json:"-"`
 }
 
 // Buffer is how many writes a stream may be behind before it is dropped (and told to resync).

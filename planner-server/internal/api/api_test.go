@@ -20,6 +20,7 @@ import (
 type env struct {
 	url         string
 	write, read string
+	readPerson  string
 	st          *store.Store
 	srv         *Server
 	httpSrv     *httptest.Server
@@ -40,7 +41,7 @@ func setup(t *testing.T, allowOrigin string, configure func(*Server, *http.Serve
 		t.Fatal(err)
 	}
 	write, _, _ := st.AddToken(ctx, "team", "w", "write")
-	read, _, _ := st.AddToken(ctx, "team", "r", "read")
+	read, readTok, _ := st.AddToken(ctx, "team", "r", "read")
 	srv := New(st, broker, "planner-server test", allowOrigin, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	hs := httptest.NewUnstartedServer(srv.Handler())
 	if configure != nil {
@@ -53,7 +54,7 @@ func setup(t *testing.T, allowOrigin string, configure func(*Server, *http.Serve
 		hs.Close()
 		st.Close()
 	})
-	return &env{url: hs.URL, write: write, read: read, st: st, srv: srv, httpSrv: hs}
+	return &env{url: hs.URL, write: write, read: read, readPerson: readTok.PersonID, st: st, srv: srv, httpSrv: hs}
 }
 
 func (e *env) do(t *testing.T, method, path, token, body string) (*http.Response, map[string]any) {
@@ -117,8 +118,71 @@ func TestAuth(t *testing.T) {
 		}
 	}
 	resp, body := e.do(t, "GET", "/v1/hello", e.read, "")
-	if resp.StatusCode != 200 || encode(body) != `{"protocol":1,"role":"read","seq":0,"server":"planner-server test","space":{"id":"team","name":"Team"}}` {
+	if resp.StatusCode != 200 || encode(body) != `{"me":{"id":"`+e.readPerson+`","name":"r"},"protocol":1,"role":"read","seq":0,"server":"planner-server test","space":{"id":"team","name":"Team"}}` {
 		t.Errorf("hello: %d %v", resp.StatusCode, encode(body))
+	}
+}
+
+func TestPeople(t *testing.T) {
+	e := setup(t, "*", nil)
+	_, ana, _ := e.st.AddToken(context.Background(), "team", "Ana", "write")
+	resp, body := e.do(t, "GET", "/v1/people", e.read, "")
+	people, _ := body["people"].([]any)
+	me, _ := body["me"].(map[string]any)
+	if resp.StatusCode != 200 || len(people) != 3 || me["name"] != "r" {
+		t.Fatalf("people: %d %s", resp.StatusCode, encode(body))
+	}
+	first := people[0].(map[string]any)
+	if first["id"] != ana.PersonID || first["name"] != "Ana" || first["active"] != true {
+		t.Errorf("first: %v", first)
+	}
+	if resp, body := e.do(t, "GET", "/v1/people", "", ""); resp.StatusCode != 401 || code(body) != "unauthorized" {
+		t.Errorf("without a token: %d %v", resp.StatusCode, body)
+	}
+}
+
+func TestRenameMe(t *testing.T) {
+	e := setup(t, "*", nil)
+	events, stop := openStream(t, e, "")
+	defer stop()
+	if ev := next(t, events, true); ev.name != "hello" || !strings.Contains(ev.data, `"name":"r"`) {
+		t.Fatalf("hello: %+v", ev)
+	}
+	// A read token renames its own person too.
+	resp, body := e.do(t, "POST", "/v1/me", e.read, `{"name":"  Rita  "}`)
+	if me, _ := body["me"].(map[string]any); resp.StatusCode != 200 || me["name"] != "Rita" {
+		t.Fatalf("rename: %d %s", resp.StatusCode, encode(body))
+	}
+	// Everyone following the space hears that the people changed.
+	if ev := next(t, events, true); ev.name != "people" {
+		t.Errorf("event: %+v", ev)
+	}
+	if _, body := e.do(t, "GET", "/v1/hello", e.read, ""); !strings.Contains(encode(body), `"name":"Rita"`) {
+		t.Errorf("hello after: %s", encode(body))
+	}
+	for _, tc := range []struct{ body, code string }{
+		{`{"name":"W"}`, "conflict"},
+		{`{"name":"@me"}`, "invalid"},
+		{`{"nom":"x"}`, "invalid"},
+		{`nope`, "invalid"},
+	} {
+		if _, body := e.do(t, "POST", "/v1/me", e.read, tc.body); code(body) != tc.code {
+			t.Errorf("%s: %s", tc.body, encode(body))
+		}
+	}
+}
+
+func TestRenameFromElsewhereIsHeardAtPing(t *testing.T) {
+	e := setup(t, "*", func(s *Server, _ *http.Server) { s.PingEvery = 50 * time.Millisecond })
+	events, stop := openStream(t, e, "")
+	defer stop()
+	next(t, events, true)
+	// The command line renames in another process: the server learns of it by looking.
+	if _, err := e.st.RenamePerson(context.Background(), "team", e.readPerson, "Rita"); err != nil {
+		t.Fatal(err)
+	}
+	if ev := next(t, events, true); ev.name != "people" {
+		t.Errorf("event: %+v", ev)
 	}
 }
 

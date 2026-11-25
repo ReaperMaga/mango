@@ -15,6 +15,9 @@ belongs to one space and has a role:
 | `write` | that, and write |
 
 Tokens are made with the server's command line (`planner-server token add`). The server stores only their SHA-256.
+Each token is for a **person** of its space. A person has an id (`per_` and 12 hex characters) that never changes,
+and a name they may change (`POST /v1/me`): 1 to 64 printable characters, not starting with `@`, and nobody else's
+in the space, in any case. One person's tokens (a laptop, a desktop) share the person. See `GET /v1/people`.
 A token is `pls_` followed by 43 characters of base64url (32 random bytes). It is sent as
 `Authorization: Bearer <token>` on every request, and as nothing else: not in a URL, never in a cookie.
 
@@ -63,8 +66,39 @@ All bodies and answers are JSON (`Content-Type: application/json`) except the ev
 ### `GET /v1/hello`
 
 ```json
-{ "protocol": 1, "server": "planner-server 0.1.0", "space": { "id": "team", "name": "Team" }, "role": "write", "seq": 42 }
+{ "protocol": 1, "server": "planner-server 0.1.0", "space": { "id": "team", "name": "Team" }, "role": "write", "me": { "id": "per_1a2b3c4d5e6f", "name": "Ana" }, "seq": 42 }
 ```
+
+`me` is the person the token is for. A server older than people leaves it out.
+
+### `GET /v1/people`
+
+Everyone in the space, sorted by name. `active`: they have a write token that is not revoked, so they may be assigned.
+The others stay listed, so what they were assigned keeps their name.
+
+```json
+{
+  "me": { "id": "per_1a2b3c4d5e6f", "name": "Ana" },
+  "people": [
+    { "id": "per_1a2b3c4d5e6f", "name": "Ana", "active": true },
+    { "id": "per_9f8e7d6c5b4a", "name": "Wall screen", "active": false }
+  ]
+}
+```
+
+The planner stores a person as their id: a **Person** property's value is a list of ids, so a new name shows everywhere
+at once. The property also writes down each assigned person's name when it is given (`people`, `{ "<id>": { "name": … } }`
+in the property), and brings it up to date when it hears of a rename, so the name still reads where the server is not.
+
+### `POST /v1/me`
+
+```json
+{ "name": "Ana Lopes" }
+```
+
+Renames the person the token is for, read tokens too, and answers as `GET /v1/people`. A name someone else in the space
+has (in any case) is refused with `409` (`conflict`); a name that is not one with `400` (`invalid`). Everyone following
+the space gets a `people` event.
 
 ### `GET /v1/collections`
 
@@ -119,10 +153,13 @@ A [server-sent event](https://html.spec.whatwg.org/multipage/server-sent-events.
 
 ```
 event: hello
-data: {"protocol":1,"server":"planner-server 0.1.0","space":{"id":"team","name":"Team"},"role":"write","seq":42}
+data: {"protocol":1,"server":"planner-server 0.1.0","space":{"id":"team","name":"Team"},"role":"write","me":{"id":"per_1a2b3c4d5e6f","name":"Ana"},"seq":42}
 
 event: docs
 data: {"seq":43,"docs":[…]}
+
+event: people
+data: {}
 
 event: resync
 data: {"seq":50}
@@ -133,6 +170,8 @@ data: {"seq":50}
 - `hello` first, always.
 - Then, when `since` is given: what `changes?since=N` would answer, as `docs` events (or one `resync`), then live writes.
 - `docs`: every write as it is committed, the client's own too. Deliver order is commit order.
+- `people`: the space's people changed (a rename, a token added or revoked): read `GET /v1/people` again. Sent at once
+  for a rename through `POST /v1/me`, and within a ping for changes made with the command line.
 - `resync`: the client missed writes it cannot be told one by one (it was too far behind, or more than 256 writes
   piled up for a slow stream); it reads everything again. The stream goes on live after it.
 - A comment line (`: ping`) every 25 s keeps proxies from closing the stream. A stream whose token was revoked, or whose
@@ -150,6 +189,7 @@ Any status other than 2xx answers `{ "error": { "code": "…", "message": "…" 
 | 401 | `unauthorized` (missing, unknown or revoked token) | `refused` |
 | 403 | `forbidden` (a `read` token writing) | `refused` |
 | 404 | `not_found` (no such route) | `invalid` |
+| 409 | `conflict` (a name someone else in the space has) | `invalid` |
 | 413 | `too_large` (a document over 1 MiB, a body over 64 MiB) | `invalid` |
 | 429 | `rate_limited` (not sent by this server yet) | `offline` |
 | 5xx | `internal` | `unknown` (`offline` for 502, 503, 504) |

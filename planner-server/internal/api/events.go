@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -33,6 +34,16 @@ func (st stream) flush(b []byte) error {
 		return err
 	}
 	return st.rc.Flush()
+}
+
+// peopleKey says who the space's people are, to tell when that changed; "" when it cannot be read.
+func (s *Server) peopleKey(ctx context.Context, space string) string {
+	list, err := s.Store.People(ctx, space)
+	if err != nil {
+		return ""
+	}
+	b, _ := json.Marshal(list)
+	return string(b)
 }
 
 type seqBody struct {
@@ -97,6 +108,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *store.Princip
 	}
 
 	token := bearer(r)
+	// The people as last told, to tell a change made from the command line (another process) at the next ping.
+	people := s.peopleKey(ctx, p.SpaceID)
 	ping := time.NewTicker(s.PingEvery)
 	defer ping.Stop()
 	for {
@@ -106,6 +119,13 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *store.Princip
 		case <-s.Broker.Done():
 			return
 		case ev := <-sub.C:
+			if ev.People {
+				people = s.peopleKey(ctx, p.SpaceID)
+				if st.send("people", struct{}{}) != nil {
+					return
+				}
+				continue
+			}
 			if ev.Seq <= last {
 				continue
 			}
@@ -126,6 +146,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request, p *store.Princip
 			// A token revoked (or a space removed) since the stream began ends it.
 			if _, err := s.Store.Authenticate(ctx, token); errors.Is(err, store.ErrNotFound) {
 				return
+			}
+			if now := s.peopleKey(ctx, p.SpaceID); now != people {
+				people = now
+				if st.send("people", struct{}{}) != nil {
+					return
+				}
 			}
 			if st.flush([]byte(": ping\n\n")) != nil {
 				return

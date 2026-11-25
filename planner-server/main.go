@@ -35,9 +35,11 @@ Usage:
   planner-server space add <id> [--name "Team"] [--db planner.db]
   planner-server space list [--db planner.db]
   planner-server space remove <id> --yes [--db planner.db]
-  planner-server token add --space <id> --name <label> [--role write|read] [--db planner.db]
+  planner-server token add --space <id> --name <person> [--role write|read] [--db planner.db]
   planner-server token list [--space <id>] [--db planner.db]
   planner-server token revoke <tokenId> [--db planner.db]
+  planner-server person list [--space <id>] [--db planner.db]
+  planner-server person rename <personId> --name <new name> [--db planner.db]
   planner-server version
 
 PLANNER_ADDR, PLANNER_DB and PLANNER_ALLOW_ORIGIN set the defaults of --addr, --db and --allow-origin.
@@ -74,12 +76,15 @@ func run(args []string) error {
 	switch cmd, rest := args[0], args[1:]; cmd {
 	case "serve":
 		return serve(rest)
-	case "space", "token":
+	case "space", "token", "person":
 		if len(rest) == 0 {
 			return usageError("planner-server " + cmd + " needs a subcommand.")
 		}
 		if cmd == "space" {
 			return space(rest[0], rest[1:])
+		}
+		if cmd == "person" {
+			return person(rest[0], rest[1:])
 		}
 		return token(rest[0], rest[1:])
 	case "version", "--version", "-v":
@@ -243,7 +248,7 @@ func space(sub string, args []string) error {
 		if err := st.AddSpace(ctx, rest[0], *name); err != nil {
 			return err
 		}
-		fmt.Printf("Added space %s. Make a token for it: planner-server token add --space %s --name <label>\n", rest[0], rest[0])
+		fmt.Printf("Added space %s. Make a token for it: planner-server token add --space %s --name <person>\n", rest[0], rest[0])
 		return nil
 	case "list":
 		st, err := store.Open(*dbPath)
@@ -288,7 +293,7 @@ func token(sub string, args []string) error {
 	fs := flag.NewFlagSet("token "+sub, flag.ContinueOnError)
 	dbPath := dbFlag(fs)
 	spaceID := fs.String("space", "", "the space the token is for")
-	name := fs.String("name", "", "a label, to tell tokens apart (a person or a computer)")
+	name := fs.String("name", "", "the person it is for, shown to everyone in the space (a name they have already: another token of theirs)")
 	role := fs.String("role", "write", "write or read")
 	rest, err := parse(fs, args)
 	if err != nil {
@@ -314,7 +319,7 @@ func token(sub string, args []string) error {
 		} else if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Token %s (%s) for space %s. It is shown only now:\n", t.ID, t.Role, t.SpaceID)
+		fmt.Fprintf(os.Stderr, "Token %s (%s) for %s (%s) in space %s. It is shown only now:\n", t.ID, t.Role, t.Person, t.PersonID, t.SpaceID)
 		fmt.Println(tok)
 		return nil
 	case "list":
@@ -331,9 +336,9 @@ func token(sub string, args []string) error {
 			return err
 		}
 		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tSPACE\tNAME\tROLE\tCREATED\tLAST USED\tREVOKED")
+		fmt.Fprintln(tw, "ID\tSPACE\tPERSON\tPERSON ID\tROLE\tCREATED\tLAST USED\tREVOKED")
 		for _, t := range tokens {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.SpaceID, t.Name, t.Role, when(t.CreatedAt), when(t.LastUsedAt), when(t.RevokedAt))
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", t.ID, t.SpaceID, t.Person, t.PersonID, t.Role, when(t.CreatedAt), when(t.LastUsedAt), when(t.RevokedAt))
 		}
 		return tw.Flush()
 	case "revoke":
@@ -354,4 +359,71 @@ func token(sub string, args []string) error {
 		return nil
 	}
 	return usageError(fmt.Sprintf("Unknown command token %s.", sub))
+}
+
+func person(sub string, args []string) error {
+	fs := flag.NewFlagSet("person "+sub, flag.ContinueOnError)
+	dbPath := dbFlag(fs)
+	spaceID := fs.String("space", "", "only the people of this space")
+	name := fs.String("name", "", "the new name")
+	rest, err := parse(fs, args)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	switch sub {
+	case "list":
+		if len(rest) > 0 {
+			return usageError("person list takes only flags.")
+		}
+		st, err := store.Open(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		spaces, err := st.Spaces(ctx)
+		if err != nil {
+			return err
+		}
+		tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(tw, "ID\tSPACE\tNAME\tTOKENS\tASSIGNABLE")
+		for _, sp := range spaces {
+			if *spaceID != "" && sp.ID != *spaceID {
+				continue
+			}
+			people, err := st.People(ctx, sp.ID)
+			if err != nil {
+				return err
+			}
+			for _, p := range people {
+				assignable := "no"
+				if p.Active {
+					assignable = "yes"
+				}
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\n", p.ID, sp.ID, p.Name, p.Tokens, assignable)
+			}
+		}
+		return tw.Flush()
+	case "rename":
+		if len(rest) != 1 || *name == "" {
+			return usageError("person rename takes one person id (planner-server person list) and --name.")
+		}
+		st, err := store.Open(*dbPath)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		space, err := st.SpaceOfPerson(ctx, rest[0])
+		if errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("there is no person %q (planner-server person list)", rest[0])
+		} else if err != nil {
+			return err
+		}
+		if _, err := st.RenamePerson(ctx, space, rest[0], *name); err != nil {
+			return err
+		}
+		fmt.Printf("Renamed %s. Planners connected to %s show the new name within half a minute.\n", rest[0], space)
+		return nil
+	}
+	return usageError(fmt.Sprintf("Unknown command person %s.", sub))
 }

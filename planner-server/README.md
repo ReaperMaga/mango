@@ -42,12 +42,29 @@ or only `read`. Make them with the same binary, pointed at the same database (th
 
 ```bash
 ./planner-server space add team --name "Team"
-./planner-server token add --space team --name "Ana's laptop"
+./planner-server token add --space team --name "Ana"
 ./planner-server token add --space team --name "Wall screen" --role read
 ```
 
 `token add` prints the token once; the server keeps only its SHA-256. Give each person or computer its own,
-so one can be revoked without the others:
+so one can be revoked without the others.
+
+**A token is for a person.** `--name` is who: the Planner's **Person** properties (an assignee, a reviewer) offer the
+space's people, and show everyone in the space who is who. A name the space has already (in any case) adds a token for
+that person, so `--name "Ana"` on her laptop and her desktop is one person to assign. Someone with only read tokens is
+nobody to assign. A name is up to 64 characters and does not start with `@`.
+
+Everyone can change their own name in Mango (**Settings > Planner server > Your name**); assignments follow, because the
+Planner stores people by id. You can rename someone too:
+
+```bash
+./planner-server person list                 # ids, names, and who may be assigned
+./planner-server person rename per_1a2b3c4d5e6f --name "Ana Lopes"
+```
+
+Planners that are connected show a new name at once when it was changed in Mango, and within half a minute when it was
+changed here. A database from an older planner-server is brought up to date when it opens: one person for each name
+its tokens had in a space.
 
 ```bash
 ./planner-server token list                  # never shows tokens, only their ids
