@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## Unreleased
+
+- Choose from how many tokens large chats are compacted after a break, also per project.
+- Change model or effort in a Claude Code chat without restarting it.
+- Stop losing a message sent while Claude Code compacts a chat.
+
 ## 0.3.1
 
 ### Fixes

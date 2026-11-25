@@ -43,6 +43,7 @@ onMounted(async () => {
 
 useShortcuts()
 useAutoSave()
+useIdleCompaction()
 
 /* The window's title is the project it shows (the taskbar, Alt+Tab and window previews read it). */
 watch(() => ws.activeProject?.name, (name) => {

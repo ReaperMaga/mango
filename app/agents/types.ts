@@ -176,6 +176,13 @@ export type AgentEvent =
    * taken mid-turn: it only updates the total (see `mergeContext`).
    */
   | { type: 'context'; usage: ContextUsage }
+  /**
+   * A request of the conversation went out: what it read stays in the prompt cache for `ttlMs` from `at`
+   * (left out when the CLI does not say: the request only used what was cached).
+   */
+  | { type: 'cache'; at: number; ttlMs?: number }
+  /** `/compact` replaced the conversation with a summary. */
+  | { type: 'compacted' }
   /** What the run has used so far, in total (each event replaces the one before). */
   | { type: 'usage'; usage: TurnUsage }
   /** Exactly one per run, always last. */
@@ -315,6 +322,17 @@ export interface ContextUsage {
   model?: string
   /** Unix ms of the reading. */
   at: number
+}
+
+/** A conversation's prompt cache at its provider. */
+export interface PromptCache {
+  /** Unix ms of the last request, which started its time anew. */
+  at: number
+  ttlMs: number
+  /** The model and effort it belongs to (`cacheOwner`). */
+  for: string
+  /** Mango has tried to compact the conversation in this break. */
+  tried?: true
 }
 
 /** One rolling usage limit of the signed-in plan, e.g. the 5-hour or the weekly window. */

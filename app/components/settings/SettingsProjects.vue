@@ -7,6 +7,8 @@ import { useThreads } from '~/stores/threads'
 import { useModels } from '~/stores/models'
 import { baseName } from '~/utils/paths'
 import { isEnvPath, parseEnvPath } from '~/utils/envPath'
+import { THRESHOLDS, thresholdOf } from '~/utils/idleCompaction'
+import { formatTokens } from '~/agents/context'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
@@ -93,6 +95,13 @@ function setAgent(v: string) {
   set({ agent: v === 'default' ? null : v as AgentId, model: null })
 }
 
+/* ---------- long breaks ---------- */
+const thresholds = computed(() => [
+  { value: '', label: t('settings.projects.defaultTokens', { tokens: formatTokens(ws.idleTokens) }) },
+  ...THRESHOLDS.map(n => ({ value: String(n), label: formatTokens(n) })),
+])
+const threshold = computed(() => String(thresholdOf(prefs.value.idleTokens) ?? ''))
+
 /* ---------- MCP servers ---------- */
 const mcpHeadId = useId()
 const mcpEl = ref<HTMLElement | null>(null)
@@ -127,7 +136,7 @@ function askRemove() {
       for (const thread of threads.threads.filter(x => x.projectPath === p.path && !x.parentId)) threads.remove(thread.id)
       ws.closeProject(p.path)
       await ws.forgetProject(p.path)
-      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null, excluded: null, languageServers: null })
+      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, idleTokens: null, color: null, archived: null, excluded: null, languageServers: null })
       ws.forgetEnvExtraFiles(p.path)
       await useMcp().forgetProject(p.path).catch(() => {})
       picked.value = null
@@ -218,6 +227,15 @@ function askRemove() {
         <SettingsRow :label="t('settings.projects.permissions')" :hint="t('settings.projects.permissionsHint')">
           <template #default="{ labelId }">
             <SettingsSegmented :model-value="prefs.mode ?? 'default'" :options="modes" :labelledby="labelId" @update:model-value="v => set({ mode: v === 'default' ? null : v as PermissionMode })" />
+          </template>
+        </SettingsRow>
+      </div>
+
+      <h3 class="head">{{ t('behavior.breaks.title') }}</h3>
+      <div class="card">
+        <SettingsRow :label="t('settings.projects.breaks')" :hint="ws.idleCompaction === 'off' ? t('settings.projects.breaksOff') : t('settings.projects.breaksHint')">
+          <template #default="{ labelId }">
+            <SettingsSelect :model-value="threshold" :options="thresholds" :labelledby="labelId" :label="t('settings.projects.breaks')" @update:model-value="v => set({ idleTokens: v ? Number(v) : null })" />
           </template>
         </SettingsRow>
       </div>

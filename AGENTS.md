@@ -59,7 +59,7 @@ app/
   agents/            claude.ts, codex.ts: CLI protocol -> AgentEvents. index.ts: runs turns, bridges to Rust. keeper.ts: keeps a chat's CLI process between turns
   assets/css/        tokens.css (the only source of colour/type/space/radius/motion), base.css
   components/        AppTitlebar, AppSidebar (threads) + AppSidebarFoot (account, usage, help, settings), AppToolStrip + AppToolPanel (right tool windows), AppWorkspace, ChatArea, CommandPalette
-    chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
+    chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking, ChatBreak (offers to compact a large chat after a break)
     git/             GitPanel (Changes tool window), GitDiffPane + GitDiff (main-pane diffs), GitBranchPopup, GitLogPanel (the Git log, a bottom panel tab) + GitLogGraph, GitLogRefs, GitLogCommit, GitCommitDiffPane (a commit's file diff in a tab)
     files/           FilesPanel (Files tool window), FilesEditorPane (Monaco editor tab), FilesDecompiledPane (a library's decompiled source, read-only), FilesImageView (pictures, SVG preview)
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
@@ -71,7 +71,7 @@ app/
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), windowClose.ts (saves before a window goes), useShortcuts.ts
+  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), useIdleCompaction.ts (compacts large chats by themselves, when chosen), windowClose.ts (saves before a window goes), useShortcuts.ts
   i18n/              interface languages: locales.ts (which one shows), messages/ (en is the source and the type de and ru must fill); plugins/i18n.ts applies the `locale` pref
   lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, semanticTokens, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
@@ -84,7 +84,7 @@ app/
   utils/             mockAgent.ts, demoThreads.ts, diffTabs.ts, commitDiffTabs.ts, gitLog.ts (lane layout, search; plain-Node testable), builtIns.ts (built-in panel tabs, plugins that became part of Mango), fileTabs.ts, decompiledTabs.ts (decompiled source tabs, the server's answer checked; plain-Node testable), browserTabs.ts (tab ids, address normalising), imageFiles.ts, editorModels.ts, autoSave.ts (when open files save themselves; plain-Node testable), reloadEdits.ts, time.ts, paths.ts,
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
-                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
+                     chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), idleCompaction.ts (when a large chat after a break is asked about or compacted; plain-Node testable), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
                      releaseRuns.ts (which runs build which release, job summaries, files by platform)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
@@ -162,6 +162,9 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   asked to change them, and used only once `get_settings` says it runs at them (`wake` in `claude.ts`); it is never asked back to
   a default, which comes out different there. The permission mode stays in the key: a process started with bypassPermissions
   can fall back to that after an approved plan.
+- Anything that spends quota without the user asking is off until they choose it. Compacting a chat by itself
+  (`useIdleCompaction.ts`) also stays away from a session used elsewhere since its last reply (`sessionMovedOn`), tries once per
+  break (`cache.tried`) and leaves nothing behind when it fails. The phone keeps `Thread.cache` too, or the desktop asks wrongly.
 - Prove adapter changes against the real CLI with `scripts/try-agent.ts` in a scratch folder (never in this
   repo). Keep prompts tiny: every run spends the user's quota.
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.

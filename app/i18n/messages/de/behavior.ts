@@ -14,6 +14,16 @@ export const behavior: Messages['behavior'] = {
     queue: 'Einreihen',
     steer: 'Lenken',
   },
+  breaks: {
+    title: 'Lange Pausen',
+    label: 'Große Claude-Code-Chats nach einer Pause',
+    hint: 'Nach etwa einer Stunde lässt die nächste Nachricht die ganze Unterhaltung erneut lesen. Ab {tokens} Tokens kann Mango fragen, ob vorher komprimiert werden soll, oder kurz davor selbst komprimieren. Automatisch verbraucht ungefragt etwas von deinem Limit. Komprimieren behält eine Zusammenfassung; Details können verloren gehen.',
+    ask: 'Bei Rückkehr fragen',
+    auto: 'Automatisch komprimieren',
+    off: 'Aus',
+    above: 'Nachfragen oder komprimieren ab',
+    aboveHint: 'Wie groß ein Chat sein muss, in Tokens. Ein Projekt kann unter Einstellungen > Projekte einen eigenen Wert haben.',
+  },
   activity: 'Aktivität',
   toolCalls: {
     label: 'Werkzeugaufrufe im Chat',

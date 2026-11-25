@@ -137,12 +137,25 @@ export const chat: Messages['chat'] = {
     againConfirm: 'Noch einmal fragen: entfernt {n} spätere Nachricht. Zum Bestätigen klicken | Noch einmal fragen: entfernt {n} spätere Nachrichten. Zum Bestätigen klicken',
   },
   notice: {
+    compacted: {
+      asked: 'Komprimiert: von {before} auf {after} Tokens.',
+      askedPlain: 'Komprimiert.',
+      idle: 'In einer Pause komprimiert: von {before} auf {after} Tokens.',
+      idlePlain: 'In einer Pause komprimiert.',
+    },
     stopped: 'Gestoppt.',
     unexpected: 'Der Agent wurde unerwartet beendet.',
     cleared: 'Neue Unterhaltung. {agent} sieht die Nachrichten darüber nicht mehr.',
     notSent: 'Nicht gesendet: {names}. {error}',
     nothingToSend: 'Nichts zu senden: Die angehängten Dateien konnten nicht in die Umgebung übertragen werden. {error}',
     noWorktree: 'Für diesen Chat konnte kein {term} erstellt werden: {error}. Es ist noch nichts gelaufen; sende eine Nachricht, um es erneut zu versuchen (dein Text geht mit).',
+  },
+  break: {
+    text: 'Zuletzt genutzt: {ago}. Deine nächste Nachricht lässt alle {tokens} Tokens erneut lesen.',
+    more: 'Komprimieren behält eine Zusammenfassung; Details können verloren gehen.',
+    compact: 'Erst komprimieren',
+    compactSend: 'Komprimieren und senden',
+    never: 'Nicht in diesem Chat',
   },
   queue: {
     label: 'Nachrichten, die auf das Senden warten',
@@ -224,6 +237,7 @@ export const chat: Messages['chat'] = {
     diff: 'Diff',
   },
   working: {
+    compacting: 'Unterhaltung wird komprimiert',
     reconnecting: 'Verbindung zu {name} wird wiederhergestellt',
     reconnectingEnv: 'Verbindung zur Umgebung wird wiederhergestellt',
     making: '{term} wird erstellt',

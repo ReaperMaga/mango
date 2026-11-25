@@ -274,7 +274,7 @@ ${a.path}`"
       <UiIconButton v-if="writable" size="sm" class="msg__pin" :class="{ 'msg__pin--on': message.pinned }" :label="message.pinned ? t('chat.message.unpin') : t('chat.message.pin')" :active="!!message.pinned" @click="threads.togglePin(thread.id, message.id)">
         <Pin />
       </UiIconButton>
-      <UiIconButton v-if="writable && !busy" size="sm" class="msg__again" :class="{ 'msg__again--ask': confirmAgain }" :label="confirmAgain ? t('chat.message.againConfirm', cuts - 1) : t('chat.message.again')" @click="again">
+      <UiIconButton v-if="writable && !busy && !message.idle" size="sm" class="msg__again" :class="{ 'msg__again--ask': confirmAgain }" :label="confirmAgain ? t('chat.message.againConfirm', cuts - 1) : t('chat.message.again')" @click="again">
         <RefreshCw />
       </UiIconButton>
       <UiIconButton v-if="writable" size="sm" :label="t('chat.message.branch')" @click="threads.branchFrom(thread.id, message.id)">

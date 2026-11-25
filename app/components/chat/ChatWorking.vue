@@ -31,6 +31,15 @@ const reconnecting = computed(() => {
   return { name: parseEnvPath(root.projectPath)?.instance }
 })
 
+/** Only the conversation is being compacted: by the user's `/compact`, or by itself in a break. */
+const compacting = computed(() => {
+  const last = props.thread.messages.at(-1)
+  if (last?.role !== 'agent' || last.parts.length) return false
+  if (last.idle) return true
+  const asked = props.thread.messages.at(-2)
+  return props.thread.agent === 'claude' && asked?.role === 'user' && asked.parts.some(p => p.type === 'text' && /^\/compact(\s|$)/.test(p.text))
+})
+
 const activity = computed(() => {
   const chat = props.thread
   if (reconnecting.value) return reconnecting.value.name ? t('chat.working.reconnecting', { name: reconnecting.value.name }) : t('chat.working.reconnectingEnv')
@@ -43,6 +52,7 @@ const activity = computed(() => {
   if (chat.status === 'waiting') return t(`chat.working.waitingFor.${waitingFor(chat)}`)
   if (waitingOn.value) return t('chat.working.waitingTasks', waitingOn.value)
   const last = chat.messages[chat.messages.length - 1]
+  if (compacting.value) return t('chat.working.compacting')
   const part = last?.role === 'agent' ? last.parts[last.parts.length - 1] : undefined
   if (!part) return t('chat.working.startingUp', { agent: agent.value })
   if (part.type === 'thinking' && part.seconds === 0) return t('chat.working.thinking')
@@ -64,6 +74,7 @@ const activity = computed(() => {
 /** The turn started when the user's message was sent. */
 const startedAt = computed(() => {
   const msgs = props.thread.messages
+  if (msgs.at(-1)?.idle) return msgs.at(-1)!.createdAt
   for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i]!.role === 'user') return msgs[i]!.createdAt
   return props.thread.updatedAt
 })

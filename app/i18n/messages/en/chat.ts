@@ -135,12 +135,25 @@ export const chat = {
     againConfirm: 'Ask again: removes {n} later message. Click to confirm | Ask again: removes {n} later messages. Click to confirm',
   },
   notice: {
+    compacted: {
+      asked: 'Compacted: {before} to {after} tokens.',
+      askedPlain: 'Compacted.',
+      idle: 'Compacted during a break: {before} to {after} tokens.',
+      idlePlain: 'Compacted during a break.',
+    },
     stopped: 'Stopped.',
     unexpected: 'The agent stopped unexpectedly.',
     cleared: 'New conversation. {agent} no longer sees the messages above.',
     notSent: 'Not sent: {names}. {error}',
     nothingToSend: 'Nothing to send: the attached files could not be put into the remote environment. {error}',
     noWorktree: 'Could not make a {term} for this chat: {error}. Nothing ran yet; send a message to try again (what you wrote goes along).',
+  },
+  break: {
+    text: 'Last used {ago}. Your next message has all {tokens} tokens read again.',
+    more: 'Compacting keeps a summary and can lose details.',
+    compact: 'Compact first',
+    compactSend: 'Compact and send',
+    never: 'Not for this chat',
   },
   queue: {
     label: 'Messages waiting to be sent',
@@ -222,6 +235,7 @@ export const chat = {
     diff: 'Diff',
   },
   working: {
+    compacting: 'Compacting the conversation',
     reconnecting: 'Reconnecting to {name}',
     reconnectingEnv: 'Reconnecting to the environment',
     making: 'Making a {term}',

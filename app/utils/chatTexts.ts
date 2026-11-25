@@ -64,6 +64,11 @@ export const approvalReason = (reason: string) =>
 export function noticeText(text: string): string {
   if (text === 'Stopped.') return t('chat.notice.stopped')
   if (text === 'The agent stopped unexpectedly.') return t('chat.notice.unexpected')
+  const compacted = /^Compacted( during a break)?(?:: (\S+) to (\S+) tokens)?\.$/.exec(text)
+  if (compacted) {
+    const when = compacted[1] ? 'idle' : 'asked'
+    return compacted[2] ? t(`chat.notice.compacted.${when}`, { before: compacted[2], after: compacted[3] }) : t(`chat.notice.compacted.${when}Plain`)
+  }
   const cleared = /^New conversation\. (.+) no longer sees the messages above\.$/.exec(text)
   if (cleared) return t('chat.notice.cleared', { agent: cleared[1] })
   const left = /^Not sent: (.+?)\. (.*)$/s.exec(text)

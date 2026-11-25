@@ -30,7 +30,8 @@ import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
 import { t } from '~/i18n'
-import { normalizeContext } from '~/agents/context'
+import { normalizeCache, normalizeContext } from '~/agents/context'
+import { attachmentDrafts, drafts } from '~/utils/drafts'
 import { savedWorktree } from '~/agents/workdir'
 import { transcript } from '~/utils/transcript'
 import { isPanelEditorTab, isPluginTab, parsePanelEditorTab } from '~/plugin-host/ids'
@@ -1132,8 +1133,62 @@ export const useThreads = defineStore('threads', {
       this.persist(t.id)
     },
 
+    /**
+     * Compact a large chat after a break. 'asked' ("Compact first"): as the user's `/compact`, and `then`
+     * (what was written) goes out once it worked, or back to the composer. 'idle': by itself, in a break. That
+     * one is no news: nothing is said about it outside the chat, and one that fails leaves no trace.
+     */
+    async compact(id: string, how: 'asked' | 'idle', then?: { text: string; attachments: Attachment[] }) {
+      const t = this.byId(id)
+      if (!t || t.parentId || t.agent !== 'claude' || isBusy(t)) return
+      held.delete(id)
+      if (how === 'asked') {
+        t.archived = false
+        const queued = then && (then.text.trim() || then.attachments.length)
+          ? { id: uid('q'), text: then.text.trim(), attachments: then.attachments, queuedAt: Date.now() }
+          : null
+        if (queued) (this.queue[id] ??= []).push(queued)
+        this._appendUser(t, '/compact', [])
+        await this._runTurn(id, '/compact', [])
+        // It did not work (or was stopped): the message would have the whole conversation read after all. Back to the composer with it.
+        if (this.byId(id)?.cache && queued && this.queue[id]?.some(q => q.id === queued.id) && !drafts.get(id) && !attachmentDrafts.get(id)?.length) {
+          this.dropQueued(id, queued.id)
+          if (queued.text) drafts.set(id, queued.text)
+          if (queued.attachments.length) attachmentDrafts.set(id, queued.attachments)
+        } else if (this.byId(id)?.cache && this.queue[id]?.length) held.add(id)
+        await this._sendFollowUps(id)
+        return
+      }
+      const before = t.updatedAt
+      const began = Date.now()
+      // Once per break, whatever comes of it and in whichever window.
+      if (t.cache) t.cache.tried = true
+      this.persist(id)
+      await this._runTurn(id, '/compact', [], true)
+      const now = this.byId(id)
+      if (now && !isBusy(now)) {
+        const note = now.messages.findLast(m => m.idle && m.createdAt >= began)
+        if (note && now.cache) {
+          now.messages.splice(now.messages.indexOf(note), 1)
+          now.status = 'working'
+        }
+        if (!this.queue[id]?.length) now.updatedAt = before
+        this.persist(id)
+      }
+      // Written while it ran.
+      await this._sendFollowUps(id)
+    },
+
+    /** Never offer to compact this chat after a break, nor do it. */
+    keepContext(id: string) {
+      const t = this.byId(id)
+      if (!t) return
+      t.keepContext = true
+      this.persist(id)
+    },
+
     /** One turn for a message already in the chat, or Mango's own `/clear`, `/create-pr` and `/create-release`. */
-    async _runTurn(id: string, text: string, attachments: Attachment[]) {
+    async _runTurn(id: string, text: string, attachments: Attachment[], idle = false) {
       const t = this.byId(id)
       if (!t) return
       if (isClear(text) && !attachments.length) {
@@ -1177,7 +1232,7 @@ export const useThreads = defineStore('threads', {
         // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
         if (!current()) return this._standDown(id)
       }
-      if (useWorkspace().editorAutoSave) await this._saveFilesOf(id)
+      if (useWorkspace().editorAutoSave && !idle) await this._saveFilesOf(id)
       if (!current()) return this._standDown(id)
       // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
       // GitHub's `gh` or GitLab's `glab`, by where the project's repository lives (read with the titlebar's button).
@@ -1185,7 +1240,7 @@ export const useThreads = defineStore('threads', {
       const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
       const handOver = t.history && !t.sessionId
-      const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+      const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments, idle)
       // Never started: the history still has to go along next time, and no turn finished.
       if (!started) return this._standDown(id)
       if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
@@ -1407,15 +1462,18 @@ export const useThreads = defineStore('threads', {
       if (wasBusy && !isBusy(t)) {
         const last = t.messages[t.messages.length - 1]
         if (last?.role === 'agent' && last.elapsedMs === undefined) {
-          const asked = [...t.messages].reverse().find(m => m.role === 'user')
+          const asked = last.idle ? last : [...t.messages].reverse().find(m => m.role === 'user')
           last.elapsedMs = Date.now() - (asked?.createdAt ?? last.createdAt)
           last.outcome = outcome ?? (status === 'error' ? 'error' : 'stopped')
         }
       }
       const visible = this.panes.some(p => p.threadId === id)
-      if (outcome === 'done') t.seen = visible
+      // A compaction nobody asked for is no news.
+      const quiet = !!t.messages.at(-1)?.idle
+      if (outcome === 'done' && !quiet) t.seen = visible
       this._touch(id)
       this.persist(id)
+      if (quiet) return
       try { notifyChange(t, before, outcome) } catch { /* a notification never breaks a run */ }
     },
     /** The chat changed (an agent's output too): note the time, and save it soon. */
@@ -1505,7 +1563,9 @@ function normalizeLoaded(t: Thread): Thread {
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
   const context = normalizeContext(t.context)
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context, history: typeof t.history === 'string' && t.history ? t.history : undefined }
+  const cache = normalizeCache(t.cache)
+  const keepContext = t.keepContext === true ? true as const : undefined
+  return { ...t, cache, keepContext, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context, history: typeof t.history === 'string' && t.history ? t.history : undefined }
 }
 
 /** The reason in a rejected backend call or a thrown error, without a trailing period. */

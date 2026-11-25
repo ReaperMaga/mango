@@ -5,7 +5,8 @@ import type { useThreads } from '~/stores/threads'
 import type { EnvRemote } from '~/types/ipc'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
-import { mergeContext } from '~/agents/context'
+import { formatTokens, mergeCache, mergeContext } from '~/agents/context'
+import { cacheOwner } from '~/utils/idleCompaction'
 import { KeptProcesses, type KeptFor } from '~/agents/keeper'
 import { forAgent, forRemoteAgent, makeThumb, type DroppedAttachment } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
@@ -273,6 +274,31 @@ function settleParts(msgs: Message[], status: 'done' | 'error' | 'stopped') {
   }
 }
 
+/** What a chat says once it was compacted (shown through `noticeText`). */
+function compactedNote(idle: boolean, before = 0, after = 0) {
+  const when = idle ? 'Compacted during a break' : 'Compacted'
+  return before && after && after < before ? `${when}: ${formatTokens(before)} to ${formatTokens(after)} tokens.` : `${when}.`
+}
+
+/**
+ * Whether the chat's Claude Code session was used since its last reply in Mango (in a terminal, say), or
+ * cannot be read: Mango must not compact it by itself then.
+ */
+export async function sessionMovedOn(thread: Thread): Promise<boolean> {
+  const asked = thread.messages.findLast(m => m.role === 'user')
+  const reply = thread.messages.at(-1)
+  if (!thread.sessionId || !asked || !reply) return true
+  const ended = Math.max(reply.createdAt, asked.createdAt + (reply.elapsedMs ?? 0))
+  try {
+    const tail = await call('agent_transcript', { sessionId: thread.sessionId, maxBytes: 256 * 1024 })
+    const { lastMessage } = await import('~/agents/claude')
+    const last = tail && lastMessage(tail.lines)
+    return !last || last.at > ended + 5000
+  } catch {
+    return true
+  }
+}
+
 const TASK_END_SUMMARY = { done: 'finished', error: 'failed', stopped: 'stopped' } as const
 
 /**
@@ -320,9 +346,10 @@ async function userMcpFor(agent: AgentId, projectPath: string) {
 
 /**
  * Run one turn to its end. `attachments`: files sent with `text`, already in the attachment store.
+ * `idle`: Mango compacts the chat by itself, in a message that says so.
  * False when it was stopped before its agent started: that one never saw the prompt.
  */
-export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<boolean> {
+export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = [], idle = false): Promise<boolean> {
   const thread = store.byId(threadId)
   if (!thread) return false
   /** Where the agent works: the chat's own worktree, or the project folder. */
@@ -339,6 +366,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   const replied = lastReply(thread)
   const first = store._pushAgentMessage(threadId)
   if (!first) return false
+  if (idle) first.idle = true
   store._setStatus(threadId, 'running')
   const turn = Symbol(threadId)
   starting.set(threadId, turn)
@@ -353,6 +381,8 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
 
   const main: Target = { threadId, msgs: [first], msg: first }
   let runUsage: TurnUsage | null = null
+  /** A compaction whose note still lacks what it came down to. */
+  let compaction: { before: number; note: Extract<Part, { type: 'notice' }> } | null = null
   const place = placeOf(workdir)
   /** Sub-agents' chats, by the id of the tool call that started each. */
   const subs = new Map<string, Target>()
@@ -391,8 +421,20 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         break
       case 'context':
         t.context = mergeContext(t.context, e.usage)
+        if (compaction && e.usage.max > 0) {
+          compaction.note.text = compactedNote(idle, compaction.before, e.usage.used)
+          compaction = null
+        }
         // Live readings come with every request; the full one at the end of a turn is worth saving.
         if (e.usage.max > 0) store.persist(threadId)
+        break
+      case 'cache':
+        t.cache = mergeCache(t.cache, e, cacheOwner(t))
+        break
+      case 'compacted':
+        // The next message goes out with another conversation than the cached one.
+        delete t.cache
+        compaction = { before: t.context?.used ?? 0, note: push(main, { type: 'notice', level: 'info', text: compactedNote(idle) }) as Extract<Part, { type: 'notice' }> }
         break
       case 'workdir': {
         // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns,
