@@ -1,7 +1,7 @@
 /** Changing a property's type: what becomes of its values, and the options that have to exist for them. */
 
 import {
-  colorAt, formatDate, newId, parseDate, valueOf, valueText, type DateValue, type Item, type Option, type Property,
+  colorAt, formatDate, newId, parseDate, valueOf, valueText, type People, type DateValue, type Item, type Option, type Property,
   type PropertyType, type Value,
 } from './model.ts'
 import { between, spread } from './order.ts'
@@ -27,14 +27,25 @@ export function parseNumber(text: string): number | null {
   return Number.isFinite(n) ? n : null
 }
 
-/** Finds or adds options by name, whatever its case. */
+/**
+ * Finds or adds options by name, whatever its case; and finds people by name: the server's (`people`) first, then those
+ * a property wrote down (`known`). People are never made up: a name nobody has is not a person.
+ */
 export class OptionSet {
   readonly options: Option[]
   private readonly byName: Map<string, string>
+  private readonly personByName = new Map<string, string>()
 
-  constructor(existing: readonly Option[]) {
+  constructor(existing: readonly Option[], people: People | null = null, known: Readonly<Record<string, string>> = {}) {
     this.options = [...existing]
     this.byName = new Map(existing.map(o => [o.name.trim().toLowerCase(), o.id]))
+    for (const [id, name] of Object.entries(known)) this.personByName.set(name.trim().toLowerCase(), id)
+    for (const p of people?.all ?? []) this.personByName.set(p.name.trim().toLowerCase(), p.id)
+  }
+
+  /** The id of the person with this name, or null. */
+  personOf(name: string): string | null {
+    return this.personByName.get(name.trim().toLowerCase()) ?? null
   }
 
   idOf(name: string): string {
@@ -72,12 +83,17 @@ export function parseValue(text: string, type: PropertyType, options: OptionSet)
       const names = t.split(/[,;\n]/).map(s => s.trim()).filter(Boolean)
       return names.length ? [...new Set(names.map(n => options.idOf(n)))] : null
     }
+    case 'person': {
+      const ids = t.split(/[,;\n]/).map(s => s.trim()).filter(Boolean).flatMap(n => options.personOf(n) ?? [])
+      return ids.length ? [...new Set(ids)] : null
+    }
     default: return null
   }
 }
 
-export function convertProperty(property: Property, type: PropertyType, items: readonly Item[]): Conversion {
-  const options = new OptionSet(property.options)
+/** `people`: the collection's, to find people by name when text becomes a person. */
+export function convertProperty(property: Property, type: PropertyType, items: readonly Item[], people: People | null = null): Conversion {
+  const options = new OptionSet(property.options, people, property.people)
   const values = new Map<string, Value | null>()
   let lost = 0
   for (const item of items) {
@@ -87,20 +103,20 @@ export function convertProperty(property: Property, type: PropertyType, items: r
       if (property.id in item.values) values.set(item.id, null)
       continue
     }
-    const next = convertValue(value, property, type, options)
+    const next = convertValue(value, property, type, options, people)
     if (next === null || next === false) lost++
     values.set(item.id, next)
   }
   return { property: { ...property, type, options: options.list() }, values, lost }
 }
 
-function convertValue(value: Value, from: Property, type: PropertyType, options: OptionSet): Value | null {
+function convertValue(value: Value, from: Property, type: PropertyType, options: OptionSet, people: People | null): Value | null {
   if (type === 'multiSelect' && from.type === 'select') return [value as string]
   if (type === 'select' && from.type === 'multiSelect') return (value as readonly string[])[0] ?? null
-  if (type === 'checkbox') return typeof value === 'number' ? value !== 0 : parseValue(valueText(value, from), type, options)
+  if (type === 'checkbox') return typeof value === 'number' ? value !== 0 : parseValue(valueText(value, from, people), type, options)
   if (type === 'number' && typeof value === 'boolean') return 1
   // A date and time of the planner's own becomes a plain date value, not text in between.
   if (type === 'date' && typeof value === 'object' && !Array.isArray(value)) return value as DateValue
-  const text = typeof value === 'object' && !Array.isArray(value) ? formatDate(value as DateValue) : valueText(value, from)
+  const text = typeof value === 'object' && !Array.isArray(value) ? formatDate(value as DateValue) : valueText(value, from, people)
   return parseValue(text, type, options)
 }

@@ -22,6 +22,7 @@
  *   their source.
  */
 
+import type { People } from '../model.ts'
 import type { JsonObject, Patch } from '../patch.ts'
 
 /** A stored document. `data` is null when it was deleted. */
@@ -106,4 +107,11 @@ export interface PlannerSource {
   place?(collectionId: string, place: string): void
   /** Of the place the collection is in. */
   statusOf?(collectionId: string): SourceStatus
+
+  /* ---- only a source with people (a planner server's space) has these */
+  /** Who may be assigned in a collection; null where nobody is (this computer). */
+  peopleOf?(collectionId: string): People | null
+  /** Asks again (a token may have been added since); `onPeople` hears the answer. */
+  refreshPeople?(collectionId: string): void
+  onPeople?(handler: () => void): () => void
 }

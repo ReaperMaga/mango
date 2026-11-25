@@ -37,6 +37,11 @@ export const strings = {
     access: 'Access',
     canEdit: 'Can edit',
     readOnly: 'Read only',
+    yourName: 'Your name',
+    yourNameHint: (space: string) => `Everyone in ${space} sees it on what you are assigned. Changing it changes it everywhere.`,
+    rename: 'Rename',
+    renamed: 'Renamed',
+    noName: 'This server does not know people yet. Update it to name yourself and assign people.',
     collections: (n: number) => (n === 1 ? '1 collection' : `${n} collections`),
   },
 
@@ -101,6 +106,7 @@ export const strings = {
     number: 'Number',
     select: 'Select',
     multiSelect: 'Multi-select',
+    person: 'Person',
     date: 'Date',
     checkbox: 'Checkbox',
     url: 'Link',
@@ -148,7 +154,7 @@ export const strings = {
   },
   template: {
     board: 'Board', table: 'Table',
-    status: 'Status', priority: 'Priority', due: 'Due', severity: 'Severity', tags: 'Tags', link: 'Link',
+    status: 'Status', assignee: 'Assignee', priority: 'Priority', due: 'Due', severity: 'Severity', tags: 'Tags', link: 'Link',
     backlog: 'Backlog', review: 'Review',
     toDo: 'To do', inProgress: 'In progress', done: 'Done',
     high: 'High', medium: 'Medium', low: 'Low', critical: 'Critical', major: 'Major', minor: 'Minor',

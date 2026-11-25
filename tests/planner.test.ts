@@ -9,9 +9,10 @@ import assert from 'node:assert/strict'
 import { between, compareOrder, isKey, manyBetween, placeAt, spread } from '../plugins/planner/src/order.ts'
 import { applyPatch, invertPatch, type JsonObject } from '../plugins/planner/src/patch.ts'
 import {
-  addDays, isDateString, isInScope, normalizeCollection, normalizeItem, parseDate, safeUrl, storedValue, valueOf,
-  type Collection, type Item, type View,
+  addDays, isDateString, isInScope, ME, normalizeCollection, normalizeItem, operatorsFor, parseDate, safeUrl, storedValue,
+  typesFor, valueOf, valueText, type Collection, type Item, type Property, type View,
 } from '../plugins/planner/src/model.ts'
+import { peopleRows, personColor, personInitial, personView } from '../plugins/planner/src/ui/people.ts'
 import { defaultValues, groupsOf, matchesFilter, NO_GROUP, runQuery, sortItems, valueForGroup } from '../plugins/planner/src/query.ts'
 import { convertProperty, parseNumber } from '../plugins/planner/src/convert.ts'
 import { csvCell, inferType, itemToMarkdown, parseCsv, planImport, toCsv } from '../plugins/planner/src/csv.ts'
@@ -353,4 +354,111 @@ test('model: a scope matches by repository only where its folder is not here', (
   assert.ok(!isInScope(scope, '/pc/app', here('github.com/a/c', false)))
   assert.ok(!isInScope(scope, '/pc/app'))
   assert.deepEqual(normalizeCollection({ scope: { kind: 'project', path: '/x', repo: 'nope' } }, meta('c')).scope, { kind: 'project', path: '/x' })
+})
+
+/* ---------------------------------------------------------------- people */
+
+const PEOPLE = {
+  me: 'per_ana',
+  all: [
+    { id: 'per_ana', name: 'Ana', active: true },
+    { id: 'per_ben', name: 'Ben', active: true },
+    { id: 'per_old', name: 'Olga', active: false },
+  ],
+}
+
+test('person: a value is person ids, each once; names are the server\'s, else what was written down', () => {
+  const c = tasks({ properties: { who: { name: 'Assignee', type: 'person', order: 'a', people: {
+    per_ana: { name: 'Ana (then)' }, per_gone: { name: 'Gus' }, 'bad id': { name: 'X' }, per_bad: { name: '@x' },
+  } } } })
+  const who = c.properties[0]!
+  assert.equal(who.type, 'person')
+  assert.deepEqual(who.people, { per_ana: 'Ana (then)', per_gone: 'Gus' })
+  assert.deepEqual(valueOf(item('a', { who: ['per_ana', 'per_ben', 'per_ana'] }), who), ['per_ana', 'per_ben'])
+  assert.deepEqual(valueOf(item('a', { who: ['per_ana', 3, '', 'has space', '@me', 'x'.repeat(129)] }), who), ['per_ana'])
+  assert.equal(valueOf(item('a', { who: 'per_ana' }), who), null)
+  assert.equal(valueOf(item('a', { who: [] }), who), null)
+  // Live names first; then what the property wrote down; then nobody knows.
+  assert.equal(valueText(['per_ana', 'per_gone', 'per_nobody'], who, PEOPLE), 'Ana, Gus, Unknown person')
+  assert.equal(valueText(['per_ana', 'per_ben'], who), 'Ana (then), Unknown person')
+  assert.equal(storedValue([], who), undefined)
+  assert.deepEqual(operatorsFor('person'), ['contains', 'notContains', 'isEmpty', 'isNotEmpty'])
+})
+
+test('person: offered only where there are people, kept where it is one already', () => {
+  assert.equal(typesFor(null).includes('person'), false)
+  assert.equal(typesFor(null, 'person').includes('person'), true)
+  assert.equal(typesFor(PEOPLE).includes('person'), true)
+})
+
+test('person: filters by id, and "me" is whoever looks', () => {
+  const c = tasks({
+    properties: { who: { name: 'Assignee', type: 'person', order: 'a' } },
+    views: { v: { name: 'Mine', type: 'table', order: 'a', filter: { match: 'and', conditions: [
+      { id: 'f', propertyId: 'who', operator: 'contains', value: [ME, 'per_ben', 3, '@other'] },
+    ] } } },
+  })
+  assert.deepEqual(c.views[0]!.filter.conditions[0]!.value, [ME, 'per_ben'])
+  const a = item('a', { who: ['per_ana'] })
+  const b = item('b', { who: ['per_ben', 'per_cleo'] })
+  const n = item('n')
+  const shown = (me: string | null) => runQuery(c, [a, b, n], c.views[0]!, { people: me ? { ...PEOPLE, me } : null }).items.map(i => i.title)
+  assert.deepEqual(shown('per_ana'), ['a', 'b'])
+  assert.deepEqual(shown('per_cleo'), ['b'])
+  assert.deepEqual(shown(null), ['b'], 'nobody looking: "me" is no one')
+  const hits = (operator: string, value: unknown = null, me: string | null = 'per_ana') => [a, b, n]
+    .filter(i => matchesFilter(c, i, { match: 'and', conditions: [{ id: '1', propertyId: 'who', operator, value } as never] }, 0, me)).map(i => i.title)
+  assert.deepEqual(hits('notContains', [ME]), ['b', 'n'])
+  assert.deepEqual(hits('isEmpty'), ['n'])
+  assert.deepEqual(hits('isNotEmpty'), ['a', 'b'])
+  assert.deepEqual(defaultValues(c, c.views[0]!, null, 0, 'per_ana'), { who: ['per_ana'] })
+  assert.deepEqual(defaultValues(c, c.views[0]!, null, 0, null), { who: ['per_ben'] })
+  // Search finds people by their names as they are now.
+  const all = view(c, { filter: { match: 'and', conditions: [] } })
+  assert.deepEqual(runQuery(c, [a, b, n], all, { search: 'BEN', people: PEOPLE }).items.map(i => i.title), ['b'])
+  assert.deepEqual(runQuery(c, [a, b, n], all, { search: 'per_' }).items.map(i => i.title), [], 'ids are not searched')
+})
+
+test('person: text becomes the people it names; people become their names', () => {
+  const c = tasks({ properties: {
+    who: { name: 'Assignee', type: 'person', order: 'a', people: { per_gus: { name: 'Gus' } } },
+    note: { name: 'Note', type: 'text', order: 'b' },
+  } })
+  const [who, note] = c.properties as [Property, Property]
+  const items = [item('a', { note: 'ana, Ben; Ana' }), item('b', { note: 'Nobody' })]
+  const toPerson = convertProperty(note, 'person', items, PEOPLE)
+  assert.deepEqual(toPerson.values.get('a'), ['per_ana', 'per_ben'])
+  assert.equal(toPerson.values.get('b'), null)
+  assert.equal(toPerson.lost, 1)
+  assert.equal(convertProperty(note, 'person', items).values.get('a'), null, 'without people, nobody to find')
+  const back = convertProperty(who, 'text', [item('a', { who: ['per_ana', 'per_gus'] })], PEOPLE)
+  assert.equal(back.values.get('a'), 'Ana, Gus')
+})
+
+test('person: the same colour for an id everywhere, whatever its name; views of people', () => {
+  assert.equal(personColor('per_ana'), personColor('per_ana'))
+  const colors = new Set(['per_a', 'per_b', 'per_c', 'per_d', 'per_e', 'per_f', 'per_g', 'per_h'].map(personColor))
+  assert.ok(colors.size >= 4, 'ids spread over the colours')
+  assert.equal(personInitial('ana'), 'A')
+  assert.equal(personInitial('  (Ünal)'), 'Ü')
+  assert.equal(personInitial('🙂'), '🙂')
+  assert.deepEqual(peopleRows(PEOPLE, ['per_zed', 'per_ben']), ['per_ana', 'per_ben', 'per_zed'])
+  assert.deepEqual(peopleRows({ ...PEOPLE, me: 'per_old' }), ['per_ana', 'per_ben'], 'a former me is not offered')
+  assert.deepEqual(peopleRows(null, ['per_zed']), ['per_zed'])
+  const prop = { people: { per_zed: 'Zed' } }
+  assert.deepEqual(personView('per_ana', prop, PEOPLE), { id: 'per_ana', name: 'Ana', former: false, unknown: false, you: true })
+  assert.deepEqual(personView('per_old', prop, PEOPLE), { id: 'per_old', name: 'Olga', former: true, unknown: false, you: false })
+  assert.deepEqual(personView('per_zed', prop, PEOPLE), { id: 'per_zed', name: 'Zed', former: true, unknown: false, you: false })
+  assert.deepEqual(personView('per_zed', prop, null), { id: 'per_zed', name: 'Zed', former: false, unknown: false, you: false })
+  assert.deepEqual(personView('per_q', prop, null), { id: 'per_q', name: 'Unknown person', former: false, unknown: true, you: false })
+})
+
+test('templates: an assignee only where there are people', () => {
+  for (const id of ['tasks', 'bugs'] as const) {
+    const without = normalizeCollection(templateData(id), meta('c'))
+    const withPeople = normalizeCollection(templateData(id, { people: true }), meta('c'))
+    assert.equal(without.properties.some(p => p.type === 'person'), false)
+    assert.equal(withPeople.properties.filter(p => p.type === 'person').length, 1)
+    for (const v of without.views) assert.ok(v.columns.length === without.properties.length)
+  }
 })

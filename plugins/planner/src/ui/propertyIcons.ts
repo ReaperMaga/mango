@@ -5,6 +5,7 @@ export const PROPERTY_ICONS: Record<PropertyType, string> = {
   number: 'hash',
   select: 'list',
   multiSelect: 'tags',
+  person: 'circle-user',
   date: 'calendar',
   checkbox: 'square-check',
   url: 'link',

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { usePlanner } from '../context.ts'
-import { PROPERTY_TYPES, type Property, type PropertyType } from '../model.ts'
+import { typesFor, type Property, type PropertyType } from '../model.ts'
 import { strings as shared } from '../strings.ts'
 import Popover from '../ui/Popover.vue'
 import PropertyIcon from '../ui/PropertyIcon.vue'
@@ -15,8 +15,8 @@ const { store } = usePlanner()
 const name = ref('')
 const active = ref(0)
 const list = ref<HTMLElement | null>(null)
-const types = PROPERTY_TYPES
-const activeId = computed(() => `pl-add-${types[active.value]}`)
+const types = computed(() => typesFor(store.people(props.collectionId)))
+const activeId = computed(() => `pl-add-${types.value[active.value]}`)
 
 function add(type: Exclude<PropertyType, 'unsupported'>) {
   const made = store.addProperty(props.collectionId, { name: name.value.trim() || freeName(shared.propertyTypes[type]), type })
@@ -32,9 +32,10 @@ function freeName(base: string): string {
 }
 function onKey(e: KeyboardEvent) {
   if (e.isComposing) return
-  if (e.key === 'ArrowDown') active.value = (active.value + 1) % types.length
-  else if (e.key === 'ArrowUp') active.value = (active.value - 1 + types.length) % types.length
-  else if (e.key === 'Enter') add(types[active.value]!)
+  const n = types.value.length
+  if (e.key === 'ArrowDown') active.value = (active.value + 1) % n
+  else if (e.key === 'ArrowUp') active.value = (active.value - 1 + n) % n
+  else if (e.key === 'Enter') add(types.value[active.value]!)
   else return
   e.preventDefault()
   void nextTick(() => list.value?.querySelector('.is-active')?.scrollIntoView({ block: 'nearest' }))

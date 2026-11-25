@@ -54,7 +54,7 @@ const HEAD = 'head'
 interface Col { id: string; field: Field; name: string; width: number; left: number }
 
 const WIDTHS: Record<Property['type'], number> = {
-  text: 200, number: 110, select: 140, multiSelect: 180, date: 150, checkbox: 96, url: 180, createdTime: 150, updatedTime: 150, unsupported: 140,
+  text: 200, number: 110, select: 140, multiSelect: 180, person: 160, date: 150, checkbox: 96, url: 180, createdTime: 150, updatedTime: 150, unsupported: 140,
 }
 const viewport = reactive({ width: 800, height: 600 })
 const draftWidths = ref<Record<string, number>>({})
@@ -585,7 +585,7 @@ function onPaste(e: ClipboardEvent) {
   const items = cells.length === 1
     ? selection.value.has(line.item.id) ? selectedItems.value : [line.item]
     : lines.value.slice(at).flatMap(l => (l.kind === 'item' ? [l.item] : [])).slice(0, cells.length)
-  const { changes, options, skipped } = planPaste(cells, items, cols.value.slice(colIndex.value.get(activeCol.value.id)).map(c => c.field))
+  const { changes, options, skipped } = planPaste(cells, items, cols.value.slice(colIndex.value.get(activeCol.value.id)).map(c => c.field), store.people(props.collection.id))
   store.updateEach(props.collection.id, changes, options)
   if (skipped) mango.ui.toast({ title: strings.notPasted(skipped), kind: 'warning' })
 }

@@ -5,6 +5,7 @@ import { isReadonly, propertyOf, storedValue, valueOf, type DateValue, type Item
 import Popover from '../ui/Popover.vue'
 import DateEditor from './DateEditor.vue'
 import OptionEditor from './OptionEditor.vue'
+import PersonEditor from './PersonEditor.vue'
 import { strings } from './strings.ts'
 import TextEditor from './TextEditor.vue'
 
@@ -82,6 +83,7 @@ const kind = computed(() => {
   switch (property.value?.type) {
     case 'select':
     case 'multiSelect': return 'options'
+    case 'person': return 'people'
     case 'date': return 'date'
     case 'text':
     case 'number':
@@ -92,7 +94,7 @@ const kind = computed(() => {
 const width = computed(() => {
   if (kind.value === 'date') return 256
   const w = props.anchor instanceof HTMLElement ? props.anchor.offsetWidth : 0
-  return Math.min(Math.max(w, kind.value === 'options' ? 248 : 260), 480)
+  return Math.min(Math.max(w, kind.value === 'options' || kind.value === 'people' ? 248 : 260), 480)
 })
 </script>
 
@@ -112,6 +114,13 @@ const width = computed(() => {
       :items="items"
       :set="set"
       @done="emit('close')"
+    />
+    <PersonEditor
+      v-else-if="kind === 'people'"
+      :collection-id="collectionId"
+      :property="property"
+      :items="items"
+      :set="set"
     />
     <DateEditor v-else-if="kind === 'date'" :value="commonDate" @change="set" @done="emit('close')" />
     <TextEditor v-else ref="text" :property="property" :value="common" @change="set" @done="emit('close')" />

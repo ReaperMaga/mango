@@ -1,7 +1,7 @@
 /** Cells as text and back: tab separated, as spreadsheets write it. Pure. */
 
 import { OptionSet, parseValue } from '../../convert.ts'
-import { isReadonly, valueOf, valueText, type Item, type Option, type Property, type Value } from '../../model.ts'
+import { isReadonly, valueOf, valueText, type Item, type Option, type People, type Property, type Value } from '../../model.ts'
 import type { ItemChange } from '../../store.ts'
 
 /** A column: a property, or null for the title. */
@@ -44,7 +44,7 @@ export interface Paste {
  * What pasting into these items and fields does, from their first on. A single row goes into every item given.
  */
 export function planPaste(
-  cells: readonly (readonly string[])[], items: readonly Item[], fields: readonly Field[],
+  cells: readonly (readonly string[])[], items: readonly Item[], fields: readonly Field[], people: People | null = null,
 ): Paste {
   const changes = new Map<string, ItemChange>()
   const sets = new Map<string, OptionSet>()
@@ -54,7 +54,7 @@ export function planPaste(
     if (isReadonly(p)) return undefined
     if (!cell.trim()) return p.type === 'checkbox' ? false : null
     let set = sets.get(p.id)
-    if (!set) sets.set(p.id, (set = new OptionSet(p.options)))
+    if (!set) sets.set(p.id, (set = new OptionSet(p.options, people, p.people)))
     const value = parseValue(cell, p.type, set)
     return value === null ? undefined : value
   }

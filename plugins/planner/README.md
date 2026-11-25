@@ -9,7 +9,7 @@ palette. Nothing is there until you make it: a new collection starts from a temp
 belongs to the project or shows everywhere. Its settings hold its name, icon, color, a description, what its items are
 called (task, note, bug) and its properties.
 
-- Properties: text, number, select, multi-select, date, checkbox, link, created and last edited. A property's type can
+- Properties: text, number, select, multi-select, person, date, checkbox, link, created and last edited. A property's type can
   be changed later; its values come along where they can. Options have colors, an order, and one can be the default.
 - Views: boards and tables, each with its own filters, sorting, grouping and columns. Everything works with the keyboard
   and by dragging.
@@ -42,6 +42,13 @@ either edits or only reads.
   **Move to …** in a collection's menu moves one with all its items. The move can be undone. Moving one off the server
   takes it away from everyone else, so that is asked first. A cloud icon in the collection list marks the server's
   collections.
+- **Person** properties assign people (an assignee, a reviewer), in collections on the server. The people are who the
+  space's tokens are for. You are listed first, and a filter can ask for **Me**: a "My tasks" view shows each person
+  their own items, and a new item made in it is assigned to whoever made it. A new Tasks or Bugs collection on the
+  server comes with an Assignee. Someone whose tokens were revoked still shows on what they were assigned, held back.
+- Everyone sets their own name in **Settings > Planner server > Your name**. People are stored by id, so a new name
+  shows on everything they were assigned, on every computer. The names are also written down in the collection, so
+  they still read when it moves to this computer or the server cannot be reached.
 - Everyone's changes show as they are made. Two people who change different fields of an item both keep their
   change. When two people change the same field, the later change wins.
 - When the server cannot be reached, its collections stay in view and changes wait to be sent. They are lost if

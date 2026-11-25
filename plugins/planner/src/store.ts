@@ -15,9 +15,9 @@ import { LocalSource } from './data/local.ts'
 import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourcePlace, type SourceStatus } from './data/source.ts'
 import type { MangoPluginApi } from './host.ts'
 import {
-  colorAt, isGroupable, isInScope, itemWord, newId, normalizeCollection, normalizeItem, ordered, projectKey, propertyOf,
+  colorAt, isGroupable, isInScope, itemWord, newId, normalizeCollection, normalizeItem, ordered, personIds, projectKey, propertyOf,
   storedValue, TITLE, viewOf, type Collection, type Color, type Item, type Option, type Property, type PropertyType,
-  type ProjectIdentity, type Scope, type Value, type View,
+  type People, type ProjectIdentity, type Scope, type Value, type View,
 } from './model.ts'
 import { between, manyBetween, placeAt, spread, type Position } from './order.ts'
 import { applyPatch, entriesById, invertPatch, isObject, readPath, sameJson, type Json, type JsonObject, type Patch, type PatchOp } from './patch.ts'
@@ -102,6 +102,10 @@ export interface PlannerStore {
   placeOf(collectionId: string): string
   /** Of the place a collection lives in (reactive). */
   statusOf(collectionId: string): SourceStatus
+  /** Who may be assigned in a collection (reactive): its planner server's people, or null on this computer. */
+  people(collectionId: string): People | null
+  /** Asks the server again who there is (a token may have been added since). */
+  refreshPeople(collectionId: string): void
   readonly projectPath: Readonly<Ref<string | null>>
   /** Every collection there is, other projects' too, in order. */
   readonly allCollections: Readonly<Ref<readonly Collection[]>>
@@ -335,6 +339,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   const sourceStatus = shallowRef<SourceStatus>(source.status())
   const onePlace = (status: SourceStatus): SourcePlace[] => [{ id: 'local', label: source.label, status }]
   const places = shallowRef<readonly SourcePlace[]>(source.places?.() ?? onePlace(sourceStatus.value))
+  /** Moves on when a source hears who its people are. */
+  const peopleHeard = shallowRef(0)
   const projectPath = ref<string | null>(mango.workspace.activeProject())
   const now = ref(Date.now())
   const saving = ref(false)
@@ -566,6 +572,13 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     return source.statusOf?.(collectionId) ?? sourceStatus.value
   }
 
+  function people(collectionId: string): People | null {
+    void peopleHeard.value
+    void places.value
+    void allCollections.value
+    return source.peopleOf?.(collectionId) ?? null
+  }
+
   /** The status of a read-only place these change, if any. */
   function readonlyFor(ops: readonly SourceOp[]): SourceStatus | null {
     if (sourceStatus.value.readonly) return sourceStatus.value
@@ -578,8 +591,66 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   /** Makes a change. False when it may not be made. */
+  /**
+   * Whoever is assigned in a change is written down in the property too, by the name the server gives them now: a
+   * collection moved off the server, an export or a search still reads their name.
+   */
+  function withPeopleNames(ops: SourceOp[]): SourceOp[] {
+    const notes = new Map<string, PatchOp[]>()
+    const seen = new Set<string>()
+    for (const op of ops) {
+      if (op.kind !== 'item' || op.op === 'delete') continue
+      const live = source.peopleOf?.(op.collectionId)
+      const c = live ? collection(op.collectionId) : null
+      if (!live || !c) continue
+      // A property made a person in this same change counts too.
+      const typed = new Map<string, unknown>()
+      for (const o of ops) {
+        if (o.kind !== 'collection' || o.id !== op.collectionId || o.op !== 'patch') continue
+        for (const p of o.patch) if (p.path.length === 3 && p.path[0] === 'properties' && p.path[2] === 'type') typed.set(p.path[1]!, p.value)
+      }
+      const values: Array<[string, unknown]> = op.op === 'create'
+        ? (isObject(op.data.values) ? Object.entries(op.data.values) : [])
+        : op.patch.filter(p => p.path.length === 2 && p.path[0] === 'values' && p.value !== undefined).map(p => [p.path[1]!, p.value])
+      for (const [propertyId, value] of values) {
+        const property = propertyOf(c, propertyId)
+        if (!property || (typed.get(propertyId) ?? property.type) !== 'person') continue
+        for (const personId of personIds(value)) {
+          const key = `${op.collectionId}/${propertyId}/${personId}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          const name = live.all.find(x => x.id === personId)?.name
+          if (!name || property.people[personId] === name) continue
+          let list = notes.get(op.collectionId)
+          if (!list) notes.set(op.collectionId, (list = []))
+          list.push({ path: ['properties', propertyId, 'people', personId], value: { name } })
+        }
+      }
+    }
+    return notes.size ? [...ops, ...[...notes].map(([id, patch]): SourceOp => ({ ...collectionTarget(id), op: 'patch', patch }))] : ops
+  }
+
+  /** The names a collection wrote down that the server now says otherwise (a rename). */
+  function staleNames(c: Collection): PatchOp[] {
+    const live = source.peopleOf?.(c.id)
+    if (!live) return []
+    return c.properties.filter(p => p.type === 'person').flatMap(p => Object.entries(p.people).flatMap(([id, name]): PatchOp[] => {
+      const now = live.all.find(x => x.id === id)?.name
+      return now && now !== name ? [{ path: ['properties', p.id, 'people', id], value: { name: now } }] : []
+    }))
+  }
+
+  /** Brings the names written down up to date, in every collection that may be changed. Not a step to undo. */
+  function refreshPeopleNames() {
+    for (const c of allCollections.value) {
+      if (statusOf(c.id).readonly) continue
+      const patch = staleNames(c)
+      if (patch.length) mutate([{ ...collectionTarget(c.id), op: 'patch', patch }], null)
+    }
+  }
+
   function mutate(ops: SourceOp[], label: string | null, opts: ChangeOptions = {}, settle?: (ok: boolean) => void): boolean {
-    ops = ops.filter(o => o.op !== 'patch' || o.patch.length)
+    ops = withPeopleNames(ops.filter(o => o.op !== 'patch' || o.patch.length))
     if (!ops.length) {
       settle?.(true)
       return true
@@ -874,10 +945,11 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   function createCollection(input: NewCollection = {}): Collection | null {
     const template = input.template ?? 'empty'
-    const data = templateData(template)
     const scope: Scope = input.scope ?? (projectPath.value ? { kind: 'project', path: projectPath.value } : { kind: 'everywhere' })
     const id = newId()
     if (input.place) source.place?.(id, input.place)
+    // Where people can be assigned, its template's assignee too.
+    const data = templateData(template, { people: !!source.peopleOf?.(id) })
     const place = placeAt(allCollections.value, [id], 'end')
     const ops: SourceOp[] = [{
       ...collectionTarget(id),
@@ -946,6 +1018,10 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       return null
     }
     const list = await withItems(id)
+    const model = collection(id)
+    // Off the server, the names written down are all there is: as they are now.
+    const names = model ? staleNames(model) : []
+    if (names.length) mutate([{ ...collectionTarget(id), op: 'patch', patch: names }], null)
     const raw = rawCollection(id)
     if (!list || !raw) return null
     const copy = newId()
@@ -1005,7 +1081,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const id = newId()
     const at = Date.now()
     const view = viewOf(c, input.viewId)
-    const values = { ...defaultValues(c, view, input.group, at), ...input.values }
+    const values = { ...defaultValues(c, view, input.group, at, people(collectionId)?.me ?? null), ...input.values }
     const place = placeAt(stateOf(collectionId).items, [id], input.position ?? 'end')
     const ok = mutate([
       {
@@ -1209,7 +1285,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const property = c && propertyOf(c, propertyId)
     if (!list || !property || type === 'unsupported' || propertyId === TITLE) return false
     if (property.type === type) return true
-    const conversion = convertProperty(property, type, list)
+    const conversion = convertProperty(property, type, list, people(collectionId))
     const added = conversion.property.options.filter(o => !property.options.some(e => e.id === o.id))
     const patch: PatchOp[] = [
       { path: ['properties', propertyId, 'type'], value: type },
@@ -1391,7 +1467,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   function importOps(collectionId: string, csv: string, existing: readonly Property[], items: readonly Item[]) {
-    const plan = planImport(parseCsv(csv), existing)
+    const plan = planImport(parseCsv(csv), existing, people(collectionId))
     const at = Date.now()
     const ids = plan.items.map(newId)
     const last = ordered(items).at(-1)?.order ?? null
@@ -1474,6 +1550,17 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   /* ---- living */
 
+  let namesSoon = false
+  const unsubscribePeople = source.onPeople?.(() => {
+    peopleHeard.value++
+    // Once for all that was heard together.
+    if (namesSoon) return
+    namesSoon = true
+    queueMicrotask(() => {
+      namesSoon = false
+      if (!disposed && status.value === 'ready') refreshPeopleNames()
+    })
+  }) ?? (() => {})
   const unsubscribe = source.subscribe(docs => publish(take(docs)), () => { void resync() })
   const unsubscribeStatus = source.onStatus((s) => {
     const back = s.online && !sourceStatus.value.online
@@ -1516,6 +1603,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     clearInterval(clock)
     project.dispose()
     unsubscribeStatus()
+    unsubscribePeople()
     if (hasWindow) {
       window.removeEventListener('pagehide', leave)
       window.removeEventListener('beforeunload', leave)
@@ -1530,7 +1618,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   void load()
 
   return {
-    status, error, sourceStatus, places, placeOf, statusOf, projectPath, allCollections, collections, now, saving,
+    status, error, sourceStatus, places, placeOf, statusOf, projectPath,
+    people, refreshPeople: id => source.refreshPeople?.(id), allCollections, collections, now, saving,
     collection, items, item, load, loadItems,
     itemsForChat: threadId => [...itemStates.values()].flatMap(s => s.items.filter(i => i.chats.includes(threadId))),
 

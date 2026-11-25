@@ -1,6 +1,6 @@
 import type { Planner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
-import { itemWord, hasOptions, PROPERTY_TYPES, type Collection, type Property, type View } from '../model.ts'
+import { itemWord, hasOptions, typesFor, type Collection, type Property, type View } from '../model.ts'
 import { strings as shared } from '../strings.ts'
 import { PROPERTY_ICONS } from '../ui/propertyIcons.ts'
 import { editProperty } from './editProperty.ts'
@@ -46,7 +46,7 @@ export async function propertyMenu(
     if (name && name !== property.name) store.renameProperty(collection.id, property.id, name)
   }
   function changeType() {
-    return mango.ui.contextMenu(at, PROPERTY_TYPES.map(t => ({
+    return mango.ui.contextMenu(at, typesFor(store.people(collection.id), property.type).map(t => ({
       label: shared.propertyTypes[t],
       icon: PROPERTY_ICONS[t],
       checked: t === property.type,

@@ -2,11 +2,13 @@
 import { computed, nextTick, onMounted, ref } from 'vue'
 import { usePlanner } from '../context.ts'
 import {
-  conditionValueKind, localDate, operatorsFor, propertyOf, TITLE, type Collection, type Condition, type Operator,
+  conditionValueKind, localDate, ME, operatorsFor, propertyOf, TITLE, type Collection, type Condition, type Operator,
 } from '../model.ts'
 import { strings } from '../strings.ts'
 import Icon from '../ui/Icon.vue'
 import OptionTag from '../ui/OptionTag.vue'
+import { peopleRows, personView } from '../ui/people.ts'
+import PersonTag from '../ui/PersonTag.vue'
 import { operatorText, propertyName } from './filters.ts'
 import PickList, { type PickRow } from './PickList.vue'
 import { shell } from './strings.ts'
@@ -29,6 +31,14 @@ const draft = ref(typeof props.condition.value === 'number' ? String(props.condi
 const chosen = computed(() => (Array.isArray(value.value) ? (value.value as readonly string[]) : []))
 const options = computed<PickRow[]>(() => (property.value?.options ?? []).map(o => ({ id: o.id, label: o.name, checked: chosen.value.includes(o.id) })))
 const optionOf = (id: string) => property.value!.options.find(o => o.id === id)!
+/** Me first: a view that shows "my" items shows each person theirs. Then the people, and any named that are not now. */
+const people = computed(() => (kind.value === 'people' ? store.people(props.collection.id) : null))
+const persons = computed<PickRow[]>(() => [
+  ...(people.value?.me ? [{ id: ME, label: shell.me, checked: chosen.value.includes(ME) }] : []),
+  ...peopleRows(people.value, chosen.value.filter(n => n !== ME))
+    .map(id => ({ id, label: personView(id, property.value!, people.value).name, checked: chosen.value.includes(id) })),
+])
+const personOf = (id: string) => personView(id, property.value!, people.value)
 const checks = computed<PickRow[]>(() => [
   { id: 'true', label: strings.checked, checked: value.value === true },
   { id: 'false', label: strings.unchecked, checked: value.value === false },
@@ -87,6 +97,18 @@ onMounted(() => void nextTick(() => field.value?.select()))
       </PickList>
     </template>
 
+    <template v-else-if="kind === 'people'">
+      <p v-if="!persons.length" class="pl-panel__note">{{ shell.noPeople }}</p>
+      <PickList v-else :rows="persons" :label="shell.value" :placeholder="shell.findPerson" :search="persons.length > 7" :max-height="260" multi @pick="toggle">
+        <template #default="{ row }">
+          <span class="pl-cond__option">
+            <span v-if="row.id === ME" class="pl-cond__me"><Icon name="circle-user" />{{ row.label }}</span>
+            <PersonTag v-else :person="personOf(row.id)" :former-word="shell.formerPerson" />
+          </span>
+        </template>
+      </PickList>
+    </template>
+
     <PickList v-else-if="kind === 'checkbox'" :rows="checks" :label="shell.value" :search="false" @pick="id => emit('change', { value: id === 'true' })" />
 
     <div v-else-if="kind !== 'none'" class="pl-cond__field">
@@ -141,4 +163,6 @@ onMounted(() => void nextTick(() => field.value?.select()))
 .pl-cond__remove { margin-left: auto; }
 .pl-cond__field { display: flex; align-items: center; gap: var(--space-1); padding: 0 var(--space-1) var(--space-1); }
 .pl-cond__option { flex: 1; min-width: 0; display: flex; }
+.pl-cond__me { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); }
+.pl-cond__me > svg { width: 18px; height: 18px; color: var(--fg-subtle); }
 </style>

@@ -89,7 +89,7 @@ const result = computed(() => {
   if (!c || !v || !list.value) return null
   // Only a filter about today has to follow the clock.
   const now = v.filter.conditions.some(x => DAYS.has(x.operator)) ? props.store.now.value : undefined
-  return runQuery(c, list.value.items, v, { search: applied.value, now })
+  return runQuery(c, list.value.items, v, { search: applied.value, now, people: props.store.people(c.id) })
 })
 const filtering = computed(() => !!view.value?.filter.conditions.some(isActive))
 const hasBar = computed(() => !!view.value && view.value.filter.conditions.length + view.value.sorts.length > 0)

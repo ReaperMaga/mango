@@ -7,7 +7,16 @@ import { strings } from './strings.ts'
 
 export type TemplateId = 'tasks' | 'bugs' | 'notes' | 'empty'
 
-interface PropertySpec { key: string; name: string; type: PropertyType; options?: Array<[name: string, color: Color]>; /** New items get the first option. */ defaultFirst?: boolean }
+interface PropertySpec {
+  key: string
+  name: string
+  type: PropertyType
+  options?: Array<[name: string, color: Color]>
+  /** New items get the first option. */
+  defaultFirst?: boolean
+  /** Only where there are people to assign (a collection on a planner server); views leave it out elsewhere. */
+  withPeople?: boolean
+}
 interface ViewSpec {
   name: string
   type: ViewType
@@ -28,12 +37,13 @@ const SPECS: Record<TemplateId, Spec> = {
     color: 'blue',
     properties: [
       { key: 'status', name: t.status, type: 'select', options: [[t.toDo, 'neutral'], [t.inProgress, 'blue'], [t.done, 'green']], defaultFirst: true },
+      { key: 'assignee', name: t.assignee, type: 'person', withPeople: true },
       { key: 'priority', name: t.priority, type: 'select', options: [[t.high, 'red'], [t.medium, 'yellow'], [t.low, 'neutral']] },
       { key: 'due', name: t.due, type: 'date' },
     ],
     views: [
-      { name: t.board, type: 'board', groupBy: 'status', show: ['priority', 'due'] },
-      { name: t.table, type: 'table', show: ['status', 'priority', 'due'] },
+      { name: t.board, type: 'board', groupBy: 'status', show: ['priority', 'due', 'assignee'] },
+      { name: t.table, type: 'table', show: ['status', 'assignee', 'priority', 'due'] },
     ],
   },
   bugs: {
@@ -42,11 +52,12 @@ const SPECS: Record<TemplateId, Spec> = {
     properties: [
       { key: 'status', name: t.status, type: 'select', options: [[t.new, 'neutral'], [t.confirmed, 'yellow'], [t.fixing, 'blue'], [t.fixed, 'green']], defaultFirst: true },
       { key: 'severity', name: t.severity, type: 'select', options: [[t.critical, 'red'], [t.major, 'orange'], [t.minor, 'neutral']] },
+      { key: 'assignee', name: t.assignee, type: 'person', withPeople: true },
       { key: 'link', name: t.link, type: 'url' },
     ],
     views: [
-      { name: t.board, type: 'board', groupBy: 'status', show: ['severity'] },
-      { name: t.table, type: 'table', show: ['status', 'severity', 'link'], sorts: [['severity', 'asc']] },
+      { name: t.board, type: 'board', groupBy: 'status', show: ['severity', 'assignee'] },
+      { name: t.table, type: 'table', show: ['status', 'severity', 'assignee', 'link'], sorts: [['severity', 'asc']] },
     ],
   },
   notes: {
@@ -112,9 +123,12 @@ export function viewData(v: NewView, order: string): JsonObject {
   }
 }
 
-/** The stored properties and views of a new collection, with ids of its own. */
-export function templateData(id: TemplateId): { icon: string; color: Color; itemName: JsonObject; properties: JsonObject; views: JsonObject } {
-  const spec = SPECS[id]
+/** The stored properties and views of a new collection, with ids of its own. `people`: it has people to assign. */
+export function templateData(id: TemplateId, options: { people?: boolean } = {}): { icon: string; color: Color; itemName: JsonObject; properties: JsonObject; views: JsonObject } {
+  const all = SPECS[id]
+  const kept = all.properties.filter(p => options.people || !p.withPeople)
+  const keys = new Set(kept.map(p => p.key))
+  const spec: Spec = { ...all, properties: kept, views: all.views.map(v => ({ ...v, show: v.show.filter(k => k === TITLE || keys.has(k)) })) }
   const ids = new Map(spec.properties.map(p => [p.key, newId()]))
   const idOf = (key: string) => (key === TITLE ? TITLE : ids.get(key)!)
   const propertyKeys = spread(spec.properties.length)

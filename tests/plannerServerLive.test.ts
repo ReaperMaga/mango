@@ -145,4 +145,36 @@ test('two computers share a collection through the planner server', { skip: !BIN
   assert.deepEqual(a.toasts, [])
   // Only the offer to undo the deletion: nothing failed.
   assert.deepEqual(b.toasts, ['Item deleted: '])
+
+  // The people are who the tokens are for; a token made while it runs is heard of when asked again.
+  const names = (s: PlannerStore) => s.people(c.id)?.all.map(p => `${p.name}${p.active ? '' : ' (read)'}`).join() ?? ''
+  await until(() => names(a.store) === 'a,b (read)')
+  const me = a.store.people(c.id)!.me!
+  assert.match(me, /^per_/)
+  run('token', 'add', '--space', 'team', '--name', 'Ben')
+  a.store.refreshPeople(c.id)
+  await until(() => names(a.store) === 'a,b (read),Ben')
+  const ben = a.store.people(c.id)!.all.find(p => p.name === 'Ben')!.id
+
+  // A assigns Ben; B sees it.
+  const task = (await a.store.createItem(c.id, { title: 'Review' }))!
+  const who = a.store.addProperty(c.id, { name: 'Assignee', type: 'person' })!
+  a.store.updateItem(c.id, task.id, { values: { [who.id]: [ben, me] } })
+  await a.store.flush()
+  await until(() => JSON.stringify(b.store.item(c.id, task.id)?.values[who.id]) === JSON.stringify([ben, me]))
+
+  // Ben is renamed from the server's command line: both computers hear it within a ping, and the name the
+  // property wrote down follows.
+  run('person', 'rename', ben, '--name', 'Benedict')
+  await until(() => names(a.store).includes('Benedict') && names(b.store).includes('Benedict'), 40_000)
+  await until(() => a.store.collection(c.id)!.properties.find(p => p.id === who.id)!.people[ben] === 'Benedict', 5000)
+
+  // A renames themself through the server: B sees the new name on the same assignment.
+  run('token', 'add', '--space', 'team', '--name', 'zed') // someone to clash with
+  await a.store.flush()
+  const renamed = await fetch(`${url}/v1/me`, { method: 'POST', headers: { Authorization: `Bearer ${writer}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'ZED' }) })
+  assert.equal(renamed.status, 409)
+  const ok = await fetch(`${url}/v1/me`, { method: 'POST', headers: { Authorization: `Bearer ${writer}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Ana' }) })
+  assert.equal(ok.status, 200)
+  await until(() => b.store.people(c.id)!.all.some(p => p.id === me && p.name === 'Ana'), 5000)
 })

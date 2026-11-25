@@ -46,6 +46,13 @@ export const strings = {
   moveDown: 'Move down',
   back: 'Back',
   clear: 'Clear',
+  /* people */
+  findPerson: 'Find a person',
+  you: 'you',
+  noPeople: 'Nobody matches.',
+  noPeopleHere: 'People come from the planner server. Move this collection there to assign them.',
+  noPeopleYet: 'The planner server lists nobody yet. Its write tokens are its people.',
+  formerPerson: 'Not in the space any more',
   /* numbers */
   notANumber: 'Enter a number',
   /* dates */
@@ -81,6 +88,7 @@ export const strings = {
     number: 'A number',
     select: 'One of a list',
     multiSelect: 'Several of a list',
+    person: 'People of the planner server',
     date: 'A day, a time or a range',
     checkbox: 'Yes or no',
     url: 'A web address',

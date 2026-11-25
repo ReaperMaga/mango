@@ -3,7 +3,7 @@
 import { OptionSet, parseNumber, parseValue } from './convert.ts'
 import {
   hasOptions, newId, parseDate, safeUrl, valueOf, valueText, type Collection, type Item, type Property,
-  type PropertyType, type Value,
+  type People, type PropertyType, type Value,
 } from './model.ts'
 import { between, spread } from './order.ts'
 
@@ -139,7 +139,7 @@ export function inferType(texts: readonly string[]): PropertyType {
  * How rows (the first is the header) come into a collection: columns go to properties of the same name, others
  * become new ones of the type they look like. Nothing is dropped but values a typed property cannot hold.
  */
-export function planImport(rows: readonly (readonly string[])[], existing: readonly Property[] = []): ImportPlan {
+export function planImport(rows: readonly (readonly string[])[], existing: readonly Property[] = [], people: People | null = null): ImportPlan {
   const [head, ...body] = rows
   if (!head) return { properties: [], items: [] }
   const names = head.map(h => h.trim())
@@ -159,11 +159,11 @@ export function planImport(rows: readonly (readonly string[])[], existing: reado
     let property = existing.find(p => !used.has(p.id) && p.name.trim().toLowerCase() === lower[at])
     if (!property) {
       lastOrder = between(lastOrder, null) ?? fresh[at]!
-      property = { id: newId(), name: name || `Column ${at + 1}`, type: inferType(texts), order: lastOrder, options: [] }
+      property = { id: newId(), name: name || `Column ${at + 1}`, type: inferType(texts), order: lastOrder, options: [], people: {} }
       changed.set(property.id, property)
     }
     used.add(property.id)
-    return { at, property, options: new OptionSet(property.options) }
+    return { at, property, options: new OptionSet(property.options, people, property.people) }
   }).filter(c => c !== null)
 
   const items = body.map((row): ImportedItem => {

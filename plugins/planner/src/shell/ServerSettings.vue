@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref } from 'vue'
+import { computed, provide, ref, watch } from 'vue'
 import { PLANNER, type Planner } from '../context.ts'
 import type { ServerConnection } from '../data/connection.ts'
 import { SERVER } from '../data/routed.ts'
@@ -32,6 +32,36 @@ const state = computed(() => {
   if (!status.online) return { tone: 'warn', text: status.message ?? s.offline }
   return { tone: 'good', text: s.connected }
 })
+const access = computed(() => `${said.value?.role === 'write' ? s.canEdit : s.readOnly} · ${s.collections(onServer.value)}`)
+
+/* ---------- your name */
+
+const me = computed(() => props.server.me.value)
+const draft = ref('')
+const nameError = ref<string | null>(null)
+const renaming = ref(false)
+const renamed = ref(false)
+// The field follows the name as the server says it, until it is typed in.
+watch(() => me.value?.name, (name) => { if (!renaming.value) draft.value = name ?? '' }, { immediate: true })
+const changed = computed(() => !!me.value && draft.value.trim() !== '' && draft.value.trim() !== me.value.name)
+function typed() {
+  nameError.value = null
+  renamed.value = false
+}
+async function rename() {
+  if (!changed.value || renaming.value) return
+  renaming.value = true
+  nameError.value = null
+  try {
+    nameError.value = await props.server.rename(draft.value)
+    if (!nameError.value) {
+      draft.value = me.value?.name ?? draft.value.trim()
+      renamed.value = true
+    }
+  } finally {
+    renaming.value = false
+  }
+}
 const onServer = computed(() => store.allCollections.value.filter(c => store.placeOf(c.id) === SERVER).length)
 
 async function connect() {
@@ -77,8 +107,32 @@ async function disconnect() {
       </div>
       <div class="pl-server__row">
         <div class="pl-server__text">
+          <label class="pl-server__label" for="pl-server-name">{{ s.yourName }}</label>
+          <p class="pl-server__hint">{{ me ? s.yourNameHint(said?.space.name ?? s.space) : s.noName }}</p>
+        </div>
+        <form v-if="me" class="pl-server__name" @submit.prevent="rename">
+          <input
+            id="pl-server-name"
+            v-model="draft"
+            class="input"
+            type="text"
+            maxlength="64"
+            autocomplete="off"
+            spellcheck="false"
+            :aria-invalid="nameError ? 'true' : undefined"
+            aria-describedby="pl-server-name-note"
+            @input="typed"
+          >
+          <component :is="Button" variant="secondary" type="submit" :disabled="!changed" :loading="renaming">{{ s.rename }}</component>
+        </form>
+        <p v-if="nameError || renamed" id="pl-server-name-note" class="pl-server__note" :class="{ 'is-bad': nameError }" role="status">
+          <Icon :name="nameError ? 'circle-alert' : 'check'" />{{ nameError ?? s.renamed }}
+        </p>
+      </div>
+      <div class="pl-server__row">
+        <div class="pl-server__text">
           <div class="pl-server__label">{{ s.access }}</div>
-          <p class="pl-server__hint">{{ said?.role === 'write' ? s.canEdit : s.readOnly }} · {{ s.collections(onServer) }}</p>
+          <p class="pl-server__hint">{{ access }}</p>
         </div>
       </div>
     </template>
@@ -136,6 +190,23 @@ async function disconnect() {
 .pl-server__state.is-warn { color: var(--ripe-waiting-fg); }
 .pl-server__state.is-bad { color: var(--ripe-error-fg); }
 .pl-server__form { display: grid; gap: var(--space-4); }
+.pl-server__name { display: flex; align-items: center; gap: var(--space-2); flex: 0 1 280px; min-width: 0; }
+.pl-server__name .input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--space-3);
+  background: var(--bg-inset);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.pl-server__name .input:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+.pl-server__name .input[aria-invalid] { border-color: color-mix(in oklch, var(--ripe-error) 60%, transparent); }
+.pl-server__note { flex-basis: 100%; display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--text-xs); color: var(--ripe-done-fg); }
+.pl-server__note svg { flex: none; width: 13px; height: 13px; stroke-width: 1.85; }
+.pl-server__note.is-bad { color: var(--ripe-error-fg); }
 .pl-server__token { font-family: var(--font-mono); }
 .pl-server__foot { display: flex; justify-content: flex-end; }
 </style>

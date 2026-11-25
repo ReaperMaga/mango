@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { usePlanner } from '../context.ts'
-import { colorAt, hasOptions, itemWord, PROPERTY_TYPES, propertyOf, type Color, type Option, type PropertyType } from '../model.ts'
+import { colorAt, hasOptions, itemWord, propertyOf, typesFor, type Color, type Option, type PropertyType } from '../model.ts'
 import { strings as shared } from '../strings.ts'
 import ColorButton from '../ui/ColorButton.vue'
 import Icon from '../ui/Icon.vue'
@@ -43,7 +43,7 @@ function settleName(e: Event, name: string, set: (trimmed: string) => void) {
 /* ---------- type and default */
 
 const typeAt = shallowRef<HTMLElement | null>(null)
-const typeRows = computed<PickRow[]>(() => PROPERTY_TYPES.map(t => ({ id: t, label: shared.propertyTypes[t], icon: PROPERTY_ICONS[t], checked: t === property.value?.type })))
+const typeRows = computed<PickRow[]>(() => typesFor(store.people(props.collectionId), property.value?.type).map(t => ({ id: t, label: shared.propertyTypes[t], icon: PROPERTY_ICONS[t], checked: t === property.value?.type })))
 
 const defaultAt = shallowRef<HTMLElement | null>(null)
 const NONE = '-'

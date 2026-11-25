@@ -70,14 +70,14 @@ defineExpose({ edit })
         :disabled="readonly"
         aria-haspopup="dialog"
         :aria-expanded="editing?.id === c.id"
-        :title="`${shell.editFilter}: ${propertyName(collection, c.propertyId)} ${operatorText(c.operator)} ${conditionText(collection, c)}`"
+        :title="`${shell.editFilter}: ${propertyName(collection, c.propertyId)} ${operatorText(c.operator)} ${conditionText(collection, c, store.people(collection.id))}`"
         @click="edit(c.id)"
         @keydown="onDelete($event, () => !readonly && remove(c.id))"
       >
         <PropertyIcon :type="c.propertyId === TITLE ? 'text' : propertyOf(collection, c.propertyId)?.type ?? 'text'" />
         <span class="pl-chip__name">{{ propertyName(collection, c.propertyId) }}</span>
         <span class="pl-chip__op">{{ operatorText(c.operator) }}</span>
-        <span v-if="conditionText(collection, c)" class="pl-chip__value">{{ conditionText(collection, c) }}</span>
+        <span v-if="conditionText(collection, c, store.people(collection.id))" class="pl-chip__value">{{ conditionText(collection, c, store.people(collection.id)) }}</span>
         <span v-else-if="!isActive(c)" class="pl-chip__op">…</span>
       </button>
       <button v-if="!readonly" type="button" class="pl-chip__x" :aria-label="shell.removeFilter" :title="shell.removeFilter" @click="remove(c.id)"><Icon name="x" /></button>

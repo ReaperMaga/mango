@@ -33,7 +33,7 @@ export function readColor(v: unknown): Color | null {
 }
 
 export const PROPERTY_TYPES = [
-  'text', 'number', 'select', 'multiSelect', 'date', 'checkbox', 'url', 'createdTime', 'updatedTime',
+  'text', 'number', 'select', 'multiSelect', 'person', 'date', 'checkbox', 'url', 'createdTime', 'updatedTime',
 ] as const
 /** `unsupported`: a newer version's type. Shown as text, not edited, kept as it is. */
 export type PropertyType = typeof PROPERTY_TYPES[number] | 'unsupported'
@@ -54,12 +54,17 @@ export interface Property {
   readonly options: readonly Option[]
   /** The option a new item gets (`select`), or null. */
   readonly defaultOption?: string | null
+  /**
+   * Of `person`: the name of everyone it was given, by id, as it was then. Names are read from the server where
+   * there is one; these keep them readable where there is not, and in exports and searches.
+   */
+  readonly people: Readonly<Record<string, string>>
 }
 
 /** An ISO date (`2026-03-01`) or a local date and time (`2026-03-01T09:30`); `end` makes it a range. */
 export interface DateValue { readonly start: string; readonly end?: string }
 
-/** text, url: string. number. select: option id. multiSelect: option ids. date. checkbox: boolean. */
+/** text, url: string. number. select: option id. multiSelect: option ids. person: person ids. date. checkbox: boolean. */
 export type Value = string | number | boolean | readonly string[] | DateValue
 
 /** The property id of an item's title, in sorts, filters and column widths. */
@@ -79,7 +84,8 @@ export interface Condition {
   readonly propertyId: string
   readonly operator: Operator
   /**
-   * text: string. number, nextDays, pastDays: number. select, multiSelect: option ids (any of them).
+   * text: string. number, nextDays, pastDays: number. select, multiSelect: option ids (any of them). person: person
+   * ids (any of them), `ME` among them for whoever looks.
    * date: ISO date. checkbox: boolean. Null while the user has not filled it in; such a condition is ignored.
    */
   readonly value: string | number | boolean | readonly string[] | null
@@ -158,6 +164,50 @@ export interface Item {
 
 /** A stored document's own fields, beside its JSON. */
 export interface DocMeta { id: string; createdAt: number; updatedAt: number }
+
+/* ---------------------------------------------------------------- people */
+
+/** Someone in a planner server's space. Their id never changes; they may change their name. */
+export interface Person {
+  readonly id: string
+  readonly name: string
+  /** May be assigned (a write token that is not revoked). The others are kept for what they were assigned. */
+  readonly active: boolean
+}
+
+/** The people of a collection kept on a planner server (`GET /v1/people`). */
+export interface People {
+  /** The id of this computer's person in that space, or null (a server older than people). */
+  readonly me: string | null
+  /** Everyone, as the server sorted them. */
+  readonly all: readonly Person[]
+}
+
+/** The types a property may be given: a person only where there are people (or it is one already). */
+export const typesFor = (people: People | null, current?: PropertyType): ReadonlyArray<typeof PROPERTY_TYPES[number]> =>
+  PROPERTY_TYPES.filter(t => t !== 'person' || people !== null || current === 'person')
+
+/** In a filter's value: whoever is looking. Never an id: ids have no `@`. */
+export const ME = '@me'
+
+/** A person's id, as the server makes them (`per_…`) and the protocol allows ids. */
+export const isPersonId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(v)
+
+/** The ids a stored person value holds, each once, in order. */
+export const personIds = (v: unknown): string[] => (Array.isArray(v) ? [...new Set(v.filter(isPersonId))] : [])
+
+/** A name as the server allows them (a little more room): printable, trimmed, not starting with `@`. */
+export function isPersonName(v: unknown): v is string {
+  return typeof v === 'string' && v.trim() === v && v.length > 0 && v.length <= 128 && !v.startsWith('@') && !/[\u0000-\u001f\u007f]/.test(v)
+}
+
+/**
+ * A person's name: as the server says it now, else as the property last wrote it down (a collection moved off the
+ * server, or a server that cannot be reached), else null.
+ */
+export function personName(id: string, property: Pick<Property, 'people'>, people: People | null): string | null {
+  return people?.all.find(p => p.id === id)?.name ?? property.people[id] ?? null
+}
 
 /* ---------------------------------------------------------------- small helpers */
 
@@ -247,12 +297,15 @@ function normalizeOption(id: string, raw: JsonObject): Option {
 function normalizeProperty(id: string, raw: JsonObject): Property {
   const type = oneOf<PropertyType>(PROPERTY_TYPES, raw.type, 'unsupported')
   const options = ordered(entriesById(raw.options).map(([k, v]) => normalizeOption(k, v)))
+  const people: Record<string, string> = {}
+  for (const [k, v] of entriesById(raw.people)) if (isPersonId(k) && isPersonName(v.name)) people[k] = v.name
   return {
     id,
     name: str(raw.name),
     type,
     order: str(raw.order),
     options,
+    people,
     defaultOption: type === 'select' ? options.find(o => o.id === raw.defaultOption)?.id ?? null : null,
   }
 }
@@ -271,7 +324,8 @@ export function operatorsFor(type: PropertyType | typeof TITLE): readonly Operat
   switch (type) {
     case 'number': return ['eq', 'neq', 'gt', 'gte', 'lt', 'lte', ...COMMON]
     case 'select': return ['is', 'isNot', ...COMMON]
-    case 'multiSelect': return ['contains', 'notContains', ...COMMON]
+    case 'multiSelect':
+    case 'person': return ['contains', 'notContains', ...COMMON]
     case 'date': return DATE_OPERATORS
     case 'createdTime':
     case 'updatedTime': return DATE_OPERATORS.filter(o => o !== 'overdue' && !COMMON.includes(o))
@@ -285,10 +339,11 @@ export function operatorsFor(type: PropertyType | typeof TITLE): readonly Operat
 export const isUnary = (op: Operator): boolean => op === 'isEmpty' || op === 'isNotEmpty' || op === 'today' || op === 'overdue'
 
 /** What kind of value a condition takes. */
-export function conditionValueKind(type: PropertyType | typeof TITLE, op: Operator): 'none' | 'text' | 'number' | 'options' | 'date' | 'checkbox' {
+export function conditionValueKind(type: PropertyType | typeof TITLE, op: Operator): 'none' | 'text' | 'number' | 'options' | 'people' | 'date' | 'checkbox' {
   if (isUnary(op)) return 'none'
   if (op === 'nextDays' || op === 'pastDays' || type === 'number') return 'number'
   if (type === 'select' || type === 'multiSelect') return 'options'
+  if (type === 'person') return 'people'
   if (type === 'date' || type === 'createdTime' || type === 'updatedTime') return 'date'
   return type === 'checkbox' ? 'checkbox' : 'text'
 }
@@ -311,6 +366,11 @@ function normalizeCondition(raw: unknown, properties: ReadonlyMap<string, Proper
     case 'options': {
       const known = strings(v).filter(o => property!.options.some(e => e.id === o))
       value = known.length ? known : null
+      break
+    }
+    case 'people': {
+      const names = strings(v).filter(n => n === ME || isPersonId(n))
+      value = names.length ? names : null
       break
     }
   }
@@ -458,6 +518,10 @@ export function readValue(raw: unknown, property: Property): Value | null {
       const known = strings(raw).filter(id => property.options.some(o => o.id === id))
       return known.length ? known : null
     }
+    case 'person': {
+      const ids = personIds(raw)
+      return ids.length ? ids : null
+    }
     case 'date': {
       if (!isObject(raw) || !isDateString(raw.start)) return null
       return isDateString(raw.end) && raw.end >= raw.start ? { start: raw.start, end: raw.end } : { start: raw.start }
@@ -482,14 +546,20 @@ export function storedValue(value: Value | null, property: Property): Json | und
   return structuredClone(v) as Json
 }
 
-/** A value as plain text: option names, dates, `Yes` / `No`. */
-export function valueText(value: Value | null, property: Property): string {
+/** A person nobody here knows the name of. */
+export const UNKNOWN_PERSON = 'Unknown person'
+
+/** A value as plain text: option names, people's names, dates, `Yes` / `No`. `people`: the server's, for names as they are now. */
+export function valueText(value: Value | null, property: Property, people: People | null = null): string {
   if (value === null) return ''
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (typeof value === 'number') return String(value)
   const name = (id: string) => property.options.find(o => o.id === id)?.name ?? ''
   if (typeof value === 'string') return property.type === 'select' ? name(value) : value
-  if (Array.isArray(value)) return (value as readonly string[]).map(name).join(', ')
+  if (Array.isArray(value)) {
+    const ids = value as readonly string[]
+    return (property.type === 'person' ? ids.map(id => personName(id, property, people) ?? UNKNOWN_PERSON) : ids.map(name)).join(', ')
+  }
   return formatDate(value as DateValue)
 }
 

@@ -2,9 +2,9 @@
 
 import { compareOrder } from './order.ts'
 import {
-  addDays, conditionValueKind, hasOptions, isReadonly, isUnary, localDate, propertyOf, TITLE, valueOf, valueText,
+  addDays, conditionValueKind, hasOptions, isReadonly, isUnary, localDate, ME, propertyOf, TITLE, valueOf, valueText,
   type Collection, type Color, type Condition, type DateValue, type Filter, type Item, type Property, type Sort,
-  type Value, type View,
+  type People, type Value, type View,
 } from './model.ts'
 
 /** The group of items without a value of the property. Other keys are option ids, or `true` / `false`. */
@@ -31,16 +31,17 @@ export interface QueryResult {
   readonly total: number
 }
 
-export interface QueryOptions { search?: string; now?: number }
+/** `people`: the collection's; a filter's `ME` stands for theirs (none: nobody, so it matches no one), and names are searched as they are now. */
+export interface QueryOptions { search?: string; now?: number; people?: People | null }
 
 /* ---------------------------------------------------------------- search */
 
 /** Every word of the search is somewhere in the title, the values as text, or the body. */
-export function matchesSearch(collection: Collection, item: Item, search: string): boolean {
+export function matchesSearch(collection: Collection, item: Item, search: string, people: People | null = null): boolean {
   const words = search.toLowerCase().split(/\s+/).filter(Boolean)
   if (!words.length) return true
   const parts = [item.title]
-  for (const p of collection.properties) if (p.type !== 'checkbox') parts.push(valueText(valueOf(item, p), p))
+  for (const p of collection.properties) if (p.type !== 'checkbox') parts.push(valueText(valueOf(item, p), p, people))
   parts.push(item.body)
   const text = parts.join('\n').toLowerCase()
   return words.every(w => text.includes(w))
@@ -100,8 +101,12 @@ function matchesDate(v: DateValue, c: Condition, today: string): boolean {
   }
 }
 
+/** A person filter's names, with `ME` as the person looking. */
+const wantedPeople = (value: Condition['value'], me: string | null): string[] =>
+  (Array.isArray(value) ? (value as readonly string[]) : []).flatMap(n => (n === ME ? (me ? [me] : []) : [n]))
+
 /** An unfinished condition (no value yet, or about a property that is gone) matches everything. */
-export function matchesCondition(collection: Collection, item: Item, c: Condition, now: number): boolean {
+export function matchesCondition(collection: Collection, item: Item, c: Condition, now: number, me: string | null = null): boolean {
   if (!isActive(c)) return true
   if (c.propertyId === TITLE) return matchesText(item.title, c)
   const p = propertyOf(collection, c.propertyId)
@@ -114,7 +119,7 @@ export function matchesCondition(collection: Collection, item: Item, c: Conditio
   if (typeof v === 'boolean') return v === c.value
   if (typeof v === 'number') return matchesNumber(v, c)
   if (isDate(v)) return matchesDate(v, c, localDate(now))
-  const wanted = Array.isArray(c.value) ? (c.value as readonly string[]) : []
+  const wanted = p.type === 'person' ? wantedPeople(c.value, me) : Array.isArray(c.value) ? (c.value as readonly string[]) : []
   const has = (Array.isArray(v) ? (v as readonly string[]) : [v as string]).some(id => wanted.includes(id))
   return c.operator === 'is' || c.operator === 'contains' ? has : !has
 }
@@ -125,10 +130,10 @@ export function isActive(c: Condition): boolean {
   return c.value !== null && c.value !== '' && !(Array.isArray(c.value) && !c.value.length)
 }
 
-export function matchesFilter(collection: Collection, item: Item, filter: Filter, now: number): boolean {
+export function matchesFilter(collection: Collection, item: Item, filter: Filter, now: number, me: string | null = null): boolean {
   const active = filter.conditions.filter(c => isActive(c) && (c.propertyId === TITLE || propertyOf(collection, c.propertyId)))
   if (!active.length) return true
-  const test = (c: Condition) => matchesCondition(collection, item, c, now)
+  const test = (c: Condition) => matchesCondition(collection, item, c, now, me)
   return filter.match === 'or' ? active.some(test) : active.every(test)
 }
 
@@ -230,7 +235,9 @@ export function groupItems(items: readonly Item[], p: Property | null, view: Vie
 export function runQuery(collection: Collection, items: readonly Item[], view: View, options: QueryOptions = {}): QueryResult {
   const now = options.now ?? Date.now()
   const search = options.search?.trim() ?? ''
-  const matched = items.filter(i => matchesFilter(collection, i, view.filter, now) && matchesSearch(collection, i, search))
+  const people = options.people ?? null
+  const me = people?.me ?? null
+  const matched = items.filter(i => matchesFilter(collection, i, view.filter, now, me) && matchesSearch(collection, i, search, people))
   const sorted = sortItems(collection, matched, view.sorts)
   const groupBy = view.groupBy ? propertyOf(collection, view.groupBy) : null
   return { items: sorted, groups: groupItems(sorted, groupBy, view), groupBy, total: items.length }
@@ -241,7 +248,7 @@ export function runQuery(collection: Collection, items: readonly Item[], view: V
  * is added to, and what the filter plainly asks for (conditions that all must hold and name one value). A default
  * the filter would hide is left out.
  */
-export function defaultValues(collection: Collection, view: View | null, group?: string | null, now = Date.now()): Record<string, Value> {
+export function defaultValues(collection: Collection, view: View | null, group?: string | null, now = Date.now(), me: string | null = null): Record<string, Value> {
   const out: Record<string, Value> = {}
   for (const p of collection.properties) {
     if (p.type !== 'select' || !p.defaultOption) continue
@@ -259,6 +266,10 @@ export function defaultValues(collection: Collection, view: View | null, group?:
       if (c.operator === 'today') out[p.id] = { start: localDate(now) }
       else if (c.operator === 'is' && p.type === 'select') out[p.id] = (c.value as readonly string[])[0]!
       else if (c.operator === 'contains' && p.type === 'multiSelect') out[p.id] = [(c.value as readonly string[])[0]!]
+      else if (c.operator === 'contains' && p.type === 'person') {
+        const [first] = wantedPeople(c.value, me)
+        if (first) out[p.id] = [first]
+      }
       else if (c.operator === 'is' && p.type === 'checkbox') out[p.id] = c.value as boolean
       else if (c.operator === 'is' && p.type === 'date') out[p.id] = { start: c.value as string }
       else if (c.operator === 'is' && p.type === 'text') out[p.id] = c.value as string

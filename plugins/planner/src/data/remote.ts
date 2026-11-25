@@ -10,6 +10,7 @@
  */
 
 import type { PluginStorageApi } from '../host.ts'
+import { isPersonId, isPersonName, type People, type Person } from '../model.ts'
 import { applyPatch, isObject, isSafeKey, type JsonObject, type PatchOp } from '../patch.ts'
 import { SourceError, type PlannerSource, type SourceDoc, type SourceErrorKind, type SourceOp, type SourceStatus } from './source.ts'
 
@@ -26,6 +27,8 @@ export interface RemoteHello {
   readonly server: string
   readonly space: { readonly id: string; readonly name: string }
   readonly role: 'read' | 'write'
+  /** The person this token is for. Null from a server older than people. */
+  readonly me: { readonly id: string; readonly name: string } | null
   readonly seq: number
 }
 
@@ -143,6 +146,25 @@ export class EventReader {
   }
 }
 
+/** A person as the server sends them, checked; null when it is not one. */
+export function personOf(v: unknown): Person | null {
+  if (!isObject(v) || !isPersonId(v.id) || !isPersonName(v.name)) return null
+  return { id: v.id, name: v.name, active: v.active !== false }
+}
+
+/** The answer of `GET /v1/people` (and `POST /v1/me`), checked. */
+function peopleOf(answer: unknown, me: string | null): People {
+  const a = isObject(answer) ? answer : {}
+  const seen = new Set<string>()
+  const all = (Array.isArray(a.people) ? a.people : []).flatMap((v) => {
+    const p = personOf(v)
+    if (!p || seen.has(p.id)) return []
+    seen.add(p.id)
+    return [p]
+  })
+  return { me: personOf(a.me)?.id ?? me, all }
+}
+
 /** Asks the server who it is and what this token may do. Throws a `SourceError` otherwise. */
 export async function hello(config: RemoteConfig, fetcher: typeof fetch = globalThis.fetch, timeoutMs = 15 * SECOND): Promise<RemoteHello> {
   const answer = await request(config, fetcher, timeoutMs, 'GET', '/v1/hello')
@@ -163,6 +185,7 @@ function checkHello(answer: unknown): RemoteHello {
     server: typeof a.server === 'string' ? a.server : '',
     space: { id: space.id, name: typeof space.name === 'string' && space.name ? space.name : space.id },
     role: a.role === 'write' ? 'write' : 'read',
+    me: personOf(a.me),
     seq: typeof a.seq === 'number' ? a.seq : 0,
   }
 }
@@ -218,6 +241,10 @@ export class RemoteSource implements PlannerSource {
   private readonly handlers = new Set<(docs: SourceDoc[]) => void>()
   private readonly resyncs = new Set<() => void>()
   private readonly statusHandlers = new Set<(status: SourceStatus) => void>()
+  private readonly peopleHandlers = new Set<() => void>()
+  /** Who may be assigned, as last heard; null until the stream said who this token is. */
+  private people: People | null = null
+  private peopleAsked: Promise<void> | null = null
 
   /** The last `seq` heard on the stream: where it goes on after a lost connection. */
   private seq = 0
@@ -319,6 +346,48 @@ export class RemoteSource implements PlannerSource {
     return this.current
   }
 
+  /* ---- people */
+
+  peopleOf(_collectionId?: string): People | null {
+    return this.people
+  }
+
+  /** Who this token was when last connected, until the stream says again. Only the id: a name may have changed since. */
+  knownAs(me: string | null) {
+    if (!this.people && me) this.people = { me, all: [] }
+  }
+
+  refreshPeople(_collectionId?: string): void {
+    if (!this.peopleAsked && !this.disposed && this.people) this.peopleAsked = this.askPeople().finally(() => { this.peopleAsked = null })
+  }
+
+  /** Gives this token's person a new name. Throws a `SourceError` with what to tell the user. */
+  async rename(name: string): Promise<void> {
+    const answer = await this.call('POST', '/v1/me', { name })
+    this.setPeople(peopleOf(answer, this.people?.me ?? null))
+  }
+
+  onPeople(handler: () => void): () => void {
+    this.peopleHandlers.add(handler)
+    return () => { this.peopleHandlers.delete(handler) }
+  }
+
+  private setPeople(people: People | null) {
+    const p = this.people
+    if (p === people || (p && people && JSON.stringify(p) === JSON.stringify(people))) return
+    this.people = people
+    for (const h of [...this.peopleHandlers]) h()
+  }
+
+  private async askPeople() {
+    try {
+      const answer = await request(this.config, this.fetcher, this.timeoutMs, 'GET', '/v1/people')
+      this.setPeople(peopleOf(answer, this.people?.me ?? null))
+    } catch (e) {
+      this.host.log.warn('Reading the people of the planner server:', e)
+    }
+  }
+
   onStatus(handler: (status: SourceStatus) => void): () => void {
     this.statusHandlers.add(handler)
     return () => { this.statusHandlers.delete(handler) }
@@ -333,6 +402,7 @@ export class RemoteSource implements PlannerSource {
     this.handlers.clear()
     this.resyncs.clear()
     this.statusHandlers.clear()
+    this.peopleHandlers.clear()
     if (typeof window !== 'undefined') window.removeEventListener('online', this.onBrowserOnline)
   }
 
@@ -437,6 +507,9 @@ export class RemoteSource implements PlannerSource {
           const docs = docsOf(payload)
           if (typeof payload.seq === 'number') this.seq = Math.max(this.seq, payload.seq)
           this.deliver(docs)
+        } else if (event === 'people') {
+          // Someone was renamed, or given a token: who there is is asked again.
+          this.refreshPeople()
         } else if (event === 'resync' && isObject(payload)) {
           if (typeof payload.seq === 'number') this.seq = payload.seq
           this.resync()
@@ -477,6 +550,17 @@ export class RemoteSource implements PlannerSource {
     if (!since || behind) this.seq = h.seq
     this.heard = true
     this.failures = 0
+    // Who this token is may have changed with it; who else there is, too. A server older than people has none.
+    const me = h.me
+    if (!me) this.setPeople(null)
+    else {
+      const all = this.people?.all ?? []
+      this.setPeople({
+        me: me.id,
+        all: all.some(p => p.id === me.id) ? all.map(p => (p.id === me.id ? { ...p, name: me.name } : p)) : [...all, { ...me, active: h.role === 'write' }],
+      })
+      this.refreshPeople()
+    }
     this.setStatus({ online: true, readonly: h.role !== 'write', ...(h.role !== 'write' ? { message: `Your access to ${h.space.name} is read only.` } : {}) })
     // The server was reset, or lost what it had: everything again.
     if (behind) this.resync()

@@ -1,7 +1,7 @@
 /** Filters and sorts in words, and changing them. */
 
 import {
-  conditionValueKind, newId, operatorsFor, propertyOf, TITLE, type Collection, type Condition, type Filter,
+  conditionValueKind, ME, newId, operatorsFor, personName, propertyOf, TITLE, UNKNOWN_PERSON, type Collection, type People, type Condition, type Filter,
   type Operator, type Sort, type View,
 } from '../model.ts'
 import type { PlannerStore } from '../store.ts'
@@ -16,14 +16,17 @@ export const propertyName = (c: Collection, id: string): string =>
 export const operatorText = (o: Operator): string =>
   (o === 'nextDays' || o === 'pastDays' ? shell.daysAre[o] : strings.operators[o])
 
-/** A condition's value in words; '' while it has none. */
-export function conditionText(c: Collection, condition: Condition): string {
+/** A condition's value in words; '' while it has none. `people`: the collection's, for names as they are now. */
+export function conditionText(c: Collection, condition: Condition, people: People | null = null): string {
   const { propertyId, operator, value } = condition
   const property = propertyOf(c, propertyId)
   switch (conditionValueKind(property?.type ?? TITLE, operator)) {
     case 'none': return ''
     case 'options':
       return (Array.isArray(value) ? (value as readonly string[]) : []).map(id => property?.options.find(o => o.id === id)?.name ?? '').filter(Boolean).join(', ')
+    case 'people':
+      return (Array.isArray(value) ? (value as readonly string[]) : [])
+        .map(id => (id === ME ? shell.me : (property && personName(id, property, people)) ?? UNKNOWN_PERSON)).join(', ')
     case 'checkbox': return value === null ? '' : value ? strings.checked.toLowerCase() : strings.unchecked.toLowerCase()
     case 'date': return typeof value === 'string' ? dateText({ start: value.slice(0, 10) }, Date.now()) : ''
     case 'number':

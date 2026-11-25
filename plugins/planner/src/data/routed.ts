@@ -7,6 +7,7 @@
  * document's `seq` only ever comes from one source.
  */
 
+import type { People } from '../model.ts'
 import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourcePlace, type SourceStatus } from './source.ts'
 
 export const HERE = 'local'
@@ -25,6 +26,7 @@ export class RoutedSource implements PlannerSource {
   private readonly handlers = new Set<(docs: SourceDoc[]) => void>()
   private readonly resyncs = new Set<() => void>()
   private readonly statusHandlers = new Set<(status: SourceStatus) => void>()
+  private readonly peopleHandlers = new Set<() => void>()
   private readonly unlisten: Array<() => void> = []
   private serverUnlisten: Array<() => void> = []
   /** The server's collections, read since it was connected: what says where a collection is. */
@@ -64,6 +66,25 @@ export class RoutedSource implements PlannerSource {
     return this.sourceOf(this.placeOfCollection(collectionId))?.status() ?? { online: false, readonly: true, message: 'Its planner server is not connected.' }
   }
 
+  /* ---- people: only the server's collections have any */
+
+  peopleOf(collectionId: string): People | null {
+    return this.placeOfCollection(collectionId) === SERVER ? this.server?.peopleOf?.(collectionId) ?? null : null
+  }
+
+  refreshPeople(collectionId: string) {
+    if (this.placeOfCollection(collectionId) === SERVER) this.server?.refreshPeople?.(collectionId)
+  }
+
+  onPeople(handler: () => void): () => void {
+    this.peopleHandlers.add(handler)
+    return () => { this.peopleHandlers.delete(handler) }
+  }
+
+  private peopleChanged() {
+    for (const h of [...this.peopleHandlers]) h()
+  }
+
   /**
    * Connects a server's space, or none. What was read from the one before goes from view; the store reads everything
    * again, the new server's collections with it.
@@ -90,9 +111,11 @@ export class RoutedSource implements PlannerSource {
           // What was written while it was away comes on its stream; what was never read is read now.
           if (s.online && !this.serverLoaded) this.resyncAll()
         }),
+        server.onPeople?.(() => this.peopleChanged()) ?? (() => {}),
       )
     }
     this.statusChanged()
+    this.peopleChanged()
     this.resyncAll()
   }
 
@@ -163,6 +186,7 @@ export class RoutedSource implements PlannerSource {
     this.handlers.clear()
     this.resyncs.clear()
     this.statusHandlers.clear()
+    this.peopleHandlers.clear()
   }
 
   /* ---- internals */

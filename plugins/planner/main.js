@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. 451e6b8baf0ab6f10554e1f3b29c5615 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. 2eb16cc22b61f6e189b7a4770cb41f7e */
 
 let active = null
 
@@ -263,6 +263,11 @@ var __plugin = (function(exports, vue) {
 			access: "Access",
 			canEdit: "Can edit",
 			readOnly: "Read only",
+			yourName: "Your name",
+			yourNameHint: (space) => `Everyone in ${space} sees it on what you are assigned. Changing it changes it everywhere.`,
+			rename: "Rename",
+			renamed: "Renamed",
+			noName: "This server does not know people yet. Update it to name yourself and assign people.",
 			collections: (n) => n === 1 ? "1 collection" : `${n} collections`
 		},
 		collection: "Collection",
@@ -323,6 +328,7 @@ var __plugin = (function(exports, vue) {
 			number: "Number",
 			select: "Select",
 			multiSelect: "Multi-select",
+			person: "Person",
 			date: "Date",
 			checkbox: "Checkbox",
 			url: "Link",
@@ -394,6 +400,7 @@ var __plugin = (function(exports, vue) {
 			board: "Board",
 			table: "Table",
 			status: "Status",
+			assignee: "Assignee",
 			priority: "Priority",
 			due: "Due",
 			severity: "Severity",
@@ -452,6 +459,7 @@ var __plugin = (function(exports, vue) {
 		"number",
 		"select",
 		"multiSelect",
+		"person",
 		"date",
 		"checkbox",
 		"url",
@@ -460,6 +468,23 @@ var __plugin = (function(exports, vue) {
 	];
 	/** The property id of an item's title, in sorts, filters and column widths. */
 	var TITLE = "title";
+	/** The types a property may be given: a person only where there are people (or it is one already). */
+	var typesFor = (people, current) => PROPERTY_TYPES.filter((t) => t !== "person" || people !== null || current === "person");
+	/** A person's id, as the server makes them (`per_…`) and the protocol allows ids. */
+	var isPersonId = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(v);
+	/** The ids a stored person value holds, each once, in order. */
+	var personIds = (v) => Array.isArray(v) ? [...new Set(v.filter(isPersonId))] : [];
+	/** A name as the server allows them (a little more room): printable, trimmed, not starting with `@`. */
+	function isPersonName(v) {
+		return typeof v === "string" && v.trim() === v && v.length > 0 && v.length <= 128 && !v.startsWith("@") && !/[\u0000-\u001f\u007f]/.test(v);
+	}
+	/**
+	* A person's name: as the server says it now, else as the property last wrote it down (a collection moved off the
+	* server, or a server that cannot be reached), else null.
+	*/
+	function personName(id, property, people) {
+		return people?.all.find((p) => p.id === id)?.name ?? property.people[id] ?? null;
+	}
 	function newId() {
 		return globalThis.crypto.randomUUID();
 	}
@@ -540,12 +565,15 @@ var __plugin = (function(exports, vue) {
 	function normalizeProperty(id, raw) {
 		const type = oneOf(PROPERTY_TYPES, raw.type, "unsupported");
 		const options = ordered(entriesById(raw.options).map(([k, v]) => normalizeOption(k, v)));
+		const people = {};
+		for (const [k, v] of entriesById(raw.people)) if (isPersonId(k) && isPersonName(v.name)) people[k] = v.name;
 		return {
 			id,
 			name: str(raw.name),
 			type,
 			order: str(raw.order),
 			options,
+			people,
 			defaultOption: type === "select" ? options.find((o) => o.id === raw.defaultOption)?.id ?? null : null
 		};
 	}
@@ -592,7 +620,8 @@ var __plugin = (function(exports, vue) {
 				"isNot",
 				...COMMON
 			];
-			case "multiSelect": return [
+			case "multiSelect":
+			case "person": return [
 				"contains",
 				"notContains",
 				...COMMON
@@ -612,6 +641,7 @@ var __plugin = (function(exports, vue) {
 		if (isUnary(op)) return "none";
 		if (op === "nextDays" || op === "pastDays" || type === "number") return "number";
 		if (type === "select" || type === "multiSelect") return "options";
+		if (type === "person") return "people";
 		if (type === "date" || type === "createdTime" || type === "updatedTime") return "date";
 		return type === "checkbox" ? "checkbox" : "text";
 	}
@@ -641,6 +671,11 @@ var __plugin = (function(exports, vue) {
 			case "options": {
 				const known = strings$4(v).filter((o) => property.options.some((e) => e.id === o));
 				value = known.length ? known : null;
+				break;
+			}
+			case "people": {
+				const names = strings$4(v).filter((n) => n === "@me" || isPersonId(n));
+				value = names.length ? names : null;
 				break;
 			}
 		}
@@ -783,6 +818,10 @@ var __plugin = (function(exports, vue) {
 				const known = strings$4(raw).filter((id) => property.options.some((o) => o.id === id));
 				return known.length ? known : null;
 			}
+			case "person": {
+				const ids = personIds(raw);
+				return ids.length ? ids : null;
+			}
 			case "date":
 				if (!isObject(raw) || !isDateString(raw.start)) return null;
 				return isDateString(raw.end) && raw.end >= raw.start ? {
@@ -805,14 +844,17 @@ var __plugin = (function(exports, vue) {
 		if (v === null || v === false) return void 0;
 		return structuredClone(v);
 	}
-	/** A value as plain text: option names, dates, `Yes` / `No`. */
-	function valueText(value, property) {
+	/** A value as plain text: option names, people's names, dates, `Yes` / `No`. `people`: the server's, for names as they are now. */
+	function valueText(value, property, people = null) {
 		if (value === null) return "";
 		if (typeof value === "boolean") return value ? "Yes" : "No";
 		if (typeof value === "number") return String(value);
 		const name = (id) => property.options.find((o) => o.id === id)?.name ?? "";
 		if (typeof value === "string") return property.type === "select" ? name(value) : value;
-		if (Array.isArray(value)) return value.map(name).join(", ");
+		if (Array.isArray(value)) {
+			const ids = value;
+			return (property.type === "person" ? ids.map((id) => personName(id, property, people) ?? "Unknown person") : ids.map(name)).join(", ");
+		}
 		return formatDate(value);
 	}
 	/** A web address that is safe to open (http or https), or null. A missing scheme means https. */
@@ -1040,7 +1082,7 @@ var __plugin = (function(exports, vue) {
 		(0, vue.onMounted)(() => EVENTS.forEach((e) => window.addEventListener(e, commit)));
 		(0, vue.onBeforeUnmount)(() => EVENTS.forEach((e) => window.removeEventListener(e, commit)));
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/marked@18.2.0/node_modules/marked/lib/marked.esm.js
+	// node_modules/.pnpm/marked@18.2.0/node_modules/marked/lib/marked.esm.js
 	function e$6() {
 		return {
 			async: !1,
@@ -3565,8 +3607,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		};
 	}
 	// plugins/planner/src/item/notes/MarkdownText.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$43 = ["data-text"];
-	var _hoisted_2$37 = [
+	var _hoisted_1$45 = ["data-text"];
+	var _hoisted_2$39 = [
 		"value",
 		"readonly",
 		"aria-label",
@@ -3667,11 +3709,11 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					onInput: _cache[0] || (_cache[0] = ($event) => save($event.target.value)),
 					onKeydown: onKey,
 					onBlur: _cache[1] || (_cache[1] = ($event) => emit("blur"))
-				}, null, 40, _hoisted_2$37)], 8, _hoisted_1$43);
+				}, null, 40, _hoisted_2$39)], 8, _hoisted_1$45);
 			};
 		}
 	}), [["__scopeId", "data-v-4de39441"]]);
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/rolldown-runtime-D7D4PA-g.js
+	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/rolldown-runtime-D7D4PA-g.js
 	var e$5 = Object.defineProperty;
 	var t$8 = (t, n) => {
 		let r = {};
@@ -3681,7 +3723,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		});
 		return n || e$5(r, Symbol.toStringTag, { value: `Module` }), r;
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/orderedmap@2.1.1/node_modules/orderedmap/dist/index.js
+	// node_modules/.pnpm/orderedmap@2.1.1/node_modules/orderedmap/dist/index.js
 	function e$4(e) {
 		this.content = e;
 	}
@@ -3746,7 +3788,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		if (t) for (var r in t) n.push(r, t[r]);
 		return new e$4(n);
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-model@1.25.13/node_modules/prosemirror-model/dist/index.js
+	// node_modules/.pnpm/prosemirror-model@1.25.13/node_modules/prosemirror-model/dist/index.js
 	function t$7(e, n, a) {
 		for (let o = 0;; o++) {
 			if (o == e.childCount || o == n.childCount) return e.childCount == n.childCount ? null : a;
@@ -5541,7 +5583,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			contentDOM: s
 		};
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-transform@1.12.7/node_modules/prosemirror-transform/dist/index.js
+	// node_modules/.pnpm/prosemirror-transform@1.12.7/node_modules/prosemirror-transform/dist/index.js
 	var a$4 = 65535;
 	var o$7 = 2 ** 16;
 	function s$10(e, t) {
@@ -6754,7 +6796,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return E$9(this, e, t, n), this;
 		}
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-state@1.4.4/node_modules/prosemirror-state/dist/index.js
+	// node_modules/.pnpm/prosemirror-state@1.4.4/node_modules/prosemirror-state/dist/index.js
 	var s$9 = Object.create(null);
 	var c$7 = class {
 		constructor(e, t, n) {
@@ -7283,7 +7325,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return e[this.key];
 		}
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-commands@1.7.2/node_modules/prosemirror-commands/dist/index.js
+	// node_modules/.pnpm/prosemirror-commands@1.7.2/node_modules/prosemirror-commands/dist/index.js
 	var h$8 = (e, t) => !e.selection.empty && (t && t(e.tr.deleteSelection().scrollIntoView()), !0);
 	function g$5(e, t) {
 		let { $cursor: n } = e.selection;
@@ -7627,7 +7669,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	};
 	for (let e in Q$4) $$4[e] = Q$4[e];
 	typeof navigator < `u` ? /Mac|iP(hone|[oa]d)/.test(navigator.platform) : typeof os < `u` && os.platform && os.platform();
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-schema-list@1.6.1/node_modules/prosemirror-schema-list/dist/index.js
+	// node_modules/.pnpm/prosemirror-schema-list@1.6.1/node_modules/prosemirror-schema-list/dist/index.js
 	function v$4(e, t = null) {
 		return function(n, r) {
 			let { $from: i, $to: a } = n.selection, o = i.blockRange(a);
@@ -7699,7 +7741,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return !0;
 		};
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-view@1.44.0/node_modules/prosemirror-view/dist/index.js
+	// node_modules/.pnpm/prosemirror-view@1.44.0/node_modules/prosemirror-view/dist/index.js
 	var u$2 = function(e) {
 		for (var t = 0;; t++) if (e = e.previousSibling, !e) return t;
 	};
@@ -11177,7 +11219,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	function Ir$1(e) {
 		if (e.spec.state || e.spec.filterTransaction || e.spec.appendTransaction) throw RangeError(`Plugins passed directly to the view must not have a state component`);
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
+	// node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js
 	var base = {
 		8: `Backspace`,
 		9: `Tab`,
@@ -11266,7 +11308,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		var r = !(e$3 && n.metaKey && n.shiftKey && !n.ctrlKey && !n.altKey || t$6 && n.shiftKey && n.key && n.key.length == 1 || n.key == `Unidentified`) && n.key || (n.shiftKey ? shift : base)[n.keyCode] || n.key || `Unidentified`;
 		return r == `Esc` && (r = `Escape`), r == `Del` && (r = `Delete`), r == `Left` && (r = `ArrowLeft`), r == `Up` && (r = `ArrowUp`), r == `Right` && (r = `ArrowRight`), r == `Down` && (r = `ArrowDown`), r;
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-keymap@1.2.3/node_modules/prosemirror-keymap/dist/index.js
+	// node_modules/.pnpm/prosemirror-keymap@1.2.3/node_modules/prosemirror-keymap/dist/index.js
 	var r$4 = typeof navigator < `u` && /Mac|iP(hone|[oa]d)/.test(navigator.platform);
 	var i$3 = typeof navigator < `u` && /Win/.test(navigator.platform);
 	function a$3(e) {
@@ -11313,7 +11355,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return !1;
 		};
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/rope-sequence@1.3.4/node_modules/rope-sequence/dist/index.js
+	// node_modules/.pnpm/rope-sequence@1.3.4/node_modules/rope-sequence/dist/index.js
 	var e$2 = function() {};
 	e$2.prototype.append = function(t) {
 		return t.length ? (t = e$2.from(t), !this.length && t || t.length < 200 && this.leafAppend(t) || this.length < 200 && t.leafPrepend(this) || this.appendInner(t)) : this;
@@ -11394,7 +11436,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 			return this.left.depth >= Math.max(this.right.depth, e.depth) + 1 ? new t(this.left, new t(this.right, e)) : new t(this, e);
 		}, t;
 	}(e$2);
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-history@1.5.2/node_modules/prosemirror-history/dist/index.js
+	// node_modules/.pnpm/prosemirror-history@1.5.2/node_modules/prosemirror-history/dist/index.js
 	var s$7 = class s$7 {
 		constructor(e, t) {
 			this.items = e, this.eventCount = t;
@@ -11620,7 +11662,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 	}
 	var E$4 = T$4(!1, !0);
 	var D$5 = T$4(!0, !0);
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/index.js
+	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/index.js
 	function D$4(e) {
 		let { state: t, transaction: n } = e, { selection: r } = n, { doc: i } = n, { storedMarks: a } = n;
 		return {
@@ -15566,7 +15608,7 @@ img.ProseMirror-separator {
 			}
 		});
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
+	// node_modules/.pnpm/@tiptap+core@3.35.0_@tiptap+pm@3.35.0/node_modules/@tiptap/core/dist/jsx-runtime/jsx-runtime.js
 	var e$1 = /* @__PURE__ */ new WeakSet();
 	var t$4 = /* @__PURE__ */ new WeakSet();
 	function n$3(t) {
@@ -15608,7 +15650,7 @@ img.ProseMirror-separator {
 		]);
 	}
 	var s$6 = (e, t) => o$5(e, t);
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-blockquote@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-blockquote/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-blockquote@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-blockquote/dist/index.js
 	var o$4 = (e, t) => {
 		let { state: n } = e, { selection: a } = n;
 		if (!a.empty) return !1;
@@ -15682,7 +15724,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-bold@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-bold/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-bold@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-bold/dist/index.js
 	var a$2 = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))$/;
 	var o$3 = /(?:^|\s)(\*\*(?!\s+\*\*)((?:[^*]+))\*\*(?!\s+\*\*))/g;
 	var s$4 = /(?:^|\s)(__(?!\s+__)((?:[^_]+))__(?!\s+__))$/;
@@ -15754,7 +15796,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-code@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-code/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-code@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-code/dist/index.js
 	var o$2 = (e) => {
 		let t = /`([^`]+)`(?!`)$/.exec(e);
 		return !t || t.index > 0 && e[t.index - 1] === "`" ? null : {
@@ -15829,7 +15871,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-code-block@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-code-block/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-code-block@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-code-block/dist/index.js
 	var s$2 = /^```([a-z]+)?[\s\n]$/;
 	var c$1 = /^~~~([a-z]+)?[\s\n]$/;
 	var l$1 = Ja.create({
@@ -15998,7 +16040,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-document@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-document/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-document@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-document/dist/index.js
 	var t$3 = Ja.create({
 		name: `doc`,
 		topNode: !0,
@@ -16007,7 +16049,7 @@ img.ProseMirror-separator {
 
 `) : ``
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-hard-break@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-hard-break/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-hard-break@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-hard-break/dist/index.js
 	var n$2 = Ja.create({
 		name: `hardBreak`,
 		markdownTokenName: `br`,
@@ -16055,7 +16097,7 @@ img.ProseMirror-separator {
 			};
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-heading@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-heading/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-heading@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-heading/dist/index.js
 	var r$2 = Ja.create({
 		name: `heading`,
 		addOptions() {
@@ -16121,7 +16163,7 @@ img.ProseMirror-separator {
 			}));
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-horizontal-rule@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-horizontal-rule/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-horizontal-rule@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-horizontal-rule/dist/index.js
 	var s$1 = Ja.create({
 		name: `horizontalRule`,
 		addOptions() {
@@ -16165,7 +16207,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-italic@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-italic/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-italic@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-italic/dist/index.js
 	var i$1 = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))$/;
 	var a$1 = /(?:^|\s)(\*(?!\s+\*)((?:[^*]+))\*(?!\s+\*))/g;
 	var o$1 = /(?:^|\s)(_(?!\s+_)((?:[^_]+))_(?!\s+_))$/;
@@ -16235,7 +16277,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/rolldown-runtime-D7D4PA-g.js
+	// node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/rolldown-runtime-D7D4PA-g.js
 	var e = Object.defineProperty;
 	var t$2 = (t, n) => {
 		let r = {};
@@ -16245,7 +16287,7 @@ img.ProseMirror-separator {
 		});
 		return n || e(r, Symbol.toStringTag, { value: `Module` }), r;
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-list@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-list/dist/index.js
 	var y$2 = `textStyle`;
 	var b$2 = /^\s*([-+*])\s$/;
 	var x$2 = Ja.create({
@@ -17269,7 +17311,7 @@ img.ProseMirror-separator {
 			return this.options.bulletList !== !1 && e.push(x$2.configure(this.options.bulletList)), this.options.listItem !== !1 && e.push(I$2.configure(this.options.listItem)), this.options.listKeymap !== !1 && e.push(G$3.configure(this.options.listKeymap)), this.options.orderedList !== !1 && e.push(Te.configure(this.options.orderedList)), this.options.taskItem !== !1 && e.push(Oe$1.configure(this.options.taskItem)), this.options.taskList !== !1 && e.push($$2.configure(this.options.taskList)), e;
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-paragraph@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-paragraph/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-paragraph@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-paragraph/dist/index.js
 	var n$1 = `&nbsp;`;
 	var r$1 = Ja.create({
 		name: `paragraph`,
@@ -17312,7 +17354,7 @@ img.ProseMirror-separator {
 			return { "Mod-Alt-0": () => this.editor.commands.setParagraph() };
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-strike@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-strike/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-strike@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-strike/dist/index.js
 	var i = /(?:^|\s)(~~(?!\s+~~)((?:[^~]+))~~(?!\s+~~))$/;
 	var a = /(?:^|\s)(~~(?!\s+~~)((?:[^~]+))~~(?!\s+~~))/g;
 	var o = na.create({
@@ -17365,7 +17407,7 @@ img.ProseMirror-separator {
 			})];
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-tables@1.8.5/node_modules/prosemirror-tables/dist/index.js
+	// node_modules/.pnpm/prosemirror-tables@1.8.5/node_modules/prosemirror-tables/dist/index.js
 	var f$1;
 	var p$1;
 	if (typeof WeakMap < `u`) {
@@ -18714,7 +18756,7 @@ img.ProseMirror-separator {
 			}
 		});
 	}
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-table@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-table/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-table@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0__@tiptap+pm@3.35.0/node_modules/@tiptap/extension-table/dist/index.js
 	function T$1(e) {
 		return e === `left` || e === `right` || e === `center` ? e : null;
 	}
@@ -19260,7 +19302,7 @@ img.ProseMirror-separator {
 			return this.options.table !== !1 && e.push($.configure(this.options.table)), this.options.tableCell !== !1 && e.push(P$1.configure(this.options.tableCell)), this.options.tableHeader !== !1 && e.push(F$1.configure(this.options.tableHeader)), this.options.tableRow !== !1 && e.push(I$1.configure(this.options.tableRow)), e;
 		}
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/@tiptap+extension-text@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-text/dist/index.js
+	// node_modules/.pnpm/@tiptap+extension-text@3.35.0_@tiptap+core@3.35.0_@tiptap+pm@3.35.0_/node_modules/@tiptap/extension-text/dist/index.js
 	var t$1 = Ja.create({
 		name: `text`,
 		group: `inline`,
@@ -19270,7 +19312,7 @@ img.ProseMirror-separator {
 		}),
 		renderMarkdown: (e) => e.text || ``
 	});
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-dropcursor@1.8.4/node_modules/prosemirror-dropcursor/dist/index.js
+	// node_modules/.pnpm/prosemirror-dropcursor@1.8.4/node_modules/prosemirror-dropcursor/dist/index.js
 	function n(t = {}) {
 		return new D$9({ view(e) {
 			return new r(e, t);
@@ -19377,7 +19419,7 @@ img.ProseMirror-separator {
 			this.editorView.dom.contains(e.relatedTarget) || this.setCursor(null);
 		}
 	};
-	// ../../../home/agent/work/mango/node_modules/.pnpm/prosemirror-gapcursor@1.4.1/node_modules/prosemirror-gapcursor/dist/index.js
+	// node_modules/.pnpm/prosemirror-gapcursor@1.4.1/node_modules/prosemirror-gapcursor/dist/index.js
 	var l = class l extends c$7 {
 		constructor(e) {
 			super(e, e);
@@ -20639,7 +20681,7 @@ img.ProseMirror-separator {
 		return true;
 	}
 	// plugins/planner/src/ui/Popover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$42 = ["aria-label"];
+	var _hoisted_1$44 = ["aria-label"];
 	/**
 	* A floating panel, shown while mounted. `cover`: lies over the anchor instead of hanging from it (an editor in
 	* place). What is marked `data-autofocus` (or the first control) gets the focus, and it goes back on close.
@@ -20791,18 +20833,18 @@ img.ProseMirror-separator {
 				}, [(0, vue.createElementVNode)("div", {
 					ref_key: "inner",
 					ref: inner
-				}, [(0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 512)], 44, _hoisted_1$42)]);
+				}, [(0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 512)], 44, _hoisted_1$44)]);
 			};
 		}
 	}), [["__scopeId", "data-v-f2b29bc6"]]);
 	// plugins/planner/src/item/notes/LinkPopover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$41 = ["aria-label", "aria-invalid"];
-	var _hoisted_2$36 = {
+	var _hoisted_1$43 = ["aria-label", "aria-invalid"];
+	var _hoisted_2$38 = {
 		key: 0,
 		class: "pl-link__bad",
 		role: "alert"
 	};
-	var _hoisted_3$32 = { class: "pl-link__row" };
+	var _hoisted_3$34 = { class: "pl-link__row" };
 	// plugins/planner/src/item/notes/LinkPopover.vue
 	var LinkPopover_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "LinkPopover",
@@ -20851,9 +20893,9 @@ img.ProseMirror-separator {
 							"aria-invalid": bad.value || void 0,
 							onInput: _cache[1] || (_cache[1] = ($event) => bad.value = false),
 							onFocus: _cache[2] || (_cache[2] = ($event) => $event.target.select())
-						}, null, 40, _hoisted_1$41), [[vue.vModelText, text.value]]),
-						bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$36, (0, vue.toDisplayString)((0, vue.unref)(strings$3).badLink), 1)) : (0, vue.createCommentVNode)("v-if", true),
-						(0, vue.createElementVNode)("div", _hoisted_3$32, [
+						}, null, 40, _hoisted_1$43), [[vue.vModelText, text.value]]),
+						bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$38, (0, vue.toDisplayString)((0, vue.unref)(strings$3).badLink), 1)) : (0, vue.createCommentVNode)("v-if", true),
+						(0, vue.createElementVNode)("div", _hoisted_3$34, [
 							__props.href ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 								key: 0,
 								variant: "ghost",
@@ -20881,15 +20923,15 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-382fe9d9"]]);
 	// plugins/planner/src/item/notes/SlashMenu.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$40 = ["id", "aria-label"];
-	var _hoisted_2$35 = [
+	var _hoisted_1$42 = ["id", "aria-label"];
+	var _hoisted_2$37 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_3$31 = { class: "pl-slash__label" };
-	var _hoisted_4$30 = {
+	var _hoisted_3$33 = { class: "pl-slash__label" };
+	var _hoisted_4$31 = {
 		key: 0,
 		class: "pl-slash__hint",
 		"aria-hidden": "true"
@@ -20974,17 +21016,17 @@ img.ProseMirror-separator {
 							name: b.icon,
 							class: "pl-slash__icon"
 						}, null, 8, ["name"]),
-						(0, vue.createElementVNode)("span", _hoisted_3$31, (0, vue.toDisplayString)((0, vue.unref)(strings$3).blocks[b.id]), 1),
-						b.hint ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$30, (0, vue.toDisplayString)(b.hint), 1)) : (0, vue.createCommentVNode)("v-if", true)
-					], 42, _hoisted_2$35);
-				}), 128))], 44, _hoisted_1$40)]);
+						(0, vue.createElementVNode)("span", _hoisted_3$33, (0, vue.toDisplayString)((0, vue.unref)(strings$3).blocks[b.id]), 1),
+						b.hint ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$31, (0, vue.toDisplayString)(b.hint), 1)) : (0, vue.createCommentVNode)("v-if", true)
+					], 42, _hoisted_2$37);
+				}), 128))], 44, _hoisted_1$42)]);
 			};
 		}
 	}), [["__scopeId", "data-v-b475f942"]]);
 	// plugins/planner/src/item/notes/NotesEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$39 = ["aria-label"];
-	var _hoisted_2$34 = ["title"];
-	var _hoisted_3$30 = {
+	var _hoisted_1$41 = ["aria-label"];
+	var _hoisted_2$36 = ["title"];
+	var _hoisted_3$32 = {
 		key: 1,
 		class: "pl-float__open is-text"
 	};
@@ -21501,7 +21543,7 @@ img.ProseMirror-separator {
 							tabindex: "-1",
 							title: (0, vue.unref)(strings$3).openLink,
 							onClick: _cache[1] || (_cache[1] = ($event) => open(float.value.href))
-						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1), (0, vue.createVNode)(Icon_default, { name: "external-link" })], 8, _hoisted_2$34)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$30, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1)])),
+						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1), (0, vue.createVNode)(Icon_default, { name: "external-link" })], 8, _hoisted_2$36)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$32, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1)])),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							label: (0, vue.unref)(strings$3).editLink,
 							shortcut: keyOf("K"),
@@ -21519,7 +21561,7 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "unlink" })]),
 							_: 1
 						}, 8, ["label"]))
-					], 64))], 44, _hoisted_1$39)) : (0, vue.createCommentVNode)("v-if", true)])),
+					], 64))], 44, _hoisted_1$41)) : (0, vue.createCommentVNode)("v-if", true)])),
 					slash.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(SlashMenu_default, {
 						key: 1,
 						id: menuId,
@@ -21547,7 +21589,7 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-85a21829"]]);
 	// plugins/planner/src/item/ItemBody.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$38 = { class: "pl-body" };
+	var _hoisted_1$40 = { class: "pl-body" };
 	/**
 	* An item's notes. Rich text, unless the user wants the Markdown or the text has something in it rich text would
 	* lose. Which one is looked at again only when the text comes from elsewhere, never while it is typed.
@@ -21605,7 +21647,7 @@ img.ProseMirror-separator {
 				asMarkdown: (0, vue.computed)(() => asMarkdown.value)
 			});
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_1$38, [!rich.value && !asMarkdown.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_1$40, [!rich.value && !asMarkdown.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
 					key: 0,
 					id: noteId,
 					class: "pl-body__note"
@@ -21847,6 +21889,7 @@ img.ProseMirror-separator {
 		number: "hash",
 		select: "list",
 		multiSelect: "tags",
+		person: "circle-user",
 		date: "calendar",
 		checkbox: "square-check",
 		url: "link",
@@ -21916,6 +21959,12 @@ img.ProseMirror-separator {
 		moveDown: "Move down",
 		back: "Back",
 		clear: "Clear",
+		findPerson: "Find a person",
+		you: "you",
+		noPeople: "Nobody matches.",
+		noPeopleHere: "People come from the planner server. Move this collection there to assign them.",
+		noPeopleYet: "The planner server lists nobody yet. Its write tokens are its people.",
+		formerPerson: "Not in the space any more",
 		notANumber: "Enter a number",
 		start: "Start",
 		end: "End",
@@ -21948,6 +21997,7 @@ img.ProseMirror-separator {
 			number: "A number",
 			select: "One of a list",
 			multiSelect: "Several of a list",
+			person: "People of the planner server",
 			date: "A day, a time or a range",
 			checkbox: "Yes or no",
 			url: "A web address",
@@ -21957,14 +22007,14 @@ img.ProseMirror-separator {
 		}
 	};
 	// plugins/planner/src/values/AddProperty.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$37 = { class: "pl-add" };
-	var _hoisted_2$33 = [
+	var _hoisted_1$39 = { class: "pl-add" };
+	var _hoisted_2$35 = [
 		"aria-activedescendant",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_3$29 = ["aria-label"];
-	var _hoisted_4$29 = [
+	var _hoisted_3$31 = ["aria-label"];
+	var _hoisted_4$30 = [
 		"id",
 		"aria-selected",
 		"title",
@@ -21986,8 +22036,8 @@ img.ProseMirror-separator {
 			const name = (0, vue.ref)("");
 			const active = (0, vue.ref)(0);
 			const list = (0, vue.ref)(null);
-			const types = PROPERTY_TYPES;
-			const activeId = (0, vue.computed)(() => `pl-add-${types[active.value]}`);
+			const types = (0, vue.computed)(() => typesFor(store.people(props.collectionId)));
+			const activeId = (0, vue.computed)(() => `pl-add-${types.value[active.value]}`);
 			function add(type) {
 				const made = store.addProperty(props.collectionId, {
 					name: name.value.trim() || freeName(strings$5.propertyTypes[type]),
@@ -22005,9 +22055,10 @@ img.ProseMirror-separator {
 			}
 			function onKey(e) {
 				if (e.isComposing) return;
-				if (e.key === "ArrowDown") active.value = (active.value + 1) % types.length;
-				else if (e.key === "ArrowUp") active.value = (active.value - 1 + types.length) % types.length;
-				else if (e.key === "Enter") add(types[active.value]);
+				const n = types.value.length;
+				if (e.key === "ArrowDown") active.value = (active.value + 1) % n;
+				else if (e.key === "ArrowUp") active.value = (active.value - 1 + n) % n;
+				else if (e.key === "Enter") add(types.value[active.value]);
 				else return;
 				e.preventDefault();
 				(0, vue.nextTick)(() => list.value?.querySelector(".is-active")?.scrollIntoView({ block: "nearest" }));
@@ -22019,7 +22070,7 @@ img.ProseMirror-separator {
 					label: (0, vue.unref)(strings$2).newProperty,
 					onClose: _cache[1] || (_cache[1] = ($event) => emit("close"))
 				}, {
-					default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_1$37, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+					default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_1$39, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => name.value = $event),
 						class: "pl-add__name",
 						"data-autofocus": "",
@@ -22031,14 +22082,14 @@ img.ProseMirror-separator {
 						placeholder: (0, vue.unref)(strings$2).propertyName,
 						autocomplete: "off",
 						onKeydown: onKey
-					}, null, 40, _hoisted_2$33), [[vue.vModelText, name.value]]), (0, vue.createElementVNode)("div", {
+					}, null, 40, _hoisted_2$35), [[vue.vModelText, name.value]]), (0, vue.createElementVNode)("div", {
 						id: "pl-add-types",
 						ref_key: "list",
 						ref: list,
 						class: "pl-add__list",
 						role: "listbox",
 						"aria-label": (0, vue.unref)(strings$2).type
-					}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(types), (t, i) => {
+					}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(types.value, (t, i) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							id: `pl-add-${t}`,
 							key: t,
@@ -22051,8 +22102,8 @@ img.ProseMirror-separator {
 						}, [(0, vue.createVNode)(PropertyIcon_default, {
 							type: t,
 							class: "pl-add__icon"
-						}, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$5).propertyTypes[t]), 1)], 42, _hoisted_4$29);
-					}), 128))], 8, _hoisted_3$29)])]),
+						}, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$5).propertyTypes[t]), 1)], 42, _hoisted_4$30);
+					}), 128))], 8, _hoisted_3$31)])]),
 					_: 1
 				}, 8, ["anchor", "label"]);
 			};
@@ -22082,9 +22133,9 @@ img.ProseMirror-separator {
 		return `#${part(5)}${part(3)}${part(1)}`;
 	}
 	// plugins/planner/src/ui/ColorPicker.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$36 = ["aria-label"];
-	var _hoisted_2$32 = ["aria-label"];
-	var _hoisted_3$28 = [
+	var _hoisted_1$38 = ["aria-label"];
+	var _hoisted_2$34 = ["aria-label"];
+	var _hoisted_3$30 = [
 		"aria-checked",
 		"aria-label",
 		"title",
@@ -22093,13 +22144,13 @@ img.ProseMirror-separator {
 		"onClick",
 		"onKeydown"
 	];
-	var _hoisted_4$28 = [
+	var _hoisted_4$29 = [
 		"aria-label",
 		"aria-valuenow",
 		"aria-valuetext"
 	];
-	var _hoisted_5$25 = ["value", "aria-label"];
-	var _hoisted_6$22 = [
+	var _hoisted_5$26 = ["value", "aria-label"];
+	var _hoisted_6$23 = [
 		"value",
 		"aria-label",
 		"aria-invalid"
@@ -22301,8 +22352,8 @@ img.ProseMirror-separator {
 							"data-autofocus": c === tabStop.value ? "" : void 0,
 							onClick: ($event) => choose(c),
 							onKeydown: ($event) => onSwatchKey($event, i)
-						}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(isCustomColor)(c) ? c : (0, vue.unref)(colorVar)(c).dot }) }, null, 4)], 40, _hoisted_3$28);
-					}), 128))], 8, _hoisted_2$32),
+						}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(isCustomColor)(c) ? c : (0, vue.unref)(colorVar)(c).dot }) }, null, 4)], 40, _hoisted_3$30);
+					}), 128))], 8, _hoisted_2$34),
 					(0, vue.createElementVNode)("div", {
 						ref_key: "area",
 						ref: area,
@@ -22329,7 +22380,7 @@ img.ProseMirror-separator {
 							top: `${(1 - hsv.value.v) * 100}%`,
 							background: (0, vue.unref)(hsvToHex)(hsv.value)
 						})
-					}, null, 4)], 44, _hoisted_4$28),
+					}, null, 4)], 44, _hoisted_4$29),
 					(0, vue.createElementVNode)("input", {
 						type: "range",
 						class: "pl-color__hue",
@@ -22340,7 +22391,7 @@ img.ProseMirror-separator {
 						"aria-label": (0, vue.unref)(strings$2).hue,
 						onInput: _cache[0] || (_cache[0] = ($event) => setHsv({ h: Number($event.target.value) })),
 						onChange: settle
-					}, null, 40, _hoisted_5$25),
+					}, null, 40, _hoisted_5$26),
 					(0, vue.createElementVNode)("label", { class: (0, vue.normalizeClass)(["pl-color__hex", { "is-bad": hexBad.value }]) }, [(0, vue.createElementVNode)("span", {
 						style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(rawColor)(__props.modelValue) }),
 						"aria-hidden": "true"
@@ -22356,13 +22407,13 @@ img.ProseMirror-separator {
 						onInput: typeHex,
 						onChange: _cache[1] || (_cache[1] = ($event) => takeHex(true)),
 						onKeydown: _cache[2] || (_cache[2] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => takeHex(true), ["prevent"]), ["enter"]))
-					}, null, 40, _hoisted_6$22)], 2)
-				], 8, _hoisted_1$36);
+					}, null, 40, _hoisted_6$23)], 2)
+				], 8, _hoisted_1$38);
 			};
 		}
 	}), [["__scopeId", "data-v-e35e2cff"]]);
 	// plugins/planner/src/ui/ColorButton.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$35 = [
+	var _hoisted_1$37 = [
 		"aria-label",
 		"title",
 		"aria-expanded",
@@ -22390,7 +22441,7 @@ img.ProseMirror-separator {
 					"aria-expanded": !!anchor.value,
 					disabled: __props.disabled,
 					onClick: _cache[0] || (_cache[0] = ($event) => anchor.value = $event.currentTarget)
-				}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(colorVar)(__props.modelValue).dot }) }, null, 4)], 8, _hoisted_1$35), anchor.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
+				}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(colorVar)(__props.modelValue).dot }) }, null, 4)], 8, _hoisted_1$37), anchor.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
 					key: 0,
 					anchor: anchor.value,
 					width: 236,
@@ -22409,18 +22460,18 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-48db138d"]]);
 	// plugins/planner/src/ui/PickPopover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$34 = ["aria-label", "aria-activedescendant"];
-	var _hoisted_2$31 = {
+	var _hoisted_1$36 = ["aria-label", "aria-activedescendant"];
+	var _hoisted_2$33 = {
 		key: 0,
 		class: "pl-pick__head"
 	};
-	var _hoisted_3$27 = [
+	var _hoisted_3$29 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_4$27 = { class: "pl-pick__label" };
+	var _hoisted_4$28 = { class: "pl-pick__label" };
 	// plugins/planner/src/ui/PickPopover.vue
 	var PickPopover_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "PickPopover",
@@ -22474,7 +22525,7 @@ img.ProseMirror-separator {
 						"data-autofocus": "",
 						"aria-activedescendant": __props.rows[active.value] ? `pl-pick-${__props.rows[active.value].id}` : void 0,
 						onKeydown: onKey
-					}, [__props.heading ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$31, (0, vue.toDisplayString)(__props.heading), 1)) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(__props.rows, (r, i) => {
+					}, [__props.heading ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$33, (0, vue.toDisplayString)(__props.heading), 1)) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(__props.rows, (r, i) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							id: `pl-pick-${r.id}`,
 							key: r.id,
@@ -22494,14 +22545,14 @@ img.ProseMirror-separator {
 								name: r.icon,
 								class: "pl-pick__icon"
 							}, null, 8, ["name"])) : (0, vue.createCommentVNode)("v-if", true),
-							(0, vue.createElementVNode)("span", _hoisted_4$27, (0, vue.toDisplayString)(r.label), 1),
+							(0, vue.createElementVNode)("span", _hoisted_4$28, (0, vue.toDisplayString)(r.label), 1),
 							r.checked ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 2,
 								name: "check",
 								class: "pl-pick__check"
 							})) : (0, vue.createCommentVNode)("v-if", true)
-						], 42, _hoisted_3$27);
-					}), 128))], 40, _hoisted_1$34)]),
+						], 42, _hoisted_3$29);
+					}), 128))], 40, _hoisted_1$36)]),
 					_: 1
 				}, 8, [
 					"anchor",
@@ -22620,31 +22671,31 @@ img.ProseMirror-separator {
 		};
 	}
 	// plugins/planner/src/values/PropertyEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$33 = {
+	var _hoisted_1$35 = {
 		key: 0,
 		class: "pl-pe__gone"
 	};
-	var _hoisted_2$30 = {
+	var _hoisted_2$32 = {
 		key: 1,
 		class: "pl-pe"
 	};
-	var _hoisted_3$26 = { class: "pl-pe__top" };
-	var _hoisted_4$26 = { class: "pl-pe__field" };
-	var _hoisted_5$24 = { class: "pl-pe__label" };
-	var _hoisted_6$21 = ["value", "readonly"];
-	var _hoisted_7$19 = { class: "pl-pe__field" };
-	var _hoisted_8$18 = { class: "pl-pe__label" };
+	var _hoisted_3$28 = { class: "pl-pe__top" };
+	var _hoisted_4$27 = { class: "pl-pe__field" };
+	var _hoisted_5$25 = { class: "pl-pe__label" };
+	var _hoisted_6$22 = ["value", "readonly"];
+	var _hoisted_7$20 = { class: "pl-pe__field" };
+	var _hoisted_8$19 = { class: "pl-pe__label" };
 	var _hoisted_9$17 = ["disabled"];
 	var _hoisted_10$16 = ["aria-label"];
 	var _hoisted_11$12 = ["data-option"];
-	var _hoisted_12$11 = [
+	var _hoisted_12$12 = [
 		"aria-label",
 		"title",
 		"disabled",
 		"onPointerdown",
 		"onKeydown"
 	];
-	var _hoisted_13$9 = [
+	var _hoisted_13$10 = [
 		"value",
 		"readonly",
 		"aria-label",
@@ -22652,13 +22703,13 @@ img.ProseMirror-separator {
 		"onBlur",
 		"onKeydown"
 	];
-	var _hoisted_14$7 = ["title"];
+	var _hoisted_14$8 = ["title"];
 	var _hoisted_15$6 = {
 		key: 0,
 		class: "pl-pe__default"
 	};
-	var _hoisted_16$5 = { class: "pl-pe__label" };
-	var _hoisted_17$4 = ["disabled"];
+	var _hoisted_16$6 = { class: "pl-pe__label" };
+	var _hoisted_17$5 = ["disabled"];
 	/** A property: name, type and, for a select, its options. Every change is kept at once. `gone`: it was deleted. */
 	var NONE$1 = "-";
 	// plugins/planner/src/values/PropertyEditor.vue
@@ -22697,7 +22748,7 @@ img.ProseMirror-separator {
 				store.flush();
 			}
 			const typeAt = (0, vue.shallowRef)(null);
-			const typeRows = (0, vue.computed)(() => PROPERTY_TYPES.map((t) => ({
+			const typeRows = (0, vue.computed)(() => typesFor(store.people(props.collectionId), property.value?.type).map((t) => ({
 				id: t,
 				label: strings$5.propertyTypes[t],
 				icon: PROPERTY_ICONS[t],
@@ -22833,8 +22884,8 @@ img.ProseMirror-separator {
 				(0, vue.nextTick)(() => handle.focus());
 			}
 			return (_ctx, _cache) => {
-				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_1$33, (0, vue.toDisplayString)((0, vue.unref)(strings$2).gone), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$30, [
-					(0, vue.createElementVNode)("div", _hoisted_3$26, [(0, vue.createElementVNode)("label", _hoisted_4$26, [(0, vue.createElementVNode)("span", _hoisted_5$24, (0, vue.toDisplayString)((0, vue.unref)(strings$2).name), 1), (0, vue.createElementVNode)("input", {
+				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_1$35, (0, vue.toDisplayString)((0, vue.unref)(strings$2).gone), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$32, [
+					(0, vue.createElementVNode)("div", _hoisted_3$28, [(0, vue.createElementVNode)("label", _hoisted_4$27, [(0, vue.createElementVNode)("span", _hoisted_5$25, (0, vue.toDisplayString)((0, vue.unref)(strings$2).name), 1), (0, vue.createElementVNode)("input", {
 						class: "pl-pe__input",
 						value: property.value.name,
 						readonly: readonly.value,
@@ -22842,7 +22893,7 @@ img.ProseMirror-separator {
 						autocomplete: "off",
 						onInput: rename,
 						onBlur: _cache[0] || (_cache[0] = ($event) => settleName($event, property.value.name, (name) => (0, vue.unref)(store).renameProperty(__props.collectionId, __props.propertyId, name, { defer: true })))
-					}, null, 40, _hoisted_6$21)]), (0, vue.createElementVNode)("div", _hoisted_7$19, [(0, vue.createElementVNode)("span", _hoisted_8$18, (0, vue.toDisplayString)((0, vue.unref)(strings$2).type), 1), (0, vue.createElementVNode)("button", {
+					}, null, 40, _hoisted_6$22)]), (0, vue.createElementVNode)("div", _hoisted_7$20, [(0, vue.createElementVNode)("span", _hoisted_8$19, (0, vue.toDisplayString)((0, vue.unref)(strings$2).type), 1), (0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-pe__pick",
 						"aria-haspopup": "listbox",
@@ -22874,7 +22925,7 @@ img.ProseMirror-separator {
 								disabled: readonly.value,
 								onPointerdown: ($event) => startDrag(o, $event),
 								onKeydown: ($event) => onHandleKey(o, i, $event)
-							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_12$11),
+							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_12$12),
 							(0, vue.createVNode)(ColorButton_default, {
 								"model-value": o.color,
 								label: (0, vue.unref)(strings$2).colorOf(o.name),
@@ -22898,12 +22949,12 @@ img.ProseMirror-separator {
 								onInput: ($event) => renameOption(o, $event),
 								onBlur: ($event) => settleName($event, o.name, (name) => setOption(o, { name })),
 								onKeydown: (0, vue.withKeys)((0, vue.withModifiers)(add, ["prevent"]), ["enter"])
-							}, null, 44, _hoisted_13$9),
+							}, null, 44, _hoisted_13$10),
 							(0, vue.unref)(counts) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 								key: 0,
 								class: "pl-pe__count",
 								title: (0, vue.unref)(strings$2).inUse((0, vue.unref)(counts).get(o.id) ?? 0, (0, vue.unref)(itemWord)(collection.value, (0, vue.unref)(counts).get(o.id) ?? 0))
-							}, (0, vue.toDisplayString)((0, vue.unref)(counts).get(o.id) ?? 0), 9, _hoisted_14$7)) : (0, vue.createCommentVNode)("v-if", true),
+							}, (0, vue.toDisplayString)((0, vue.unref)(counts).get(o.id) ?? 0), 9, _hoisted_14$8)) : (0, vue.createCommentVNode)("v-if", true),
 							!readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 								key: 1,
 								size: "sm",
@@ -22922,7 +22973,7 @@ img.ProseMirror-separator {
 						type: "button",
 						class: "pl-pe__add",
 						onClick: add
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$16), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$6, [(0, vue.createElementVNode)("span", _hoisted_16$5, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$16), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$6, [(0, vue.createElementVNode)("span", _hoisted_16$6, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-pe__pick",
 						"aria-haspopup": "listbox",
@@ -22936,7 +22987,7 @@ img.ProseMirror-separator {
 						}, null, 4)) : (0, vue.createCommentVNode)("v-if", true),
 						(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(defaultOption.value?.name ?? (0, vue.unref)(strings$2).nothing), 1),
 						(0, vue.createVNode)(Icon_default, { name: "chevron-down" })
-					], 8, _hoisted_17$4)])) : (0, vue.createCommentVNode)("v-if", true)], 64)) : (0, vue.createCommentVNode)("v-if", true),
+					], 8, _hoisted_17$5)])) : (0, vue.createCommentVNode)("v-if", true)], 64)) : (0, vue.createCommentVNode)("v-if", true),
 					typeAt.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PickPopover_default, {
 						key: 1,
 						rows: typeRows.value,
@@ -23075,7 +23126,7 @@ img.ProseMirror-separator {
 			if (name && name !== property.name) store.renameProperty(collection.id, property.id, name);
 		}
 		function changeType() {
-			return mango.ui.contextMenu(at, PROPERTY_TYPES.map((t) => ({
+			return mango.ui.contextMenu(at, typesFor(store.people(collection.id), property.type).map((t) => ({
 				label: strings$5.propertyTypes[t],
 				icon: PROPERTY_ICONS[t],
 				checked: t === property.type,
@@ -23192,9 +23243,9 @@ img.ProseMirror-separator {
 		return parseDate(text.trim().replace(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?!\d)/, (_, y, m, d) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`).replace(/([ T])(\d:\d\d)/g, (_, a, b) => `${a}0${b}`));
 	}
 	// plugins/planner/src/values/DateEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$32 = { class: "pl-date" };
-	var _hoisted_2$29 = { class: "pl-date__fields" };
-	var _hoisted_3$25 = [
+	var _hoisted_1$34 = { class: "pl-date" };
+	var _hoisted_2$31 = { class: "pl-date__fields" };
+	var _hoisted_3$27 = [
 		"onUpdate:modelValue",
 		"data-autofocus",
 		"aria-label",
@@ -23204,20 +23255,20 @@ img.ProseMirror-separator {
 		"onChange",
 		"onKeydown"
 	];
-	var _hoisted_4$25 = [
+	var _hoisted_4$26 = [
 		"value",
 		"aria-label",
 		"onFocus",
 		"onChange"
 	];
-	var _hoisted_5$23 = {
+	var _hoisted_5$24 = {
 		key: 0,
 		class: "pl-date__bad",
 		role: "alert"
 	};
-	var _hoisted_6$20 = { class: "pl-date__month" };
-	var _hoisted_7$18 = { "aria-live": "polite" };
-	var _hoisted_8$17 = ["aria-label"];
+	var _hoisted_6$21 = { class: "pl-date__month" };
+	var _hoisted_7$19 = { "aria-live": "polite" };
+	var _hoisted_8$18 = ["aria-label"];
 	var _hoisted_9$16 = {
 		class: "pl-date__week",
 		role: "row"
@@ -23230,11 +23281,11 @@ img.ProseMirror-separator {
 		"aria-current",
 		"onClick"
 	];
-	var _hoisted_12$10 = { class: "pl-date__foot" };
-	var _hoisted_13$8 = ["aria-checked"];
-	var _hoisted_14$6 = ["aria-checked"];
+	var _hoisted_12$11 = { class: "pl-date__foot" };
+	var _hoisted_13$9 = ["aria-checked"];
+	var _hoisted_14$7 = ["aria-checked"];
 	var _hoisted_15$5 = { class: "pl-date__acts" };
-	var _hoisted_16$4 = ["title"];
+	var _hoisted_16$5 = ["title"];
 	// plugins/planner/src/values/DateEditor.vue
 	var DateEditor_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "DateEditor",
@@ -23388,8 +23439,8 @@ img.ProseMirror-separator {
 				else save(s, `${day(end.value) ?? day(s)}T${t}`);
 			}
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$32, [
-					(0, vue.createElementVNode)("div", _hoisted_2$29, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(withEnd.value ? ["start", "end"] : ["start"], (which) => {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$34, [
+					(0, vue.createElementVNode)("div", _hoisted_2$31, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(withEnd.value ? ["start", "end"] : ["start"], (which) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							key: which,
 							class: (0, vue.normalizeClass)(["pl-date__field", {
@@ -23411,7 +23462,7 @@ img.ProseMirror-separator {
 							},
 							onChange: ($event) => commit(which),
 							onKeydown: ($event) => onInputKey($event, which)
-						}, null, 40, _hoisted_3$25), [[vue.vModelText, drafts.value[which]]]), withTime.value && (which === "start" ? start.value : end.value) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+						}, null, 40, _hoisted_3$27), [[vue.vModelText, drafts.value[which]]]), withTime.value && (which === "start" ? start.value : end.value) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 							key: 0,
 							type: "time",
 							class: "pl-date__time",
@@ -23419,10 +23470,10 @@ img.ProseMirror-separator {
 							"aria-label": which === "start" ? (0, vue.unref)(strings$2).startTime : (0, vue.unref)(strings$2).endTime,
 							onFocus: ($event) => side.value = which,
 							onChange: ($event) => setTime(which, $event)
-						}, null, 40, _hoisted_4$25)) : (0, vue.createCommentVNode)("v-if", true)], 2);
-					}), 128)), bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_5$23, (0, vue.toDisplayString)((0, vue.unref)(strings$2).notADate), 1)) : (0, vue.createCommentVNode)("v-if", true)]),
-					(0, vue.createElementVNode)("div", _hoisted_6$20, [
-						(0, vue.createElementVNode)("span", _hoisted_7$18, (0, vue.toDisplayString)((0, vue.unref)(monthText)(month.value)), 1),
+						}, null, 40, _hoisted_4$26)) : (0, vue.createCommentVNode)("v-if", true)], 2);
+					}), 128)), bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_5$24, (0, vue.toDisplayString)((0, vue.unref)(strings$2).notADate), 1)) : (0, vue.createCommentVNode)("v-if", true)]),
+					(0, vue.createElementVNode)("div", _hoisted_6$21, [
+						(0, vue.createElementVNode)("span", _hoisted_7$19, (0, vue.toDisplayString)((0, vue.unref)(monthText)(month.value)), 1),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							size: "sm",
 							label: (0, vue.unref)(strings$2).previousMonth,
@@ -23478,8 +23529,8 @@ img.ProseMirror-separator {
 								onClick: ($event) => pick(d)
 							}, (0, vue.toDisplayString)(Number(d.slice(8))), 11, _hoisted_11$11)], 10, _hoisted_10$15);
 						}), 128))]);
-					}), 128))], 40, _hoisted_8$17),
-					(0, vue.createElementVNode)("div", _hoisted_12$10, [
+					}), 128))], 40, _hoisted_8$18),
+					(0, vue.createElementVNode)("div", _hoisted_12$11, [
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__opt",
@@ -23489,7 +23540,7 @@ img.ProseMirror-separator {
 						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$2).endDate), 1), _cache[4] || (_cache[4] = (0, vue.createElementVNode)("i", {
 							class: "pl-date__switch",
 							"aria-hidden": "true"
-						}, null, -1))], 8, _hoisted_13$8),
+						}, null, -1))], 8, _hoisted_13$9),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__opt",
@@ -23499,7 +23550,7 @@ img.ProseMirror-separator {
 						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$2).includeTime), 1), _cache[5] || (_cache[5] = (0, vue.createElementVNode)("i", {
 							class: "pl-date__switch",
 							"aria-hidden": "true"
-						}, null, -1))], 8, _hoisted_14$6),
+						}, null, -1))], 8, _hoisted_14$7),
 						(0, vue.createElementVNode)("div", _hoisted_15$5, [(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__act",
@@ -23513,15 +23564,15 @@ img.ProseMirror-separator {
 								emit("change", null);
 								emit("done");
 							})
-						}, (0, vue.toDisplayString)((0, vue.unref)(strings$2).clear), 9, _hoisted_16$4)) : (0, vue.createCommentVNode)("v-if", true)])
+						}, (0, vue.toDisplayString)((0, vue.unref)(strings$2).clear), 9, _hoisted_16$5)) : (0, vue.createCommentVNode)("v-if", true)])
 					])
 				]);
 			};
 		}
 	}), [["__scopeId", "data-v-aacd3835"]]);
 	// plugins/planner/src/ui/OptionTag.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$31 = ["title"];
-	var _hoisted_2$28 = { class: "pl-tag__name" };
+	var _hoisted_1$33 = ["title"];
+	var _hoisted_2$30 = { class: "pl-tag__name" };
 	// plugins/planner/src/ui/OptionTag.vue
 	var OptionTag_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "OptionTag",
@@ -23538,26 +23589,26 @@ img.ProseMirror-separator {
 					class: "pl-tag__dot",
 					style: (0, vue.normalizeStyle)({ background: color.value.dot }),
 					"aria-hidden": "true"
-				}, null, 4), (0, vue.createElementVNode)("span", _hoisted_2$28, (0, vue.toDisplayString)(__props.option.name), 1)], 12, _hoisted_1$31);
+				}, null, 4), (0, vue.createElementVNode)("span", _hoisted_2$30, (0, vue.toDisplayString)(__props.option.name), 1)], 12, _hoisted_1$33);
 			};
 		}
 	}), [["__scopeId", "data-v-5e67d769"]]);
 	// plugins/planner/src/values/OptionEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$30 = {
+	var _hoisted_1$32 = {
 		key: 0,
 		class: "pl-oe"
 	};
-	var _hoisted_2$27 = { class: "pl-oe__head" };
-	var _hoisted_3$24 = ["aria-label", "title"];
-	var _hoisted_4$24 = [
+	var _hoisted_2$29 = { class: "pl-oe__head" };
+	var _hoisted_3$26 = ["aria-label", "title"];
+	var _hoisted_4$25 = [
 		"value",
 		"aria-label",
 		"onKeydown"
 	];
-	var _hoisted_5$22 = { class: "pl-oe__colors" };
-	var _hoisted_6$19 = { class: "pl-oe__rows is-plain" };
-	var _hoisted_7$17 = ["disabled"];
-	var _hoisted_8$16 = ["disabled"];
+	var _hoisted_5$23 = { class: "pl-oe__colors" };
+	var _hoisted_6$20 = { class: "pl-oe__rows is-plain" };
+	var _hoisted_7$18 = ["disabled"];
+	var _hoisted_8$17 = ["disabled"];
 	var _hoisted_9$15 = {
 		key: 1,
 		class: "pl-oe"
@@ -23569,29 +23620,29 @@ img.ProseMirror-separator {
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_12$9 = [
+	var _hoisted_12$10 = [
 		"id",
 		"aria-label",
 		"aria-multiselectable"
 	];
-	var _hoisted_13$7 = [
+	var _hoisted_13$8 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_14$5 = { class: "pl-oe__tag" };
+	var _hoisted_14$6 = { class: "pl-oe__tag" };
 	var _hoisted_15$4 = [
 		"aria-label",
 		"title",
 		"onClick"
 	];
-	var _hoisted_16$3 = { class: "pl-oe__new" };
-	var _hoisted_17$3 = {
+	var _hoisted_16$4 = { class: "pl-oe__new" };
+	var _hoisted_17$4 = {
 		key: 0,
 		class: "pl-oe__note"
 	};
-	var _hoisted_18$2 = {
+	var _hoisted_18$3 = {
 		key: 0,
 		class: "pl-oe__foot"
 	};
@@ -23747,14 +23798,14 @@ img.ProseMirror-separator {
 				if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: "hold" });
 			}
 			return (_ctx, _cache) => {
-				return edited.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$30, [
-					(0, vue.createElementVNode)("div", _hoisted_2$27, [(0, vue.createElementVNode)("button", {
+				return edited.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$32, [
+					(0, vue.createElementVNode)("div", _hoisted_2$29, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-oe__icon",
 						"aria-label": (0, vue.unref)(strings$2).back,
 						title: (0, vue.unref)(strings$2).back,
 						onClick: stopEdit
-					}, [(0, vue.createVNode)(Icon_default, { name: "arrow-left" })], 8, _hoisted_3$24), (0, vue.createElementVNode)("input", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "arrow-left" })], 8, _hoisted_3$26), (0, vue.createElementVNode)("input", {
 						ref_key: "nameInput",
 						ref: nameInput,
 						class: "pl-oe__input",
@@ -23764,26 +23815,26 @@ img.ProseMirror-separator {
 						spellcheck: "false",
 						onInput: rename,
 						onKeydown: (0, vue.withKeys)((0, vue.withModifiers)(stopEdit, ["prevent"]), ["enter"])
-					}, null, 40, _hoisted_4$24)]),
-					(0, vue.createElementVNode)("div", _hoisted_5$22, [(0, vue.createVNode)(ColorPicker_default, {
+					}, null, 40, _hoisted_4$25)]),
+					(0, vue.createElementVNode)("div", _hoisted_5$23, [(0, vue.createVNode)(ColorPicker_default, {
 						"model-value": edited.value.color,
 						label: (0, vue.unref)(strings$2).color,
 						"onUpdate:modelValue": recolor,
 						onChange: _cache[0] || (_cache[0] = ($event) => (0, vue.unref)(store).flush())
 					}, null, 8, ["model-value", "label"])]),
-					(0, vue.createElementVNode)("div", _hoisted_6$19, [
+					(0, vue.createElementVNode)("div", _hoisted_6$20, [
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row",
 							disabled: editIndex.value <= 0,
 							onClick: _cache[1] || (_cache[1] = ($event) => moveOption(-1))
-						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-up" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveUp), 1)], 8, _hoisted_7$17),
+						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-up" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveUp), 1)], 8, _hoisted_7$18),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row",
 							disabled: editIndex.value >= __props.property.options.length - 1,
 							onClick: _cache[2] || (_cache[2] = ($event) => moveOption(1))
-						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-down" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveDown), 1)], 8, _hoisted_8$16),
+						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-down" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveDown), 1)], 8, _hoisted_8$17),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row is-danger",
@@ -23839,7 +23890,7 @@ img.ProseMirror-separator {
 							onPointermove: ($event) => active.value = i,
 							onClick: ($event) => pick(row)
 						}, [row.option ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
-							(0, vue.createElementVNode)("span", _hoisted_14$5, [(0, vue.createVNode)(OptionTag_default, { option: row.option }, null, 8, ["option"])]),
+							(0, vue.createElementVNode)("span", _hoisted_14$6, [(0, vue.createVNode)(OptionTag_default, { option: row.option }, null, 8, ["option"])]),
 							has(row.option) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 0,
 								name: "check",
@@ -23860,9 +23911,9 @@ img.ProseMirror-separator {
 						], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createVNode)(Icon_default, {
 							name: "plus",
 							class: "pl-oe__plus"
-						}), (0, vue.createElementVNode)("span", _hoisted_16$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).create(row.create ?? "")), 1)], 64))], 42, _hoisted_13$7);
-					}), 128)), !rows.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_17$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).noOptions), 1)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_12$9),
-					canClear.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18$2, [(0, vue.createElementVNode)("button", {
+						}), (0, vue.createElementVNode)("span", _hoisted_16$4, (0, vue.toDisplayString)((0, vue.unref)(strings$2).create(row.create ?? "")), 1)], 64))], 42, _hoisted_13$8);
+					}), 128)), !rows.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_17$4, (0, vue.toDisplayString)((0, vue.unref)(strings$2).noOptions), 1)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_12$10),
+					canClear.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18$3, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-oe__row",
 						onClick: clear
@@ -23871,6 +23922,259 @@ img.ProseMirror-separator {
 			};
 		}
 	}), [["__scopeId", "data-v-f177d8df"]]);
+	// plugins/planner/src/ui/people.ts
+	/** How a person looks and reads: the same colour on every computer, from their id, and their name as it is now. */
+	var HUES = NAMED_COLORS.filter((c) => c !== "neutral");
+	/** One of the named colours, the same for an id everywhere (FNV-1a of its code points): a rename keeps it. */
+	function personColor(id) {
+		let h = 2166136261;
+		for (const ch of id) {
+			h ^= ch.codePointAt(0);
+			h = Math.imul(h, 16777619) >>> 0;
+		}
+		return HUES[h % HUES.length];
+	}
+	/** The first letter (or other character) of the name, as a capital. */
+	function personInitial(name) {
+		return ([...name.trim()].find((ch) => /[\p{L}\p{N}]/u.test(ch)) ?? [...name.trim()][0] ?? "?").toLocaleUpperCase();
+	}
+	/** A person of a property, by id: the server's name for them, else the one the property wrote down. */
+	function personView(id, property, people) {
+		const live = people?.all.find((p) => p.id === id);
+		const name = personName(id, property, people);
+		return {
+			id,
+			name: name ?? "Unknown person",
+			former: !!people && !live?.active,
+			unknown: name === null,
+			you: !!people?.me && people.me === id
+		};
+	}
+	/** The ids to choose from: whoever is looking first, then the others who may be assigned, then any others given. */
+	function peopleRows(people, also = []) {
+		const active = (people?.all ?? []).filter((p) => p.active).map((p) => p.id);
+		const me = people?.me && active.includes(people.me) ? [people.me] : [];
+		return [.../* @__PURE__ */ new Set([
+			...me,
+			...active,
+			...also
+		])];
+	}
+	// plugins/planner/src/ui/PersonTag.vue?vue&type=script&setup=true&lang.ts
+	var _hoisted_1$31 = ["title"];
+	var _hoisted_2$28 = { class: "pl-person__name" };
+	var _hoisted_3$25 = {
+		key: 0,
+		class: "pl-person__you"
+	};
+	// plugins/planner/src/ui/PersonTag.vue
+	var PersonTag_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
+		__name: "PersonTag",
+		props: {
+			person: {},
+			youWord: {},
+			formerWord: {}
+		},
+		setup(__props) {
+			const props = __props;
+			const color = (0, vue.computed)(() => colorVar(props.person.former || props.person.unknown ? "neutral" : personColor(props.person.id)));
+			const title = (0, vue.computed)(() => [props.person.name, props.person.former && props.formerWord ? `· ${props.formerWord}` : ""].filter(Boolean).join(" "));
+			return (_ctx, _cache) => {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+					class: (0, vue.normalizeClass)(["pl-person", { "is-former": __props.person.former || __props.person.unknown }]),
+					title: title.value
+				}, [
+					(0, vue.createElementVNode)("span", {
+						class: "pl-person__avatar",
+						style: (0, vue.normalizeStyle)({
+							background: color.value.strong,
+							color: color.value.fg
+						}),
+						"aria-hidden": "true"
+					}, (0, vue.toDisplayString)((0, vue.unref)(personInitial)(__props.person.name)), 5),
+					(0, vue.createElementVNode)("span", _hoisted_2$28, (0, vue.toDisplayString)(__props.person.name), 1),
+					__props.person.you && __props.youWord ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$25, (0, vue.toDisplayString)(__props.youWord), 1)) : (0, vue.createCommentVNode)("v-if", true)
+				], 10, _hoisted_1$31);
+			};
+		}
+	}), [["__scopeId", "data-v-cd77ab33"]]);
+	// plugins/planner/src/values/PersonEditor.vue?vue&type=script&setup=true&lang.ts
+	var _hoisted_1$30 = { class: "pl-pp" };
+	var _hoisted_2$27 = { class: "pl-pp__head" };
+	var _hoisted_3$24 = [
+		"aria-controls",
+		"aria-activedescendant",
+		"aria-label",
+		"placeholder"
+	];
+	var _hoisted_4$24 = ["id", "aria-label"];
+	var _hoisted_5$22 = [
+		"id",
+		"aria-selected",
+		"onPointermove",
+		"onClick"
+	];
+	var _hoisted_6$19 = { class: "pl-pp__who" };
+	var _hoisted_7$17 = {
+		key: 0,
+		class: "pl-pp__note"
+	};
+	var _hoisted_8$16 = {
+		key: 0,
+		class: "pl-pp__foot"
+	};
+	// plugins/planner/src/values/PersonEditor.vue
+	var PersonEditor_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
+		__name: "PersonEditor",
+		props: {
+			collectionId: {},
+			property: {},
+			items: {},
+			set: { type: Function }
+		},
+		setup(__props) {
+			const props = __props;
+			const { store } = usePlanner();
+			const people = (0, vue.computed)(() => store.people(props.collectionId));
+			(0, vue.onMounted)(() => store.refreshPeople(props.collectionId));
+			const query = (0, vue.ref)("");
+			const active = (0, vue.ref)(0);
+			const input = (0, vue.ref)(null);
+			const list = (0, vue.ref)(null);
+			const namesOf = (item) => {
+				const v = valueOf(item, props.property);
+				return Array.isArray(v) ? v : [];
+			};
+			const counts = (0, vue.computed)(() => {
+				const out = /* @__PURE__ */ new Map();
+				for (const i of props.items) for (const n of namesOf(i)) out.set(n, (out.get(n) ?? 0) + 1);
+				return out;
+			});
+			const has = (name) => props.items.length > 0 && counts.value.get(name) === props.items.length;
+			const some = (name) => !has(name) && counts.value.has(name);
+			const all = (0, vue.computed)(() => peopleRows(people.value, [...counts.value.keys()]).map((id) => personView(id, props.property, people.value)));
+			const rows = (0, vue.computed)(() => {
+				const words = query.value.toLowerCase().split(/\s+/).filter(Boolean);
+				return all.value.filter((p) => words.every((w) => p.name.toLowerCase().includes(w))).map((p) => p.id);
+			});
+			const viewOf = (id) => all.value.find((p) => p.id === id);
+			const canClear = (0, vue.computed)(() => counts.value.size > 0);
+			const note = (0, vue.computed)(() => {
+				if (rows.value.length) return null;
+				if (query.value.trim()) return strings$2.noPeople;
+				return people.value ? strings$2.noPeopleYet : strings$2.noPeopleHere;
+			});
+			active.value = Math.max(0, all.value.findIndex((p) => has(p.id)));
+			(0, vue.nextTick)(reveal);
+			(0, vue.watch)(query, () => {
+				active.value = 0;
+			});
+			(0, vue.watch)(() => rows.value.length, (n) => {
+				active.value = Math.max(0, Math.min(active.value, n - 1));
+			});
+			const uid = `pl-people-${props.property.id}`;
+			const rowId = (i) => `${uid}-${i}`;
+			function reveal() {
+				list.value?.querySelector(".is-active")?.scrollIntoView({ block: "nearest" });
+			}
+			function move(by) {
+				const n = rows.value.length;
+				if (n) active.value = (active.value + by + n) % n;
+				(0, vue.nextTick)(reveal);
+			}
+			function toggle(name) {
+				if (!name || !props.items.length) return;
+				const remove = has(name);
+				props.set((item) => {
+					const now = namesOf(item);
+					const next = remove ? now.filter((n) => n !== name) : now.includes(name) ? now : [...now, name];
+					return next.length ? [...next] : null;
+				});
+				query.value = "";
+				input.value?.focus();
+			}
+			function clear() {
+				props.set(null);
+				input.value?.focus();
+			}
+			function onKey(e) {
+				if (e.isComposing) return;
+				if (e.key === "ArrowDown") move(1);
+				else if (e.key === "ArrowUp") move(-1);
+				else if (e.key === "Enter") toggle(rows.value[active.value]);
+				else if (e.key === "Backspace" && !query.value && props.items.length === 1) {
+					const last = namesOf(props.items[0]).at(-1);
+					if (!last) return;
+					props.set((item) => {
+						const next = namesOf(item).filter((n) => n !== last);
+						return next.length ? next : null;
+					});
+				} else return;
+				e.preventDefault();
+			}
+			return (_ctx, _cache) => {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$30, [
+					(0, vue.createElementVNode)("div", _hoisted_2$27, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+						ref_key: "input",
+						ref: input,
+						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => query.value = $event),
+						class: "pl-pp__input",
+						"data-autofocus": "",
+						role: "combobox",
+						"aria-expanded": "true",
+						"aria-autocomplete": "list",
+						"aria-controls": `${uid}-list`,
+						"aria-activedescendant": rows.value[active.value] !== void 0 ? rowId(active.value) : void 0,
+						"aria-label": __props.property.name,
+						placeholder: (0, vue.unref)(strings$2).findPerson,
+						spellcheck: "false",
+						autocomplete: "off",
+						onKeydown: onKey
+					}, null, 40, _hoisted_3$24), [[vue.vModelText, query.value]])]),
+					(0, vue.createElementVNode)("div", {
+						id: `${uid}-list`,
+						ref_key: "list",
+						ref: list,
+						class: "pl-pp__rows",
+						role: "listbox",
+						"aria-label": __props.property.name,
+						"aria-multiselectable": "true"
+					}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(rows.value, (name, i) => {
+						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+							id: rowId(i),
+							key: name,
+							class: (0, vue.normalizeClass)(["pl-pp__row", { "is-active": i === active.value }]),
+							role: "option",
+							"aria-selected": has(name),
+							onPointermove: ($event) => active.value = i,
+							onClick: ($event) => toggle(name)
+						}, [(0, vue.createElementVNode)("span", _hoisted_6$19, [(0, vue.createVNode)(PersonTag_default, {
+							person: viewOf(name),
+							"you-word": (0, vue.unref)(strings$2).you,
+							"former-word": (0, vue.unref)(strings$2).formerPerson
+						}, null, 8, [
+							"person",
+							"you-word",
+							"former-word"
+						])]), has(name) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
+							key: 0,
+							name: "check",
+							class: "pl-pp__check"
+						})) : some(name) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
+							key: 1,
+							name: "minus",
+							class: "pl-pp__check is-some"
+						})) : (0, vue.createCommentVNode)("v-if", true)], 42, _hoisted_5$22);
+					}), 128)), note.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_7$17, (0, vue.toDisplayString)(note.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_4$24),
+					canClear.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$16, [(0, vue.createElementVNode)("button", {
+						type: "button",
+						class: "pl-pp__row",
+						onClick: clear
+					}, [(0, vue.createVNode)(Icon_default, { name: "x" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).clear), 1)])])) : (0, vue.createCommentVNode)("v-if", true)
+				]);
+			};
+		}
+	}), [["__scopeId", "data-v-fb3eaf54"]]);
 	// plugins/planner/src/convert.ts
 	/** Changing a property's type: what becomes of its values, and the options that have to exist for them. */
 	var TRUE = /* @__PURE__ */ new Set([
@@ -23892,13 +24196,23 @@ img.ProseMirror-separator {
 		const n = Number(t);
 		return Number.isFinite(n) ? n : null;
 	}
-	/** Finds or adds options by name, whatever its case. */
+	/**
+	* Finds or adds options by name, whatever its case; and finds people by name: the server's (`people`) first, then those
+	* a property wrote down (`known`). People are never made up: a name nobody has is not a person.
+	*/
 	var OptionSet = class {
 		options;
 		byName;
-		constructor(existing) {
+		personByName = /* @__PURE__ */ new Map();
+		constructor(existing, people = null, known = {}) {
 			this.options = [...existing];
 			this.byName = new Map(existing.map((o) => [o.name.trim().toLowerCase(), o.id]));
+			for (const [id, name] of Object.entries(known)) this.personByName.set(name.trim().toLowerCase(), id);
+			for (const p of people?.all ?? []) this.personByName.set(p.name.trim().toLowerCase(), p.id);
+		}
+		/** The id of the person with this name, or null. */
+		personOf(name) {
+			return this.personByName.get(name.trim().toLowerCase()) ?? null;
 		}
 		idOf(name) {
 			const key = name.trim().toLowerCase();
@@ -23941,11 +24255,16 @@ img.ProseMirror-separator {
 				const names = t.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean);
 				return names.length ? [...new Set(names.map((n) => options.idOf(n)))] : null;
 			}
+			case "person": {
+				const ids = t.split(/[,;\n]/).map((s) => s.trim()).filter(Boolean).flatMap((n) => options.personOf(n) ?? []);
+				return ids.length ? [...new Set(ids)] : null;
+			}
 			default: return null;
 		}
 	}
-	function convertProperty(property, type, items) {
-		const options = new OptionSet(property.options);
+	/** `people`: the collection's, to find people by name when text becomes a person. */
+	function convertProperty(property, type, items, people = null) {
+		const options = new OptionSet(property.options, people, property.people);
 		const values = /* @__PURE__ */ new Map();
 		let lost = 0;
 		for (const item of items) {
@@ -23954,7 +24273,7 @@ img.ProseMirror-separator {
 				if (property.id in item.values) values.set(item.id, null);
 				continue;
 			}
-			const next = convertValue(value, property, type, options);
+			const next = convertValue(value, property, type, options, people);
 			if (next === null || next === false) lost++;
 			values.set(item.id, next);
 		}
@@ -23968,13 +24287,13 @@ img.ProseMirror-separator {
 			lost
 		};
 	}
-	function convertValue(value, from, type, options) {
+	function convertValue(value, from, type, options, people) {
 		if (type === "multiSelect" && from.type === "select") return [value];
 		if (type === "select" && from.type === "multiSelect") return value[0] ?? null;
-		if (type === "checkbox") return typeof value === "number" ? value !== 0 : parseValue(valueText(value, from), type, options);
+		if (type === "checkbox") return typeof value === "number" ? value !== 0 : parseValue(valueText(value, from, people), type, options);
 		if (type === "number" && typeof value === "boolean") return 1;
 		if (type === "date" && typeof value === "object" && !Array.isArray(value)) return value;
-		return parseValue(typeof value === "object" && !Array.isArray(value) ? formatDate(value) : valueText(value, from), type, options);
+		return parseValue(typeof value === "object" && !Array.isArray(value) ? formatDate(value) : valueText(value, from, people), type, options);
 	}
 	// plugins/planner/src/values/TextEditor.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$29 = { class: "pl-text" };
@@ -24152,6 +24471,7 @@ img.ProseMirror-separator {
 				switch (property.value?.type) {
 					case "select":
 					case "multiSelect": return "options";
+					case "person": return "people";
 					case "date": return "date";
 					case "text":
 					case "number":
@@ -24162,7 +24482,7 @@ img.ProseMirror-separator {
 			const width = (0, vue.computed)(() => {
 				if (kind.value === "date") return 256;
 				const w = props.anchor instanceof HTMLElement ? props.anchor.offsetWidth : 0;
-				return Math.min(Math.max(w, kind.value === "options" ? 248 : 260), 480);
+				return Math.min(Math.max(w, kind.value === "options" || kind.value === "people" ? 248 : 260), 480);
 			});
 			return (_ctx, _cache) => {
 				return property.value && kind.value && !gone.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
@@ -24184,13 +24504,23 @@ img.ProseMirror-separator {
 						"collection-id",
 						"property",
 						"items"
-					])) : kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createBlock)(DateEditor_default, {
+					])) : kind.value === "people" ? ((0, vue.openBlock)(), (0, vue.createBlock)(PersonEditor_default, {
 						key: 1,
+						"collection-id": __props.collectionId,
+						property: property.value,
+						items: items.value,
+						set
+					}, null, 8, [
+						"collection-id",
+						"property",
+						"items"
+					])) : kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createBlock)(DateEditor_default, {
+						key: 2,
 						value: commonDate.value,
 						onChange: set,
 						onDone: _cache[1] || (_cache[1] = ($event) => emit("close"))
 					}, null, 8, ["value"])) : ((0, vue.openBlock)(), (0, vue.createBlock)(TextEditor_default, {
-						key: 2,
+						key: 3,
 						ref_key: "text",
 						ref: text,
 						property: property.value,
@@ -24213,7 +24543,7 @@ img.ProseMirror-separator {
 	var _hoisted_2$25 = ["title"];
 	var _hoisted_3$22 = ["title"];
 	var _hoisted_4$22 = {
-		key: 4,
+		key: 5,
 		class: "pl-value pl-value--number"
 	};
 	var _hoisted_5$21 = ["title"];
@@ -24233,6 +24563,11 @@ img.ProseMirror-separator {
 			const options = (0, vue.computed)(() => {
 				const v = value.value;
 				return (props.property.type === "select" && typeof v === "string" ? [v] : Array.isArray(v) ? v : []).flatMap((id) => props.property.options.find((o) => o.id === id) ?? []);
+			});
+			const persons = (0, vue.computed)(() => {
+				if (props.property.type !== "person" || !Array.isArray(value.value)) return [];
+				const people = store.people(props.item.collectionId);
+				return value.value.map((id) => personView(id, props.property, people));
 			});
 			const date = (0, vue.computed)(() => {
 				const v = value.value;
@@ -24264,22 +24599,31 @@ img.ProseMirror-separator {
 						key: o.id,
 						option: o
 					}, null, 8, ["option"]);
-				}), 128))], 2)) : date.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+				}), 128))], 2)) : persons.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 					key: 2,
+					class: (0, vue.normalizeClass)(["pl-value pl-value--people", { "is-wrap": __props.wrap }])
+				}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(persons.value, (p) => {
+					return (0, vue.openBlock)(), (0, vue.createBlock)(PersonTag_default, {
+						key: p.id,
+						person: p,
+						"former-word": (0, vue.unref)(strings$2).formerPerson
+					}, null, 8, ["person", "former-word"]);
+				}), 128))], 2)) : date.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+					key: 3,
 					class: "pl-value pl-value--date",
 					title: (0, vue.unref)(fullDate)(date.value.start)
 				}, (0, vue.toDisplayString)((0, vue.unref)(dateText)(date.value, (0, vue.unref)(store).now.value)), 9, _hoisted_2$25)) : href.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
-					key: 3,
+					key: 4,
 					class: "pl-value pl-value--url",
 					title: `${(0, vue.unref)(strings$2).openLink}: ${href.value}`,
 					onClick: (0, vue.withModifiers)(open, ["stop", "prevent"]),
 					onPointerdown: _cache[0] || (_cache[0] = (0, vue.withModifiers)(() => {}, ["stop"]))
 				}, (0, vue.toDisplayString)(shortUrl.value), 41, _hoisted_3$22)) : __props.property.type === "number" && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$22, (0, vue.toDisplayString)(value.value), 1)) : (__props.property.type === "text" || __props.property.type === "url") && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
-					key: 5,
+					key: 6,
 					class: (0, vue.normalizeClass)(["pl-value", { "is-wrap": __props.wrap }]),
 					title: __props.property.type === "url" ? (0, vue.unref)(strings$2).badLink : __props.wrap ? void 0 : String(value.value)
 				}, (0, vue.toDisplayString)(value.value), 11, _hoisted_5$21)) : raw.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
-					key: 6,
+					key: 7,
 					class: "pl-value pl-value--raw",
 					title: (0, vue.unref)(strings$2).unsupported
 				}, (0, vue.toDisplayString)(raw.value), 9, _hoisted_6$18)) : (0, vue.createCommentVNode)("v-if", true);
@@ -24478,12 +24822,12 @@ img.ProseMirror-separator {
 		class: "pl-page__note",
 		role: "status"
 	};
-	var _hoisted_12$8 = { class: "pl-page__sub" };
-	var _hoisted_13$6 = {
+	var _hoisted_12$9 = { class: "pl-page__sub" };
+	var _hoisted_13$7 = {
 		key: 1,
 		class: "pl-page__sub"
 	};
-	var _hoisted_14$4 = { class: "pl-page__sub" };
+	var _hoisted_14$5 = { class: "pl-page__sub" };
 	// plugins/planner/src/item/ItemPage.vue
 	var ItemPage_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ItemPage",
@@ -24727,14 +25071,14 @@ img.ProseMirror-separator {
 					]))
 				])], 512)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_11$9, [state.value.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
 					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loadFailed), 1),
-					(0, vue.createElementVNode)("p", _hoisted_12$8, (0, vue.toDisplayString)(state.value.error), 1),
+					(0, vue.createElementVNode)("p", _hoisted_12$9, (0, vue.toDisplayString)(state.value.error), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[6] || (_cache[6] = ($event) => (0, vue.unref)(store).loadItems(__props.collection.id)) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).retry), 1)]),
 						_: 1
 					}))
-				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_13$6, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
+				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_13$7, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
 					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).gone((0, vue.unref)(itemWord)(__props.collection, 1))), 1),
-					(0, vue.createElementVNode)("p", _hoisted_14$4, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
+					(0, vue.createElementVNode)("p", _hoisted_14$5, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[7] || (_cache[7] = ($event) => emit("close")) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).backToCollection), 1)]),
 						_: 1
@@ -24744,11 +25088,11 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-8c609c4b"]]);
 	/** Every word of the search is somewhere in the title, the values as text, or the body. */
-	function matchesSearch(collection, item, search) {
+	function matchesSearch(collection, item, search, people = null) {
 		const words = search.toLowerCase().split(/\s+/).filter(Boolean);
 		if (!words.length) return true;
 		const parts = [item.title];
-		for (const p of collection.properties) if (p.type !== "checkbox") parts.push(valueText(valueOf(item, p), p));
+		for (const p of collection.properties) if (p.type !== "checkbox") parts.push(valueText(valueOf(item, p), p, people));
 		parts.push(item.body);
 		const text = parts.join("\n").toLowerCase();
 		return words.every((w) => text.includes(w));
@@ -24801,8 +25145,10 @@ img.ProseMirror-separator {
 			default: return true;
 		}
 	}
+	/** A person filter's names, with `ME` as the person looking. */
+	var wantedPeople = (value, me) => (Array.isArray(value) ? value : []).flatMap((n) => n === "@me" ? me ? [me] : [] : [n]);
 	/** An unfinished condition (no value yet, or about a property that is gone) matches everything. */
-	function matchesCondition(collection, item, c, now) {
+	function matchesCondition(collection, item, c, now, me = null) {
 		if (!isActive(c)) return true;
 		if (c.propertyId === "title") return matchesText(item.title, c);
 		const p = propertyOf(collection, c.propertyId);
@@ -24815,7 +25161,7 @@ img.ProseMirror-separator {
 		if (typeof v === "boolean") return v === c.value;
 		if (typeof v === "number") return matchesNumber(v, c);
 		if (isDate(v)) return matchesDate(v, c, localDate(now));
-		const wanted = Array.isArray(c.value) ? c.value : [];
+		const wanted = p.type === "person" ? wantedPeople(c.value, me) : Array.isArray(c.value) ? c.value : [];
 		const has = (Array.isArray(v) ? v : [v]).some((id) => wanted.includes(id));
 		return c.operator === "is" || c.operator === "contains" ? has : !has;
 	}
@@ -24824,10 +25170,10 @@ img.ProseMirror-separator {
 		if (isUnary(c.operator)) return true;
 		return c.value !== null && c.value !== "" && !(Array.isArray(c.value) && !c.value.length);
 	}
-	function matchesFilter(collection, item, filter, now) {
+	function matchesFilter(collection, item, filter, now, me = null) {
 		const active = filter.conditions.filter((c) => isActive(c) && (c.propertyId === "title" || propertyOf(collection, c.propertyId)));
 		if (!active.length) return true;
-		const test = (c) => matchesCondition(collection, item, c, now);
+		const test = (c) => matchesCondition(collection, item, c, now, me);
 		return filter.match === "or" ? active.some(test) : active.every(test);
 	}
 	var text = new Intl.Collator(void 0, {
@@ -24930,7 +25276,9 @@ img.ProseMirror-separator {
 	function runQuery(collection, items, view, options = {}) {
 		const now = options.now ?? Date.now();
 		const search = options.search?.trim() ?? "";
-		const sorted = sortItems(collection, items.filter((i) => matchesFilter(collection, i, view.filter, now) && matchesSearch(collection, i, search)), view.sorts);
+		const people = options.people ?? null;
+		const me = people?.me ?? null;
+		const sorted = sortItems(collection, items.filter((i) => matchesFilter(collection, i, view.filter, now, me) && matchesSearch(collection, i, search, people)), view.sorts);
 		const groupBy = view.groupBy ? propertyOf(collection, view.groupBy) : null;
 		return {
 			items: sorted,
@@ -24944,7 +25292,7 @@ img.ProseMirror-separator {
 	* is added to, and what the filter plainly asks for (conditions that all must hold and name one value). A default
 	* the filter would hide is left out.
 	*/
-	function defaultValues(collection, view, group, now = Date.now()) {
+	function defaultValues(collection, view, group, now = Date.now(), me = null) {
 		const out = {};
 		for (const p of collection.properties) {
 			if (p.type !== "select" || !p.defaultOption) continue;
@@ -24970,7 +25318,10 @@ img.ProseMirror-separator {
 			if (c.operator === "today") out[p.id] = { start: localDate(now) };
 			else if (c.operator === "is" && p.type === "select") out[p.id] = c.value[0];
 			else if (c.operator === "contains" && p.type === "multiSelect") out[p.id] = [c.value[0]];
-			else if (c.operator === "is" && p.type === "checkbox") out[p.id] = c.value;
+			else if (c.operator === "contains" && p.type === "person") {
+				const [first] = wantedPeople(c.value, me);
+				if (first) out[p.id] = [first];
+			} else if (c.operator === "is" && p.type === "checkbox") out[p.id] = c.value;
 			else if (c.operator === "is" && p.type === "date") out[p.id] = { start: c.value };
 			else if (c.operator === "is" && p.type === "text") out[p.id] = c.value;
 			else if (c.operator === "eq") out[p.id] = c.value;
@@ -25230,6 +25581,10 @@ img.ProseMirror-separator {
 		dayCount: (n) => n === 1 ? "day" : `${n} days`,
 		findOption: "Find an option…",
 		noOptions: "This property has no options yet.",
+		findPerson: "Find a person…",
+		me: "Me",
+		formerPerson: "Not in the space any more",
+		noPeople: "Nobody to choose: people come from a planner server.",
 		sortBy: "Sort by",
 		addSort: "Add sort",
 		ascending: "Ascending",
@@ -25862,18 +26217,18 @@ img.ProseMirror-separator {
 		class: "pl-set__line"
 	};
 	var _hoisted_11$8 = { class: "pl-set__label" };
-	var _hoisted_12$7 = {
+	var _hoisted_12$8 = {
 		key: 1,
 		class: "pl-set__part"
 	};
-	var _hoisted_13$5 = { class: "pl-set__line" };
-	var _hoisted_14$3 = { class: "pl-set__label" };
+	var _hoisted_13$6 = { class: "pl-set__line" };
+	var _hoisted_14$4 = { class: "pl-set__label" };
 	var _hoisted_15$3 = ["disabled"];
-	var _hoisted_16$2 = { class: "pl-set__options" };
-	var _hoisted_17$2 = { class: "pl-set__part" };
-	var _hoisted_18$1 = { class: "pl-set__line" };
-	var _hoisted_19$1 = { class: "pl-set__label" };
-	var _hoisted_20$1 = {
+	var _hoisted_16$3 = { class: "pl-set__options" };
+	var _hoisted_17$3 = { class: "pl-set__part" };
+	var _hoisted_18$2 = { class: "pl-set__line" };
+	var _hoisted_19$2 = { class: "pl-set__label" };
+	var _hoisted_20$2 = {
 		key: 0,
 		class: "pl-panel__note pl-set__none"
 	};
@@ -26096,27 +26451,27 @@ img.ProseMirror-separator {
 							modelValue: where.value,
 							"onUpdate:modelValue": _cache[7] || (_cache[7] = ($event) => where.value = $event)
 						}, null, 8, ["modelValue"])])) : (0, vue.createCommentVNode)("v-if", true),
-						status.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_12$7, [(0, vue.createElementVNode)("div", _hoisted_13$5, [(0, vue.createElementVNode)("h3", _hoisted_14$3, (0, vue.toDisplayString)((0, vue.unref)(shell).heading((0, vue.unref)(optionWords)(status.value).many)), 1), (0, vue.createElementVNode)("button", {
+						status.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_12$8, [(0, vue.createElementVNode)("div", _hoisted_13$6, [(0, vue.createElementVNode)("h3", _hoisted_14$4, (0, vue.toDisplayString)((0, vue.unref)(shell).heading((0, vue.unref)(optionWords)(status.value).many)), 1), (0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-small",
 							disabled: readonly.value,
 							onClick: _cache[8] || (_cache[8] = ($event) => edit(status.value.id))
-						}, [(0, vue.createVNode)(Icon_default, { name: "pencil" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).editOptions), 1)], 8, _hoisted_15$3)]), (0, vue.createElementVNode)("p", _hoisted_16$2, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(status.value.options, (o) => {
+						}, [(0, vue.createVNode)(Icon_default, { name: "pencil" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).editOptions), 1)], 8, _hoisted_15$3)]), (0, vue.createElementVNode)("p", _hoisted_16$3, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(status.value.options, (o) => {
 							return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 								key: o.id,
 								class: "pl-set__option",
 								style: (0, vue.normalizeStyle)({ color: (0, vue.unref)(colorVar)(o.color).fg })
 							}, [(0, vue.createElementVNode)("i", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(colorVar)(o.color).dot }) }, null, 4), (0, vue.createTextVNode)((0, vue.toDisplayString)(o.name), 1)], 4);
 						}), 128))])])) : (0, vue.createCommentVNode)("v-if", true),
-						(0, vue.createElementVNode)("section", _hoisted_17$2, [
-							(0, vue.createElementVNode)("div", _hoisted_18$1, [(0, vue.createElementVNode)("h3", _hoisted_19$1, (0, vue.toDisplayString)((0, vue.unref)(shell).properties), 1), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+						(0, vue.createElementVNode)("section", _hoisted_17$3, [
+							(0, vue.createElementVNode)("div", _hoisted_18$2, [(0, vue.createElementVNode)("h3", _hoisted_19$2, (0, vue.toDisplayString)((0, vue.unref)(shell).properties), 1), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 								key: 0,
 								type: "button",
 								class: "pl-small",
 								"aria-haspopup": "dialog",
 								onClick: _cache[9] || (_cache[9] = ($event) => addAt.value = $event.currentTarget)
 							}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).addProperty), 1)])) : (0, vue.createCommentVNode)("v-if", true)]),
-							!properties.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_20$1, (0, vue.toDisplayString)((0, vue.unref)(shell).noProperties), 1)) : (0, vue.createCommentVNode)("v-if", true),
+							!properties.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_20$2, (0, vue.toDisplayString)((0, vue.unref)(shell).noProperties), 1)) : (0, vue.createCommentVNode)("v-if", true),
 							(0, vue.createElementVNode)("div", {
 								ref_key: "box",
 								ref: box
@@ -26216,6 +26571,12 @@ img.ProseMirror-separator {
 					defaultFirst: true
 				},
 				{
+					key: "assignee",
+					name: t.assignee,
+					type: "person",
+					withPeople: true
+				},
+				{
 					key: "priority",
 					name: t.priority,
 					type: "select",
@@ -26235,12 +26596,17 @@ img.ProseMirror-separator {
 				name: t.board,
 				type: "board",
 				groupBy: "status",
-				show: ["priority", "due"]
+				show: [
+					"priority",
+					"due",
+					"assignee"
+				]
 			}, {
 				name: t.table,
 				type: "table",
 				show: [
 					"status",
+					"assignee",
 					"priority",
 					"due"
 				]
@@ -26273,6 +26639,12 @@ img.ProseMirror-separator {
 					]
 				},
 				{
+					key: "assignee",
+					name: t.assignee,
+					type: "person",
+					withPeople: true
+				},
+				{
 					key: "link",
 					name: t.link,
 					type: "url"
@@ -26282,13 +26654,14 @@ img.ProseMirror-separator {
 				name: t.board,
 				type: "board",
 				groupBy: "status",
-				show: ["severity"]
+				show: ["severity", "assignee"]
 			}, {
 				name: t.table,
 				type: "table",
 				show: [
 					"status",
 					"severity",
+					"assignee",
 					"link"
 				],
 				sorts: [["severity", "asc"]]
@@ -26388,9 +26761,19 @@ img.ProseMirror-separator {
 			cardPreview: v.cardPreview ?? "body"
 		};
 	}
-	/** The stored properties and views of a new collection, with ids of its own. */
-	function templateData(id) {
-		const spec = SPECS[id];
+	/** The stored properties and views of a new collection, with ids of its own. `people`: it has people to assign. */
+	function templateData(id, options = {}) {
+		const all = SPECS[id];
+		const kept = all.properties.filter((p) => options.people || !p.withPeople);
+		const keys = new Set(kept.map((p) => p.key));
+		const spec = {
+			...all,
+			properties: kept,
+			views: all.views.map((v) => ({
+				...v,
+				show: v.show.filter((k) => k === "title" || keys.has(k))
+			}))
+		};
 		const ids = new Map(spec.properties.map((p) => [p.key, newId()]));
 		const idOf = (key) => key === "title" ? TITLE : ids.get(key);
 		const propertyKeys = spread(spec.properties.length);
@@ -27062,13 +27445,14 @@ img.ProseMirror-separator {
 	/** Filters and sorts in words, and changing them. */
 	var propertyName = (c, id) => id === "title" ? shell.title : propertyOf(c, id)?.name || shell.unnamed;
 	var operatorText = (o) => o === "nextDays" || o === "pastDays" ? shell.daysAre[o] : strings$5.operators[o];
-	/** A condition's value in words; '' while it has none. */
-	function conditionText(c, condition) {
+	/** A condition's value in words; '' while it has none. `people`: the collection's, for names as they are now. */
+	function conditionText(c, condition, people = null) {
 		const { propertyId, operator, value } = condition;
 		const property = propertyOf(c, propertyId);
 		switch (conditionValueKind(property?.type ?? "title", operator)) {
 			case "none": return "";
 			case "options": return (Array.isArray(value) ? value : []).map((id) => property?.options.find((o) => o.id === id)?.name ?? "").filter(Boolean).join(", ");
+			case "people": return (Array.isArray(value) ? value : []).map((id) => id === "@me" ? shell.me : (property && personName(id, property, people)) ?? "Unknown person").join(", ");
 			case "checkbox": return value === null ? "" : value ? strings$5.checked.toLowerCase() : strings$5.unchecked.toLowerCase();
 			case "date": return typeof value === "string" ? dateText({ start: value.slice(0, 10) }, Date.now()) : "";
 			case "number":
@@ -27122,16 +27506,25 @@ img.ProseMirror-separator {
 	};
 	var _hoisted_7$12 = { class: "pl-cond__option" };
 	var _hoisted_8$11 = {
-		key: 3,
+		key: 0,
+		class: "pl-panel__note"
+	};
+	var _hoisted_9$10 = { class: "pl-cond__option" };
+	var _hoisted_10$9 = {
+		key: 0,
+		class: "pl-cond__me"
+	};
+	var _hoisted_11$7 = {
+		key: 4,
 		class: "pl-cond__field"
 	};
-	var _hoisted_9$10 = ["value", "aria-label"];
-	var _hoisted_10$9 = [
+	var _hoisted_12$7 = ["value", "aria-label"];
+	var _hoisted_13$5 = [
 		"value",
 		"placeholder",
 		"aria-label"
 	];
-	var _hoisted_11$7 = [
+	var _hoisted_14$3 = [
 		"value",
 		"placeholder",
 		"aria-label"
@@ -27172,6 +27565,18 @@ img.ProseMirror-separator {
 				checked: chosen.value.includes(o.id)
 			})));
 			const optionOf = (id) => property.value.options.find((o) => o.id === id);
+			/** Me first: a view that shows "my" items shows each person theirs. Then the people, and any named that are not now. */
+			const people = (0, vue.computed)(() => kind.value === "people" ? store.people(props.collection.id) : null);
+			const persons = (0, vue.computed)(() => [...people.value?.me ? [{
+				id: "@me",
+				label: shell.me,
+				checked: chosen.value.includes("@me")
+			}] : [], ...peopleRows(people.value, chosen.value.filter((n) => n !== "@me")).map((id) => ({
+				id,
+				label: personView(id, property.value, people.value).name,
+				checked: chosen.value.includes(id)
+			}))]);
+			const personOf = (id) => personView(id, property.value, people.value);
 			const checks = (0, vue.computed)(() => [{
 				id: "true",
 				label: strings$5.checked,
@@ -27250,13 +27655,34 @@ img.ProseMirror-separator {
 					"label",
 					"placeholder",
 					"search"
+				]))], 64)) : kind.value === "people" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [!persons.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_8$11, (0, vue.toDisplayString)((0, vue.unref)(shell).noPeople), 1)) : ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
+					key: 1,
+					rows: persons.value,
+					label: (0, vue.unref)(shell).value,
+					placeholder: (0, vue.unref)(shell).findPerson,
+					search: persons.value.length > 7,
+					"max-height": 260,
+					multi: "",
+					onPick: toggle
+				}, {
+					default: (0, vue.withCtx)(({ row }) => [(0, vue.createElementVNode)("span", _hoisted_9$10, [row.id === (0, vue.unref)("@me") ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$9, [(0, vue.createVNode)(Icon_default, { name: "circle-user" }), (0, vue.createTextVNode)((0, vue.toDisplayString)(row.label), 1)])) : ((0, vue.openBlock)(), (0, vue.createBlock)(PersonTag_default, {
+						key: 1,
+						person: personOf(row.id),
+						"former-word": (0, vue.unref)(shell).formerPerson
+					}, null, 8, ["person", "former-word"]))])]),
+					_: 1
+				}, 8, [
+					"rows",
+					"label",
+					"placeholder",
+					"search"
 				]))], 64)) : kind.value === "checkbox" ? ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
-					key: 2,
+					key: 3,
 					rows: checks.value,
 					label: (0, vue.unref)(shell).value,
 					search: false,
 					onPick: _cache[2] || (_cache[2] = (id) => emit("change", { value: id === "true" }))
-				}, null, 8, ["rows", "label"])) : kind.value !== "none" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$11, [kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 8, ["rows", "label"])) : kind.value !== "none" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_11$7, [kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 0,
 					ref_key: "field",
 					ref: field,
@@ -27267,7 +27693,7 @@ img.ProseMirror-separator {
 					"aria-label": (0, vue.unref)(shell).value,
 					onInput: _cache[3] || (_cache[3] = ($event) => setDate($event.target.value)),
 					onKeydown: _cache[4] || (_cache[4] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_9$10)) : kind.value === "number" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 40, _hoisted_12$7)) : kind.value === "number" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 1,
 					ref_key: "field",
 					ref: field,
@@ -27280,7 +27706,7 @@ img.ProseMirror-separator {
 					"aria-label": type.value === "number" ? (0, vue.unref)(shell).value : (0, vue.unref)(shell).days,
 					onInput: _cache[5] || (_cache[5] = ($event) => setNumber($event.target.value)),
 					onKeydown: _cache[6] || (_cache[6] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_10$9)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 40, _hoisted_13$5)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 2,
 					ref_key: "field",
 					ref: field,
@@ -27294,7 +27720,7 @@ img.ProseMirror-separator {
 					spellcheck: "false",
 					onInput: _cache[7] || (_cache[7] = ($event) => setText($event.target.value)),
 					onKeydown: _cache[8] || (_cache[8] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_11$7)), kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+				}, null, 40, _hoisted_14$3)), kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 					key: 3,
 					type: "button",
 					class: "pl-small",
@@ -27552,14 +27978,14 @@ img.ProseMirror-separator {
 							disabled: __props.readonly,
 							"aria-haspopup": "dialog",
 							"aria-expanded": editing.value?.id === c.id,
-							title: `${(0, vue.unref)(shell).editFilter}: ${(0, vue.unref)(propertyName)(__props.collection, c.propertyId)} ${(0, vue.unref)(operatorText)(c.operator)} ${(0, vue.unref)(conditionText)(__props.collection, c)}`,
+							title: `${(0, vue.unref)(shell).editFilter}: ${(0, vue.unref)(propertyName)(__props.collection, c.propertyId)} ${(0, vue.unref)(operatorText)(c.operator)} ${(0, vue.unref)(conditionText)(__props.collection, c, (0, vue.unref)(store).people(__props.collection.id))}`,
 							onClick: ($event) => edit(c.id),
 							onKeydown: ($event) => onDelete($event, () => !__props.readonly && remove(c.id))
 						}, [
 							(0, vue.createVNode)(PropertyIcon_default, { type: c.propertyId === (0, vue.unref)("title") ? "text" : (0, vue.unref)(propertyOf)(__props.collection, c.propertyId)?.type ?? "text" }, null, 8, ["type"]),
 							(0, vue.createElementVNode)("span", _hoisted_3$12, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, c.propertyId)), 1),
 							(0, vue.createElementVNode)("span", _hoisted_4$12, (0, vue.toDisplayString)((0, vue.unref)(operatorText)(c.operator)), 1),
-							(0, vue.unref)(conditionText)(__props.collection, c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_5$12, (0, vue.toDisplayString)((0, vue.unref)(conditionText)(__props.collection, c)), 1)) : !(0, vue.unref)(isActive)(c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$10, "…")) : (0, vue.createCommentVNode)("v-if", true)
+							(0, vue.unref)(conditionText)(__props.collection, c, (0, vue.unref)(store).people(__props.collection.id)) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_5$12, (0, vue.toDisplayString)((0, vue.unref)(conditionText)(__props.collection, c, (0, vue.unref)(store).people(__props.collection.id))), 1)) : !(0, vue.unref)(isActive)(c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$10, "…")) : (0, vue.createCommentVNode)("v-if", true)
 						], 40, _hoisted_2$13), !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 							key: 0,
 							type: "button",
@@ -29818,11 +30244,11 @@ img.ProseMirror-separator {
 		key: 0,
 		class: "pl-ghost__count"
 	};
-	var _hoisted_16$1 = {
+	var _hoisted_16$2 = {
 		key: 1,
 		class: "pl-ghost__head"
 	};
-	var _hoisted_17$1 = { class: "pl-board__count" };
+	var _hoisted_17$2 = { class: "pl-board__count" };
 	// plugins/planner/src/views/board/BoardView.vue
 	var BoardView_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "BoardView",
@@ -30761,7 +31187,7 @@ img.ProseMirror-separator {
 						"collection",
 						"view",
 						"item"
-					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$2, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 6)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$1, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$1, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
+					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$2, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 6)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$2, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$2, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
 				]));
 			};
 		}
@@ -31006,7 +31432,7 @@ img.ProseMirror-separator {
 	/**
 	* What pasting into these items and fields does, from their first on. A single row goes into every item given.
 	*/
-	function planPaste(cells, items, fields) {
+	function planPaste(cells, items, fields, people = null) {
 		const changes = /* @__PURE__ */ new Map();
 		const sets = /* @__PURE__ */ new Map();
 		let skipped = 0;
@@ -31014,7 +31440,7 @@ img.ProseMirror-separator {
 			if (isReadonly(p)) return void 0;
 			if (!cell.trim()) return p.type === "checkbox" ? false : null;
 			let set = sets.get(p.id);
-			if (!set) sets.set(p.id, set = new OptionSet(p.options));
+			if (!set) sets.set(p.id, set = new OptionSet(p.options, people, p.people));
 			const value = parseValue(cell, p.type, set);
 			return value === null ? void 0 : value;
 		};
@@ -31237,22 +31663,22 @@ img.ProseMirror-separator {
 		"title",
 		"onClick"
 	];
-	var _hoisted_16 = [
+	var _hoisted_16$1 = [
 		"disabled",
 		"aria-checked",
 		"aria-label",
 		"onClick"
 	];
-	var _hoisted_17 = {
+	var _hoisted_17$1 = {
 		key: 3,
 		class: "pl-td__text"
 	};
-	var _hoisted_18 = {
+	var _hoisted_18$1 = {
 		key: 4,
 		class: "pl-td__value"
 	};
-	var _hoisted_19 = ["aria-rowindex"];
-	var _hoisted_20 = [
+	var _hoisted_19$1 = ["aria-rowindex"];
+	var _hoisted_20$1 = [
 		"id",
 		"aria-colspan",
 		"aria-expanded",
@@ -31311,6 +31737,7 @@ img.ProseMirror-separator {
 				number: 110,
 				select: 140,
 				multiSelect: 180,
+				person: 160,
 				date: 150,
 				checkbox: 96,
 				url: 180,
@@ -31883,7 +32310,7 @@ img.ProseMirror-separator {
 				e.preventDefault();
 				const cells = parseTsv(text);
 				const at = currentIndex();
-				const { changes, options, skipped } = planPaste(cells, cells.length === 1 ? selection.value.has(line.item.id) ? selectedItems.value : [line.item] : lines.value.slice(at).flatMap((l) => l.kind === "item" ? [l.item] : []).slice(0, cells.length), cols.value.slice(colIndex.value.get(activeCol.value.id)).map((c) => c.field));
+				const { changes, options, skipped } = planPaste(cells, cells.length === 1 ? selection.value.has(line.item.id) ? selectedItems.value : [line.item] : lines.value.slice(at).flatMap((l) => l.kind === "item" ? [l.item] : []).slice(0, cells.length), cols.value.slice(colIndex.value.get(activeCol.value.id)).map((c) => c.field), store.people(props.collection.id));
 				store.updateEach(props.collection.id, changes, options);
 				if (skipped) mango.ui.toast({
 					title: strings.notPasted(skipped),
@@ -32301,7 +32728,7 @@ img.ProseMirror-separator {
 								}, [(0, vue.createElementVNode)("span", { class: (0, vue.normalizeClass)(["pl-box", { "is-on": (0, vue.unref)(valueOf)(line.item, c.field) === true }]) }, [(0, vue.unref)(valueOf)(line.item, c.field) === true ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 									key: 0,
 									name: "check"
-								})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_16)) : c.field.type === "unsupported" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_17, (0, vue.toDisplayString)((0, vue.unref)(valueText)((0, vue.unref)(valueOf)(line.item, c.field), c.field)), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18, [(0, vue.createVNode)(ValueView_default, {
+								})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_16$1)) : c.field.type === "unsupported" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_17$1, (0, vue.toDisplayString)((0, vue.unref)(valueText)((0, vue.unref)(valueOf)(line.item, c.field), c.field)), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18$1, [(0, vue.createVNode)(ValueView_default, {
 									property: c.field,
 									item: line.item
 								}, null, 8, ["property", "item"])]))], 46, _hoisted_13$1);
@@ -32349,7 +32776,7 @@ img.ProseMirror-separator {
 								}),
 								(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).newItem(wordOf(1))), 1),
 								isEmpty.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_24, (0, vue.toDisplayString)((0, vue.unref)(strings).empty(wordOf(2))), 1)) : (0, vue.createCommentVNode)("v-if", true)
-							], 64))], 42, _hoisted_20)], 14, _hoisted_19))], 64);
+							], 64))], 42, _hoisted_20$1)], 14, _hoisted_19$1))], 64);
 						}), 128)), rowDrag.value?.drop ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							key: 0,
 							class: "pl-dropline",
@@ -32543,7 +32970,8 @@ img.ProseMirror-separator {
 				const now = v.filter.conditions.some((x) => DAYS.has(x.operator)) ? props.store.now.value : void 0;
 				return runQuery(c, list.value.items, v, {
 					search: applied.value,
-					now
+					now,
+					people: props.store.people(c.id)
 				});
 			});
 			const filtering = (0, vue.computed)(() => !!view.value?.filter.conditions.some(isActive));
@@ -32906,6 +33334,30 @@ img.ProseMirror-separator {
 			else if (field === "data") this.data.push(value);
 		}
 	};
+	/** A person as the server sends them, checked; null when it is not one. */
+	function personOf(v) {
+		if (!isObject(v) || !isPersonId(v.id) || !isPersonName(v.name)) return null;
+		return {
+			id: v.id,
+			name: v.name,
+			active: v.active !== false
+		};
+	}
+	/** The answer of `GET /v1/people` (and `POST /v1/me`), checked. */
+	function peopleOf(answer, me) {
+		const a = isObject(answer) ? answer : {};
+		const seen = /* @__PURE__ */ new Set();
+		const all = (Array.isArray(a.people) ? a.people : []).flatMap((v) => {
+			const p = personOf(v);
+			if (!p || seen.has(p.id)) return [];
+			seen.add(p.id);
+			return [p];
+		});
+		return {
+			me: personOf(a.me)?.id ?? me,
+			all
+		};
+	}
 	/** Asks the server who it is and what this token may do. Throws a `SourceError` otherwise. */
 	async function hello(config, fetcher = globalThis.fetch, timeoutMs = 15 * SECOND) {
 		return checkHello(await request(config, fetcher, timeoutMs, "GET", "/v1/hello"));
@@ -32923,6 +33375,7 @@ img.ProseMirror-separator {
 				name: typeof space.name === "string" && space.name ? space.name : space.id
 			},
 			role: a.role === "write" ? "write" : "read",
+			me: personOf(a.me),
 			seq: typeof a.seq === "number" ? a.seq : 0
 		};
 	}
@@ -32976,6 +33429,10 @@ img.ProseMirror-separator {
 		handlers = /* @__PURE__ */ new Set();
 		resyncs = /* @__PURE__ */ new Set();
 		statusHandlers = /* @__PURE__ */ new Set();
+		peopleHandlers = /* @__PURE__ */ new Set();
+		/** Who may be assigned, as last heard; null until the stream said who this token is. */
+		people = null;
+		peopleAsked = null;
 		/** The last `seq` heard on the stream: where it goes on after a lost connection. */
 		seq = 0;
 		/** Read before the stream said where the space stands: what it missed in between is asked for then. */
@@ -33071,6 +33528,46 @@ img.ProseMirror-separator {
 		status() {
 			return this.current;
 		}
+		peopleOf(_collectionId) {
+			return this.people;
+		}
+		/** Who this token was when last connected, until the stream says again. Only the id: a name may have changed since. */
+		knownAs(me) {
+			if (!this.people && me) this.people = {
+				me,
+				all: []
+			};
+		}
+		refreshPeople(_collectionId) {
+			if (!this.peopleAsked && !this.disposed && this.people) this.peopleAsked = this.askPeople().finally(() => {
+				this.peopleAsked = null;
+			});
+		}
+		/** Gives this token's person a new name. Throws a `SourceError` with what to tell the user. */
+		async rename(name) {
+			const answer = await this.call("POST", "/v1/me", { name });
+			this.setPeople(peopleOf(answer, this.people?.me ?? null));
+		}
+		onPeople(handler) {
+			this.peopleHandlers.add(handler);
+			return () => {
+				this.peopleHandlers.delete(handler);
+			};
+		}
+		setPeople(people) {
+			const p = this.people;
+			if (p === people || p && people && JSON.stringify(p) === JSON.stringify(people)) return;
+			this.people = people;
+			for (const h of [...this.peopleHandlers]) h();
+		}
+		async askPeople() {
+			try {
+				const answer = await request(this.config, this.fetcher, this.timeoutMs, "GET", "/v1/people");
+				this.setPeople(peopleOf(answer, this.people?.me ?? null));
+			} catch (e) {
+				this.host.log.warn("Reading the people of the planner server:", e);
+			}
+		}
 		onStatus(handler) {
 			this.statusHandlers.add(handler);
 			return () => {
@@ -33086,6 +33583,7 @@ img.ProseMirror-separator {
 			this.handlers.clear();
 			this.resyncs.clear();
 			this.statusHandlers.clear();
+			this.peopleHandlers.clear();
 			if (typeof window !== "undefined") window.removeEventListener("online", this.onBrowserOnline);
 		}
 		async call(method, path, body) {
@@ -33197,7 +33695,8 @@ img.ProseMirror-separator {
 						const docs = docsOf(payload);
 						if (typeof payload.seq === "number") this.seq = Math.max(this.seq, payload.seq);
 						this.deliver(docs);
-					} else if (event === "resync" && isObject(payload)) {
+					} else if (event === "people") this.refreshPeople();
+					else if (event === "resync" && isObject(payload)) {
 						if (typeof payload.seq === "number") this.seq = payload.seq;
 						this.resync();
 					}
@@ -33243,6 +33742,22 @@ img.ProseMirror-separator {
 			if (!since || behind) this.seq = h.seq;
 			this.heard = true;
 			this.failures = 0;
+			const me = h.me;
+			if (!me) this.setPeople(null);
+			else {
+				const all = this.people?.all ?? [];
+				this.setPeople({
+					me: me.id,
+					all: all.some((p) => p.id === me.id) ? all.map((p) => p.id === me.id ? {
+						...p,
+						name: me.name
+					} : p) : [...all, {
+						...me,
+						active: h.role === "write"
+					}]
+				});
+				this.refreshPeople();
+			}
 			this.setStatus({
 				online: true,
 				readonly: h.role !== "write",
@@ -33286,12 +33801,26 @@ img.ProseMirror-separator {
 	function createConnection(host, routed) {
 		const url = (0, vue.shallowRef)(null);
 		const space = (0, vue.shallowRef)(null);
+		const me = (0, vue.shallowRef)(null);
+		let remote = null;
+		let unlisten = () => {};
 		function use(config, said) {
-			const remote = new RemoteSource(config, {
+			const r = new RemoteSource(config, {
 				storage: host.storage,
 				log: host.log
 			});
-			if (said) remote.label = said.space.name;
+			remote = r;
+			const saidMe = said ? personOf(said.me) : null;
+			if (said) {
+				r.label = said.space.name;
+				r.knownAs(saidMe?.id ?? null);
+			}
+			me.value = saidMe;
+			unlisten();
+			unlisten = r.onPeople(() => {
+				const people = r.peopleOf();
+				me.value = people?.all.find((p) => p.id === people.me) ?? null;
+			});
 			url.value = config.url;
 			space.value = said;
 			routed.setServer(remote);
@@ -33301,6 +33830,7 @@ img.ProseMirror-separator {
 		return {
 			url,
 			space,
+			me,
 			async connect(address, token) {
 				const at = serverUrl(address);
 				if (!at) return "That is not a web address. It looks like https://planner.example.com.";
@@ -33327,7 +33857,40 @@ img.ProseMirror-separator {
 				}, said);
 				return null;
 			},
+			async rename(name) {
+				const r = remote;
+				if (!r) return "Connect to a planner server first.";
+				const trimmed = name.trim();
+				if (!trimmed) return "Type the name everyone in the space should see.";
+				if (trimmed.startsWith("@")) return "A name does not start with @.";
+				try {
+					await r.rename(trimmed);
+				} catch (e) {
+					return e instanceof Error ? e.message : String(e);
+				}
+				const people = r.peopleOf();
+				const me = people?.all.find((p) => p.id === people.me);
+				const saved = host.storage.get(KEY);
+				if (me && space.value && isObject(saved)) {
+					space.value = {
+						...space.value,
+						me: {
+							id: me.id,
+							name: me.name
+						}
+					};
+					host.storage.set(KEY, {
+						...saved,
+						hello: space.value
+					});
+				}
+				return null;
+			},
 			disconnect() {
+				unlisten();
+				unlisten = () => {};
+				me.value = null;
+				remote = null;
 				host.storage.delete(KEY);
 				url.value = null;
 				space.value = null;
@@ -33513,14 +34076,6 @@ img.ProseMirror-separator {
 		}
 	};
 	// plugins/planner/src/data/routed.ts
-	/**
-	* The planner's sources together: this computer's, and a planner server's space when one is connected. Every
-	* collection lives in one of them with all its items; the store sees one source.
-	*
-	* A collection's place is learned from where it was read or heard of; a new one goes where `place` said, or here.
-	* Collections are never in two places at once: moving one copies it under new ids (`store.moveCollection`), so each
-	* document's `seq` only ever comes from one source.
-	*/
 	var HERE = "local";
 	var SERVER = "server";
 	var ONLINE = {
@@ -33535,6 +34090,7 @@ img.ProseMirror-separator {
 		handlers = /* @__PURE__ */ new Set();
 		resyncs = /* @__PURE__ */ new Set();
 		statusHandlers = /* @__PURE__ */ new Set();
+		peopleHandlers = /* @__PURE__ */ new Set();
 		unlisten = [];
 		serverUnlisten = [];
 		/** The server's collections, read since it was connected: what says where a collection is. */
@@ -33575,6 +34131,21 @@ img.ProseMirror-separator {
 				message: "Its planner server is not connected."
 			};
 		}
+		peopleOf(collectionId) {
+			return this.placeOfCollection(collectionId) === "server" ? this.server?.peopleOf?.(collectionId) ?? null : null;
+		}
+		refreshPeople(collectionId) {
+			if (this.placeOfCollection(collectionId) === "server") this.server?.refreshPeople?.(collectionId);
+		}
+		onPeople(handler) {
+			this.peopleHandlers.add(handler);
+			return () => {
+				this.peopleHandlers.delete(handler);
+			};
+		}
+		peopleChanged() {
+			for (const h of [...this.peopleHandlers]) h();
+		}
 		/**
 		* Connects a server's space, or none. What was read from the one before goes from view; the store reads everything
 		* again, the new server's collections with it.
@@ -33595,8 +34166,9 @@ img.ProseMirror-separator {
 			if (server) this.serverUnlisten.push(server.subscribe((docs) => this.heard(SERVER, docs), () => this.resyncAll()), server.onStatus((s) => {
 				this.statusChanged();
 				if (s.online && !this.serverLoaded) this.resyncAll();
-			}));
+			}), server.onPeople?.(() => this.peopleChanged()) ?? (() => {}));
 			this.statusChanged();
+			this.peopleChanged();
 			this.resyncAll();
 		}
 		async loadCollections() {
@@ -33661,6 +34233,7 @@ img.ProseMirror-separator {
 			this.handlers.clear();
 			this.resyncs.clear();
 			this.statusHandlers.clear();
+			this.peopleHandlers.clear();
 		}
 		sourceOf(place) {
 			return place === "local" ? this.local : this.server;
@@ -33713,9 +34286,17 @@ img.ProseMirror-separator {
 	var _hoisted_10 = { class: "pl-server__label" };
 	var _hoisted_11 = { class: "pl-server__row" };
 	var _hoisted_12 = { class: "pl-server__text" };
-	var _hoisted_13 = { class: "pl-server__label" };
+	var _hoisted_13 = {
+		class: "pl-server__label",
+		for: "pl-server-name"
+	};
 	var _hoisted_14 = { class: "pl-server__hint" };
-	var _hoisted_15 = { class: "pl-server__foot" };
+	var _hoisted_15 = ["aria-invalid"];
+	var _hoisted_16 = { class: "pl-server__row" };
+	var _hoisted_17 = { class: "pl-server__text" };
+	var _hoisted_18 = { class: "pl-server__label" };
+	var _hoisted_19 = { class: "pl-server__hint" };
+	var _hoisted_20 = { class: "pl-server__foot" };
 	// plugins/planner/src/shell/ServerSettings.vue
 	var ServerSettings_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ServerSettings",
@@ -33752,6 +34333,34 @@ img.ProseMirror-separator {
 					text: s.connected
 				};
 			});
+			const access = (0, vue.computed)(() => `${said.value?.role === "write" ? s.canEdit : s.readOnly} · ${s.collections(onServer.value)}`);
+			const me = (0, vue.computed)(() => props.server.me.value);
+			const draft = (0, vue.ref)("");
+			const nameError = (0, vue.ref)(null);
+			const renaming = (0, vue.ref)(false);
+			const renamed = (0, vue.ref)(false);
+			(0, vue.watch)(() => me.value?.name, (name) => {
+				if (!renaming.value) draft.value = name ?? "";
+			}, { immediate: true });
+			const changed = (0, vue.computed)(() => !!me.value && draft.value.trim() !== "" && draft.value.trim() !== me.value.name);
+			function typed() {
+				nameError.value = null;
+				renamed.value = false;
+			}
+			async function rename() {
+				if (!changed.value || renaming.value) return;
+				renaming.value = true;
+				nameError.value = null;
+				try {
+					nameError.value = await props.server.rename(draft.value);
+					if (!nameError.value) {
+						draft.value = me.value?.name ?? draft.value.trim();
+						renamed.value = true;
+					}
+				} finally {
+					renaming.value = false;
+				}
+			}
 			const onServer = (0, vue.computed)(() => store.allCollections.value.filter((c) => store.placeOf(c.id) === SERVER).length);
 			async function connect() {
 				if (busy.value) return;
@@ -33788,7 +34397,40 @@ img.ProseMirror-separator {
 						class: (0, vue.normalizeClass)(["pl-server__state", `is-${state.value.tone}`]),
 						role: "status"
 					}, [(0, vue.createVNode)(Icon_default, { name: state.value.tone === "good" ? "cloud" : "cloud-off" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(state.value.text), 1)], 2)) : (0, vue.createCommentVNode)("v-if", true)])]),
-					(0, vue.createElementVNode)("div", _hoisted_11, [(0, vue.createElementVNode)("div", _hoisted_12, [(0, vue.createElementVNode)("div", _hoisted_13, (0, vue.toDisplayString)((0, vue.unref)(s).access), 1), (0, vue.createElementVNode)("p", _hoisted_14, (0, vue.toDisplayString)(said.value?.role === "write" ? (0, vue.unref)(s).canEdit : (0, vue.unref)(s).readOnly) + " · " + (0, vue.toDisplayString)((0, vue.unref)(s).collections(onServer.value)), 1)])])
+					(0, vue.createElementVNode)("div", _hoisted_11, [
+						(0, vue.createElementVNode)("div", _hoisted_12, [(0, vue.createElementVNode)("label", _hoisted_13, (0, vue.toDisplayString)((0, vue.unref)(s).yourName), 1), (0, vue.createElementVNode)("p", _hoisted_14, (0, vue.toDisplayString)(me.value ? (0, vue.unref)(s).yourNameHint(said.value?.space.name ?? (0, vue.unref)(s).space) : (0, vue.unref)(s).noName), 1)]),
+						me.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("form", {
+							key: 0,
+							class: "pl-server__name",
+							onSubmit: (0, vue.withModifiers)(rename, ["prevent"])
+						}, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							id: "pl-server-name",
+							"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => draft.value = $event),
+							class: "input",
+							type: "text",
+							maxlength: "64",
+							autocomplete: "off",
+							spellcheck: "false",
+							"aria-invalid": nameError.value ? "true" : void 0,
+							"aria-describedby": "pl-server-name-note",
+							onInput: typed
+						}, null, 40, _hoisted_15), [[vue.vModelText, draft.value]]), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
+							variant: "secondary",
+							type: "submit",
+							disabled: !changed.value,
+							loading: renaming.value
+						}, {
+							default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(s).rename), 1)]),
+							_: 1
+						}, 8, ["disabled", "loading"]))], 32)) : (0, vue.createCommentVNode)("v-if", true),
+						nameError.value || renamed.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
+							key: 1,
+							id: "pl-server-name-note",
+							class: (0, vue.normalizeClass)(["pl-server__note", { "is-bad": nameError.value }]),
+							role: "status"
+						}, [(0, vue.createVNode)(Icon_default, { name: nameError.value ? "circle-alert" : "check" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(nameError.value ?? (0, vue.unref)(s).renamed), 1)], 2)) : (0, vue.createCommentVNode)("v-if", true)
+					]),
+					(0, vue.createElementVNode)("div", _hoisted_16, [(0, vue.createElementVNode)("div", _hoisted_17, [(0, vue.createElementVNode)("div", _hoisted_18, (0, vue.toDisplayString)((0, vue.unref)(s).access), 1), (0, vue.createElementVNode)("p", _hoisted_19, (0, vue.toDisplayString)(access.value), 1)])])
 				], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("form", {
 					key: 1,
 					class: "pl-server__form",
@@ -33800,7 +34442,7 @@ img.ProseMirror-separator {
 					}, {
 						default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 							id: "pl-server-address",
-							"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => address.value = $event),
+							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => address.value = $event),
 							class: "input",
 							type: "url",
 							inputmode: "url",
@@ -33818,7 +34460,7 @@ img.ProseMirror-separator {
 					}, {
 						default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 							id: "pl-server-token",
-							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => token.value = $event),
+							"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => token.value = $event),
 							class: "input pl-server__token",
 							type: "password",
 							placeholder: "pls_…",
@@ -33831,7 +34473,7 @@ img.ProseMirror-separator {
 						"hint",
 						"error"
 					])),
-					(0, vue.createElementVNode)("div", _hoisted_15, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
+					(0, vue.createElementVNode)("div", _hoisted_20, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 						variant: "primary",
 						type: "submit",
 						loading: busy.value
@@ -33958,7 +34600,7 @@ img.ProseMirror-separator {
 	* How rows (the first is the header) come into a collection: columns go to properties of the same name, others
 	* become new ones of the type they look like. Nothing is dropped but values a typed property cannot hold.
 	*/
-	function planImport(rows, existing = []) {
+	function planImport(rows, existing = [], people = null) {
 		const [head, ...body] = rows;
 		if (!head) return {
 			properties: [],
@@ -33985,7 +34627,8 @@ img.ProseMirror-separator {
 					name: name || `Column ${at + 1}`,
 					type: inferType(texts),
 					order: lastOrder,
-					options: []
+					options: [],
+					people: {}
 				};
 				changed.set(property.id, property);
 			}
@@ -33993,7 +34636,7 @@ img.ProseMirror-separator {
 			return {
 				at,
 				property,
-				options: new OptionSet(property.options)
+				options: new OptionSet(property.options, people, property.people)
 			};
 		}).filter((c) => c !== null);
 		const items = body.map((row) => {
@@ -34106,6 +34749,8 @@ img.ProseMirror-separator {
 			status
 		}];
 		const places = (0, vue.shallowRef)(source.places?.() ?? onePlace(sourceStatus.value));
+		/** Moves on when a source hears who its people are. */
+		const peopleHeard = (0, vue.shallowRef)(0);
 		const projectPath = (0, vue.ref)(mango.workspace.activeProject());
 		const now = (0, vue.ref)(Date.now());
 		const saving = (0, vue.ref)(false);
@@ -34345,6 +34990,12 @@ img.ProseMirror-separator {
 			allCollections.value;
 			return source.statusOf?.(collectionId) ?? sourceStatus.value;
 		}
+		function people(collectionId) {
+			peopleHeard.value;
+			places.value;
+			allCollections.value;
+			return source.peopleOf?.(collectionId) ?? null;
+		}
 		/** The status of a read-only place these change, if any. */
 		function readonlyFor(ops) {
 			if (sourceStatus.value.readonly) return sourceStatus.value;
@@ -34356,8 +35007,84 @@ img.ProseMirror-separator {
 			return null;
 		}
 		/** Makes a change. False when it may not be made. */
+		/**
+		* Whoever is assigned in a change is written down in the property too, by the name the server gives them now: a
+		* collection moved off the server, an export or a search still reads their name.
+		*/
+		function withPeopleNames(ops) {
+			const notes = /* @__PURE__ */ new Map();
+			const seen = /* @__PURE__ */ new Set();
+			for (const op of ops) {
+				if (op.kind !== "item" || op.op === "delete") continue;
+				const live = source.peopleOf?.(op.collectionId);
+				const c = live ? collection(op.collectionId) : null;
+				if (!live || !c) continue;
+				const typed = /* @__PURE__ */ new Map();
+				for (const o of ops) {
+					if (o.kind !== "collection" || o.id !== op.collectionId || o.op !== "patch") continue;
+					for (const p of o.patch) if (p.path.length === 3 && p.path[0] === "properties" && p.path[2] === "type") typed.set(p.path[1], p.value);
+				}
+				const values = op.op === "create" ? isObject(op.data.values) ? Object.entries(op.data.values) : [] : op.patch.filter((p) => p.path.length === 2 && p.path[0] === "values" && p.value !== void 0).map((p) => [p.path[1], p.value]);
+				for (const [propertyId, value] of values) {
+					const property = propertyOf(c, propertyId);
+					if (!property || (typed.get(propertyId) ?? property.type) !== "person") continue;
+					for (const personId of personIds(value)) {
+						const key = `${op.collectionId}/${propertyId}/${personId}`;
+						if (seen.has(key)) continue;
+						seen.add(key);
+						const name = live.all.find((x) => x.id === personId)?.name;
+						if (!name || property.people[personId] === name) continue;
+						let list = notes.get(op.collectionId);
+						if (!list) notes.set(op.collectionId, list = []);
+						list.push({
+							path: [
+								"properties",
+								propertyId,
+								"people",
+								personId
+							],
+							value: { name }
+						});
+					}
+				}
+			}
+			return notes.size ? [...ops, ...[...notes].map(([id, patch]) => ({
+				...collectionTarget(id),
+				op: "patch",
+				patch
+			}))] : ops;
+		}
+		/** The names a collection wrote down that the server now says otherwise (a rename). */
+		function staleNames(c) {
+			const live = source.peopleOf?.(c.id);
+			if (!live) return [];
+			return c.properties.filter((p) => p.type === "person").flatMap((p) => Object.entries(p.people).flatMap(([id, name]) => {
+				const now = live.all.find((x) => x.id === id)?.name;
+				return now && now !== name ? [{
+					path: [
+						"properties",
+						p.id,
+						"people",
+						id
+					],
+					value: { name: now }
+				}] : [];
+			}));
+		}
+		/** Brings the names written down up to date, in every collection that may be changed. Not a step to undo. */
+		function refreshPeopleNames() {
+			for (const c of allCollections.value) {
+				if (statusOf(c.id).readonly) continue;
+				const patch = staleNames(c);
+				if (patch.length) mutate([{
+					...collectionTarget(c.id),
+					op: "patch",
+					patch
+				}], null);
+			}
+		}
 		function mutate(ops, label, opts = {}, settle) {
-			ops = ops.filter((o) => o.op !== "patch" || o.patch.length);
+			ops = withPeopleNames(ops.filter((o) => o.op !== "patch" || o.patch.length));
 			if (!ops.length) {
 				settle?.(true);
 				return true;
@@ -34677,13 +35404,13 @@ img.ProseMirror-separator {
 		}], label, opts);
 		function createCollection(input = {}) {
 			const template = input.template ?? "empty";
-			const data = templateData(template);
 			const scope = input.scope ?? (projectPath.value ? {
 				kind: "project",
 				path: projectPath.value
 			} : { kind: "everywhere" });
 			const id = newId();
 			if (input.place) source.place?.(id, input.place);
+			const data = templateData(template, { people: !!source.peopleOf?.(id) });
 			const place = placeAt(allCollections.value, [id], "end");
 			const ops = [{
 				...collectionTarget(id),
@@ -34767,6 +35494,13 @@ img.ProseMirror-separator {
 				return null;
 			}
 			const list = await withItems(id);
+			const model = collection(id);
+			const names = model ? staleNames(model) : [];
+			if (names.length) mutate([{
+				...collectionTarget(id),
+				op: "patch",
+				patch: names
+			}], null);
 			const raw = rawCollection(id);
 			if (!list || !raw) return null;
 			const copy = newId();
@@ -34839,7 +35573,7 @@ img.ProseMirror-separator {
 			const id = newId();
 			const at = Date.now();
 			const values = {
-				...defaultValues(c, viewOf(c, input.viewId), input.group, at),
+				...defaultValues(c, viewOf(c, input.viewId), input.group, at, people(collectionId)?.me ?? null),
 				...input.values
 			};
 			const place = placeAt(stateOf(collectionId).items, [id], input.position ?? "end");
@@ -35110,7 +35844,7 @@ img.ProseMirror-separator {
 			const property = c && propertyOf(c, propertyId);
 			if (!list || !property || type === "unsupported" || propertyId === "title") return false;
 			if (property.type === type) return true;
-			const conversion = convertProperty(property, type, list);
+			const conversion = convertProperty(property, type, list, people(collectionId));
 			const added = conversion.property.options.filter((o) => !property.options.some((e) => e.id === o.id));
 			const patch = [
 				{
@@ -35395,7 +36129,7 @@ img.ProseMirror-separator {
 			return make(c, itemIds ? itemIds.map((id) => byId.get(id)).filter((i) => i !== void 0) : list);
 		}
 		function importOps(collectionId, csv, existing, items) {
-			const plan = planImport(parseCsv(csv), existing);
+			const plan = planImport(parseCsv(csv), existing, people(collectionId));
 			const at = Date.now();
 			const ids = plan.items.map(newId);
 			const keys = manyBetween(ordered(items).at(-1)?.order ?? null, null, ids.length);
@@ -35498,6 +36232,16 @@ img.ProseMirror-separator {
 			const v = mango.storage.get(uiKey());
 			return isObject(v) ? v : {};
 		}
+		let namesSoon = false;
+		const unsubscribePeople = source.onPeople?.(() => {
+			peopleHeard.value++;
+			if (namesSoon) return;
+			namesSoon = true;
+			queueMicrotask(() => {
+				namesSoon = false;
+				if (!disposed && status.value === "ready") refreshPeopleNames();
+			});
+		}) ?? (() => {});
 		const unsubscribe = source.subscribe((docs) => publish(take(docs)), () => {
 			resync();
 		});
@@ -35542,6 +36286,7 @@ img.ProseMirror-separator {
 			clearInterval(clock);
 			project.dispose();
 			unsubscribeStatus();
+			unsubscribePeople();
 			if (hasWindow) {
 				window.removeEventListener("pagehide", leave);
 				window.removeEventListener("beforeunload", leave);
@@ -35561,6 +36306,8 @@ img.ProseMirror-separator {
 			placeOf,
 			statusOf,
 			projectPath,
+			people,
+			refreshPeople: (id) => source.refreshPeople?.(id),
 			allCollections,
 			collections,
 			now,

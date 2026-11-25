@@ -118,6 +118,10 @@ export const shell = {
   dayCount: (n: number) => (n === 1 ? 'day' : `${n} days`),
   findOption: 'Find an option…',
   noOptions: 'This property has no options yet.',
+  findPerson: 'Find a person…',
+  me: 'Me',
+  formerPerson: 'Not in the space any more',
+  noPeople: 'Nobody to choose: people come from a planner server.',
 
   sortBy: 'Sort by',
   addSort: 'Add sort',

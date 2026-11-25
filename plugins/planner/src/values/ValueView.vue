@@ -4,6 +4,8 @@ import { usePlanner } from '../context.ts'
 import { safeUrl, valueOf, type DateValue, type Item, type Option, type Property } from '../model.ts'
 import Icon from '../ui/Icon.vue'
 import OptionTag from '../ui/OptionTag.vue'
+import { personView } from '../ui/people.ts'
+import PersonTag from '../ui/PersonTag.vue'
 import { dateText, fullDate } from './dates.ts'
 import { strings } from './strings.ts'
 
@@ -16,6 +18,11 @@ const options = computed<Option[]>(() => {
   const v = value.value
   const ids: readonly string[] = props.property.type === 'select' && typeof v === 'string' ? [v] : Array.isArray(v) ? v as readonly string[] : []
   return ids.flatMap(id => props.property.options.find(o => o.id === id) ?? [])
+})
+const persons = computed(() => {
+  if (props.property.type !== 'person' || !Array.isArray(value.value)) return []
+  const people = store.people(props.item.collectionId)
+  return (value.value as readonly string[]).map(id => personView(id, props.property, people))
 })
 const date = computed(() => {
   const v = value.value
@@ -49,6 +56,9 @@ function open() {
   <span v-else-if="options.length" class="pl-value pl-value--tags" :class="{ 'is-wrap': wrap }">
     <OptionTag v-for="o in options" :key="o.id" :option="o" />
   </span>
+  <span v-else-if="persons.length" class="pl-value pl-value--people" :class="{ 'is-wrap': wrap }">
+    <PersonTag v-for="p in persons" :key="p.id" :person="p" :former-word="strings.formerPerson" />
+  </span>
   <span v-else-if="date" class="pl-value pl-value--date" :title="fullDate(date.start)">{{ dateText(date, store.now.value) }}</span>
   <span
     v-else-if="href"
@@ -72,6 +82,10 @@ function open() {
 .pl-value.is-wrap { white-space: pre-wrap; overflow-wrap: anywhere; }
 .pl-value--tags { display: inline-flex; gap: var(--space-1); }
 .pl-value--tags.is-wrap { flex-wrap: wrap; white-space: normal; }
+.pl-value--people { display: inline-flex; gap: var(--space-2); }
+/* Out of room, the last name gives way first: the others stay readable. */
+.pl-value--people > :not(:last-child) { flex-shrink: 0; }
+.pl-value--people.is-wrap { flex-wrap: wrap; row-gap: var(--space-1); white-space: normal; }
 .pl-value--date, .pl-value--number { font-variant-numeric: tabular-nums; }
 .pl-value--url { color: var(--accent-ink); cursor: pointer; }
 .pl-value--url:hover { text-decoration: underline; text-underline-offset: 3px; }
