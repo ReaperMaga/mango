@@ -75,8 +75,8 @@ export interface ChangeOptions {
 export interface Move {
   /** Moved together, in this sequence. */
   ids: readonly string[]
-  /** Into this group of a property. `from`: the group they were dragged out of (a multi-select keeps its others). */
-  group?: { propertyId: string; key: string; from?: string }
+  /** Into this group of a property. `from`: the group they were dragged out of, for all or by id (a multi-select keeps its others). */
+  group?: { propertyId: string; key: string; from?: string | ReadonlyMap<string, string> }
   /** Left out: the manual order stays (a sorted view). */
   position?: Position
 }
@@ -121,6 +121,8 @@ export interface PlannerStore {
   createItem(collectionId: string, input?: NewItem): Promise<Item | null>
   updateItem(collectionId: string, itemId: string, change: ItemChange, options?: ChangeOptions): void
   updateItems(collectionId: string, itemIds: readonly string[], change: ItemChange): void
+  /** Each item its own change, as one step to undo. */
+  updateEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>): void
   /** Group and position as one change. */
   moveItems(collectionId: string, move: Move): void
   duplicateItems(collectionId: string, itemIds: readonly string[]): Item[]
@@ -742,6 +744,14 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     })), strings.did.editItem, opts)
   }
 
+  function changeEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>) {
+    const c = collection(collectionId)
+    if (!c) return
+    mutate([...changes].map(([id, change]): SourceOp => ({
+      ...itemTarget(collectionId, id), op: 'patch', patch: effective(rawItem(collectionId, id), itemPatch(c, change)),
+    })), strings.did.editItem)
+  }
+
   function moveItems(collectionId: string, move: Move) {
     const c = collection(collectionId)
     if (!c) return
@@ -751,10 +761,11 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const place = move.position === undefined ? new Map<string, string>() : placeAt(list, ids, move.position)
     const property = move.group ? propertyOf(c, move.group.propertyId) : null
     const groupable = property && isGroupable(property) ? property : null
+    const from = move.group?.from
     const patches = new Map<string, PatchOp[]>()
     for (const id of ids) {
       const change: ItemChange = groupable
-        ? { values: { [groupable.id]: valueForGroup(groupable, move.group!.key, byId.get(id), move.group!.from) } }
+        ? { values: { [groupable.id]: valueForGroup(groupable, move.group!.key, byId.get(id), typeof from === 'object' ? from.get(id) : from) } }
         : {}
       patches.set(id, itemPatch(c, change))
     }
@@ -1155,6 +1166,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     createItem,
     updateItem: (c, id, change, opts) => changeItems(c, [id], change, opts),
     updateItems: (c, ids, change) => changeItems(c, ids, change),
+    updateEach: changeEach,
     moveItems, duplicateItems, deleteItems,
     linkChat: (c, id, threadId) => setChat(c, id, threadId, true),
     unlinkChat: (c, id, threadId) => setChat(c, id, threadId, false),
