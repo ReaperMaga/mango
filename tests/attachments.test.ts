@@ -1,16 +1,32 @@
 /**
- * What a run in a remote environment gets for its attachments.
+ * What a run gets for its attachments, on this computer and in a remote environment.
  *
  *   node --test tests/attachments.test.ts      (or: pnpm test)
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Attachment } from '../app/types/chat.ts'
-import { forRemoteAgent } from '../app/utils/attachments.ts'
+import { forAgent, forRemoteAgent } from '../app/utils/attachments.ts'
 
 const local = (id: string, name: string, kind: Attachment['kind'] = 'file', mime = 'application/pdf'): Attachment =>
   ({ id, name, kind, mime, size: 3, path: `C:\\Users\\me\\AppData\\Roaming\\dev.mango.app\\attachments\\${id}\\${name}` })
 const there = (path: string) => `/home/agent/.local/share/mango/attachments/${path.split('\\').slice(-2).join('/')}`
+
+test('on this computer only files named by path open their folder: a picture sent inline needs none', async () => {
+  const gif = local('p1', 'small.gif', 'image', 'image/gif')
+  const read = async () => 'R0lGODlh'
+  const picture = await forAgent('look', [gif], read)
+  assert.deepEqual([picture.images.length, picture.prompt, picture.readDirs], [1, 'look', []])
+  const folder = (a: Attachment) => a.path.slice(0, a.path.lastIndexOf('\\'))
+  const pdf = local('a1', 'spec.pdf')
+  const both = await forAgent('read', [gif, pdf], read)
+  assert.deepEqual(both.readDirs, [folder(pdf)])
+  assert.ok(both.prompt.includes(pdf.path) && !both.prompt.includes(gif.path))
+  // One that cannot go inline is read from disk, like any other file.
+  const failed = await forAgent('look', [gif], async () => { throw new Error('too large') })
+  assert.deepEqual([failed.images.length, failed.readDirs], [0, [folder(gif)]])
+  assert.ok(failed.prompt.includes(gif.path))
+})
 
 test('every file is put into the environment and named by its path there', async () => {
   const put: string[] = []

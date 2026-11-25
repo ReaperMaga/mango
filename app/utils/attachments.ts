@@ -130,8 +130,8 @@ export function attachmentNote(files: Pick<Attachment, 'name' | 'path'>[]): stri
 
 /**
  * What an agent run gets for a message with attachments: images carry their bytes (shrunk
- * to fit when needed); every other file, or an image that can't be sent inline, is named by
- * path at the end of the prompt, and its folder is opened to the agent for reading.
+ * to fit when needed) and need nothing from disk; every other file, or an image that can't be
+ * sent inline, is named by path at the end of the prompt, and its folder is opened to the agent for reading.
  */
 export async function forAgent(
   text: string,
@@ -151,8 +151,7 @@ export async function forAgent(
     byPath.push(a)
   }
   const prompt = [text.trim(), attachmentNote(byPath)].filter(Boolean).join('\n\n')
-  // Codex reads images by path too, so their folders count.
-  const readDirs = [...new Set(list.map(a => a.path.replace(/[\\/][^\\/]*$/, '')).filter(Boolean))]
+  const readDirs = [...new Set(byPath.map(a => a.path.replace(/[\\/][^\\/]*$/, '')).filter(Boolean))]
   return { prompt, images, readDirs }
 }
 

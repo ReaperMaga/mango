@@ -110,12 +110,18 @@ interface FakeCli {
   closed: boolean
   killed: boolean
   refuseMode?: boolean
+  /** What its next turn does instead of answering: fails on this, or goes on until it is interrupted ('hang'). */
+  next?: string
+  /** It reads no message while it hangs. */
+  deaf?: boolean
   /** Control requests it does not know. */
   unknown?: string[]
-  /** Says yes to a model or effort and does not change it. */
+  /** Says yes to a model, an effort or folders and does not change them. */
   ignores?: boolean
   model?: string
   effort?: string
+  /** The folders it was asked to open: each list takes the place of the one before. */
+  dirs?: string[]
 }
 /** How a fake process tells what its session had spent: before the answer, too late, or not at all. */
 type Spent = 'early' | 'late' | 'never'
@@ -139,6 +145,11 @@ function fakeClaude(tells: Spent = 'early') {
         await wait()
         if (m.type === 'control_request') {
           const { subtype, mode } = m.request
+          if (subtype === 'interrupt') {
+            out({ type: 'user', uuid: 'stop', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } })
+            out({ type: 'result', subtype: 'error_during_execution', is_error: true, session_id: 's1', total_cost_usd: total })
+            return
+          }
           if (subtype === 'get_usage') {
             spentAsked = m.request_id
             if (tells === 'early') out({ type: 'control_response', response: { subtype: 'success', request_id: spentAsked, response: { session: { total_cost_usd: total } } } })
@@ -149,14 +160,25 @@ function fakeClaude(tells: Spent = 'early') {
           // Any effort is accepted; one it does not know leaves it where it was.
           if (ok && subtype === 'set_model' && !p.ignores) p.model = `claude-${model}`
           if (ok && subtype === 'apply_flag_settings' && !p.ignores && ['low', 'medium', 'high'].includes(settings.effortLevel)) p.effort = settings.effortLevel
+          if (ok && subtype === 'apply_flag_settings' && !p.ignores && settings.permissions) p.dirs = settings.permissions.additionalDirectories
           if (ok && subtype === 'set_model') out({ type: 'user', isReplay: true, uuid: `note-${model}`, message: { role: 'user', content: `<local-command-stdout>Set model to ${model}</local-command-stdout>` } })
-          const response = mode ? { mode } : subtype === 'set_model' ? { model: `claude-${model}` } : subtype === 'get_settings' ? { applied: { model: p.model, effort: p.effort } } : {}
+          const response = mode ? { mode } : subtype === 'set_model' ? { model: `claude-${model}` } : subtype === 'get_settings' ? { applied: { model: p.model, effort: p.effort }, effective: p.dirs ? { permissions: { additionalDirectories: p.dirs } } : {} } : {}
           out({ type: 'control_response', response: { subtype: ok ? 'success' : 'error', request_id: m.request_id, ...(ok ? { response } : { error: 'no' }) } })
         } else if (m.type === 'user') {
+          const { next } = p
+          if (next === 'hang') {
+            if (!p.deaf) out({ type: 'user', isReplay: true, uuid: 'h', message: m.message })
+            return
+          }
           turns++
           spent = ++total
           out({ type: 'system', subtype: 'init', session_id: 's1' })
           out({ type: 'user', isReplay: true, uuid: `u${procs.length}-${turns}`, message: m.message })
+          if (next) {
+            out({ type: 'assistant', uuid: 'failed', error: next, message: { id: 'failed', content: [{ type: 'text', text: 'API Error' }] } })
+            out({ type: 'result', subtype: 'success', is_error: true, result: 'API Error', session_id: 's1', total_cost_usd: total })
+            return
+          }
           out({ type: 'assistant', uuid: `r${procs.length}-${turns}`, message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
           if (spentAsked && tells === 'late') out({ type: 'control_response', response: { subtype: 'success', request_id: spentAsked, response: { session: { total_cost_usd: total } } } })
           out({ type: 'result', subtype: 'success', session_id: 's1', total_cost_usd: total, usage: { input_tokens: 1, output_tokens: 1 } })
@@ -170,7 +192,7 @@ function fakeClaude(tells: Spent = 'early') {
 }
 
 function chat(cli: ReturnType<typeof fakeClaude>) {
-  const kept = new KeptProcesses()
+  const kept = new KeptProcesses({ keepMs: 5000 })
   const turn = (over: Partial<AgentRunOptions> = {}) => new Promise<AgentEvent[]>((resolve) => {
     const events: AgentEvent[] = []
     claudeAdapter.run({
@@ -225,10 +247,10 @@ test('claude: a new process that resumes shows only its own cost, or none when i
   }
 })
 
-test('claude: other settings, another session or a folder it cannot read start a new process', async () => {
+test('claude: other settings or another session start a new process', async () => {
   const others: Partial<AgentRunOptions>[] = [
     { mode: 'auto' }, { sessionId: 's2' }, { sessionId: null }, { cwd: '/q' },
-    { appendSystemPrompt: 'x' }, { readDirs: ['/files'] },
+    { appendSystemPrompt: 'x' },
     { mcpServers: [{ name: 'm', transport: 'http', url: 'https://example.com', headers: { A: 'b' } }] },
   ]
   for (const over of others) {
@@ -308,6 +330,38 @@ test('claude: a switch that is refused, or cannot be made sure of, starts a new 
   }
 })
 
+test('claude: folders to read are opened to the kept process before the prompt, along with the earlier ones', async () => {
+  const { counts, procs: [p] } = await switching([
+    { readDirs: ['/a'] }, { readDirs: ['/b'] }, {}, { readDirs: ['/b'] }, { readDirs: ['/c', '/a'], effort: 'low' },
+  ])
+  assert.deepEqual(counts, [1, 1, 1, 1, 1])
+  assert.deepEqual(p!.args.filter((_, i) => p!.args[i - 1] === '--add-dir'), ['/a'])
+  assert.deepEqual(p!.dirs, ['/a', '/b', '/c'])
+  assert.deepEqual(asked(p!), [
+    'prompt',
+    'apply_flag_settings', 'get_settings', 'prompt',
+    'prompt',
+    'prompt',
+    'apply_flag_settings', 'get_settings', 'apply_flag_settings', 'get_settings', 'prompt',
+  ])
+})
+
+test('claude: a folder that cannot be opened to the kept process starts a new one with it', async () => {
+  const cases: [string, (p: FakeCli) => void][] = [
+    ['no apply_flag_settings', (p) => { p.unknown = ['apply_flag_settings'] }],
+    ['no get_settings', (p) => { p.unknown = ['get_settings'] }],
+    ['a yes that opens nothing', (p) => { p.ignores = true }],
+  ]
+  for (const [what, prepare] of cases) {
+    const { counts, procs } = await switching([{}, { readDirs: ['/a'] }], prepare)
+    assert.deepEqual(counts, [1, 2], what)
+    assert.ok(procs[0]!.killed, what)
+    assert.equal(prompts(procs[0]!), 1, what)
+    assert.equal(procs[1]!.args[procs[1]!.args.indexOf('--add-dir') + 1], '/a', what)
+    assert.ok(procs[1]!.args.includes('--resume'), what)
+  }
+})
+
 test('claude: another mode always starts a new process, whatever else changes', async () => {
   const { counts } = await switching([{ mode: 'auto', model: 'haiku' }, { mode: 'ask', model: 'opus' }, { mode: 'plan', model: 'opus' }])
   assert.deepEqual(counts, [1, 2, 3])
@@ -324,6 +378,65 @@ test('claude: a process that refuses the mode is replaced, and the turn still ru
   assert.equal(prompts(cli.procs[1]!), 1)
   assert.deepEqual(endings(events), ['done'])
   kept.killAll()
+})
+
+/** A turn that hangs, stopped after `before` had its go at it. */
+async function stopTurn(cli: FakeCli, kept: KeptProcesses, prompt = 'two', before: (run: ReturnType<typeof claudeAdapter.run>) => unknown = () => {}) {
+  cli.next = 'hang'
+  const events: AgentEvent[] = []
+  const run = claudeAdapter.run({
+    cwd: '/p', prompt, model: 'default', mode: 'ask', sessionId: 's1', spawn: async () => { throw new Error('no new process') },
+    keeper: kept.keeperFor(owner('c'), '', () => ''), emit: e => events.push(e),
+  })
+  await wait(30)
+  await before(run)
+  run.interrupt()
+  await wait(30)
+  assert.deepEqual(endings(events), ['stopped'])
+  cli.next = undefined
+}
+
+test('claude: a stopped turn leaves its process to the next one', async () => {
+  const cli = fakeClaude()
+  const { kept, turn } = chat(cli)
+  await turn({ sessionId: null })
+  await stopTurn(cli.procs[0]!, kept)
+  assert.equal(kept.size, 1)
+  const events = await turn({ readTranscript: async () => ({ lines: [...ownTurn, said('user', 'stop')], whole: true }) })
+  assert.deepEqual(endings(events), ['done'])
+  assert.equal(cost(events), 1)
+  assert.equal(cli.procs.length, 1)
+  kept.killAll()
+})
+
+test('claude: a stopped turn with something left to do does not', async () => {
+  const cases: [string, (cli: FakeCli, kept: KeptProcesses) => Promise<void>][] = [
+    ['a prompt not read yet', async (p, kept) => { p.deaf = true; await stopTurn(p, kept) }],
+    ['a steering message not read yet', (p, kept) => stopTurn(p, kept, 'two', async (run) => { p.deaf = true; assert.ok(await run.steer!({ prompt: 'three' })) })],
+    ['a command', (p, kept) => stopTurn(p, kept, '/compact')],
+  ]
+  for (const [what, stop] of cases) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    await stop(cli.procs[0]!, kept)
+    assert.equal(kept.size, 0, what)
+    assert.ok(cli.procs[0]!.closed, what)
+  }
+})
+
+test('claude: a turn that failed on a passing error leaves its process to the next one, any other does not', async () => {
+  for (const [error, processes] of [['server_error', 1], ['rate_limit', 1], ['authentication_failed', 2], ['invalid_request', 2], ['unknown', 2]] as const) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    cli.procs[0]!.next = error
+    assert.deepEqual(endings(await turn()), ['error'], error)
+    cli.procs[0]!.next = undefined
+    assert.deepEqual(endings(await turn()), ['done'], error)
+    assert.equal(cli.procs.length, processes, error)
+    kept.killAll()
+  }
 })
 
 /** Transcript lines as Claude Code writes them, what a kept process does not print among them. */

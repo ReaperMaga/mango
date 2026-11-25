@@ -12,8 +12,8 @@ import type { KeptProcess, ProcessKeeper } from './types.ts'
  * Runs in plain Node (tests/keeper.test.ts): no Vue, Pinia or Tauri.
  */
 
-/** How long a process waits for its chat's next message: nearly all follow-ups come within this. */
-export const KEEP_MS = 15 * 60_000
+/** How long a process waits for its chat's next message: as long as Claude Code's prompt cache lasts on a plan. */
+export const KEEP_MS = 60 * 60_000
 /** Each is a whole CLI with its MCP servers: the one idle longest goes first. */
 export const KEEP_MAX = 4
 /** How long a process told to finish gets before it is killed. */

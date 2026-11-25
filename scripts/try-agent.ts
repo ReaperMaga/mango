@@ -3,7 +3,7 @@
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
- *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep] [--between "<text>"] [--then-model id] [--then-effort level]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
+ *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep] [--between "<text>"] [--then-model id] [--then-effort level] [--then-file path]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
@@ -21,7 +21,7 @@
  * --then sends a second turn --then-after ms (default 1000) after the first, in the process kept from it, as the app
  *  does for a chat's next message; with --no-keep a new process resumes the session instead. --between first sends
  *  a message to the same session from a `claude -p --resume` of its own, as someone in a terminal would (Claude Code only).
- *  --then-model and --then-effort give the second turn another model or effort.
+ *  --then-model and --then-effort give the second turn another model or effort; --then-file attaches a file to it by path.
  * --task-output-after reads each background task's output that long after it starts (no quota);
  * --stop-task-after stops each background task that long after it starts.
  * --mcp hands the run MCP servers as Settings > MCP servers would: a JSON array of AgentMcpServer
@@ -33,6 +33,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join, resolve } from 'node:path'
 import { KeptProcesses } from '../app/agents/keeper.ts'
+import { attachmentNote } from '../app/utils/attachments.ts'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
 if (!agentId || !cwd || (!prompt && !['--models', '--usage', '--commands', '--context'].some(f => process.argv.includes(f)))) {
@@ -105,6 +106,8 @@ const images = imagePath
   ? [{ name: basename(imagePath), path: imagePath, mime: imageMime[extname(imagePath).toLowerCase()] ?? 'image/png', data: readFileSync(imagePath).toString('base64') }]
   : []
 
+const thenFile = flag('then-file') ? resolve(flag('then-file')!) : null
+
 // One chat's process, kept from the first turn to the --then turn.
 const kept = has('no-keep') ? null : new KeptProcesses()
 let session: string | null = flag('session') ?? null
@@ -119,9 +122,9 @@ const readTranscript = async (id: string) => {
 
 const turn = (prompt: string, second = false) => adapter.run({
   cwd,
-  prompt,
+  prompt: second && thenFile ? `${prompt}\n\n${attachmentNote([{ name: basename(thenFile), path: thenFile }])}` : prompt,
   images,
-  readDirs: imagePath ? [dirname(imagePath)] : [],
+  readDirs: second && thenFile ? [dirname(thenFile)] : [],
   model: (second && flag('then-model')) || flag('model') || 'default',
   mode: flag('mode') ?? 'ask',
   effort: (second && flag('then-effort')) || flag('effort') || null,
