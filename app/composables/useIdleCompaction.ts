@@ -23,7 +23,7 @@ export function useIdleCompaction() {
   const win = useWindows()
   let working = false
 
-  const due = (t: Thread) => dueForCompaction(t, ws.idleCompaction, Date.now(), !!drafts.get(t.id)?.trim()
+  const due = (t: Thread) => dueForCompaction(t, ws.idleCompaction, Date.now(), ws.idleTokensFor(t.projectPath), !!drafts.get(t.id)?.trim()
     || !!attachmentDrafts.get(t.id)?.length || !!threads.queue[t.id]?.length || !!threads.live[t.id]
     || !win.owns({ projectPath: t.projectPath, rootId: t.id }))
 

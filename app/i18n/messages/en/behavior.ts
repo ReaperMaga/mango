@@ -19,6 +19,8 @@ export const behavior = {
     ask: 'Ask when I return',
     auto: 'Compact automatically',
     off: 'Off',
+    above: 'Ask or compact above',
+    aboveHint: 'How large a chat has to be, in tokens. A project can have its own in Settings > Projects.',
   },
   activity: 'Activity',
   toolCalls: {

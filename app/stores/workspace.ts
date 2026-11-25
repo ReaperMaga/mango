@@ -16,7 +16,7 @@ import { useLanguageServers } from '~/lsp/store'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
-import type { IdleCompaction } from '~/utils/idleCompaction'
+import { DEFAULT_THRESHOLD, thresholdOf, type IdleCompaction } from '~/utils/idleCompaction'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
 import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
 import { filesViewOf, type FilesView } from '~/utils/fileTree'
@@ -99,6 +99,8 @@ export interface ProjectPrefs {
   mode?: PermissionMode
   /** The model new chats start with (for the agent they start with). */
   model?: string
+  /** From how many tokens its chats are compacted after a break, or asked about. */
+  idleTokens?: number
   /** A hue (0 to 360) for the project's badge; automatic when missing. */
   color?: number
   /** Hidden from the Recent list; its chats are kept. Opening the project again brings it back. */
@@ -247,7 +249,7 @@ let tabSeq = 0
  */
 const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
 const SHARED_KEYS = ['locale', 'theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
-  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'idleCompaction', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
+  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'idleCompaction', 'idleTokens', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
   'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
 /** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
 const KNOWN_TABS_KEY = 'builtInTabs'
@@ -350,6 +352,8 @@ const initialState = () => {
       followUp: (prefs.followUp === 'steer' ? 'steer' : 'queue') as FollowUp,
       toolCalls: (['all', 'hide-ok', 'hide', 'zen'].includes(prefs.toolCalls) ? prefs.toolCalls : 'all') as ToolCalls,
       idleCompaction: (['ask', 'auto', 'off'].includes(prefs.idleCompaction) ? prefs.idleCompaction : 'ask') as IdleCompaction,
+      /** How large a chat has to be for that, in tokens; a project can have its own. */
+      idleTokens: thresholdOf(prefs.idleTokens) ?? DEFAULT_THRESHOLD,
       notify: notifyOf(prefs.notify),
       /** Keys the user changed, by action id (Settings > Shortcuts); `''` is a cleared key. Defaults live in utils/shortcuts. */
       shortcuts: cleanOverrides(prefs.shortcuts),
@@ -398,6 +402,8 @@ export const useWorkspace = defineStore('workspace', {
 
   getters: {
     /** The recent projects the lists show: archived ones are left out. */
+    /** From how many tokens a chat of the project is compacted after a break, or asked about. */
+    idleTokensFor: s => (projectPath: string): number => thresholdOf(s.projectPrefs[projectPath]?.idleTokens) ?? s.idleTokens,
     listedRecent: s => s.recent.filter(p => !s.projectPrefs[p.path]?.archived),
     activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
     hasProject: s => s.openProjects.length > 0,
@@ -481,6 +487,7 @@ export const useWorkspace = defineStore('workspace', {
           followUp: this.followUp,
           toolCalls: this.toolCalls,
           idleCompaction: this.idleCompaction,
+          idleTokens: this.idleTokens,
           notify: this.notify,
           shortcuts: this.shortcuts,
           confirmArchive: this.confirmArchive,

@@ -21,6 +21,8 @@ export const behavior: Messages['behavior'] = {
     ask: 'Bei Rückkehr fragen',
     auto: 'Automatisch komprimieren',
     off: 'Aus',
+    above: 'Nachfragen oder komprimieren ab',
+    aboveHint: 'Wie groß ein Chat sein muss, in Tokens. Ein Projekt kann unter Einstellungen > Projekte einen eigenen Wert haben.',
   },
   activity: 'Aktivität',
   toolCalls: {

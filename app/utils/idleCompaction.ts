@@ -12,8 +12,13 @@ import type { Thread } from '~/types/chat'
 /** Settings > Behaviour. 'auto' still asks where it could not compact by itself (the computer slept). */
 export type IdleCompaction = 'ask' | 'auto' | 'off'
 
-/** Below this a conversation is cheap enough to read again: compacting would mostly lose detail. */
-export const MIN_TOKENS = 200_000
+/** How large a chat has to be: what Settings offers. Below these a conversation is cheap enough to read again. */
+export const THRESHOLDS = [100_000, 150_000, 200_000, 300_000, 400_000, 500_000, 750_000]
+export const DEFAULT_THRESHOLD = 200_000
+
+/** A saved threshold, undefined when it is none Settings offers. */
+export const thresholdOf = (v: unknown): number | undefined => THRESHOLDS.find(n => n === v)
+
 const HOUR_MS = 3_600_000
 /** Automatic compaction starts this long before the cache expires... */
 const LEAD_MS = 6 * 60_000
@@ -24,10 +29,10 @@ const MARGIN_MS = 60_000
 export const cacheOwner = (t: Pick<Thread, 'model' | 'effort'>) => `${t.model} ${t.effort ?? ''}`
 
 /** A chat whose conversation is large and at rest: worth compacting, if the user wants that. */
-function compactable(t: Thread): boolean {
+function compactable(t: Thread, minTokens: number): boolean {
   if (t.agent !== 'claude' || t.parentId || !t.sessionId || t.keepContext || !t.cache) return false
   if (t.status !== 'working' && t.status !== 'done' && t.status !== 'error') return false
-  if ((t.context?.used ?? 0) < MIN_TOKENS || t.messages.at(-1)?.role !== 'agent') return false
+  if ((t.context?.used ?? 0) < minTokens || t.messages.at(-1)?.role !== 'agent') return false
   // Never compact a compaction, whether it worked or not: the next message comes first.
   const asked = t.messages.findLast(m => m.role === 'user')
   return !asked?.parts.some(p => p.type === 'text' && /^\/compact(\s|$)/.test(p.text.trim()))
@@ -37,8 +42,8 @@ function compactable(t: Thread): boolean {
 const lastUsed = (t: Thread) => Math.max(t.cache?.at ?? 0, t.messages.at(-1)?.createdAt ?? 0)
 
 /** The break to ask about before the chat's next message, null when there is nothing to ask. */
-export function breakToAsk(t: Thread, setting: IdleCompaction, now: number): { since: number; tokens: number } | null {
-  if (setting === 'off' || !compactable(t)) return null
+export function breakToAsk(t: Thread, setting: IdleCompaction, now: number, minTokens: number): { since: number; tokens: number } | null {
+  if (setting === 'off' || !compactable(t, minTokens)) return null
   const since = lastUsed(t)
   // A cache of five minutes (an API key) is gone after every pause: only a real break is worth a question.
   return now - since >= Math.max(t.cache!.ttlMs, HOUR_MS) ? { since, tokens: t.context!.used } : null
@@ -48,8 +53,8 @@ export function breakToAsk(t: Thread, setting: IdleCompaction, now: number): { s
  * Whether the chat is to be compacted by itself now: its cache is about to expire, its last turn ended well
  * and nothing about it is open. `busy`: something the caller knows of (a draft, queued messages, its window).
  */
-export function dueForCompaction(t: Thread, setting: IdleCompaction, now: number, busy: boolean): boolean {
-  if (setting !== 'auto' || busy || !compactable(t) || t.archived || t.simulated || t.status !== 'working') return false
+export function dueForCompaction(t: Thread, setting: IdleCompaction, now: number, minTokens: number, busy: boolean): boolean {
+  if (setting !== 'auto' || busy || !compactable(t, minTokens) || t.archived || t.simulated || t.status !== 'working') return false
   // In an environment another device may go on with the chat.
   if (t.projectPath.startsWith('env://')) return false
   const { at, ttlMs, for: owner, tried } = t.cache!

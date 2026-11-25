@@ -8,13 +8,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Message, Thread } from '../app/types/chat.ts'
 import type { AgentEvent } from '../app/agents/types.ts'
-import { breakToAsk, cacheOwner, dueForCompaction, MIN_TOKENS } from '../app/utils/idleCompaction.ts'
+import { breakToAsk as ask, cacheOwner, DEFAULT_THRESHOLD, dueForCompaction as due, thresholdOf, THRESHOLDS, type IdleCompaction } from '../app/utils/idleCompaction.ts'
 import { claudeCacheTtl, mergeCache, normalizeCache } from '../app/agents/context.ts'
 import { claudeAdapter, lastMessage } from '../app/agents/claude.ts'
 
 const MIN = 60_000
 const HOUR = 60 * MIN
 const T0 = 1_800_000_000_000
+
+const breakToAsk = (t: Thread, setting: IdleCompaction, now: number, min = DEFAULT_THRESHOLD) => ask(t, setting, now, min)
+const dueForCompaction = (t: Thread, setting: IdleCompaction, now: number, busy: boolean, min = DEFAULT_THRESHOLD) => due(t, setting, now, min, busy)
 
 const user = (text: string): Message => ({ id: 'u', role: 'user', createdAt: T0 - MIN, parts: [{ type: 'text', text }] })
 const reply: Message = { id: 'a', role: 'agent', createdAt: T0 - MIN, outcome: 'done', elapsedMs: MIN, parts: [{ type: 'text', text: 'ok' }] }
@@ -48,7 +51,7 @@ test('never for a chat there is nothing to compact in, or that should be left al
   const never: Partial<Thread>[] = [
     { agent: 'codex' }, { parentId: 'p' }, { sessionId: null }, { keepContext: true }, { cache: undefined },
     { status: 'running' }, { status: 'queued' }, { status: 'waiting' }, { context: undefined },
-    { context: { used: MIN_TOKENS - 1, max: 1_000_000, at: T0 } }, { messages: [] }, { messages: [user('hi')] },
+    { context: { used: DEFAULT_THRESHOLD - 1, max: 1_000_000, at: T0 } }, { messages: [] }, { messages: [user('hi')] },
     { messages: [user('/compact'), reply] }, { messages: [user('/compact keep the API'), reply] },
   ]
   for (const over of never) {
@@ -56,6 +59,19 @@ test('never for a chat there is nothing to compact in, or that should be left al
     assert.equal(dueForCompaction(chat(over), 'auto', T0 + 55 * MIN, false), false, JSON.stringify(over))
   }
   assert.ok(breakToAsk(chat({ messages: [user('/compaction is slow'), reply] }), 'ask', T0 + HOUR))
+})
+
+test('the threshold decides how large a chat has to be, and only one Settings offers counts', () => {
+  for (const min of THRESHOLDS) {
+    const of = (used: number) => chat({ context: { used, max: 1_000_000, at: T0 } })
+    assert.ok(breakToAsk(of(min), 'ask', T0 + HOUR, min))
+    assert.equal(breakToAsk(of(min - 1), 'ask', T0 + HOUR, min), null)
+    assert.equal(dueForCompaction(of(min), 'auto', T0 + 55 * MIN, false, min), true)
+    assert.equal(dueForCompaction(of(min - 1), 'auto', T0 + 55 * MIN, false, min), false)
+    assert.equal(thresholdOf(min), min)
+  }
+  assert.ok(THRESHOLDS.includes(DEFAULT_THRESHOLD))
+  for (const bad of [undefined, null, 0, 1, -5, Number.NaN, '200000', 200_001, {}]) assert.equal(thresholdOf(bad), undefined)
 })
 
 test('by itself only when chosen, in the minutes before the cache goes', () => {

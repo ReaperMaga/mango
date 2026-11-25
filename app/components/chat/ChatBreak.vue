@@ -24,7 +24,7 @@ const ws = useWorkspace()
 const now = useNow()
 // Another chat in the pane counts from now, not from the last tick.
 watch(() => props.thread.id, () => { now.value = Date.now() })
-const pause = computed(() => breakToAsk(props.thread, ws.idleCompaction, now.value))
+const pause = computed(() => breakToAsk(props.thread, ws.idleCompaction, now.value, ws.idleTokensFor(props.thread.projectPath)))
 </script>
 
 <template>
