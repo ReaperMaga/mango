@@ -3,7 +3,7 @@
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
- *        [--steer "<text>" [--steer-after ms]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
+ *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
@@ -18,6 +18,8 @@
  * conversation's own folder; Claude Code only).
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
+ * --then sends a second turn --then-after ms (default 1000) after the first, in the process kept from it, as the app
+ *  does for a chat's next message; with --no-keep a new process resumes the session instead.
  * --task-output-after reads each background task's output that long after it starts (no quota);
  * --stop-task-after stops each background task that long after it starts.
  * --mcp hands the run MCP servers as Settings > MCP servers would: a JSON array of AgentMcpServer
@@ -27,6 +29,7 @@
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { basename, dirname, extname, resolve } from 'node:path'
+import { KeptProcesses } from '../app/agents/keeper.ts'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
 if (!agentId || !cwd || (!prompt && !['--models', '--usage', '--commands', '--context'].some(f => process.argv.includes(f)))) {
@@ -99,7 +102,12 @@ const images = imagePath
   ? [{ name: basename(imagePath), path: imagePath, mime: imageMime[extname(imagePath).toLowerCase()] ?? 'image/png', data: readFileSync(imagePath).toString('base64') }]
   : []
 
-const run = adapter.run({
+// One chat's process, kept from the first turn to the --then turn.
+const kept = has('no-keep') ? null : new KeptProcesses()
+let session: string | null = flag('session') ?? null
+let then = flag('then')
+
+const turn = (prompt: string) => adapter.run({
   cwd,
   prompt,
   images,
@@ -107,19 +115,26 @@ const run = adapter.run({
   model: flag('model') ?? 'default',
   mode: flag('mode') ?? 'ask',
   effort: flag('effort') ?? null,
-  sessionId: flag('session') ?? null,
+  sessionId: session,
+  ...(kept ? { keeper: kept.keeperFor({ chat: 'try', agent: agentId, folder: cwd }, '', () => '') } : {}),
   ...(flag('mcp') ? { mcpServers: JSON.parse(readFileSync(resolve(flag('mcp')!), 'utf8')) } : {}),
   spawn: spawnCli,
   emit(event: any) {
     if (event.type === 'text-delta') { pendingText += event.text; return }
     flush()
     console.log(JSON.stringify(event))
+    if (event.type === 'session') session = event.sessionId
     if (event.type === 'approval') setTimeout(() => run.respondApproval(event.id, !has('deny')), 300)
     // Questions get each one's first option (or "42" where there are none), unless --dismiss.
     if (event.type === 'question') {
       setTimeout(() => run.answerQuestion?.(event.id, has('dismiss') ? null : event.questions.map(q => [q.options[0]?.label ?? '42'])), 300)
     }
-    if (event.type === 'turn-end') setTimeout(() => process.exit(0), 1500)
+    if (event.type === 'turn-end') {
+      const next = then
+      then = undefined
+      if (next) setTimeout(() => { console.log('-- then', kept?.size ? '(a process is kept)' : '(no process is kept)'); run = turn(next) }, Number(flag('then-after')) || 1000)
+      else setTimeout(async () => { await kept?.release(() => true); process.exit(0) }, 1500)
+    }
     if (event.type === 'task-start') {
       const id = event.id
       const readAfter = Number(flag('task-output-after'))
@@ -129,6 +144,7 @@ const run = adapter.run({
     }
   },
 })
+let run = turn(prompt)
 
 const steer = flag('steer')
 if (steer) {

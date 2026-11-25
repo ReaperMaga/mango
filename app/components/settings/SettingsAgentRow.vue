@@ -13,6 +13,7 @@ export interface AuthEntry {
 <script setup lang="ts">
 import { Check, CircleAlert, CircleCheck, CircleDashed, Copy, ExternalLink, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import { AGENT_CLI, copyToClipboard } from '~/utils/agentCli'
+import { releaseAgents } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import type { AgentInfo } from '~/types/ipc'
 import type { AgentId } from '~/types/chat'
@@ -178,6 +179,7 @@ async function signOut() {
   if (signingOut.value) return
   signingOut.value = true
   try {
+    await releaseAgents(p => p.agent === props.agent)
     await call('agent_logout', { agent: props.agent })
     confirming.value = false
     await props.refresh()

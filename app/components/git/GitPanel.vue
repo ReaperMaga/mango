@@ -5,6 +5,7 @@ import {
 } from 'lucide-vue-next'
 import type { GitFile, VcsLock } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
+import { releaseAgents } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { gitFileKey, useGit, type GitAction } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
@@ -260,6 +261,8 @@ async function removeWorktree() {
       const main = mainFolder.value
       if (!main) throw new Error(t('git.panel.noMainFolder'))
       const force = removeForce.value
+      // A process in the folder would keep Windows from removing it.
+      await releaseAgents(p => p.folder === folder)
       await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: main, worktree: folder, force }))
       delete git.repos[folder]
       await git.loadWorktrees(main)

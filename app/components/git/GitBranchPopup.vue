@@ -10,6 +10,7 @@ import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
+import { releaseAgents } from '~/agents'
 import { useThreads } from '~/stores/threads'
 import { shortAgo } from '~/utils/time'
 import { useOverlay } from '~/composables/useOverlay'
@@ -475,6 +476,8 @@ async function deleteBranch(name: string, force: boolean): Promise<boolean> {
     throw new Error(t('git.branches.chatWorking', { folder }))
   }
   const main = trees.value.main ?? at
+  // A process in the folder would keep Windows from removing it.
+  if (folder) await releaseAgents(k => k.folder === folder)
   const remove = () => call('git_branch_delete', { path: at, branch: name, force, withWorktree: true })
   const removed = await (folder ? fileStore.aroundChange([folder], remove) : remove())
   if (removed) threads.forgetWorktree(main, removed)
