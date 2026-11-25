@@ -2,6 +2,8 @@
 
 import type { Operator, PropertyType } from './model.ts'
 
+const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
 export const strings = {
   planner: 'Planner',
   noProject: 'Open a project first',
@@ -17,8 +19,6 @@ export const strings = {
   },
 
   collection: 'Collection',
-  newItemPrompt: 'What is it?',
-  newItemIn: (name: string) => `New item in ${name}`,
   newCollection: 'New collection',
   chooseCollection: 'Add to which collection?',
   noCollections: 'No collections yet',
@@ -28,7 +28,6 @@ export const strings = {
   show: 'Show',
   item: 'item',
   items: 'items',
-  itemCount: (n: number) => (n === 1 ? '1 item' : `${n} items`),
   noGroup: (property: string) => `No ${property.toLowerCase()}`,
   checked: 'Checked',
   unchecked: 'Not checked',
@@ -44,10 +43,10 @@ export const strings = {
 
   /** What an undo entry is called ("Undo delete item"). */
   did: {
-    createItem: 'new item',
+    createItem: (word: string) => `new ${word}`,
     editItem: 'edit',
     moveItem: 'move',
-    deleteItems: (n: number) => (n === 1 ? 'delete item' : `delete ${n} items`),
+    deleteItems: (n: number, word: string) => (n === 1 ? `delete ${word}` : `delete ${n} ${word}`),
     duplicate: 'duplicate',
     createCollection: 'new collection',
     editCollection: 'edit collection',
@@ -61,7 +60,7 @@ export const strings = {
     import: 'import',
     linkChat: 'link chat',
   },
-  deletedItems: (n: number) => (n === 1 ? 'Item deleted' : `${n} items deleted`),
+  deletedItems: (n: number, word: string) => (n === 1 ? `${capital(word)} deleted` : `${n} ${word} deleted`),
   deletedCollection: (name: string) => `${name || 'Collection'} deleted`,
   deletedProperty: (name: string) => `${name || 'Property'} deleted`,
   deletedOption: (name: string) => `${name || 'Option'} deleted`,

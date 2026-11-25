@@ -11,6 +11,7 @@ import type { PluginDataApi, PluginDataChange, PluginDataOp, PluginDoc } from '.
 import { createStore, type PlannerStore, type StoreHost } from '../plugins/planner/src/store.ts'
 import { itemWord } from '../plugins/planner/src/model.ts'
 import { runQuery } from '../plugins/planner/src/query.ts'
+import { planPaste } from '../plugins/planner/src/views/table/clipboard.ts'
 
 /** The database several windows share. */
 class Db {
@@ -479,6 +480,37 @@ test('duplicates, chats, and csv in and out', async () => {
   assert.equal(store.items(copy.id).items.length, 5)
   await store.flush()
   assert.ok((await store.exportMarkdown(copy.id))!.includes('## N'))
+})
+
+test('a held change stays one step however long it rests', async () => {
+  const { store, c } = await withTasks()
+  store.updateCollection(c.id, { color: '#112233' }, { defer: 'hold' })
+  await new Promise(r => setTimeout(r, 30))
+  store.updateCollection(c.id, { color: '#445566' }, { defer: 'hold' })
+  await store.flush()
+  assert.equal(store.collection(c.id)!.color, '#445566')
+  store.undo()
+  assert.equal(store.collection(c.id)!.color, c.color)
+})
+
+test('pasting makes the options it needs, in one step', async () => {
+  const { db, store, c, x, y, status, option } = await withTasks()
+  const { changes, options, skipped } = planPaste([['Blocked'], ['done']], [x, y], [status])
+  assert.equal(skipped, 0)
+  store.updateEach(c.id, changes, options)
+  await store.flush()
+  const other = open(db)
+  await ready(other.store)
+  await other.store.loadItems(c.id)
+  const blocked = other.store.collection(c.id)!.properties[0]!.options.at(-1)!
+  assert.equal(blocked.name, 'Blocked')
+  assert.equal(other.store.item(c.id, x.id)!.values[status.id], blocked.id)
+  assert.equal(other.store.item(c.id, y.id)!.values[status.id], option('Done'))
+  store.undo()
+  assert.equal(store.collection(c.id)!.properties[0]!.options.length, 3)
+  assert.equal(store.item(c.id, x.id)!.values[status.id], x.values[status.id])
+  store.redo()
+  assert.equal(store.item(c.id, x.id)!.values[status.id], blocked.id)
 })
 
 test('a read that fails says so and can be tried again', async () => {

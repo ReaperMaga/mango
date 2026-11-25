@@ -5,10 +5,11 @@ import { parseNumber } from '../../convert.ts'
 import type { PluginMenuRow } from '../../host.ts'
 import { itemMenu } from '../../item/itemMenu.ts'
 import {
-  isReadonly, newId, operatorsFor, propertyOf, TITLE, valueOf, valueText,
+  isReadonly, itemWord, newId, operatorsFor, propertyOf, TITLE, valueOf, valueText,
   type Collection, type Item, type Property, type SortDirection, type Value, type View,
 } from '../../model.ts'
 import type { Group, QueryResult } from '../../query.ts'
+import { keyLabel } from '../../shell/keys.ts'
 import { strings as shared } from '../../strings.ts'
 import Icon from '../../ui/Icon.vue'
 import OptionTag from '../../ui/OptionTag.vue'
@@ -38,7 +39,9 @@ const planner = usePlanner()
 const { mango, store } = planner
 const { ThreadDot } = mango.ui.components
 const uid = useId()
+const wordOf = (n: number) => itemWord(props.collection, n)
 
+const openKey = keyLabel(mango, 'Enter')
 const GUTTER = 46
 const ADD_W = 36
 const HEAD_H = 32
@@ -578,9 +581,8 @@ function onPaste(e: ClipboardEvent) {
   const items = cells.length === 1
     ? selection.value.has(line.item.id) ? selectedItems.value : [line.item]
     : lines.value.slice(at).flatMap(l => (l.kind === 'item' ? [l.item] : [])).slice(0, cells.length)
-  const { changes, skipped } = planPaste(cells, items, cols.value.slice(colIndex.value.get(activeCol.value.id)).map(c => c.field),
-    (p, name) => store.addOption(props.collection.id, p.id, name))
-  store.updateEach(props.collection.id, changes)
+  const { changes, options, skipped } = planPaste(cells, items, cols.value.slice(colIndex.value.get(activeCol.value.id)).map(c => c.field))
+  store.updateEach(props.collection.id, changes, options)
   if (skipped) mango.ui.toast({ title: strings.notPasted(skipped), kind: 'warning' })
 }
 
@@ -592,7 +594,7 @@ function rowMenu(e: MouseEvent, line: ItemLine, col?: string) {
 }
 function openMenu(item: Item, at: { x: number; y: number } | HTMLElement) {
   const ids = selection.value.has(item.id) ? selectedItems.value.map(i => i.id) : [item.id]
-  void itemMenu(planner, props.collection, ids, at, { open: id => emit('open', id) })
+  void itemMenu(planner, props.collection, ids, at, { open: id => emit('open', id), openKey })
 }
 
 async function setForSelected(p: Property, el: HTMLElement) {
@@ -760,7 +762,7 @@ function onKey(e: KeyboardEvent) {
 const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 6 })
 const footer = computed(() => new Map(cols.value.map((c): [string, string] => {
   const { items, total } = props.result
-  if (!c.field) return [c.id, items.length === total ? strings.count(total) : strings.countOf(items.length, total)]
+  if (!c.field) return [c.id, items.length === total ? strings.count(total, wordOf(total)) : strings.countOf(items.length, total, wordOf(total))]
   const p = c.field
   if (p.type === 'number') {
     const values = items.map(i => valueOf(i, p)).filter(v => typeof v === 'number')
@@ -771,7 +773,8 @@ const footer = computed(() => new Map(cols.value.map((c): [string, string] => {
 })))
 
 const groupPreview = (g: Group) => (g.name ? { name: g.name, color: g.color } : null)
-const isEmpty = computed(() => !props.result.items.length && !props.result.groupBy)
+/** Nothing to find is said above the view. */
+const isEmpty = computed(() => !props.result.total && !props.result.groupBy)
 
 defineExpose({ newItem, focus })
 </script>
@@ -923,7 +926,7 @@ defineExpose({ newItem, focus })
                     class="pl-open"
                     tabindex="-1"
                     :aria-label="strings.openItem(line.item.title)"
-                    :title="`${strings.open} (${mango.platform === 'macos' ? '⌘' : 'Ctrl+'}Enter)`"
+                    :title="`${strings.open} (${openKey})`"
                     @mousedown.stop.prevent
                     @click.stop="emit('open', line.item.id)"
                   >
@@ -977,8 +980,8 @@ defineExpose({ newItem, focus })
                     type="button"
                     class="pl-line__add"
                     tabindex="-1"
-                    :aria-label="strings.newItemIn(groupName(line.group))"
-                    :title="strings.newItemIn(groupName(line.group))"
+                    :aria-label="strings.newItemIn(wordOf(1), groupName(line.group))"
+                    :title="strings.newItemIn(wordOf(1), groupName(line.group))"
                     @click.stop="addItem(line.group, true)"
                   >
                     <Icon name="plus" />
@@ -986,8 +989,8 @@ defineExpose({ newItem, focus })
                 </template>
                 <template v-else>
                   <Icon name="plus" class="pl-line__plus" />
-                  <span>{{ strings.newItem }}</span>
-                  <span v-if="isEmpty" class="pl-line__note">{{ result.total ? strings.noMatches : strings.empty }}</span>
+                  <span>{{ strings.newItem(wordOf(1)) }}</span>
+                  <span v-if="isEmpty" class="pl-line__note">{{ strings.empty(wordOf(2)) }}</span>
                 </template>
               </div>
             </div>
@@ -995,7 +998,7 @@ defineExpose({ newItem, focus })
 
           <div v-if="rowDrag?.drop" class="pl-dropline" :style="{ top: `${rowDrag.drop.boundary * ROW_H - 1}px` }" aria-hidden="true" />
         </div>
-        <p v-if="readonly && !result.items.length" class="pl-none">{{ result.total ? strings.noMatches : strings.empty }}</p>
+        <p v-if="readonly && isEmpty" class="pl-none">{{ strings.empty(wordOf(2)) }}</p>
 
         <div class="pl-tr pl-tr--foot" role="row" :aria-rowindex="lines.length + 2">
           <div class="pl-gutter" role="gridcell" aria-colindex="1" />

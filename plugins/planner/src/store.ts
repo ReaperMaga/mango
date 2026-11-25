@@ -15,7 +15,7 @@ import { LocalSource } from './data/local.ts'
 import type { PlannerSource, SourceDoc, SourceOp, SourceStatus } from './data/source.ts'
 import type { MangoPluginApi } from './host.ts'
 import {
-  colorAt, isGroupable, isInScope, newId, normalizeCollection, normalizeItem, ordered, projectKey, propertyOf,
+  colorAt, isGroupable, isInScope, itemWord, newId, normalizeCollection, normalizeItem, ordered, projectKey, propertyOf,
   storedValue, TITLE, viewOf, type Collection, type Color, type Item, type Option, type Property, type PropertyType,
   type Scope, type Value, type View,
 } from './model.ts'
@@ -69,8 +69,11 @@ export interface ItemChange {
   values?: Readonly<Record<string, Value | null>>
 }
 export interface ChangeOptions {
-  /** For text while it is typed: written after a pause (or `flush`), one undo step per pause. */
-  defer?: boolean
+  /**
+   * For text while it is typed: written after a pause (or `flush`), one undo step per pause. `hold`: only at `flush`
+   * or the next other change, for a drag, which may rest anywhere.
+   */
+  defer?: boolean | 'hold'
 }
 
 export interface Move {
@@ -122,8 +125,8 @@ export interface PlannerStore {
   createItem(collectionId: string, input?: NewItem): Promise<Item | null>
   updateItem(collectionId: string, itemId: string, change: ItemChange, options?: ChangeOptions): void
   updateItems(collectionId: string, itemIds: readonly string[], change: ItemChange): void
-  /** Each item its own change, as one step to undo. */
-  updateEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>): void
+  /** Each item its own change, with options they need (by property), as one step to undo. */
+  updateEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>, newOptions?: ReadonlyMap<string, readonly Option[]>): void
   /** Group and position as one change. */
   moveItems(collectionId: string, move: Move): void
   duplicateItems(collectionId: string, itemIds: readonly string[]): Item[]
@@ -441,7 +444,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       return false
     }
     if (opts.defer) {
-      addDeferred(ops, label)
+      addDeferred(ops, label, opts.defer === 'hold')
       return true
     }
     settleDeferred()
@@ -481,7 +484,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   /** Text as it is typed: joins what is waiting, a newer text of one field replacing the older. */
-  function addDeferred(ops: SourceOp[], label: string | null) {
+  function addDeferred(ops: SourceOp[], label: string | null, hold: boolean) {
     if (deferred) {
       const m = deferred
       m.at = Date.now()
@@ -504,7 +507,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     }
     saving.value = true
     clearTimeout(timer)
-    timer = setTimeout(settleDeferred, deferMs)
+    if (!hold) timer = setTimeout(settleDeferred, deferMs)
   }
 
   /** Replaces the values of a patch that is waiting already; false when one of its fields is not in it. */
@@ -710,7 +713,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
         },
       },
       ...itemOrderOps(collectionId, place, new Set([id])),
-    ], strings.did.createItem)
+    ], strings.did.createItem(itemWord(c, 1)))
     return ok ? item(collectionId, id) : null
   }
 
@@ -747,12 +750,28 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     })), strings.did.editItem, opts)
   }
 
-  function changeEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>) {
+  function changeEach(collectionId: string, changes: ReadonlyMap<string, ItemChange>, newOptions?: ReadonlyMap<string, readonly Option[]>) {
     const c = collection(collectionId)
     if (!c) return
-    mutate([...changes].map(([id, change]): SourceOp => ({
-      ...itemTarget(collectionId, id), op: 'patch', patch: effective(rawItem(collectionId, id), itemPatch(c, change)),
-    })), strings.did.editItem)
+    const patch = c.properties.flatMap((p): PatchOp[] => {
+      const add = newOptions?.get(p.id)
+      if (!add?.length) return []
+      const base = ['properties', p.id, 'options']
+      const ids = new Set(add.map(o => o.id))
+      const place = placeAt(p.options, [...ids], 'end')
+      return [
+        ...add.map((o): PatchOp => ({ path: [...base, o.id], value: { name: o.name, color: o.color, order: place.get(o.id)! } })),
+        ...orderPatch(base, new Map([...place].filter(([id]) => !ids.has(id)))),
+      ]
+    })
+    // The values are checked against the options as they will be.
+    const then = { ...c, properties: c.properties.map(p => ({ ...p, options: [...p.options, ...(newOptions?.get(p.id) ?? [])] })) }
+    mutate([
+      { ...collectionTarget(collectionId), op: 'patch', patch },
+      ...[...changes].map(([id, change]): SourceOp => ({
+        ...itemTarget(collectionId, id), op: 'patch', patch: effective(rawItem(collectionId, id), itemPatch(then, change)),
+      })),
+    ], strings.did.editItem)
   }
 
   function moveItems(collectionId: string, move: Move) {
@@ -801,8 +820,9 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   function deleteItems(collectionId: string, itemIds: readonly string[]) {
     const ids = [...new Set(itemIds)].filter(id => rawItem(collectionId, id))
     if (!ids.length) return
-    const ok = mutate(ids.map((id): SourceOp => ({ ...itemTarget(collectionId, id), op: 'delete' })), strings.did.deleteItems(ids.length))
-    if (ok) undoToast(strings.deletedItems(ids.length))
+    const word = itemWord(collection(collectionId), ids.length)
+    const ok = mutate(ids.map((id): SourceOp => ({ ...itemTarget(collectionId, id), op: 'delete' })), strings.did.deleteItems(ids.length, word))
+    if (ok) undoToast(strings.deletedItems(ids.length, word))
   }
 
   function setChat(collectionId: string, itemId: string, threadId: string, linked: boolean) {

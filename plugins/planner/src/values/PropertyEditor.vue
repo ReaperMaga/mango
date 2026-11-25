@@ -59,7 +59,7 @@ const list = ref<HTMLElement | null>(null)
 const deleting = shallowRef<{ id: string; anchor: HTMLElement } | null>(null)
 
 function setOption(o: Option, change: { name?: string; color?: Color }) {
-  store.updateOption(props.collectionId, props.propertyId, o.id, change, { defer: true })
+  store.updateOption(props.collectionId, props.propertyId, o.id, change, { defer: change.color ? 'hold' : true })
 }
 function renameOption(o: Option, e: Event) {
   const name = (e.target as HTMLInputElement).value

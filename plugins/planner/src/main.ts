@@ -7,6 +7,7 @@ import './shell/shell.css'
 import { shell } from './shell/strings.ts'
 import { createStore, type PlannerStore } from './store.ts'
 import { strings } from './strings.ts'
+import { toastOnce } from './ui/toastOnce.ts'
 
 const ICON = 'square-kanban'
 let current: PlannerStore | null = null
@@ -23,7 +24,7 @@ export function activate(mango: MangoPluginApi) {
 
   /** Shows the planner's tab, where it was or at `route`. */
   function open(route?: Route) {
-    if (!mango.workspace.activeProject()) return mango.ui.toast({ title: strings.noProject, body: shell.noProjectBody })
+    if (!mango.workspace.activeProject()) return toastOnce(mango, strings.noProject, shell.noProjectBody)
     mango.ui.tabs.open(VIEW_ID, { title: strings.planner, key: TAB_KEY, state: route ? { ...route } : undefined })
   }
 

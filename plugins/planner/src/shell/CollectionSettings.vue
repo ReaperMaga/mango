@@ -125,7 +125,7 @@ function onKey(e: KeyboardEvent) {
           :model-value="collection.color"
           :label="shell.colour"
           :disabled="readonly"
-          @update:model-value="color => store.updateCollection(collectionId, { color }, { defer: true })"
+          @update:model-value="color => store.updateCollection(collectionId, { color }, { defer: 'hold' })"
           @change="store.flush()"
         />
       </div>

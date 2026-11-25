@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { usePlanner } from '../../context.ts'
-import { isReadonly, type Collection, type Property } from '../../model.ts'
+import { isReadonly, itemWord, type Collection, type Property } from '../../model.ts'
 import { strings as shared } from '../../strings.ts'
 import Icon from '../../ui/Icon.vue'
 import { PROPERTY_ICONS } from '../../ui/propertyIcons.ts'
@@ -24,8 +24,8 @@ function setProperty(e: MouseEvent) {
 </script>
 
 <template>
-  <div class="pl-bulk" role="toolbar" :aria-label="strings.selectionActions" @keydown.esc.stop.prevent="emit('clear')">
-    <span class="pl-bulk__count" role="status">{{ strings.selected(count) }}</span>
+  <div class="pl-bulk" role="toolbar" :aria-label="strings.selectionActions(itemWord(collection, 2))" @keydown.esc.stop.prevent="emit('clear')">
+    <span class="pl-bulk__count" role="status">{{ strings.selected(count, itemWord(collection, count)) }}</span>
     <button type="button" class="pl-bulk__btn" :title="strings.setProperty" aria-haspopup="menu" @click="setProperty">
       <Icon name="sliders-horizontal" /><span>{{ strings.setProperty }}</span>
     </button>

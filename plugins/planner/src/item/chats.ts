@@ -2,6 +2,7 @@
 
 import type { Planner } from '../context.ts'
 import { projectKey, type Collection, type Item } from '../model.ts'
+import { toastOnce } from '../ui/toastOnce.ts'
 import { strings } from './strings.ts'
 
 /** The project a chat about this collection belongs to: its own when that is open, else the active one. */
@@ -20,7 +21,7 @@ export function startChat(planner: Planner, collection: Collection, item: Item):
   const { mango, store } = planner
   const projectPath = projectFor(planner, collection)
   if (!projectPath) {
-    mango.ui.toast({ title: strings.noProject })
+    toastOnce(mango, strings.noProject)
     return false
   }
   // As it is now, with what was typed a moment ago.

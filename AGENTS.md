@@ -27,6 +27,7 @@ pnpm version:check                  # every copy of the version agrees (exit 1 i
 
 pnpm nuxt prepare && pnpm vue-tsc --noEmit -p .nuxt/tsconfig.app.json   # typecheck (must be clean)
 pnpm test                                                               # plain Node unit tests in tests/ (must pass)
+pnpm plugins:check && pnpm plugins:build                                # plugins built from src/ (planner): typecheck, then main.js and styles.css
 cd src-tauri && cargo test && cargo build                               # backend tests, no new warnings
 cd src-tauri && cargo check --target x86_64-pc-windows-msvc             # Windows must keep compiling
 # macOS: CI runs `cargo check` on a Mac runner. From Linux, stub the C compiler (no Apple SDK here):
@@ -124,7 +125,7 @@ src-tauri/src/
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
-plugins/             the official plugins (one folder each) and catalog.json, the catalog Settings > Plugins > Browse shows (also compiled in as the offline copy)
+plugins/             the official plugins (one folder each) and catalog.json, the catalog Settings > Plugins > Browse shows (also compiled in as the offline copy); planner/ is built from its src/
 mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its own package, see mobile/AGENTS.md
 ```
 
@@ -219,6 +220,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   Everything a plugin registers goes through its scope and is undone when it stops; a plugin's error is caught, logged to it, and never
   breaks the app. Git sources pass `validate.rs` (URL, ref, subpath) before reaching git, and a plugin's files are read only from inside its
   folder. An official plugin is a folder in `plugins/` plus its entry in `plugins/catalog.json` (`tests/officialPlugins.test.ts` checks them).
+  `planner` is built from `plugins/planner/src/`: edit there, never its `main.js` or `styles.css`, then run `pnpm plugins:check` and
+  `pnpm plugins:build` and commit the built files too (`tests/plannerBuild.test.ts` compares them). Its interface changes data only through `src/store.ts`.
 - Plugins' file hooks (`ui.files`, `plugin-host/fileHooks.ts`) run per row inside computeds: call them only through
   that file, which guards them and reports outside the computed. A companion (Unity's `.meta`) must never be separated
   from its entry: whatever in Mango renames or deletes project entries goes through `stores/files.ts` (`renameEntry`, `companionPaths` + `deleteEntry`), which uses `utils/companions.ts`.

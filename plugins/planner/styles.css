@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. 9f06cdd52fddc3ca8fd2453701c3d3ee */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. ed32a5542937a9803e3918f53e73db66 */
 :where(.pl-icon[data-v-517fdef4]) { width: 15px; height: 15px; stroke-width: 1.75; flex: none;
 }
 
@@ -471,8 +471,6 @@ button.pl-oe__row[data-v-f177d8df]:disabled { color: var(--fg-faint);
 .pl-page[data-v-8c609c4b]:focus-visible { outline: none; border-radius: 0;
 }
 .pl-page__head[data-v-8c609c4b] { display: flex; align-items: center; gap: 2px; flex: none; height: var(--tabbar-h); padding: 0 var(--space-2); border-bottom: 1px solid var(--line-soft);
-}
-.pl-page__place[data-v-8c609c4b] { min-width: 0; padding-left: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: var(--fg-subtle);
 }
 .pl-page__gap[data-v-8c609c4b] { flex: 1;
 }

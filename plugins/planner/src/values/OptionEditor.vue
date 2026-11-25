@@ -154,7 +154,7 @@ function moveOption(by: number) {
   if (o && other) store.moveOption(props.collectionId, props.property.id, o.id, by < 0 ? { before: other.id } : { after: other.id })
 }
 function recolor(color: Color) {
-  if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: true })
+  if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: 'hold' })
 }
 </script>
 

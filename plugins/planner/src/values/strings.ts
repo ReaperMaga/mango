@@ -73,7 +73,7 @@ export const strings = {
   moveDownProperty: 'Move down',
   deleteProperty: 'Delete property',
   deleteTitle: (name: string) => `Delete “${name}”?`,
-  deleteBody: 'Its values are removed from every item.',
+  deleteBody: (word: string) => `Its values are removed from every ${word}.`,
   delete: 'Delete',
   unsupported: 'Made by a newer version of the planner',
   typeHint: {

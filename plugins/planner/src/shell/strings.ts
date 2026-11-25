@@ -14,7 +14,7 @@ export const shell = {
   importCsv: 'Import a CSV file…',
   importCsvHint: 'A new collection with a property for every column.',
   importInto: 'Import CSV…',
-  imported: (n: number) => (n === 1 ? '1 item imported' : `${n} items imported`),
+  imported: (n: number, word: string) => `${n} ${word} imported`,
   importFailed: 'The file could not be read',
   fileTooLarge: 'It is larger than 10 MB.',
 
@@ -123,14 +123,14 @@ export const shell = {
   groupBy: 'Group by',
   noGrouping: 'No grouping',
   groups: 'Groups',
-  noGroupable: 'Items can be grouped by a select, multi-select or checkbox property. This collection has none yet.',
+  noGroupable: 'A view can be grouped by a select, multi-select or checkbox property. This collection has none yet.',
   addProperty: 'Add property',
   hide: (name: string) => `Hide ${name}`,
   show: (name: string) => `Show ${name}`,
 
   properties: 'Properties',
   shown: 'Shown in this view',
-  noProperties: 'No properties yet. Add one to give items a status, a date or anything else you track.',
+  noProperties: 'No properties yet. Add one for a status, a date or anything else you track.',
   propertyMenu: 'Property options',
   bodyPreview: 'Show the start of the page on cards',
   reorder: (name: string) => `Move ${name} (Alt+arrow up or down)`,
@@ -141,10 +141,10 @@ export const shell = {
   offlineBody: 'Changes are kept and sent when the connection is back.',
   readonlyBody: 'The planner cannot be changed right now.',
 
-  itemsFailed: 'The items could not be read',
+  itemsFailed: (many: string) => `The ${many} could not be read`,
   noMatches: (many: string) => `No ${many} match the filters`,
   noMatchesSearch: (text: string, many: string) => `No ${many} match “${text}”`,
-  resizePane: 'Resize the item',
+  resizePane: 'Resize the page',
 
   quickAdd: 'New item',
   quickAddTo: 'In',

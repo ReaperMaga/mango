@@ -1,6 +1,6 @@
 import type { Planner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
-import { hasOptions, PROPERTY_TYPES, type Collection, type Property, type View } from '../model.ts'
+import { itemWord, hasOptions, PROPERTY_TYPES, type Collection, type Property, type View } from '../model.ts'
 import { strings as shared } from '../strings.ts'
 import { PROPERTY_ICONS } from '../ui/propertyIcons.ts'
 import { editProperty } from './editProperty.ts'
@@ -58,7 +58,7 @@ export async function propertyMenu(
     if (now) store.updateView(collection.id, now.id, { columns: now.columns.map(c => (c.propertyId === property.id ? { ...c, visible: false } : c)) })
   }
   async function remove() {
-    const ok = await mango.ui.confirm({ title: strings.deleteTitle(property.name), body: strings.deleteBody, confirmLabel: strings.delete, danger: true })
+    const ok = await mango.ui.confirm({ title: strings.deleteTitle(property.name), body: strings.deleteBody(itemWord(collection, 1)), confirmLabel: strings.delete, danger: true })
     if (ok) await store.deleteProperty(collection.id, property.id)
   }
 }

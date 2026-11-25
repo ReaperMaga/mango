@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
       <FilterBar v-if="hasBar && !covered" ref="bar" :collection="collection" :view="view" :readonly="readonly" @add="el => head?.openFilter(el)" />
 
       <div v-if="list?.status === 'error'" class="pl-fail" role="alert">
-        <p class="pl-fail__title">{{ shell.itemsFailed }}</p>
+        <p class="pl-fail__title">{{ shell.itemsFailed(itemWord(collection, 2)) }}</p>
         <p v-if="list.error" class="pl-fail__body selectable">{{ list.error }}</p>
         <component :is="Button" size="sm" @click="store.loadItems(collection.id)">{{ strings.retry }}</component>
       </div>

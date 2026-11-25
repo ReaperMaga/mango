@@ -41,7 +41,7 @@ export async function importAsCollection({ mango, store }: Host, scope?: Scope):
 async function importInto({ mango, store }: Host, id: string) {
   const file = await pickCsv(mango)
   const n = file ? await store.importCsv(id, file.text) : 0
-  if (n) mango.ui.toast({ title: shell.imported(n), kind: 'success' })
+  if (n) mango.ui.toast({ title: shell.imported(n, itemWord(store.collection(id), n)), kind: 'success' })
 }
 
 type Format = 'csv' | 'md'
@@ -112,7 +112,7 @@ export async function editCollection(planner: Planner, c: Collection, groupBy?: 
 
 async function removeCollection({ mango, store, go, route }: Planner, c: Collection) {
   // Read first, so that it can say how much goes.
-  if (!await store.loadItems(c.id)) return mango.ui.toast({ title: shell.itemsFailed, body: store.items(c.id).error ?? '', kind: 'error' })
+  if (!await store.loadItems(c.id)) return mango.ui.toast({ title: shell.itemsFailed(itemWord(c, 2)), body: store.items(c.id).error ?? '', kind: 'error' })
   const body = shell.deleteBody(store.items(c.id).items.length, c)
   const ok = await mango.ui.confirm({ title: shell.deleteConfirm(c.name || shell.unnamed), body, confirmLabel: shell.deleteLabel, danger: true })
   if (ok && await store.deleteCollection(c.id) && route.value.collectionId === c.id) go({ collectionId: null })

@@ -1,12 +1,14 @@
 import type { Planner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
-import { propertyOf, valueOf, type Collection, type Item, type Property } from '../model.ts'
+import { itemWord, propertyOf, valueOf, type Collection, type Item, type Property } from '../model.ts'
 import { startChat } from './chats.ts'
 import { strings } from './strings.ts'
 
 export interface ItemMenuOptions {
   /** How it opens; left out, in the planner's tab. `null`: it is open already. */
   open?: ((itemId: string) => void) | null
+  /** The key that opens it there; Enter when left out. */
+  openKey?: string
   /** The select offered as quick choices: a board's group. Left out, the first one. */
   propertyId?: string | null
   /** Rows of the view's own, after Open. */
@@ -35,7 +37,7 @@ export function itemMenu(
 
   if (one) {
     const { open = (itemId: string) => planner.go({ itemId }) } = opts
-    if (open) rows.push({ label: strings.open, icon: 'panel-right', kbd: 'Enter', onSelect: () => open(one.id) })
+    if (open) rows.push({ label: strings.open, icon: 'panel-right', kbd: opts.openKey ?? 'Enter', onSelect: () => open(one.id) })
   }
   rows.push(...(opts.rows ?? []))
   if (one) {
@@ -68,7 +70,7 @@ export function itemMenu(
     { label: strings.duplicate, icon: 'copy-plus', divider: true, onSelect: () => { store.duplicateItems(collection.id, ids) } },
     { label: strings.copyMarkdown, icon: 'copy', onSelect: () => { void copyMarkdown(planner, collection.id, ids) } },
     {
-      label: one ? strings.delete : strings.deleteMany(ids.length),
+      label: one ? strings.delete : strings.deleteMany(ids.length, itemWord(collection, ids.length)),
       icon: 'trash-2',
       danger: true,
       divider: true,

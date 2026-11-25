@@ -1,5 +1,5 @@
 export const strings = {
-  page: (title: string) => `Item: ${title || 'Untitled'}`,
+  page: (word: string, title: string) => `${word}: ${title || 'Untitled'}`,
   untitled: 'Untitled',
   title: 'Title',
   close: 'Close',
@@ -10,7 +10,7 @@ export const strings = {
   loading: 'Loading…',
   loadFailed: 'The planner could not be read',
   retry: 'Try again',
-  gone: 'This item was deleted',
+  gone: (word: string) => `This ${word} was deleted`,
   goneBody: 'It may have been deleted in another window. Undo can bring it back if you deleted it here.',
   backToCollection: 'Back to the collection',
   empty: 'Empty',
@@ -47,6 +47,6 @@ export const strings = {
   copied: 'Copied as Markdown',
   copyFailed: 'It could not be copied',
   delete: 'Delete',
-  deleteMany: (n: number) => `Delete ${n} items`,
+  deleteMany: (n: number, word: string) => `Delete ${n} ${word}`,
   none: (property: string) => `No ${property.toLowerCase()}`,
 }

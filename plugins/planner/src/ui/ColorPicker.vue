@@ -7,7 +7,7 @@ import { colorVar, rawColor } from './colors.ts'
 import { hexToHsv, hsvToHex, type Hsv } from './hsv.ts'
 
 /**
- * A named colour or any other. `update:modelValue` follows every move (save it deferred), `change` comes once it is
+ * A named colour or any other. `update:modelValue` follows every move (save it with `defer: 'hold'`), `change` comes once it is
  * settled (flush it). Also when it closes in the middle of one.
  */
 const props = defineProps<{ modelValue: Color; label: string }>()

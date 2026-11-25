@@ -1,7 +1,7 @@
 /** Cells as text and back: tab separated, as spreadsheets write it. Pure. */
 
 import { OptionSet, parseValue } from '../../convert.ts'
-import { hasOptions, isReadonly, valueOf, valueText, type Item, type Option, type Property, type Value } from '../../model.ts'
+import { isReadonly, valueOf, valueText, type Item, type Option, type Property, type Value } from '../../model.ts'
 import type { ItemChange } from '../../store.ts'
 
 /** A column: a property, or null for the title. */
@@ -34,22 +34,20 @@ export function parseTsv(source: string): string[][] {
 
 export interface Paste {
   readonly changes: ReadonlyMap<string, ItemChange>
+  /** The options it needs, by property. */
+  readonly options: ReadonlyMap<string, readonly Option[]>
   /** How many cells held text that is not a value of their column. */
   readonly skipped: number
 }
 
 /**
  * What pasting into these items and fields does, from their first on. A single row goes into every item given.
- * `addOption` makes an option that is missing, and answers it.
  */
 export function planPaste(
   cells: readonly (readonly string[])[], items: readonly Item[], fields: readonly Field[],
-  addOption: (property: Property, name: string) => Option | null,
 ): Paste {
   const changes = new Map<string, ItemChange>()
   const sets = new Map<string, OptionSet>()
-  /** The options made, by the id `parseValue` gave them. */
-  const made = new Map<string, string>()
   let skipped = 0
 
   const read = (cell: string, p: Property): Value | null | undefined => {
@@ -58,17 +56,7 @@ export function planPaste(
     let set = sets.get(p.id)
     if (!set) sets.set(p.id, (set = new OptionSet(p.options)))
     const value = parseValue(cell, p.type, set)
-    if (value === null) return undefined
-    if (!hasOptions(p)) return value
-    const ids = (Array.isArray(value) ? value as readonly string[] : [value as string]).flatMap((id) => {
-      if (p.options.some(o => o.id === id)) return [id]
-      const real = made.get(id) ?? addOption(p, set.options.find(o => o.id === id)!.name)?.id
-      if (!real) return []
-      made.set(id, real)
-      return [real]
-    })
-    if (!ids.length) return undefined
-    return p.type === 'select' ? ids[0]! : ids
+    return value === null ? undefined : value
   }
 
   for (const [y, item] of items.entries()) {
@@ -89,5 +77,9 @@ export function planPaste(
     }
     if (change.title !== undefined || Object.keys(values).length) changes.set(item.id, change)
   }
-  return { changes, skipped }
+  const options = new Map([...sets].flatMap(([id, set]): Array<[string, readonly Option[]]> => {
+    const old = fields.find(f => f?.id === id)!.options.length
+    return set.options.length > old ? [[id, set.options.slice(old)]] : []
+  }))
+  return { changes, options, skipped }
 }

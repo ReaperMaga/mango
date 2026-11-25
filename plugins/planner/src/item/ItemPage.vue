@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { usePlanner, VIEW_ID } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
-import type { Collection } from '../model.ts'
+import { itemWord, type Collection } from '../model.ts'
 import Icon from '../ui/Icon.vue'
 import { anyLayerOpen } from '../ui/layers.ts'
 import { startChat } from './chats.ts'
@@ -110,12 +110,11 @@ const collectionName = computed(() => props.collection.name || strings.untitled)
 </script>
 
 <template>
-  <article ref="root" class="pl-page" :class="`is-${mode}`" tabindex="-1" :aria-label="strings.page(item?.title ?? '')">
+  <article ref="root" class="pl-page" :class="`is-${mode}`" tabindex="-1" :aria-label="strings.page(itemWord(collection, 1), item?.title ?? '')">
     <header class="pl-page__head">
       <component :is="IconButton" v-if="mode === 'full'" :label="strings.back(collectionName)" shortcut="Esc" @click="emit('close')"><Icon name="arrow-left" /></component>
       <component :is="IconButton" v-else :label="strings.close" shortcut="Esc" @click="emit('close')"><Icon name="x" /></component>
       <component :is="IconButton" :label="mode === 'full' ? strings.dock : strings.expand" @click="emit('toggle-mode')"><Icon :name="mode === 'full' ? 'panel-right' : 'maximize-2'" /></component>
-      <span v-if="mode === 'full'" class="pl-page__place">{{ collectionName }}</span>
       <span class="pl-page__gap" />
       <template v-if="item">
         <component :is="Button" variant="ghost" size="sm" @click="chatMenu">
@@ -173,7 +172,7 @@ const collectionName = computed(() => props.collection.name || strings.untitled)
       </template>
       <p v-else-if="state.status !== 'ready'" class="pl-page__sub">{{ strings.loading }}</p>
       <template v-else>
-        <p>{{ strings.gone }}</p>
+        <p>{{ strings.gone(itemWord(collection, 1)) }}</p>
         <p class="pl-page__sub">{{ strings.goneBody }}</p>
         <component :is="Button" @click="emit('close')">{{ strings.backToCollection }}</component>
       </template>
@@ -196,7 +195,6 @@ const collectionName = computed(() => props.collection.name || strings.untitled)
 }
 .pl-page:focus-visible { outline: none; border-radius: 0; }
 .pl-page__head { display: flex; align-items: center; gap: 2px; flex: none; height: var(--tabbar-h); padding: 0 var(--space-2); border-bottom: 1px solid var(--line-soft); }
-.pl-page__place { min-width: 0; padding-left: var(--space-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); color: var(--fg-subtle); }
 .pl-page__gap { flex: 1; }
 .pl-page__scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
 .pl-page__col { display: flex; flex-direction: column; gap: var(--space-3); min-height: 100%; max-width: 760px; margin: 0 auto; padding: var(--space-4) var(--space-3) var(--space-6); }

@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. 9f06cdd52fddc3ca8fd2453701c3d3ee */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. ed32a5542937a9803e3918f53e73db66 */
 
 let active = null
 
@@ -103,53 +103,6 @@ var __plugin = (function(exports, vue) {
 			itemId: text(state.itemId)
 		};
 	}
-	// plugins/planner/src/ui/Icon.vue?vue&type=script&setup=true&lang.ts
-	/** A lucide icon by name, drawn by Mango. 15px unless styled otherwise. */
-	var Icon_vue_vue_type_script_setup_true_lang_default = /*@__PURE__*/ (0, vue.defineComponent)({
-		__name: "Icon",
-		props: { name: {} },
-		setup(__props) {
-			const { Icon } = usePlanner().mango.ui.components;
-			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Icon)), {
-					icon: __props.name,
-					class: "pl-icon"
-				}, null, 8, ["icon"]);
-			};
-		}
-	});
-	// \0plugin-vue:export-helper
-	var _plugin_vue_export_helper_default = (sfc, props) => {
-		const target = sfc.__vccOpts || sfc;
-		for (const [key, val] of props) target[key] = val;
-		return target;
-	};
-	// plugins/planner/src/ui/Icon.vue
-	var Icon_default = /*#__PURE__*/ _plugin_vue_export_helper_default(Icon_vue_vue_type_script_setup_true_lang_default, [["__scopeId", "data-v-517fdef4"]]);
-	// plugins/planner/src/ui/layers.ts
-	var layers = [];
-	function pushLayer(layer) {
-		layers.push(layer);
-		return () => {
-			const i = layers.indexOf(layer);
-			if (i >= 0) layers.splice(i, 1);
-		};
-	}
-	var isTopLayer = (layer) => layers.at(-1) === layer;
-	/** In this layer or one opened over it. */
-	function inOrAbove(layer, el) {
-		return layers.slice(layers.indexOf(layer)).some((l) => l.contains(el));
-	}
-	/** Mango's dialogs that are open. A popover may be in one: those open before it are under it, not over it. */
-	var hostDialogs = () => [...document.querySelectorAll(".dlg__panel")];
-	/** In one of Mango's own menus, dialogs or toasts over the planner's layer. */
-	function inHostLayer(el, under = []) {
-		const host = el instanceof Element ? el.closest(".menu__pop, .dlg__panel, .toast") : null;
-		return host !== null && !under.includes(host);
-	}
-	var hostLayerOpen = (under = []) => document.querySelector(".menu__pop") !== null || hostDialogs().some((d) => !under.includes(d));
-	/** Something floats that owns Escape: a popover of the planner, or a menu or dialog of Mango's. */
-	var anyLayerOpen = () => layers.length > 0 || hostLayerOpen();
 	// plugins/planner/src/order.ts
 	/**
 	* Positions as short strings ("fractional indexing"): a new position between two others is a new key, so moving
@@ -267,6 +220,7 @@ var __plugin = (function(exports, vue) {
 		return new Map(all.map((id, i) => [id, fresh[i]]));
 	}
 	// plugins/planner/src/strings.ts
+	var capital = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 	var strings$5 = {
 		planner: "Planner",
 		noProject: "Open a project first",
@@ -280,8 +234,6 @@ var __plugin = (function(exports, vue) {
 			addThread: "Add to planner"
 		},
 		collection: "Collection",
-		newItemPrompt: "What is it?",
-		newItemIn: (name) => `New item in ${name}`,
 		newCollection: "New collection",
 		chooseCollection: "Add to which collection?",
 		noCollections: "No collections yet",
@@ -291,7 +243,6 @@ var __plugin = (function(exports, vue) {
 		show: "Show",
 		item: "item",
 		items: "items",
-		itemCount: (n) => n === 1 ? "1 item" : `${n} items`,
 		noGroup: (property) => `No ${property.toLowerCase()}`,
 		checked: "Checked",
 		unchecked: "Not checked",
@@ -305,10 +256,10 @@ var __plugin = (function(exports, vue) {
 		importEmpty: "There is nothing to import in that file.",
 		/** What an undo entry is called ("Undo delete item"). */
 		did: {
-			createItem: "new item",
+			createItem: (word) => `new ${word}`,
 			editItem: "edit",
 			moveItem: "move",
-			deleteItems: (n) => n === 1 ? "delete item" : `delete ${n} items`,
+			deleteItems: (n, word) => n === 1 ? `delete ${word}` : `delete ${n} ${word}`,
 			duplicate: "duplicate",
 			createCollection: "new collection",
 			editCollection: "edit collection",
@@ -322,7 +273,7 @@ var __plugin = (function(exports, vue) {
 			import: "import",
 			linkChat: "link chat"
 		},
-		deletedItems: (n) => n === 1 ? "Item deleted" : `${n} items deleted`,
+		deletedItems: (n, word) => n === 1 ? `${capital(word)} deleted` : `${n} ${word} deleted`,
 		deletedCollection: (name) => `${name || "Collection"} deleted`,
 		deletedProperty: (name) => `${name || "Property"} deleted`,
 		deletedOption: (name) => `${name || "Option"} deleted`,
@@ -844,9 +795,75 @@ var __plugin = (function(exports, vue) {
 	}
 	var propertyOf = (c, id) => c.properties.find((p) => p.id === id) ?? null;
 	var viewOf = (c, id) => c.views.find((v) => v.id === id) ?? null;
+	// plugins/planner/src/ui/Icon.vue?vue&type=script&setup=true&lang.ts
+	/** A lucide icon by name, drawn by Mango. 15px unless styled otherwise. */
+	var Icon_vue_vue_type_script_setup_true_lang_default = /*@__PURE__*/ (0, vue.defineComponent)({
+		__name: "Icon",
+		props: { name: {} },
+		setup(__props) {
+			const { Icon } = usePlanner().mango.ui.components;
+			return (_ctx, _cache) => {
+				return (0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Icon)), {
+					icon: __props.name,
+					class: "pl-icon"
+				}, null, 8, ["icon"]);
+			};
+		}
+	});
+	// \0plugin-vue:export-helper
+	var _plugin_vue_export_helper_default = (sfc, props) => {
+		const target = sfc.__vccOpts || sfc;
+		for (const [key, val] of props) target[key] = val;
+		return target;
+	};
+	// plugins/planner/src/ui/Icon.vue
+	var Icon_default = /*#__PURE__*/ _plugin_vue_export_helper_default(Icon_vue_vue_type_script_setup_true_lang_default, [["__scopeId", "data-v-517fdef4"]]);
+	// plugins/planner/src/ui/layers.ts
+	var layers = [];
+	function pushLayer(layer) {
+		layers.push(layer);
+		return () => {
+			const i = layers.indexOf(layer);
+			if (i >= 0) layers.splice(i, 1);
+		};
+	}
+	var isTopLayer = (layer) => layers.at(-1) === layer;
+	/** In this layer or one opened over it. */
+	function inOrAbove(layer, el) {
+		return layers.slice(layers.indexOf(layer)).some((l) => l.contains(el));
+	}
+	/** Mango's dialogs that are open. A popover may be in one: those open before it are under it, not over it. */
+	var hostDialogs = () => [...document.querySelectorAll(".dlg__panel")];
+	/** In one of Mango's own menus, dialogs or toasts over the planner's layer. */
+	function inHostLayer(el, under = []) {
+		const host = el instanceof Element ? el.closest(".menu__pop, .dlg__panel, .toast") : null;
+		return host !== null && !under.includes(host);
+	}
+	var hostLayerOpen = (under = []) => document.querySelector(".menu__pop") !== null || hostDialogs().some((d) => !under.includes(d));
+	/** Something floats that owns Escape: a popover of the planner, or a menu or dialog of Mango's. */
+	var anyLayerOpen = () => layers.length > 0 || hostLayerOpen();
+	// plugins/planner/src/ui/toastOnce.ts
+	var REST_MS = 5e3;
+	var last = {
+		title: "",
+		at: 0
+	};
+	/** A hint, not again while it is still on screen. */
+	function toastOnce(mango, title, body) {
+		if (title === last.title && Date.now() - last.at < REST_MS) return;
+		last = {
+			title,
+			at: Date.now()
+		};
+		mango.ui.toast({
+			title,
+			body,
+			timeout: REST_MS
+		});
+	}
 	// plugins/planner/src/item/strings.ts
 	var strings$3 = {
-		page: (title) => `Item: ${title || "Untitled"}`,
+		page: (word, title) => `${word}: ${title || "Untitled"}`,
 		untitled: "Untitled",
 		title: "Title",
 		close: "Close",
@@ -857,7 +874,7 @@ var __plugin = (function(exports, vue) {
 		loading: "Loading…",
 		loadFailed: "The planner could not be read",
 		retry: "Try again",
-		gone: "This item was deleted",
+		gone: (word) => `This ${word} was deleted`,
 		goneBody: "It may have been deleted in another window. Undo can bring it back if you deleted it here.",
 		backToCollection: "Back to the collection",
 		empty: "Empty",
@@ -892,7 +909,7 @@ var __plugin = (function(exports, vue) {
 		copied: "Copied as Markdown",
 		copyFailed: "It could not be copied",
 		delete: "Delete",
-		deleteMany: (n) => `Delete ${n} items`,
+		deleteMany: (n, word) => `Delete ${n} ${word}`,
 		none: (property) => `No ${property.toLowerCase()}`
 	};
 	// plugins/planner/src/item/chats.ts
@@ -911,7 +928,7 @@ var __plugin = (function(exports, vue) {
 		const { mango, store } = planner;
 		const projectPath = projectFor(planner, collection);
 		if (!projectPath) {
-			mango.ui.toast({ title: strings$3.noProject });
+			toastOnce(mango, strings$3.noProject);
 			return false;
 		}
 		const now = store.item(collection.id, item.id) ?? item;
@@ -1431,7 +1448,7 @@ var __plugin = (function(exports, vue) {
 			if (open) rows.push({
 				label: strings$3.open,
 				icon: "panel-right",
-				kbd: "Enter",
+				kbd: opts.openKey ?? "Enter",
 				onSelect: () => open(one.id)
 			});
 		}
@@ -1485,7 +1502,7 @@ var __plugin = (function(exports, vue) {
 				copyMarkdown(planner, collection.id, ids);
 			}
 		}, {
-			label: one ? strings$3.delete : strings$3.deleteMany(ids.length),
+			label: one ? strings$3.delete : strings$3.deleteMany(ids.length, itemWord(collection, ids.length)),
 			icon: "trash-2",
 			danger: true,
 			divider: true,
@@ -1776,7 +1793,7 @@ var __plugin = (function(exports, vue) {
 		moveDownProperty: "Move down",
 		deleteProperty: "Delete property",
 		deleteTitle: (name) => `Delete “${name}”?`,
-		deleteBody: "Its values are removed from every item.",
+		deleteBody: (word) => `Its values are removed from every ${word}.`,
 		delete: "Delete",
 		unsupported: "Made by a newer version of the planner",
 		typeHint: {
@@ -2007,7 +2024,7 @@ var __plugin = (function(exports, vue) {
 		"aria-invalid"
 	];
 	/**
-	* A named colour or any other. `update:modelValue` follows every move (save it deferred), `change` comes once it is
+	* A named colour or any other. `update:modelValue` follows every move (save it with `defer: 'hold'`), `change` comes once it is
 	* settled (flush it). Also when it closes in the middle of one.
 	*/
 	var RECENT = "recentColors";
@@ -2555,7 +2572,7 @@ var __plugin = (function(exports, vue) {
 		"onKeydown"
 	];
 	var _hoisted_14$6 = ["title"];
-	var _hoisted_15$6 = {
+	var _hoisted_15$5 = {
 		key: 0,
 		class: "pl-pe__default"
 	};
@@ -2621,7 +2638,7 @@ var __plugin = (function(exports, vue) {
 			const list = (0, vue.ref)(null);
 			const deleting = (0, vue.shallowRef)(null);
 			function setOption(o, change) {
-				store.updateOption(props.collectionId, props.propertyId, o.id, change, { defer: true });
+				store.updateOption(props.collectionId, props.propertyId, o.id, change, { defer: change.color ? "hold" : true });
 			}
 			function renameOption(o, e) {
 				const name = e.target.value;
@@ -2824,7 +2841,7 @@ var __plugin = (function(exports, vue) {
 						type: "button",
 						class: "pl-pe__add",
 						onClick: add
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$14), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$6, [(0, vue.createElementVNode)("span", _hoisted_16$5, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$14), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$5, [(0, vue.createElementVNode)("span", _hoisted_16$5, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-pe__pick",
 						"aria-haspopup": "listbox",
@@ -2996,7 +3013,7 @@ var __plugin = (function(exports, vue) {
 		async function remove() {
 			if (await mango.ui.confirm({
 				title: strings$2.deleteTitle(property.name),
-				body: strings$2.deleteBody,
+				body: strings$2.deleteBody(itemWord(collection, 1)),
 				confirmLabel: strings$2.delete,
 				danger: true
 			})) await store.deleteProperty(collection.id, property.id);
@@ -3135,7 +3152,7 @@ var __plugin = (function(exports, vue) {
 	var _hoisted_12$9 = { class: "pl-date__foot" };
 	var _hoisted_13$7 = ["aria-checked"];
 	var _hoisted_14$5 = ["aria-checked"];
-	var _hoisted_15$5 = { class: "pl-date__acts" };
+	var _hoisted_15$4 = { class: "pl-date__acts" };
 	var _hoisted_16$4 = ["title"];
 	// plugins/planner/src/values/DateEditor.vue
 	var DateEditor_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
@@ -3398,7 +3415,7 @@ var __plugin = (function(exports, vue) {
 							class: "pl-date__switch",
 							"aria-hidden": "true"
 						}, null, -1))], 8, _hoisted_14$5),
-						(0, vue.createElementVNode)("div", _hoisted_15$5, [(0, vue.createElementVNode)("button", {
+						(0, vue.createElementVNode)("div", _hoisted_15$4, [(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__act",
 							onClick: _cache[2] || (_cache[2] = ($event) => pick(today.value))
@@ -3479,7 +3496,7 @@ var __plugin = (function(exports, vue) {
 		"onClick"
 	];
 	var _hoisted_14$4 = { class: "pl-oe__tag" };
-	var _hoisted_15$4 = [
+	var _hoisted_15$3 = [
 		"aria-label",
 		"title",
 		"onClick"
@@ -3642,7 +3659,7 @@ var __plugin = (function(exports, vue) {
 				if (o && other) store.moveOption(props.collectionId, props.property.id, o.id, by < 0 ? { before: other.id } : { after: other.id });
 			}
 			function recolor(color) {
-				if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: true });
+				if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: "hold" });
 			}
 			return (_ctx, _cache) => {
 				return edited.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$27, [
@@ -3754,7 +3771,7 @@ var __plugin = (function(exports, vue) {
 								"aria-label": (0, vue.unref)(strings$2).editOption(row.option.name),
 								title: `${(0, vue.unref)(strings$2).editOption(row.option.name)} (F2)`,
 								onClick: (0, vue.withModifiers)(($event) => startEdit(row.option), ["stop"])
-							}, [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })], 8, _hoisted_15$4)
+							}, [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })], 8, _hoisted_15$3)
 						], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createVNode)(Icon_default, {
 							name: "plus",
 							class: "pl-oe__plus"
@@ -4347,40 +4364,36 @@ var __plugin = (function(exports, vue) {
 	// plugins/planner/src/item/ItemPage.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$23 = ["aria-label"];
 	var _hoisted_2$21 = { class: "pl-page__head" };
-	var _hoisted_3$19 = {
-		key: 2,
-		class: "pl-page__place"
-	};
-	var _hoisted_4$19 = { class: "pl-page__chat" };
-	var _hoisted_5$18 = { class: "pl-page__col" };
-	var _hoisted_6$15 = ["data-text"];
-	var _hoisted_7$15 = [
+	var _hoisted_3$19 = { class: "pl-page__chat" };
+	var _hoisted_4$19 = { class: "pl-page__col" };
+	var _hoisted_5$18 = ["data-text"];
+	var _hoisted_6$15 = [
 		"value",
 		"readonly",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_8$14 = ["aria-label"];
-	var _hoisted_9$12 = ["title", "onClick"];
-	var _hoisted_10$11 = {
+	var _hoisted_7$15 = ["aria-label"];
+	var _hoisted_8$14 = ["title", "onClick"];
+	var _hoisted_9$12 = {
 		key: 1,
 		class: "pl-chat__open is-gone"
 	};
-	var _hoisted_11$8 = {
+	var _hoisted_10$11 = {
 		key: 0,
 		class: "pl-chat"
 	};
-	var _hoisted_12$7 = {
+	var _hoisted_11$8 = {
 		key: 1,
 		class: "pl-page__note",
 		role: "status"
 	};
-	var _hoisted_13$5 = { class: "pl-page__sub" };
-	var _hoisted_14$3 = {
+	var _hoisted_12$7 = { class: "pl-page__sub" };
+	var _hoisted_13$5 = {
 		key: 1,
 		class: "pl-page__sub"
 	};
-	var _hoisted_15$3 = { class: "pl-page__sub" };
+	var _hoisted_14$3 = { class: "pl-page__sub" };
 	// plugins/planner/src/item/ItemPage.vue
 	var ItemPage_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ItemPage",
@@ -4494,7 +4507,7 @@ var __plugin = (function(exports, vue) {
 					ref: root,
 					class: (0, vue.normalizeClass)(["pl-page", `is-${__props.mode}`]),
 					tabindex: "-1",
-					"aria-label": (0, vue.unref)(strings$3).page(item.value?.title ?? "")
+					"aria-label": (0, vue.unref)(strings$3).page((0, vue.unref)(itemWord)(__props.collection, 1), item.value?.title ?? "")
 				}, [(0, vue.createElementVNode)("header", _hoisted_2$21, [
 					__props.mode === "full" ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 						key: 0,
@@ -4520,14 +4533,13 @@ var __plugin = (function(exports, vue) {
 						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: __props.mode === "full" ? "panel-right" : "maximize-2" }, null, 8, ["name"])]),
 						_: 1
 					}, 8, ["label"])),
-					__props.mode === "full" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$19, (0, vue.toDisplayString)(collectionName.value), 1)) : (0, vue.createCommentVNode)("v-if", true),
 					_cache[7] || (_cache[7] = (0, vue.createElementVNode)("span", { class: "pl-page__gap" }, null, -1)),
-					item.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 3 }, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
+					item.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 						variant: "ghost",
 						size: "sm",
 						onClick: chatMenu
 					}, {
-						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", _hoisted_4$19, (0, vue.toDisplayString)(chats.value.some((c) => c.title !== null) ? (0, vue.unref)(strings$3).chats : (0, vue.unref)(strings$3).startChat), 1)]),
+						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", _hoisted_3$19, (0, vue.toDisplayString)(chats.value.some((c) => c.title !== null) ? (0, vue.unref)(strings$3).chats : (0, vue.unref)(strings$3).startChat), 1)]),
 						_: 1
 					})), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 						label: (0, vue.unref)(strings$3).more,
@@ -4542,7 +4554,7 @@ var __plugin = (function(exports, vue) {
 					ref_key: "scroller",
 					ref: scroller,
 					class: "pl-page__scroll"
-				}, [(0, vue.createElementVNode)("div", _hoisted_5$18, [
+				}, [(0, vue.createElementVNode)("div", _hoisted_4$19, [
 					(0, vue.createElementVNode)("div", {
 						class: "pl-page__title",
 						"data-text": `${item.value.title || (0, vue.unref)(strings$3).untitled} `
@@ -4557,7 +4569,7 @@ var __plugin = (function(exports, vue) {
 						onInput: setTitle,
 						onKeydown: onTitleKey,
 						onBlur: _cache[3] || (_cache[3] = ($event) => (0, vue.unref)(store).flush())
-					}, null, 40, _hoisted_7$15)], 8, _hoisted_6$15),
+					}, null, 40, _hoisted_6$15)], 8, _hoisted_5$18),
 					(0, vue.createVNode)(ItemProperties_default, {
 						collection: __props.collection,
 						item: item.value,
@@ -4581,7 +4593,7 @@ var __plugin = (function(exports, vue) {
 							class: "pl-chat__open",
 							title: (0, vue.unref)(strings$3).showChat(c.title || (0, vue.unref)(strings$3).newChatTitle),
 							onClick: ($event) => (0, vue.unref)(mango).chat.show(c.id)
-						}, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), { "thread-id": c.id }, null, 8, ["thread-id"])), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(c.title || (0, vue.unref)(strings$3).newChatTitle), 1)], 8, _hoisted_9$12)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$11, [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).chatGone), 1)])), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
+						}, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), { "thread-id": c.id }, null, 8, ["thread-id"])), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(c.title || (0, vue.unref)(strings$3).newChatTitle), 1)], 8, _hoisted_8$14)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$12, [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).chatGone), 1)])), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							key: 2,
 							size: "sm",
 							class: "pl-chat__unlink",
@@ -4591,11 +4603,11 @@ var __plugin = (function(exports, vue) {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "unlink" })]),
 							_: 1
 						}, 8, ["label", "onClick"])) : (0, vue.createCommentVNode)("v-if", true)]);
-					}), 128)), linkable.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("li", _hoisted_11$8, [(0, vue.createElementVNode)("button", {
+					}), 128)), linkable.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("li", _hoisted_10$11, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-chat__open is-add",
 						onClick: _cache[4] || (_cache[4] = ($event) => (0, vue.unref)(store).linkChat(__props.collection.id, item.value.id, linkable.value.id))
-					}, [(0, vue.createVNode)(Icon_default, { name: "link" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).linkActive(linkable.value.title || (0, vue.unref)(strings$3).newChatTitle)), 1)])])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_8$14)) : (0, vue.createCommentVNode)("v-if", true),
+					}, [(0, vue.createVNode)(Icon_default, { name: "link" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).linkActive(linkable.value.title || (0, vue.unref)(strings$3).newChatTitle)), 1)])])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_7$15)) : (0, vue.createCommentVNode)("v-if", true),
 					_cache[8] || (_cache[8] = (0, vue.createElementVNode)("hr", { class: "pl-page__rule" }, null, -1)),
 					((0, vue.openBlock)(), (0, vue.createBlock)(ItemBody_default, {
 						key: item.value.id,
@@ -4609,16 +4621,16 @@ var __plugin = (function(exports, vue) {
 						"item",
 						"readonly"
 					]))
-				])], 512)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_12$7, [state.value.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
+				])], 512)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_11$8, [state.value.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
 					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loadFailed), 1),
-					(0, vue.createElementVNode)("p", _hoisted_13$5, (0, vue.toDisplayString)(state.value.error), 1),
+					(0, vue.createElementVNode)("p", _hoisted_12$7, (0, vue.toDisplayString)(state.value.error), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[5] || (_cache[5] = ($event) => (0, vue.unref)(store).loadItems(__props.collection.id)) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).retry), 1)]),
 						_: 1
 					}))
-				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_14$3, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
-					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).gone), 1),
-					(0, vue.createElementVNode)("p", _hoisted_15$3, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
+				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_13$5, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
+					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).gone((0, vue.unref)(itemWord)(__props.collection, 1))), 1),
+					(0, vue.createElementVNode)("p", _hoisted_14$3, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[6] || (_cache[6] = ($event) => emit("close")) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).backToCollection), 1)]),
 						_: 1
@@ -5011,7 +5023,7 @@ var __plugin = (function(exports, vue) {
 		importCsv: "Import a CSV file…",
 		importCsvHint: "A new collection with a property for every column.",
 		importInto: "Import CSV…",
-		imported: (n) => n === 1 ? "1 item imported" : `${n} items imported`,
+		imported: (n, word) => `${n} ${word} imported`,
 		importFailed: "The file could not be read",
 		fileTooLarge: "It is larger than 10 MB.",
 		switchCollection: "Switch collection",
@@ -5117,13 +5129,13 @@ var __plugin = (function(exports, vue) {
 		groupBy: "Group by",
 		noGrouping: "No grouping",
 		groups: "Groups",
-		noGroupable: "Items can be grouped by a select, multi-select or checkbox property. This collection has none yet.",
+		noGroupable: "A view can be grouped by a select, multi-select or checkbox property. This collection has none yet.",
 		addProperty: "Add property",
 		hide: (name) => `Hide ${name}`,
 		show: (name) => `Show ${name}`,
 		properties: "Properties",
 		shown: "Shown in this view",
-		noProperties: "No properties yet. Add one to give items a status, a date or anything else you track.",
+		noProperties: "No properties yet. Add one for a status, a date or anything else you track.",
 		propertyMenu: "Property options",
 		bodyPreview: "Show the start of the page on cards",
 		reorder: (name) => `Move ${name} (Alt+arrow up or down)`,
@@ -5132,10 +5144,10 @@ var __plugin = (function(exports, vue) {
 		offline: "Offline",
 		offlineBody: "Changes are kept and sent when the connection is back.",
 		readonlyBody: "The planner cannot be changed right now.",
-		itemsFailed: "The items could not be read",
+		itemsFailed: (many) => `The ${many} could not be read`,
 		noMatches: (many) => `No ${many} match the filters`,
 		noMatchesSearch: (text, many) => `No ${many} match “${text}”`,
-		resizePane: "Resize the item",
+		resizePane: "Resize the page",
 		quickAdd: "New item",
 		quickAddTo: "In",
 		quickAddTitle: "Title",
@@ -5811,7 +5823,7 @@ var __plugin = (function(exports, vue) {
 								"model-value": collection.value.color,
 								label: (0, vue.unref)(shell).colour,
 								disabled: readonly.value,
-								"onUpdate:modelValue": _cache[2] || (_cache[2] = (color) => (0, vue.unref)(store).updateCollection(__props.collectionId, { color }, { defer: true })),
+								"onUpdate:modelValue": _cache[2] || (_cache[2] = (color) => (0, vue.unref)(store).updateCollection(__props.collectionId, { color }, { defer: "hold" })),
 								onChange: _cache[3] || (_cache[3] = ($event) => (0, vue.unref)(store).flush())
 							}, null, 8, [
 								"model-value",
@@ -6100,8 +6112,7 @@ var __plugin = (function(exports, vue) {
 				name: t.board,
 				type: "board",
 				groupBy: "status",
-				show: ["tags"],
-				cardPreview: "body"
+				show: ["tags"]
 			}, {
 				name: t.table,
 				type: "table",
@@ -6161,7 +6172,7 @@ var __plugin = (function(exports, vue) {
 			},
 			columns: (v.columns ?? []).map((c) => ({ ...c })),
 			widths: {},
-			cardPreview: v.cardPreview ?? "none"
+			cardPreview: v.cardPreview ?? "body"
 		};
 	}
 	/** The stored properties and views of a new collection, with ids of its own. */
@@ -6200,7 +6211,6 @@ var __plugin = (function(exports, vue) {
 					propertyId: idOf(p.key),
 					visible: false
 				}))],
-				cardPreview: v.cardPreview,
 				sorts: v.sorts?.map(([p, direction]) => ({
 					propertyId: idOf(p),
 					direction
@@ -6246,7 +6256,7 @@ var __plugin = (function(exports, vue) {
 		const file = await pickCsv(mango);
 		const n = file ? await store.importCsv(id, file.text) : 0;
 		if (n) mango.ui.toast({
-			title: shell.imported(n),
+			title: shell.imported(n, itemWord(store.collection(id), n)),
 			kind: "success"
 		});
 	}
@@ -6359,7 +6369,7 @@ var __plugin = (function(exports, vue) {
 	}
 	async function removeCollection({ mango, store, go, route }, c) {
 		if (!await store.loadItems(c.id)) return mango.ui.toast({
-			title: shell.itemsFailed,
+			title: shell.itemsFailed(itemWord(c, 2)),
 			body: store.items(c.id).error ?? "",
 			kind: "error"
 		});
@@ -9575,7 +9585,7 @@ var __plugin = (function(exports, vue) {
 			/** While a colour is picked it shows; it is written once that is settled. */
 			function setColour(color) {
 				const key = colouring.value?.key;
-				if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color }, { defer: true });
+				if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color }, { defer: "hold" });
 			}
 			function closeColours() {
 				const at = colouring.value?.anchor;
@@ -10297,8 +10307,8 @@ var __plugin = (function(exports, vue) {
 		untitled: "Untitled",
 		open: "Open",
 		openItem: (title) => `Open ${title || "Untitled"}`,
-		newItem: "New item",
-		newItemIn: (group) => `New item in ${group}`,
+		newItem: (word) => `New ${word}`,
+		newItemIn: (word, group) => `New ${word} in ${group}`,
 		addProperty: "Add a property",
 		selectRow: (title) => `Select ${title || "Untitled"}`,
 		selectAll: "Select all",
@@ -10314,18 +10324,17 @@ var __plugin = (function(exports, vue) {
 		moveLeft: "Move left",
 		moveRight: "Move right",
 		resetWidth: "Reset width",
-		selected: (n) => `${n} selected`,
+		selected: (n, word) => `${n} ${word} selected`,
 		setProperty: "Set property",
 		duplicate: "Duplicate",
 		delete: "Delete",
 		clear: "Clear selection",
-		selectionActions: "Selected items",
-		count: (n) => n === 1 ? "1 item" : `${n} items`,
-		countOf: (n, total) => `${n} of ${total} items`,
+		selectionActions: (many) => `Selected ${many}`,
+		count: (n, word) => `${n} ${word}`,
+		countOf: (n, total, word) => `${n} of ${total} ${word}`,
 		sum: (n) => `Sum ${n}`,
 		checkedOf: (n, total) => `${n} of ${total}`,
-		empty: "No items yet",
-		noMatches: "Nothing matches",
+		empty: (many) => `No ${many} yet`,
 		notPasted: (n) => n === 1 ? "1 value did not fit its column" : `${n} values did not fit their columns`
 	};
 	// plugins/planner/src/views/table/BulkBar.vue?vue&type=script&setup=true&lang.ts
@@ -10372,10 +10381,10 @@ var __plugin = (function(exports, vue) {
 				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 					class: "pl-bulk",
 					role: "toolbar",
-					"aria-label": (0, vue.unref)(strings).selectionActions,
+					"aria-label": (0, vue.unref)(strings).selectionActions((0, vue.unref)(itemWord)(__props.collection, 2)),
 					onKeydown: _cache[3] || (_cache[3] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("clear"), ["stop", "prevent"]), ["esc"]))
 				}, [
-					(0, vue.createElementVNode)("span", _hoisted_2$2, (0, vue.toDisplayString)((0, vue.unref)(strings).selected(__props.count)), 1),
+					(0, vue.createElementVNode)("span", _hoisted_2$2, (0, vue.toDisplayString)((0, vue.unref)(strings).selected(__props.count, (0, vue.unref)(itemWord)(__props.collection, __props.count))), 1),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-bulk__btn",
@@ -10525,13 +10534,10 @@ var __plugin = (function(exports, vue) {
 	}
 	/**
 	* What pasting into these items and fields does, from their first on. A single row goes into every item given.
-	* `addOption` makes an option that is missing, and answers it.
 	*/
-	function planPaste(cells, items, fields, addOption) {
+	function planPaste(cells, items, fields) {
 		const changes = /* @__PURE__ */ new Map();
 		const sets = /* @__PURE__ */ new Map();
-		/** The options made, by the id `parseValue` gave them. */
-		const made = /* @__PURE__ */ new Map();
 		let skipped = 0;
 		const read = (cell, p) => {
 			if (isReadonly(p)) return void 0;
@@ -10539,17 +10545,7 @@ var __plugin = (function(exports, vue) {
 			let set = sets.get(p.id);
 			if (!set) sets.set(p.id, set = new OptionSet(p.options));
 			const value = parseValue(cell, p.type, set);
-			if (value === null) return void 0;
-			if (!hasOptions(p)) return value;
-			const ids = (Array.isArray(value) ? value : [value]).flatMap((id) => {
-				if (p.options.some((o) => o.id === id)) return [id];
-				const real = made.get(id) ?? addOption(p, set.options.find((o) => o.id === id).name)?.id;
-				if (!real) return [];
-				made.set(id, real);
-				return [real];
-			});
-			if (!ids.length) return void 0;
-			return p.type === "select" ? ids[0] : ids;
+			return value === null ? void 0 : value;
 		};
 		for (const [y, item] of items.entries()) {
 			const row = cells.length === 1 ? cells[0] : cells[y];
@@ -10571,6 +10567,10 @@ var __plugin = (function(exports, vue) {
 		}
 		return {
 			changes,
+			options: new Map([...sets].flatMap(([id, set]) => {
+				const old = fields.find((f) => f?.id === id).options.length;
+				return set.options.length > old ? [[id, set.options.slice(old)]] : [];
+			})),
 			skipped
 		};
 	}
@@ -10833,6 +10833,8 @@ var __plugin = (function(exports, vue) {
 			const { mango, store } = planner;
 			const { ThreadDot } = mango.ui.components;
 			const uid = (0, vue.useId)();
+			const wordOf = (n) => itemWord(props.collection, n);
+			const openKey = keyLabel(mango, "Enter");
 			const WIDTHS = {
 				text: 200,
 				number: 110,
@@ -11411,8 +11413,8 @@ var __plugin = (function(exports, vue) {
 				e.preventDefault();
 				const cells = parseTsv(text);
 				const at = currentIndex();
-				const { changes, skipped } = planPaste(cells, cells.length === 1 ? selection.value.has(line.item.id) ? selectedItems.value : [line.item] : lines.value.slice(at).flatMap((l) => l.kind === "item" ? [l.item] : []).slice(0, cells.length), cols.value.slice(colIndex.value.get(activeCol.value.id)).map((c) => c.field), (p, name) => store.addOption(props.collection.id, p.id, name));
-				store.updateEach(props.collection.id, changes);
+				const { changes, options, skipped } = planPaste(cells, cells.length === 1 ? selection.value.has(line.item.id) ? selectedItems.value : [line.item] : lines.value.slice(at).flatMap((l) => l.kind === "item" ? [l.item] : []).slice(0, cells.length), cols.value.slice(colIndex.value.get(activeCol.value.id)).map((c) => c.field));
+				store.updateEach(props.collection.id, changes, options);
 				if (skipped) mango.ui.toast({
 					title: strings.notPasted(skipped),
 					kind: "warning"
@@ -11430,7 +11432,10 @@ var __plugin = (function(exports, vue) {
 			}
 			function openMenu(item, at) {
 				const ids = selection.value.has(item.id) ? selectedItems.value.map((i) => i.id) : [item.id];
-				itemMenu(planner, props.collection, ids, at, { open: (id) => emit("open", id) });
+				itemMenu(planner, props.collection, ids, at, {
+					open: (id) => emit("open", id),
+					openKey
+				});
 			}
 			async function setForSelected(p, el) {
 				await (0, vue.nextTick)();
@@ -11593,7 +11598,7 @@ var __plugin = (function(exports, vue) {
 			const number = new Intl.NumberFormat(void 0, { maximumFractionDigits: 6 });
 			const footer = (0, vue.computed)(() => new Map(cols.value.map((c) => {
 				const { items, total } = props.result;
-				if (!c.field) return [c.id, items.length === total ? strings.count(total) : strings.countOf(items.length, total)];
+				if (!c.field) return [c.id, items.length === total ? strings.count(total, wordOf(total)) : strings.countOf(items.length, total, wordOf(total))];
 				const p = c.field;
 				if (p.type === "number") {
 					const values = items.map((i) => valueOf(i, p)).filter((v) => typeof v === "number");
@@ -11606,7 +11611,8 @@ var __plugin = (function(exports, vue) {
 				name: g.name,
 				color: g.color
 			} : null;
-			const isEmpty = (0, vue.computed)(() => !props.result.items.length && !props.result.groupBy);
+			/** Nothing to find is said above the view. */
+			const isEmpty = (0, vue.computed)(() => !props.result.total && !props.result.groupBy);
 			__expose({
 				newItem,
 				focus
@@ -11806,7 +11812,7 @@ var __plugin = (function(exports, vue) {
 										class: "pl-open",
 										tabindex: "-1",
 										"aria-label": (0, vue.unref)(strings).openItem(line.item.title),
-										title: `${(0, vue.unref)(strings).open} (${(0, vue.unref)(mango).platform === "macos" ? "⌘" : "Ctrl+"}Enter)`,
+										title: `${(0, vue.unref)(strings).open} (${(0, vue.unref)(openKey)})`,
 										onMousedown: _cache[2] || (_cache[2] = (0, vue.withModifiers)(() => {}, ["stop", "prevent"])),
 										onClick: (0, vue.withModifiers)(($event) => emit("open", line.item.id), ["stop"])
 									}, [(0, vue.createVNode)(Icon_default, { name: "panel-right-open" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).open), 1)], 40, _hoisted_15)
@@ -11860,8 +11866,8 @@ var __plugin = (function(exports, vue) {
 									type: "button",
 									class: "pl-line__add",
 									tabindex: "-1",
-									"aria-label": (0, vue.unref)(strings).newItemIn(groupName(line.group)),
-									title: (0, vue.unref)(strings).newItemIn(groupName(line.group)),
+									"aria-label": (0, vue.unref)(strings).newItemIn(wordOf(1), groupName(line.group)),
+									title: (0, vue.unref)(strings).newItemIn(wordOf(1), groupName(line.group)),
 									onClick: (0, vue.withModifiers)(($event) => addItem(line.group, true), ["stop"])
 								}, [(0, vue.createVNode)(Icon_default, { name: "plus" })], 8, _hoisted_23)) : (0, vue.createCommentVNode)("v-if", true)
 							], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [
@@ -11869,8 +11875,8 @@ var __plugin = (function(exports, vue) {
 									name: "plus",
 									class: "pl-line__plus"
 								}),
-								(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).newItem), 1),
-								isEmpty.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_24, (0, vue.toDisplayString)(__props.result.total ? (0, vue.unref)(strings).noMatches : (0, vue.unref)(strings).empty), 1)) : (0, vue.createCommentVNode)("v-if", true)
+								(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).newItem(wordOf(1))), 1),
+								isEmpty.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_24, (0, vue.toDisplayString)((0, vue.unref)(strings).empty(wordOf(2))), 1)) : (0, vue.createCommentVNode)("v-if", true)
 							], 64))], 42, _hoisted_20)], 14, _hoisted_19))], 64);
 						}), 128)), rowDrag.value?.drop ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							key: 0,
@@ -11878,7 +11884,7 @@ var __plugin = (function(exports, vue) {
 							style: (0, vue.normalizeStyle)({ top: `${rowDrag.value.drop.boundary * (0, vue.unref)(32) - 1}px` }),
 							"aria-hidden": "true"
 						}, null, 4)) : (0, vue.createCommentVNode)("v-if", true)], 4),
-						__props.readonly && !__props.result.items.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_25, (0, vue.toDisplayString)(__props.result.total ? (0, vue.unref)(strings).noMatches : (0, vue.unref)(strings).empty), 1)) : (0, vue.createCommentVNode)("v-if", true),
+						__props.readonly && isEmpty.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_25, (0, vue.toDisplayString)((0, vue.unref)(strings).empty(wordOf(2))), 1)) : (0, vue.createCommentVNode)("v-if", true),
 						(0, vue.createElementVNode)("div", {
 							class: "pl-tr pl-tr--foot",
 							role: "row",
@@ -12243,7 +12249,7 @@ var __plugin = (function(exports, vue) {
 						"readonly"
 					])) : (0, vue.createCommentVNode)("v-if", true),
 					list.value?.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_5, [
-						(0, vue.createElementVNode)("p", _hoisted_6, (0, vue.toDisplayString)((0, vue.unref)(shell).itemsFailed), 1),
+						(0, vue.createElementVNode)("p", _hoisted_6, (0, vue.toDisplayString)((0, vue.unref)(shell).itemsFailed((0, vue.unref)(itemWord)(collection.value, 2))), 1),
 						list.value.error ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_7, (0, vue.toDisplayString)(list.value.error), 1)) : (0, vue.createCommentVNode)("v-if", true),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 							size: "sm",
@@ -12891,7 +12897,7 @@ var __plugin = (function(exports, vue) {
 				return false;
 			}
 			if (opts.defer) {
-				addDeferred(ops, label);
+				addDeferred(ops, label, opts.defer === "hold");
 				return true;
 			}
 			settleDeferred();
@@ -12935,7 +12941,7 @@ var __plugin = (function(exports, vue) {
 			publish(keys);
 		}
 		/** Text as it is typed: joins what is waiting, a newer text of one field replacing the older. */
-		function addDeferred(ops, label) {
+		function addDeferred(ops, label, hold) {
 			if (deferred) {
 				const m = deferred;
 				m.at = Date.now();
@@ -12960,7 +12966,7 @@ var __plugin = (function(exports, vue) {
 			}
 			saving.value = true;
 			clearTimeout(timer);
-			timer = setTimeout(settleDeferred, deferMs);
+			if (!hold) timer = setTimeout(settleDeferred, deferMs);
 		}
 		/** Replaces the values of a patch that is waiting already; false when one of its fields is not in it. */
 		function replaceIn(ops, op) {
@@ -13186,7 +13192,7 @@ var __plugin = (function(exports, vue) {
 					order: place.get(id),
 					createdAt: at
 				}
-			}, ...itemOrderOps(collectionId, place, /* @__PURE__ */ new Set([id]))], strings$5.did.createItem) ? item(collectionId, id) : null;
+			}, ...itemOrderOps(collectionId, place, /* @__PURE__ */ new Set([id]))], strings$5.did.createItem(itemWord(c, 1))) ? item(collectionId, id) : null;
 		}
 		function itemOrderOps(collectionId, place, except) {
 			return [...place].filter(([id]) => !except.has(id)).map(([id, order]) => ({
@@ -13237,14 +13243,44 @@ var __plugin = (function(exports, vue) {
 				patch: effective(rawItem(collectionId, id), patch)
 			})), strings$5.did.editItem, opts);
 		}
-		function changeEach(collectionId, changes) {
+		function changeEach(collectionId, changes, newOptions) {
 			const c = collection(collectionId);
 			if (!c) return;
-			mutate([...changes].map(([id, change]) => ({
+			const patch = c.properties.flatMap((p) => {
+				const add = newOptions?.get(p.id);
+				if (!add?.length) return [];
+				const base = [
+					"properties",
+					p.id,
+					"options"
+				];
+				const ids = new Set(add.map((o) => o.id));
+				const place = placeAt(p.options, [...ids], "end");
+				return [...add.map((o) => ({
+					path: [...base, o.id],
+					value: {
+						name: o.name,
+						color: o.color,
+						order: place.get(o.id)
+					}
+				})), ...orderPatch(base, new Map([...place].filter(([id]) => !ids.has(id))))];
+			});
+			const then = {
+				...c,
+				properties: c.properties.map((p) => ({
+					...p,
+					options: [...p.options, ...newOptions?.get(p.id) ?? []]
+				}))
+			};
+			mutate([{
+				...collectionTarget(collectionId),
+				op: "patch",
+				patch
+			}, ...[...changes].map(([id, change]) => ({
 				...itemTarget(collectionId, id),
 				op: "patch",
-				patch: effective(rawItem(collectionId, id), itemPatch(c, change))
-			})), strings$5.did.editItem);
+				patch: effective(rawItem(collectionId, id), itemPatch(then, change))
+			}))], strings$5.did.editItem);
 		}
 		function moveItems(collectionId, move) {
 			const c = collection(collectionId);
@@ -13309,10 +13345,11 @@ var __plugin = (function(exports, vue) {
 		function deleteItems(collectionId, itemIds) {
 			const ids = [...new Set(itemIds)].filter((id) => rawItem(collectionId, id));
 			if (!ids.length) return;
+			const word = itemWord(collection(collectionId), ids.length);
 			if (mutate(ids.map((id) => ({
 				...itemTarget(collectionId, id),
 				op: "delete"
-			})), strings$5.did.deleteItems(ids.length))) undoToast(strings$5.deletedItems(ids.length));
+			})), strings$5.did.deleteItems(ids.length, word))) undoToast(strings$5.deletedItems(ids.length, word));
 		}
 		function setChat(collectionId, itemId, threadId, linked) {
 			const existing = item(collectionId, itemId);
@@ -13926,10 +13963,7 @@ var __plugin = (function(exports, vue) {
 		const isOpen = () => mango.ui.tabs.active()?.viewId === VIEW_ID;
 		/** Shows the planner's tab, where it was or at `route`. */
 		function open(route) {
-			if (!mango.workspace.activeProject()) return mango.ui.toast({
-				title: strings$5.noProject,
-				body: shell.noProjectBody
-			});
+			if (!mango.workspace.activeProject()) return toastOnce(mango, strings$5.noProject, shell.noProjectBody);
 			mango.ui.tabs.open(VIEW_ID, {
 				title: strings$5.planner,
 				key: TAB_KEY,

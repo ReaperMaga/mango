@@ -15,7 +15,6 @@ interface ViewSpec {
   /** Shown, in this order; the others are hidden. */
   show: string[]
   sorts?: Array<[property: string, direction: 'asc' | 'desc']>
-  cardPreview?: View['cardPreview']
 }
 interface Spec { icon: string; color: Color; properties: PropertySpec[]; views: ViewSpec[] }
 
@@ -59,7 +58,7 @@ const SPECS: Record<TemplateId, Spec> = {
       { key: 'edited', name: t.edited, type: 'updatedTime' },
     ],
     views: [
-      { name: t.board, type: 'board', groupBy: 'status', show: ['tags'], cardPreview: 'body' },
+      { name: t.board, type: 'board', groupBy: 'status', show: ['tags'] },
       { name: t.table, type: 'table', show: ['status', 'tags', 'edited'], sorts: [['edited', 'desc']] },
     ],
   },
@@ -109,7 +108,7 @@ export function viewData(v: NewView, order: string): JsonObject {
     filter: v.filter ? { match: v.filter.match, conditions: v.filter.conditions.map(c => ({ ...c })) } : { match: 'and', conditions: [] },
     columns: (v.columns ?? []).map(c => ({ ...c })),
     widths: {},
-    cardPreview: v.cardPreview ?? 'none',
+    cardPreview: v.cardPreview ?? 'body',
   }
 }
 
@@ -138,7 +137,6 @@ export function templateData(id: TemplateId): { icon: string; color: Color; item
         ...v.show.map(k => ({ propertyId: idOf(k), visible: true })),
         ...spec.properties.filter(p => !v.show.includes(p.key)).map(p => ({ propertyId: idOf(p.key), visible: false })),
       ],
-      cardPreview: v.cardPreview,
       sorts: v.sorts?.map(([p, direction]) => ({ propertyId: idOf(p), direction })),
     }, viewKeys[i]!)])),
   }

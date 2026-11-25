@@ -162,7 +162,7 @@ function renameGroup(key: string, name: string) {
 /** While a colour is picked it shows; it is written once that is settled. */
 function setColour(color: Color) {
   const key = colouring.value?.key
-  if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color }, { defer: true })
+  if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color }, { defer: 'hold' })
 }
 function closeColours() {
   const at = colouring.value?.anchor
