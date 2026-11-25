@@ -28,6 +28,7 @@ use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) use self::store::Ctx;
+pub(crate) use self::validate::valid_id;
 
 // ---------------------------------------------------------------------------
 // Types (app/types/ipc.ts, "Plugins")

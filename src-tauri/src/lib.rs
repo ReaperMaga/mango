@@ -24,6 +24,7 @@ mod lsp;
 mod mcp;
 mod notify;
 mod plastic;
+mod plugin_data;
 mod plugins;
 mod projects;
 mod releases;
@@ -75,6 +76,7 @@ pub fn run() {
         .manage(windows::CloseState::default())
         .manage(mcp::McpState::default())
         .manage(plugins::PluginsState::default())
+        .manage(plugin_data::PluginDataState::default())
         .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
@@ -113,6 +115,12 @@ pub fn run() {
             plugins::plugins_catalog,
             plugins::plugins_dir,
             plugins::plugins_reveal,
+            plugin_data::plugin_data_list,
+            plugin_data::plugin_data_get,
+            plugin_data::plugin_data_count,
+            plugin_data::plugin_data_changes,
+            plugin_data::plugin_data_write,
+            plugin_data::plugin_data_clear,
             agents::detect_agents,
             pty::pty_spawn,
             pty::pty_write,

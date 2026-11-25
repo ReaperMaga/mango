@@ -1,0 +1,11 @@
+{
+  "id": "planner",
+  "name": "Planner",
+  "version": "1.0.0",
+  "description": "Plan work beside your chats: boards, tables and pages, with properties and views of your own.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/planner",
+  "main": "main.js",
+  "styles": "styles.css",
+  "minAppVersion": "0.4.2"
+}

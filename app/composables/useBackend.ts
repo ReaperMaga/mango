@@ -11,6 +11,7 @@ import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { mockGitlabHosts, mockGitlabHostsSave, mockHostingInstall, mockHostingLogin, mockHostingLogout, mockHostingStatus } from '~/composables/mockHosting'
 import { mockPlugins } from '~/composables/mockPlugins'
+import { followMockPluginData, mockPluginData } from '~/composables/mockPluginData'
 import { isEnvPath } from '~/utils/envPath'
 import { invoke } from '@tauri-apps/api/core'
 
@@ -360,6 +361,7 @@ const mock = (() => {
       for (const id of args.remove) delete threads[id]
       localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
     }
+    if (cmd === 'plugin_data_write') return mockPluginData(cmd, args, emit)
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
       case 'recent_projects': return [...recent]
@@ -569,10 +571,12 @@ const mock = (() => {
     if (cmd.startsWith('env_')) return envs(cmd, args)
     // Plugins: the catalog and official plugins from this repository's plugins/ folder (mockPlugins.ts).
     if (cmd.startsWith('plugins_')) return mockPlugins(cmd, args, emit)
+    if (cmd.startsWith('plugin_data_')) return mockPluginData(cmd, args, emit)
     throw new Error(`mock: unknown command ${cmd}`)
   }
 
   function on(event: string, handler: (p: any) => void): Unlisten {
+    if (event === 'plugins://data') followMockPluginData(emit)
     if (!listeners.has(event)) listeners.set(event, new Set())
     listeners.get(event)!.add(handler)
     return () => listeners.get(event)?.delete(handler)

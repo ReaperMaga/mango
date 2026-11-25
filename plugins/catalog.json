@@ -104,6 +104,19 @@
       "source": { "url": "https://github.com/ReaperMaga/mango", "ref": null, "subpath": "plugins/unity" },
       "minAppVersion": "0.1.41",
       "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/unity"
+    },
+    {
+      "id": "planner",
+      "name": "Planner",
+      "description": "Plan work beside your chats: boards, tables and pages, with properties and views of your own.",
+      "author": "Mango",
+      "version": "1.0.0",
+      "tags": ["productivity", "tools"],
+      "official": true,
+      "icon": "square-kanban",
+      "source": { "url": "https://github.com/ReaperMaga/mango", "ref": null, "subpath": "plugins/planner" },
+      "minAppVersion": "0.4.2",
+      "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/planner"
     }
   ]
 }

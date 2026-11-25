@@ -8,12 +8,14 @@ import { AGENTS } from '~/types/chat'
 import type {
   Disposable, MangoPluginApi, MenuLocation, PluginColorScheme, PluginDirEntry, PluginMenuItem, PluginSettingsPage, PluginView,
 } from './types'
+import { createPluginData } from './data'
 import { DisposableScope } from './scope'
-import { PART_ID, fullId, pluginRef, pluginTabId, schemeCss, tokenDeclarations } from './ids'
+import { PART_ID, fullId, jsonState, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations } from './ids'
 import {
   builtinCommands, hooks, pluginTabs, raw, reg, report, type Owned,
 } from './registry'
-import { closeDialog, layers, openDialog, toast } from './uiState'
+import { closeDialog, layers, openDialog, openMenu, toast } from './uiState'
+import { pluginComponents } from './ui/components'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
@@ -22,6 +24,8 @@ import { useFiles } from '~/stores/files'
 import { useBrowser } from '~/stores/browser'
 import { usePlugins } from '~/stores/plugins'
 import { MANGO_COMMANDS } from '~/stores/commands'
+import { holdOverlay } from '~/composables/useOverlay'
+import { drafts } from '~/utils/drafts'
 import { normalizeAddress } from '~/utils/browserTabs'
 import { sepOf, withTrailingSep } from '~/utils/paths'
 import { fileTabId } from '~/utils/fileTabs'
@@ -212,6 +216,13 @@ export function createApi(host: ApiHost): MangoPluginApi {
         threads().show(tid)
       },
       rename: (tid, title) => threads().rename(tid, String(title ?? '')),
+      draft: tid => drafts.get(tid) ?? '',
+      setDraft(tid, text) {
+        if (!threads().byId(tid)) throw new Error(`No chat "${tid}".`)
+        const v = String(text ?? '')
+        if (v) drafts.set(tid, v)
+        else drafts.delete(tid)
+      },
 
       onBeforeSend: fn => hook(hooks.beforeSend, fn, 'chat.onBeforeSend'),
       onAgentEvent: fn => hook(hooks.agentEvent, fn, 'chat.onAgentEvent'),
@@ -336,18 +347,65 @@ export function createApi(host: ApiHost): MangoPluginApi {
         register(view) {
           checkId(view?.id, 'tabs.register')
           const v = rawView(view.view, 'tabs.register')
-          return track(reg.tabViews, owned({ ...view, view: v }, id, fullId(id, view.id)), 'tabViews')
+          if (view.header !== undefined && !['default', 'none'].includes(view.header)) throw new TypeError('tabs.register: header is "default" or "none".')
+          const d = track(reg.tabViews, owned({ ...view, view: v }, id, fullId(id, view.id)), 'tabViews')
+          // Open ones (restored, or from before a reload) follow what the view says now.
+          for (const [tabId, tab] of Object.entries(pluginTabs)) {
+            const ref = parsePluginTab(tabId)
+            if (ref?.pluginId !== id || ref.viewId !== view.id) continue
+            tab.restore = view.restore === true
+            tab.icon = typeof view.icon === 'string' ? view.icon : undefined
+          }
+          return d
         },
         open(viewId, opts) {
-          if (!reg.tabViews.some(v => v.pluginId === id && v.id === viewId)) throw new Error(`No tab view "${viewId}".`)
+          const view = reg.tabViews.find(v => v.pluginId === id && v.id === viewId)
+          if (!view) throw new Error(`No tab view "${viewId}".`)
           const projectPath = ws().activeProjectPath
           if (!projectPath) throw new Error('No project is open.')
           const key = opts?.key ? String(opts.key) : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
           const tabId = pluginTabId({ projectPath, pluginId: id, viewId, key })
-          pluginTabs[tabId] = { title: String(opts?.title ?? viewId), state: opts?.state === undefined ? undefined : markRawIfObject(opts.state) }
+          const restore = view.restore === true
+          // Focusing an open tab without saying a state leaves the one it has.
+          const state = opts?.state === undefined && threads().tabs.includes(tabId) ? pluginTabs[tabId]?.state : opts?.state
+          if (restore && state !== undefined && jsonState(state) === undefined) host.log('warn', [`tabs.open: the state of "${viewId}" is not JSON (or is over 256 KB), so it is not kept across restarts.`])
+          pluginTabs[tabId] = {
+            title: String(opts?.title ?? viewId),
+            state: markRawIfObject(state),
+            restore,
+            ...(typeof view.icon === 'string' ? { icon: view.icon } : {}),
+          }
           threads().show(tabId)
         },
+        active() {
+          const tabId = threads().activePane.threadId
+          const ref = parsePluginTab(tabId)
+          return ref && ref.pluginId === id ? { viewId: ref.viewId, key: ref.key, state: pluginTabs[tabId!]?.state } : null
+        },
+        close(viewId, key) {
+          const projectPath = ws().activeProjectPath
+          if (projectPath) threads().closeTab(pluginTabId({ projectPath, pluginId: id, viewId: String(viewId), key: String(key) }))
+        },
       },
+      navItems: {
+        register(item) {
+          checkId(item?.id, 'navItems.register')
+          needFn(item.run, 'navItems.register: run')
+          if (typeof item.title !== 'string' || !item.title.trim()) throw new TypeError('navItems.register: "title" is needed.')
+          if (!item.icon) throw new TypeError('navItems.register: "icon" is needed.')
+          if (item.shortcut !== undefined) checkId(item.shortcut, 'navItems.register: shortcut')
+          return track(reg.navItems, owned(item, id, fullId(id, item.id)), 'navItems')
+        },
+      },
+      components: pluginComponents(id),
+      contextMenu(at, rows) {
+        const place = at instanceof HTMLElement ? at : { x: Number(at?.x), y: Number(at?.y) }
+        if (!(place instanceof HTMLElement) && !(Number.isFinite(place.x) && Number.isFinite(place.y))) throw new TypeError('ui.contextMenu: "at" is a point { x, y } or an element.')
+        if (!Array.isArray(rows)) throw new TypeError('ui.contextMenu: "rows" is a list.')
+        if (scope.disposed || !rows.length) return Promise.resolve()
+        return openMenu({ pluginId: id, at: place, rows })
+      },
+      holdOverlay: () => scope.add(holdOverlay()),
       statusItems: {
         register(item) {
           checkId(item?.id, 'statusItems.register')
@@ -599,6 +657,8 @@ export function createApi(host: ApiHost): MangoPluginApi {
       },
     },
 
+    data: createPluginData({ pluginId: id, scope, call, on, report: (e, where) => report(id, e, where) }),
+
     events: {
       on(name, handler) {
         needFn(handler, 'events.on')
@@ -634,6 +694,7 @@ export function createApi(host: ApiHost): MangoPluginApi {
       warn: (...a) => host.log('warn', a),
       error: (...a) => host.log('error', a),
     },
+    onBeforeClose: fn => hook(hooks.beforeClose, fn, 'onBeforeClose'),
     onDispose(fn) {
       needFn(fn, 'onDispose')
       scope.add(fn)

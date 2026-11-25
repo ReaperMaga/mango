@@ -151,6 +151,10 @@ export interface PluginChatApi {
   /** Show a chat (in the active pane). */
   show(threadId: string): void
   rename(threadId: string, title: string): void
+  /** Since 0.4.2. What is written in a chat's composer and not sent yet. */
+  draft(threadId: string): string
+  /** Since 0.4.2. Put text into a chat's composer, replacing what is there; nothing is sent. */
+  setDraft(threadId: string, text: string): void
 
   onBeforeSend(hook: BeforeSendHook): Disposable
   /** Every event an agent run produces, as it arrives (tool calls, text deltas, `turn-end`…). */
@@ -216,6 +220,8 @@ export interface TabContext {
   state: unknown
   projectPath: string | null
   setTitle(title: string): void
+  /** Since 0.4.2. Replace `state` (kept across restarts for a view with `restore`). */
+  setState(state: unknown): void
   close(): void
 }
 
@@ -224,6 +230,77 @@ export interface PluginTabView {
   id: string
   icon: PluginIcon
   view: PluginView<TabContext>
+  /**
+   * Since 0.4.2. `none`: no header row above the view (icon, title, plugin name); the view draws its own.
+   * Default `default`.
+   */
+  header?: 'default' | 'none'
+  /**
+   * Since 0.4.2. Open tabs of this view come back after a restart, with their title and `state` (which must
+   * be JSON). Off by default: the tab closes with the app.
+   */
+  restore?: boolean
+}
+
+/**
+ * Since 0.4.2. A place of the plugin's own in Mango's navigation: an icon on the tool strip at the right edge,
+ * set apart under the tool windows, for a plugin whose main thing is a tab in the main area.
+ */
+export interface PluginNavItem {
+  id: string
+  title: string
+  icon: PluginIcon
+  /** The `shortcuts.register` id of its shortcut: shown in the tooltip (as the user rebound it). */
+  shortcut?: string
+  /** Small number on the icon. */
+  badge?: Reactive<number | null>
+  /** Marked as the place in view, e.g. while its tab shows (`tabs.active`). */
+  active?: Reactive<boolean>
+  /** Hidden while false. */
+  when?: () => boolean
+  run(): void
+}
+
+/** Since 0.4.2. A row of `ui.contextMenu`. Icons as everywhere in the API. */
+export interface PluginMenuRow {
+  label: string
+  icon?: PluginIcon
+  /** A second line, muted. */
+  hint?: string
+  /** Muted, right-aligned on the label's line. */
+  aside?: string
+  kbd?: string
+  checked?: boolean
+  disabled?: boolean
+  danger?: boolean
+  /** A divider before this row. */
+  divider?: boolean
+  /** A small heading before this row, starting a group. */
+  group?: string
+  onSelect?: () => void
+}
+
+/**
+ * Since 0.4.2. Mango's own controls, so a plugin's view looks and behaves like the app around it. Props are
+ * those of the components in `app/components/ui` (listed in docs/plugins.md).
+ */
+export interface PluginUiComponents {
+  /** UiButton's props; default slot. */
+  Button: Component
+  /** IconButton's props (`label` is its tooltip and name); the icon as default slot. */
+  IconButton: Component
+  /** UiMenu's props, with `items` as `PluginMenuRow` (icons of any kind); slot `{ open, toggle }`. */
+  Menu: Component
+  /** UiField's props: label, hint and error around a control. */
+  Field: Component
+  /** `icon`: any `PluginIcon`. */
+  Icon: Component
+  /** `threadId`: the status dot of a chat, as the sidebar draws it. Renders nothing for a chat that is gone. */
+  ThreadDot: Component
+  /** `name`, `path`, `size`: a project's badge. */
+  ProjectBadge: Component
+  /** `text`: Markdown as a chat reply shows it, raw HTML escaped. */
+  Markdown: Component
 }
 
 export interface PluginStatusItem {
@@ -380,7 +457,23 @@ export interface PluginUiApi {
     register(view: PluginTabView): Disposable
     /** Open (or focus, for the same `key`) a tab of a registered view. */
     open(viewId: string, opts: { title: string; key?: string; state?: unknown }): void
+    /** Since 0.4.2. This plugin's tab in the active pane, or null. Reactive in a computed or a getter. */
+    active(): { viewId: string; key: string; state: unknown } | null
+    /** Since 0.4.2. Close a tab of the active project (nothing when it is not open). */
+    close(viewId: string, key: string): void
   }
+  /** Since 0.4.2. */
+  navItems: { register(item: PluginNavItem): Disposable }
+  /** Since 0.4.2. Mango's own controls. */
+  components: PluginUiComponents
+  /** Since 0.4.2. A menu at a point (a right click), or hanging from an element. Resolves when it closes. */
+  contextMenu(at: { x: number; y: number } | HTMLElement, rows: PluginMenuRow[]): Promise<void>
+  /**
+   * Since 0.4.2. Call while a layer of the plugin's own floats over the workspace (a popover, a drag): a browser
+   * tab's page is a native view drawn over all HTML, and hides until this is disposed. `ui.contextMenu`,
+   * `ui.dialog` and the Menu component do it themselves.
+   */
+  holdOverlay(): Disposable
   statusItems: { register(item: PluginStatusItem): Disposable }
   settingsPages: { register(page: PluginSettingsPage): Disposable }
   menus: { register<L extends MenuLocation>(location: L, item: PluginMenuItem<L>): Disposable }
@@ -520,6 +613,60 @@ export interface PluginStorageApi {
   keys(): string[]
 }
 
+/**
+ * Since 0.4.2. A saved document. `data` is JSON, null once it is deleted: a deleted document stays behind as a
+ * tombstone, so a copy kept elsewhere can learn of it.
+ */
+export interface PluginDoc<T = unknown> {
+  collection: string
+  id: string
+  /** 1 when first written, one more on every write. */
+  rev: number
+  /** Where this write stands among all of the plugin's writes: unique, always growing. */
+  seq: number
+  createdAt: number
+  updatedAt: number
+  deleted: boolean
+  data: T | null
+}
+
+/**
+ * `expectedRev`: write only if the document is still at this revision (`0`: only if it does not exist, or is
+ * deleted). Left out: write whatever is there.
+ */
+export type PluginDataOp =
+  | { op: 'put'; collection: string; id: string; data: unknown; expectedRev?: number }
+  | { op: 'delete'; collection: string; id: string; expectedRev?: number }
+
+export interface PluginDataChange {
+  /** The last `seq` in this change. */
+  seq: number
+  docs: PluginDoc[]
+  /** Written by this window (its own `write` already returned these). */
+  local: boolean
+}
+
+/**
+ * Since 0.4.2. Documents kept in a database in Mango's data folder, for what a person makes in the plugin:
+ * more than `storage` holds, safe with several windows open, and kept when the plugin is removed unless the
+ * user asks for it to go. Collections are just names (letters, digits, `_`, `-`, up to 64); ids are up to 128
+ * characters; a document is at most 1 MB of JSON.
+ */
+export interface PluginDataApi {
+  /** A collection's documents, deleted ones left out. */
+  list<T = unknown>(collection: string): Promise<PluginDoc<T>[]>
+  get<T = unknown>(collection: string, id: string): Promise<PluginDoc<T> | null>
+  /**
+   * All of these (up to 20 000, 64 MB of JSON), or none. Rejects with an error whose `conflicts` (`PluginDoc[]`, as they are now) is set when
+   * an `expectedRev` no longer holds; nothing is written then.
+   */
+  write(ops: PluginDataOp[]): Promise<PluginDoc[]>
+  /** Everything written after `since` (0: everything), tombstones included, oldest first. */
+  changes(since: number): Promise<{ seq: number; docs: PluginDoc[] }>
+  /** After every write, from this window or another. */
+  onChange(handler: (change: PluginDataChange) => void): Disposable
+}
+
 /* ---------------------------------------------------------------- escape hatches */
 
 /** Raw access to Mango's backend: every command in `~/types/ipc` `Commands`. */
@@ -567,6 +714,8 @@ export interface MangoPluginApi {
   agents: PluginAgentsApi
   settings: PluginSettingsApi
   storage: PluginStorageApi
+  /** Since 0.4.2. */
+  data: PluginDataApi
   /** Messages between plugins (and to themselves): names are free, use a `<pluginId>:` prefix. */
   events: {
     on(name: string, handler: (payload: unknown) => void): Disposable
@@ -576,6 +725,11 @@ export interface MangoPluginApi {
   assets: { text(path: string): Promise<string>; url(path: string): Promise<string> }
   /** Lines shown in the plugin's log in Settings > Plugins (also mirrored to the console). */
   log: { info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void }
+  /**
+   * Since 0.4.2. Awaited before the window closes or hides, Mango quits, or restarts for an update: save what is not
+   * saved yet. About 2 s, for all plugins together. The window may stay after all, and ask again.
+   */
+  onBeforeClose(fn: () => Awaitable<void>): Disposable
   /** Undo `fn` when the plugin goes away. */
   onDispose(fn: () => void): void
 

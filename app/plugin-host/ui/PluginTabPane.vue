@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
 import PluginIcon from './PluginIcon.vue'
-import { parsePluginTab } from '~/plugin-host/ids'
-import { pluginNames, pluginTabView, pluginTabs } from '~/plugin-host/registry'
+import { jsonState, parsePluginTab } from '~/plugin-host/ids'
+import { pluginNames, pluginTabView, pluginTabs, report } from '~/plugin-host/registry'
 import type { TabContext } from '~/plugin-host/types'
 import { usePluginRuntime } from '~/plugin-host/runtime'
 import { useThreads } from '~/stores/threads'
 
 /**
  * A plugin's tab in the main area (`ui.tabs`): a header like the other panes, then the plugin's view.
- * While its plugin is not running the tab stays and says so; turning the plugin off closes it.
+ * While its plugin starts the pane waits, empty; when the plugin is not running it says so; turning the plugin
+ * off closes the tab. A view with `header: 'none'` draws its own header.
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 const { t } = useI18n()
@@ -21,14 +22,34 @@ const view = computed(() => (ref_.value ? pluginTabView(ref_.value.pluginId, ref
 const title = computed(() => pluginTabs[props.tabId]?.title ?? ref_.value?.viewId ?? t('plugins.view.plugin'))
 const plugin = computed(() => (ref_.value ? pluginNames[ref_.value.pluginId] ?? ref_.value.pluginId : ''))
 
+/** Its plugin may still bring the view: nothing to say yet. */
+const waiting = computed(() => {
+  if (view.value) return false
+  const status = ref_.value ? runtime.states[ref_.value.pluginId]?.status : undefined
+  return status === 'loading' || (status === undefined && !runtime.ready)
+})
+
 const ctx = computed<TabContext>(() => {
   const id = props.tabId
+  const projectPath = ref_.value?.projectPath ?? null
+  const pluginId = ref_.value?.pluginId ?? ''
+  // Read here so a component's `ctx` changes with its state; the getter keeps a `mount` view's current.
+  void pluginTabs[id]?.state
   return {
-    state: pluginTabs[id]?.state,
-    projectPath: ref_.value?.projectPath ?? null,
+    get state() { return pluginTabs[id]?.state },
+    projectPath,
     setTitle(next: string) {
       const tab = pluginTabs[id]
-      if (tab && typeof next === 'string' && next.trim()) tab.title = next.trim()
+      if (!tab || typeof next !== 'string' || !next.trim() || tab.title === next.trim()) return
+      tab.title = next.trim()
+      if (tab.restore) threads.persistLayout()
+    },
+    setState(next: unknown) {
+      const tab = pluginTabs[id]
+      if (!tab) return
+      if (tab.restore && next !== undefined && jsonState(next) === undefined) report(pluginId, new Error('The state is not JSON (or is over 256 KB), so it is not kept across restarts.'), 'setState')
+      tab.state = next && typeof next === 'object' ? markRaw(next as object) : next
+      if (tab.restore) threads.persistLayout()
     },
     close: () => threads.closeTab(id),
   }
@@ -37,15 +58,15 @@ const ctx = computed<TabContext>(() => {
 
 <template>
   <section class="ptp" :class="{ 'is-active': active, 'is-split': split }" :aria-label="title">
-    <header class="ptp__head">
-      <PluginIcon :icon="view?.icon" class="ptp__icon" />
+    <header v-if="view ? view.header !== 'none' : !waiting" class="ptp__head">
+      <PluginIcon :icon="view?.icon ?? pluginTabs[tabId]?.icon" class="ptp__icon" />
       <h2 class="ptp__name" :title="title">{{ title }}</h2>
       <span class="ptp__from">{{ plugin }}</span>
     </header>
     <div v-if="view" class="ptp__body">
       <PluginViewHost :key="tabId" :view="view.view" :ctx="ctx" :plugin-id="view.pluginId" />
     </div>
-    <div v-else-if="runtime.ready" class="ptp__gone">
+    <div v-else-if="!waiting" class="ptp__gone">
       <p>{{ plugin ? t('plugins.view.tabGone', { plugin }) : t('plugins.view.tabGoneUnnamed') }}</p>
     </div>
   </section>

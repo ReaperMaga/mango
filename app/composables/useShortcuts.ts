@@ -8,7 +8,7 @@ import { useGitLog } from '~/stores/gitLog'
 import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
-import { SHORTCUTS, eventCombo } from '~/utils/shortcuts'
+import { SHORTCUTS, eventCombo, ownsKey } from '~/utils/shortcuts'
 import { reg as pluginReg, report as reportPlugin } from '~/plugin-host/registry'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
@@ -35,6 +35,15 @@ export async function openLocalFolder() {
   const ws = useWorkspace()
   const path = await pickFolder(t('shell.shortcuts.labels.open-folder'))
   if (path) await ws.openProjectAsking(path)
+}
+
+/** The keys an editor claims for itself while the focus is in it (`data-own-keys`). */
+function keyClaims(target: EventTarget | null): string[] {
+  const claims: string[] = []
+  for (let el = target instanceof Element ? target.closest('[data-own-keys]') : null; el; el = el.parentElement?.closest('[data-own-keys]') ?? null) {
+    claims.push(el.getAttribute('data-own-keys') ?? '')
+  }
+  return claims
 }
 
 /**
@@ -91,6 +100,7 @@ export function useShortcuts() {
     if (!isMod(e) || ws.recordingShortcut) return
     const combo = eventCombo(e)
     if (!combo) return
+    if (ownsKey(keyClaims(e.target), combo)) return
     const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm')
 
     const builtin = SHORTCUTS.find(s => ws.bindings[s.id] === combo)?.id

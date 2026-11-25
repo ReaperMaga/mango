@@ -123,6 +123,8 @@ export const useUpdater = defineStore('updater', {
       try {
         await call('update_download')
         this.phase = 'restarting'
+        // Before the files: saving those is the last thing before the restart.
+        await useWindows().pluginsEverywhere()
         // What was typed while it downloaded.
         if (!await this._allSaved()) return
         await call('update_install')

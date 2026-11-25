@@ -53,6 +53,27 @@ export function emitAll<Args extends unknown[]>(
   }
 }
 
+/**
+ * `onBeforeClose`: all at once, at most `ms` together. What throws, or is not done by then, is reported; nothing is
+ * waited for without hooks.
+ */
+export async function runBeforeClose(
+  hooks: ReadonlyArray<HookEntry<() => unknown>>,
+  ms: number,
+  onError: (pluginId: string, e: unknown) => void,
+): Promise<void> {
+  if (!hooks.length) return
+  const open = new Set(hooks)
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const late = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms) })
+  await Promise.race([late, Promise.all([...hooks].map(async (h) => {
+    try { await h.fn() } catch (e) { onError(h.pluginId, e) }
+    open.delete(h)
+  }))])
+  clearTimeout(timer)
+  for (const h of open) onError(h.pluginId, new Error(`Not done after ${ms} ms: Mango goes on closing.`))
+}
+
 /** `/name args` as name and args, or null when the text is not a slash command. */
 export function parseSlash(text: string): { name: string; args: string } | null {
   const m = /^\/([\w.:-]+)(?:\s+([\s\S]*))?$/.exec(text.trim())

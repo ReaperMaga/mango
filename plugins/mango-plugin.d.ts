@@ -184,6 +184,10 @@ export interface PluginChatApi {
   stop(threadId: string): void
   show(threadId: string): void
   rename(threadId: string, title: string): void
+  /** Since 0.4.2. What is written in a chat's composer and not sent yet. */
+  draft(threadId: string): string
+  /** Since 0.4.2. Put text into a chat's composer, replacing what is there; nothing is sent. */
+  setDraft(threadId: string, text: string): void
 
   onBeforeSend(hook: BeforeSendHook): Disposable
   onAgentEvent(handler: (threadId: string, event: AgentEvent) => void): Disposable
@@ -226,6 +230,8 @@ export interface TabContext {
   state: unknown
   projectPath: string | null
   setTitle(title: string): void
+  /** Since 0.4.2. Replace `state` (kept across restarts for a view with `restore`). */
+  setState(state: unknown): void
   close(): void
 }
 
@@ -233,6 +239,55 @@ export interface PluginTabView {
   id: string
   icon: PluginIcon
   view: PluginView<TabContext>
+  /** Since 0.4.2. `none`: no header row above the view; it draws its own. */
+  header?: 'default' | 'none'
+  /** Since 0.4.2. Open tabs come back after a restart, with their title and `state` (JSON). */
+  restore?: boolean
+}
+
+/** Since 0.4.2. An icon on the tool strip at the right edge, under the tool windows; it opens a tab. */
+export interface PluginNavItem {
+  id: string
+  title: string
+  icon: PluginIcon
+  /** The `shortcuts.register` id of its shortcut, shown in the tooltip. */
+  shortcut?: string
+  badge?: Reactive<number | null>
+  /** Marked as the place in view. */
+  active?: Reactive<boolean>
+  when?: () => boolean
+  run(): void
+}
+
+/** Since 0.4.2. A row of `ui.contextMenu` and the Menu component. */
+export interface PluginMenuRow {
+  label: string
+  icon?: PluginIcon
+  /** A second line, muted. */
+  hint?: string
+  /** Muted, right-aligned on the label's line. */
+  aside?: string
+  kbd?: string
+  checked?: boolean
+  disabled?: boolean
+  danger?: boolean
+  /** A divider before this row. */
+  divider?: boolean
+  /** A small heading before this row, starting a group. */
+  group?: string
+  onSelect?: () => void
+}
+
+/** Since 0.4.2. Mango's own controls; docs/plugins.md lists their props. */
+export interface PluginUiComponents {
+  Button: Component
+  IconButton: Component
+  Menu: Component
+  Field: Component
+  Icon: Component
+  ThreadDot: Component
+  ProjectBadge: Component
+  Markdown: Component
 }
 
 export interface PluginStatusItem {
@@ -335,7 +390,19 @@ export interface PluginUiApi {
   tabs: {
     register(view: PluginTabView): Disposable
     open(viewId: string, opts: { title: string; key?: string; state?: unknown }): void
+    /** Since 0.4.2. This plugin's tab in the active pane, or null. Reactive. */
+    active(): { viewId: string; key: string; state: unknown } | null
+    /** Since 0.4.2. Close a tab of the active project. */
+    close(viewId: string, key: string): void
   }
+  /** Since 0.4.2. */
+  navItems: { register(item: PluginNavItem): Disposable }
+  /** Since 0.4.2. */
+  components: PluginUiComponents
+  /** Since 0.4.2. A menu at a point or hanging from an element. Resolves when it closes. */
+  contextMenu(at: { x: number; y: number } | HTMLElement, rows: PluginMenuRow[]): Promise<void>
+  /** Since 0.4.2. Call while a layer of your own floats over the workspace; dispose it after. */
+  holdOverlay(): Disposable
   statusItems: { register(item: PluginStatusItem): Disposable }
   settingsPages: { register(page: PluginSettingsPage): Disposable }
   menus: { register<L extends MenuLocation>(location: L, item: PluginMenuItem<L>): Disposable }
@@ -439,6 +506,60 @@ export interface PluginStorageApi {
   keys(): string[]
 }
 
+/**
+ * Since 0.4.2. A saved document. `data` is JSON, null once it is deleted: a deleted document stays behind as a
+ * tombstone, so a copy kept elsewhere can learn of it.
+ */
+export interface PluginDoc<T = unknown> {
+  collection: string
+  id: string
+  /** 1 when first written, one more on every write. */
+  rev: number
+  /** Where this write stands among all of the plugin's writes: unique, always growing. */
+  seq: number
+  createdAt: number
+  updatedAt: number
+  deleted: boolean
+  data: T | null
+}
+
+/**
+ * `expectedRev`: write only if the document is still at this revision (`0`: only if it does not exist, or is
+ * deleted). Left out: write whatever is there.
+ */
+export type PluginDataOp =
+  | { op: 'put'; collection: string; id: string; data: unknown; expectedRev?: number }
+  | { op: 'delete'; collection: string; id: string; expectedRev?: number }
+
+export interface PluginDataChange {
+  /** The last `seq` in this change. */
+  seq: number
+  docs: PluginDoc[]
+  /** Written by this window (its own `write` already returned these). */
+  local: boolean
+}
+
+/**
+ * Since 0.4.2. Documents kept in a database in Mango's data folder, for what a person makes in the plugin:
+ * more than `storage` holds, safe with several windows open, and kept when the plugin is removed unless the
+ * user asks for it to go. Collections are just names (letters, digits, `_`, `-`, up to 64); ids are up to 128
+ * characters; a document is at most 1 MB of JSON.
+ */
+export interface PluginDataApi {
+  /** A collection's documents, deleted ones left out. */
+  list<T = unknown>(collection: string): Promise<PluginDoc<T>[]>
+  get<T = unknown>(collection: string, id: string): Promise<PluginDoc<T> | null>
+  /**
+   * All of these (up to 20 000, 64 MB of JSON), or none. Rejects with an error whose `conflicts` (`PluginDoc[]`, as they are now) is set when
+   * an `expectedRev` no longer holds; nothing is written then.
+   */
+  write(ops: PluginDataOp[]): Promise<PluginDoc[]>
+  /** Everything written after `since` (0: everything), tombstones included, oldest first. */
+  changes(since: number): Promise<{ seq: number; docs: PluginDoc[] }>
+  /** After every write, from this window or another. */
+  onChange(handler: (change: PluginDataChange) => void): Disposable
+}
+
 /* ---------------------------------------------------------------- the API object */
 
 export interface MangoPluginApi {
@@ -463,12 +584,19 @@ export interface MangoPluginApi {
   agents: PluginAgentsApi
   settings: PluginSettingsApi
   storage: PluginStorageApi
+  /** Since 0.4.2. */
+  data: PluginDataApi
   events: {
     on(name: string, handler: (payload: unknown) => void): Disposable
     emit(name: string, payload?: unknown): void
   }
   assets: { text(path: string): Promise<string>; url(path: string): Promise<string> }
   log: { info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void }
+  /**
+   * Since 0.4.2. Awaited before the window closes or hides, Mango quits, or restarts for an update: save what is not
+   * saved yet. About 2 s, for all plugins together. The window may stay after all, and ask again.
+   */
+  onBeforeClose(fn: () => void | Promise<void>): Disposable
   onDispose(fn: () => void): void
 
   /** No stability promise: every command and event in Mango's app/types/ipc.ts. */

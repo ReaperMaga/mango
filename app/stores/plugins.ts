@@ -130,8 +130,18 @@ export const usePlugins = defineStore('plugins', {
       this._put(await call('plugins_set_enabled', { id, enabled }))
     },
 
-    async remove(id: string) {
+    /** How many documents a plugin saved (`mango.data`); 0 when that cannot be told: they are kept then. */
+    async documentCount(id: string): Promise<number> {
+      try { return await call('plugin_data_count', { pluginId: id }) } catch { return 0 }
+    },
+
+    /** Its documents stay, for when it is installed again, unless `deleteDocuments`. */
+    async remove(id: string, deleteDocuments = false) {
       await call('plugins_remove', { id })
+      let failed: unknown = null
+      if (deleteDocuments) {
+        try { await call('plugin_data_clear', { pluginId: id }) } catch (e) { failed = e }
+      }
       this.installed = this.installed.filter(p => p.manifest.id !== id)
       delete this.updates[id]
       delete this.settingsValues[id]
@@ -143,6 +153,7 @@ export const usePlugins = defineStore('plugins', {
       } catch { /* nothing stored */ }
       this.revision++
       announce()
+      if (failed) throw failed
     },
 
     async checkUpdates(ids: string[] | null = null, jobId = pluginJobId()): Promise<PluginUpdateInfo[]> {

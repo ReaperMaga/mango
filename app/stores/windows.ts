@@ -6,6 +6,7 @@ import {
   type ChatRef, type Claim, type ClaimTable, type WindowPlace, type WindowSpec,
 } from '~/utils/windows'
 import { onWindowClose, tellUnsaved } from '~/composables/windowClose'
+import { pluginsBeforeClose } from '~/plugin-host/registry'
 import { flushHistory } from '~/utils/chatHistory'
 import { flushRemoteChats } from '~/utils/remoteChats'
 import { useFiles } from '~/stores/files'
@@ -50,6 +51,7 @@ type Body =
   | { t: 'bye'; id: string }
   | { t: 'focus'; id: string }
   | { t: 'save' }
+  | { t: 'leaving' }
   | { t: 'saved'; left: string[] }
 type Message = Body & { from: string; inst: string; req?: string; to?: string }
 
@@ -402,7 +404,10 @@ export const useWindows = defineStore('windows', {
           alone = loaded && isTauri() && await call('window_alone', {}).catch(() => false)
           await this._shutDown()
         }
-        await Promise.race([chores().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
+        await Promise.all([
+          Promise.race([chores().catch(() => {}), new Promise(r => setTimeout(r, 4000))]),
+          pluginsBeforeClose(),
+        ])
       } while (typedMeanwhile())
       await Promise.race([this._closing(alone).catch(() => {}), new Promise(r => setTimeout(r, 1000))])
       return true
@@ -422,7 +427,10 @@ export const useWindows = defineStore('windows', {
           if (ws.openProjects.length) ws.persist()
           return false
         }
-        await Promise.race([flushHistory(), new Promise(r => setTimeout(r, 2000))])
+        await Promise.all([
+          Promise.race([flushHistory(), new Promise(r => setTimeout(r, 2000))]),
+          pluginsBeforeClose(),
+        ])
       } while (typedMeanwhile())
       return true
     },
@@ -441,6 +449,13 @@ export const useWindows = defineStore('windows', {
       // With autosave off no window has anything to say.
       const silent = useWorkspace().editorAutoSave && peers.some(id => !answers.some(m => m.from === id))
       return [...mine, ...answers.flatMap(m => (m.t === 'saved' ? m.left : [])), ...(silent ? [t('shell.windows.silent')] : [])]
+    },
+
+    /** The plugins of every window save what they hold (an update restarts Mango). */
+    async pluginsEverywhere(): Promise<void> {
+      await this.prune()
+      const peers = Object.keys(this.table).filter(id => id !== this.self)
+      await Promise.all([pluginsBeforeClose(), peers.length ? this._ask({ t: 'leaving' }, peers, ANSWER_MS) : null])
     },
 
     /**
@@ -528,6 +543,10 @@ export const useWindows = defineStore('windows', {
           break
         case 'save':
           await this._post({ t: 'saved', left: await useFiles().saveAll(SAVE_FOR_PEER_MS) }, m)
+          break
+        case 'leaving':
+          await pluginsBeforeClose()
+          await this._post({ t: 'saved', left: [] }, m)
           break
         case 'focus':
           if (m.id === this.self) window.focus()

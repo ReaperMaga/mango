@@ -179,7 +179,11 @@ function fakeApi(id: string) {
       },
       toolWindows: { register: reg('toolWindows'), open() {}, close() {} },
       panelTabs: { register: reg('panelTabs'), open() {} },
-      tabs: { register: reg('tabs'), open() {} },
+      tabs: { register: reg('tabs'), open() {}, active: () => null, close() {} },
+      navItems: { register: reg('navItems') },
+      components: {},
+      contextMenu: async () => {},
+      holdOverlay: () => ({ dispose() {} }),
       statusItems: { register: reg('statusItems') },
       settingsPages: { register: reg('settingsPages') },
       menus: { register: reg('menus') },
@@ -195,10 +199,12 @@ function fakeApi(id: string) {
     agents: { registerMcpServer: reg('mcp'), appendSystemPrompt: reg('systemPrompt') },
     settings: { get: (k: string) => settings[k], set: (k: string, v: unknown) => { settings[k] = v }, all: () => ({ ...settings }), onChange: reg('settingsChange') },
     storage: { get: (k: string) => store.get(k), set: (k: string, v: unknown) => { store.set(k, v) }, delete: (k: string) => { store.delete(k) }, keys: () => [...store.keys()] },
+    data: { list: async () => [], get: async () => null, write: async () => [], changes: async () => ({ seq: 0, docs: [] }), onChange: reg('dataChange') },
     events: { on: reg('events'), emit() {} },
     assets: { text: async () => '', url: async () => '' },
     log: { info() {}, warn() {}, error() {} },
     onDispose: (fn: () => void) => { disposers.push(fn) },
+    onBeforeClose: reg('beforeClose'),
   }
   return { api, registered, dispose: () => disposers.forEach(fn => fn()) }
 }
@@ -212,6 +218,7 @@ const expected: Record<string, string[]> = {
   'turn-chime': ['turnEnd', 'commands'],
   'copy-as-markdown': ['messageActions', 'menus', 'commands'],
   'unity': ['fileFilters', 'fileCompanions', 'fileIcons', 'fileLanguages', 'toolWindows', 'statusItems', 'menus', 'commands', 'systemPrompt', 'turnEnd'],
+  'planner': ['tabs', 'navItems', 'shortcuts', 'commands', 'menus', 'dataChange', 'projectChange'],
 }
 
 test('every entry module exports activate, which registers what the plugin is for', async () => {

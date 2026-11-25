@@ -4,15 +4,17 @@ import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useForge } from '~/stores/forge'
 import { useGit, refreshGit } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
-import { read, reg, shown } from '~/plugin-host/registry'
+import { useWindows } from '~/stores/windows'
+import { guarded, read, reg, shown } from '~/plugin-host/registry'
 import { allPanelTabs, panelTabBadge, panelTabOffered } from '~/composables/panelTabs'
 import { iconComponent } from '~/plugin-host/icons'
-import { parsePanelEditorTab } from '~/plugin-host/ids'
+import { parsePanelEditorTab, pluginRef } from '~/plugin-host/ids'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
  * docks its tool windows: one button per tool, a click opens it beside the
- * chats and a second click puts it away. At the foot sit the bottom panel's tabs, the terminal's toggle and a button that
+ * chats and a second click puts it away. Below them, set apart, are plugins' places that open as a tab
+ * (`ui.navItems`). At the foot sit the bottom panel's tabs, the terminal's toggle and a button that
  * says where the project runs (this computer or an environment), marking an environment that is
  * stopped or can't be reached.
  */
@@ -21,6 +23,7 @@ const { t } = useI18n()
 const ws = useWorkspace()
 const git = useGit()
 const threads = useThreads()
+const win = useWindows()
 
 /** Number of changed files in the working copy in view (the active chat's worktree, or the project), shown on the Changes button. */
 const workdir = computed(() => threads.workdir ?? ws.activeProjectPath)
@@ -91,6 +94,20 @@ const tools = computed(() => [
   }),
 ])
 
+/** Plugins' places in the main area (`ui.navItems`): they open a tab, so they stand apart from the tool windows. A chat window shows its chat alone. */
+const places = computed(() => (win.spec.kind === 'chat' ? [] : reg.navItems.filter(i => shown(i))).map((i) => {
+  const badge = read(i.badge, i.pluginId, null, 'nav badge')
+  return {
+    key: i.fullId,
+    label: i.title,
+    title: i.shortcut ? ws.withKey(i.title, pluginRef(i.pluginId, i.shortcut)) : i.title,
+    icon: iconComponent(i.icon)!,
+    count: typeof badge === 'number' && badge > 0 ? Math.floor(badge) : 0,
+    active: read(i.active, i.pluginId, false, 'nav active') === true,
+    run: () => { void guarded(i.pluginId, `nav item ${i.id}`, () => i.run()) },
+  }
+}))
+
 /*
  * The highlight behind the open tool is one shape that glides from button to button, so switching
  * tools reads as a move rather than one light going off and another coming on. It fades in where it
@@ -135,6 +152,22 @@ watch(() => ws.toolPanel, async (id) => {
         <CircleDashed v-if="tool.mark === 'running'" />
         <X v-else />
       </span>
+    </button>
+    </div>
+    <div v-if="places.length" class="ts__places" role="group" :aria-label="t('plugins.view.navigation')">
+    <button
+      v-for="p in places"
+      :key="p.key"
+      type="button"
+      class="ts__btn ts__btn--solo"
+      :class="{ 'is-active': p.active }"
+      :aria-current="p.active ? 'page' : undefined"
+      :aria-label="p.count ? t('shell.tools.items', { label: p.label }, p.count) : p.label"
+      :title="p.title"
+      @click="p.run()"
+    >
+      <component :is="p.icon" />
+      <span v-if="p.count" class="ts__count tabular" aria-hidden="true">{{ p.count > 99 ? '99+' : p.count }}</span>
     </button>
     </div>
     <div class="ts__foot">
@@ -206,6 +239,24 @@ watch(() => ws.toolPanel, async (id) => {
   gap: var(--space-1);
   padding: var(--space-2) 0;
 }
+/* What opens as a tab, not as a tool window: under a short line. */
+.ts__places {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+}
+.ts__places::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 16px;
+  height: 1px;
+  background: var(--line);
+}
 .ts__btn {
   position: relative;
   display: grid;
@@ -219,7 +270,7 @@ watch(() => ws.toolPanel, async (id) => {
 .ts__btn svg { width: 16px; height: 16px; stroke-width: 1.75; }
 .ts__btn:hover { background: var(--bg-hover); color: var(--fg); }
 .ts__btn.is-active { color: var(--accent-ink); }
-/* The foot's buttons (terminal, environment) have no glide: they keep their own fill. */
+/* The foot's buttons (terminal, environment) and the places have no glide: they keep their own fill. */
 .ts__btn--solo.is-active { background: var(--accent-soft); }
 .ts__glide {
   position: absolute;

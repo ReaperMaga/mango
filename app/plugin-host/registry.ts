@@ -6,10 +6,11 @@ import type { ShortcutDef } from '~/utils/shortcuts'
 import type {
   AgentRunContext, BeforeSendContext, BeforeSendHook, MenuLocation, PluginColorScheme, PluginCodeBlockRenderer, PluginCommand,
   PluginFileCompanion, PluginFileFilter, PluginFileIconProvider, PluginFileLanguage,
-  PluginMcpServer, PluginMenuItem, PluginMessageAction, PluginPanelTab, PluginShortcut, PluginSlashCommand, PluginStatusItem,
+  PluginMcpServer, PluginMenuItem, PluginMessageAction, PluginNavItem, PluginPanelTab, PluginShortcut, PluginSlashCommand, PluginStatusItem,
   PluginTabView, PluginToolWindow, Reactive,
 } from './types'
-import { emitAll, parseSlash, runBeforeSend, type HookEntry } from './hooks'
+import type { PluginTabEntry, SavedPluginTab } from './ids'
+import { emitAll, parseSlash, runBeforeClose, runBeforeSend, type HookEntry } from './hooks'
 
 /**
  * Everything the active plugins registered, in one place the app reads: the palette, the shortcuts,
@@ -35,6 +36,7 @@ export const reg = {
   panelTabs: shallowReactive<Owned<PluginPanelTab>[]>([]),
   /** `fullId` is `<pluginId>.<id>`. */
   tabViews: shallowReactive<Owned<PluginTabView>[]>([]),
+  navItems: shallowReactive<Owned<PluginNavItem>[]>([]),
   statusItems: shallowReactive<Owned<PluginStatusItem>[]>([]),
   menus: shallowReactive<Array<Owned<PluginMenuItem> & { location: MenuLocation }>>([]),
   /** `fullId` is `plugin:<pluginId>.<id>`, the `scheme` value. */
@@ -48,8 +50,16 @@ export const reg = {
   fileLanguages: shallowReactive<Owned<PluginFileLanguage>[]>([]),
 }
 
-/** Open plugin tabs: title and the state `tabs.open` was given, by tab id (see `ids.ts`). Not saved. */
-export const pluginTabs = reactive<Record<string, { title: string; state: unknown }>>({})
+/** Open plugin tabs: title and state, by tab id (see `ids.ts`). Those with `restore` are saved with the layout (stores/threads.ts). */
+export const pluginTabs = reactive<Record<string, PluginTabEntry>>({})
+
+/** Tabs saved with the layout: they wait here for their plugin to start. */
+export function restorePluginTabs(saved: SavedPluginTab[]) {
+  for (const s of saved) {
+    const state = s.state && typeof s.state === 'object' ? markRaw(s.state as object) : s.state
+    pluginTabs[s.id] = { title: s.title, state, restore: true, ...(s.icon ? { icon: s.icon } : {}) }
+  }
+}
 
 /** Plugin names by id (for "Plugins" groups and details). */
 export const pluginNames = reactive<Record<string, string>>({})
@@ -60,6 +70,7 @@ export const hooks = {
   turnEnd: [] as HookEntry<(threadId: string, ok: boolean) => void>[],
   threadCreated: [] as HookEntry<(t: Thread) => void>[],
   statusChange: [] as HookEntry<(threadId: string, s: ThreadStatus) => void>[],
+  beforeClose: [] as HookEntry<() => unknown>[],
 }
 
 /* ---------- reporting a plugin's failures (the runtime puts them into its log) */
@@ -123,6 +134,11 @@ export function emitThreadCreated(t: Thread) {
 export function emitStatusChange(threadId: string, s: ThreadStatus) {
   if (hooks.statusChange.length) emitAll(hooks.statusChange, [threadId, s], onHookError('onStatusChange'))
 }
+
+/* ---------- closing (called from stores/windows.ts) */
+
+/** The plugins in this window save what they hold, as it closes or Mango restarts. Well inside what a close may take (src-tauri/src/windows.rs). */
+export const pluginsBeforeClose = () => runBeforeClose(hooks.beforeClose, 2000, onHookError('onBeforeClose'))
 
 /* ---------- slash commands */
 

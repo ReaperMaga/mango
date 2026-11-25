@@ -111,6 +111,72 @@ export function parsePluginTab(id: string | null | undefined): PluginTabRef | nu
   return { projectPath, pluginId, viewId, key: rest.join('\u0001') }
 }
 
+/*
+ * Tabs of a view with `restore` are saved with the layout, apart from the panes (a build that does not know
+ * them drops them and shows nothing in their place). They wait for their plugin, which starts later.
+ */
+
+/** An open plugin tab. `restore`: it is saved (its view says so, or it was restored and its plugin has not started yet). */
+export interface PluginTabEntry { title: string; state: unknown; restore?: boolean; /** the view's icon, when it is a string */ icon?: string }
+
+export interface SavedPluginTab { id: string; title: string; state?: unknown; icon?: string; /** the pane that showed it */ pane?: string }
+
+const MAX_SAVED_TABS = 100
+const MAX_SAVED_STATE = 256 * 1024
+const MAX_SAVED_ICON = 8 * 1024
+
+/** A copy of a tab's state as JSON keeps it; undefined when it is not JSON or is too large to keep with the layout. */
+export function jsonState(v: unknown): unknown {
+  try {
+    const s = JSON.stringify(v)
+    return s === undefined || s.length > MAX_SAVED_STATE ? undefined : JSON.parse(s)
+  } catch { return undefined }
+}
+
+/** The open tabs to save, in order, with the pane each is shown in. */
+export function savedPluginTabs(
+  tabs: readonly string[],
+  entries: Readonly<Record<string, PluginTabEntry>>,
+  panes: ReadonlyArray<{ id: string; threadId: string | null }>,
+): SavedPluginTab[] {
+  const out: SavedPluginTab[] = []
+  for (const id of tabs) {
+    const e = entries[id]
+    if (!e?.restore || !isPluginTab(id) || out.length >= MAX_SAVED_TABS) continue
+    const state = jsonState(e.state)
+    const pane = panes.find(p => p.threadId === id)?.id
+    out.push({
+      id,
+      title: e.title,
+      ...(state !== undefined ? { state } : {}),
+      ...(e.icon && e.icon.length <= MAX_SAVED_ICON ? { icon: e.icon } : {}),
+      ...(pane ? { pane } : {}),
+    })
+  }
+  return out
+}
+
+/** Saved tabs, dropping anything unreadable (older or newer builds, a hand-edited file). */
+export function normalizePluginTabs(v: unknown): SavedPluginTab[] {
+  if (!Array.isArray(v)) return []
+  const out = new Map<string, SavedPluginTab>()
+  for (const raw of v) {
+    if (out.size >= MAX_SAVED_TABS) break
+    if (!raw || typeof raw !== 'object') continue
+    const { id, title, state, icon, pane } = raw as Record<string, unknown>
+    const ref = typeof id === 'string' ? parsePluginTab(id) : null
+    if (!ref || !ref.projectPath || !ref.key || !PLUGIN_ID.test(ref.pluginId) || !PART_ID.test(ref.viewId) || out.has(id as string)) continue
+    out.set(id as string, {
+      id: id as string,
+      title: typeof title === 'string' && title.trim() ? title : ref.viewId,
+      ...(state !== undefined ? { state } : {}),
+      ...(typeof icon === 'string' && icon && icon.length <= MAX_SAVED_ICON ? { icon } : {}),
+      ...(typeof pane === 'string' && pane ? { pane } : {}),
+    })
+  }
+  return [...out.values()]
+}
+
 /* ---------- design tokens a plugin hands in */
 
 const TOKEN_NAME = /^--[A-Za-z0-9_-]{1,64}$/

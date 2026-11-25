@@ -136,6 +136,17 @@ const timer = setInterval(tick, 1000)
 mango.onDispose(() => clearInterval(timer))
 ```
 
+Closing a window does not deactivate its plugins. What is not saved yet then goes into `mango.onBeforeClose(fn)` (since
+0.4.2). Mango waits for it before the window closes or hides, Mango quits, or restarts for an update: about two seconds,
+for all plugins together.
+
+```js
+mango.onBeforeClose(() => saveNow())
+```
+
+It runs in each window that closes, only for what that window holds. The window may stay after all (another file could
+not be saved, and the person chose to keep it), so save, but do not shut down. A crash does not call it: save as you go.
+
 A plugin that throws in `activate` is shown as failed in Settings > Plugins, with the error, and whatever it had
 registered so far is undone. A hook or handler that throws is skipped for that call, logged in the plugin's log, and
 the rest of Mango carries on. Still, catch what you can: a failed hook means the plugin silently did nothing.
@@ -211,6 +222,14 @@ mango.shortcuts.register({
 })
 ```
 
+An editor of your own can keep keys for itself (since 0.4.2): while the focus is in an element with `data-own-keys`, or
+inside one, Mango's and plugins' shortcuts leave those keys to it. Claim only what the editor uses, written as shortcuts
+are, separated by spaces:
+
+```html
+<div contenteditable="true" data-own-keys="Mod+B Mod+I Mod+K"></div>
+```
+
 ### Chats
 
 Reading and driving chats:
@@ -224,6 +243,8 @@ await mango.chat.send(threadId, text)  // send as the user would (onBeforeSend h
 mango.chat.stop(threadId)
 mango.chat.show(threadId)
 mango.chat.rename(threadId, 'New title')
+mango.chat.draft(threadId)             // since 0.4.2: what is in its composer, not sent yet
+mango.chat.setDraft(threadId, text)    // since 0.4.2: replaces it; nothing is sent
 ```
 
 A chat is a `Thread` (see [`app/types/chat.ts`](https://github.com/ReaperMaga/mango/blob/main/app/types/chat.ts)):
@@ -341,10 +362,73 @@ mango.ui.panelTabs.open('output')      // brings it into view wherever it is; a 
 mango.ui.tabs.register({
   id: 'report',
   icon: 'file-text',
-  view: { mount(el, ctx) { el.textContent = JSON.stringify(ctx.state) } },  // ctx: { state, projectPath, setTitle, close }
+  view: { mount(el, ctx) { el.textContent = JSON.stringify(ctx.state) } },  // ctx: { state, projectPath, setTitle, setState, close }
+  header: 'none',   // since 0.4.2: no header row (icon, title, plugin name) above the view, which draws its own
+  restore: true,    // since 0.4.2: open tabs come back after a restart
 })
 mango.ui.tabs.open('report', { title: 'Report', key: 'weekly', state: { week: 47 } })  // same key: focus the open tab
+mango.ui.tabs.active()                  // since 0.4.2: { viewId, key, state } of your tab in the active pane, or null
+mango.ui.tabs.close('report', 'weekly') // since 0.4.2: in the active project
 ```
+
+A tab belongs to the project that was active when it opened; `tabs.open` throws while none is. With `restore`, its title
+and `state` are saved with the window's layout (the main window's; other windows start afresh), so `state` must be JSON
+and small (up to 256 KB): what to show, not the data itself. `ctx.setState` replaces it. Opening an open tab without a
+`state` leaves the one it has. Give such a tab a fixed `key`. A restored tab waits, empty, until your plugin has
+registered its view, so register it in `activate` before anything slow. Turning the plugin off closes its tabs.
+
+**Navigation** (`ui.navItems`, since 0.4.2) is for a plugin whose main thing is a tab: an icon on the tool strip at the
+right edge, set apart under the tool windows. Not shown in a window of a single chat.
+
+```js
+mango.shortcuts.register({ id: 'open', label: 'Open report', key: 'Mod+Shift+R', run: openReport })
+mango.ui.navItems.register({
+  id: 'report',
+  title: 'Report',
+  icon: 'file-text',
+  shortcut: 'open',                                          // shows the key the user has for it
+  badge: () => unread.value || null,
+  active: () => mango.ui.tabs.active()?.viewId === 'report', // marked while its tab is in view
+  run: openReport,
+})
+```
+
+**Mango's controls** (`ui.components`, since 0.4.2) are Vue components for a plugin's own views, so they look and behave
+like the app. In a `mount` view, render them with `mango.vue.render` and a vnode whose `appContext` is
+`mango.app._context`.
+
+| Component | Props | Slots, events and methods |
+|---|---|---|
+| `Button` | `variant` (`primary`, `secondary`, `ghost`, `danger`; default `secondary`), `size` (`sm`, `md`, `lg`; default `md`), `loading`, `block`, `type` (`button`, `submit`); attributes such as `disabled` and `onClick` go to the button | default: the label, an icon before it |
+| `IconButton` | `label` (its tooltip and accessible name), `active`, `size` (`sm`, `md`; default `md`), `shortcut` (added to the tooltip); attributes go to the button | default: the icon |
+| `Menu` | `items` (`PluginMenuRow[]`), `placement` (`bottom-start`, `bottom-end`, `top-start`, `top-end`; default `bottom-start`), `width` (default 240), `maxWidth` (grow to fit up to this), `maxHeight`, `label` | default `{ open, toggle }`: the trigger. Event `closed`. Methods `show()`, `showAt(x, y)`, `close()`, `toggle()` |
+| `Field` | `label`, `hint`, `error`, `for` (the control's id) | default: the control (`<input class="input">`) |
+| `Icon` | `icon` (any `PluginIcon`) | |
+| `ThreadDot` | `threadId`, `size` (default 12) | nothing renders for a chat that is gone |
+| `ProjectBadge` | `path`, `name` (default: the project's), `size` (`sm`, `md`; default `md`) | in the colour the user gave the project |
+| `Markdown` | `text`, `base` (the folder relative picture paths are in) | raw HTML is escaped; pictures come only from files |
+
+```js
+const { h } = mango.vue
+const { Button, Icon } = mango.ui.components
+h(Button, { variant: 'primary', onClick: add }, () => [h(Icon, { icon: 'plus' }), 'Add'])
+```
+
+**Menus of your own** (since 0.4.2), at a point (a right click) or hanging from an element. One is open at a time;
+resolves when it closes:
+
+```js
+el.addEventListener('contextmenu', (e) => {
+  e.preventDefault()
+  void mango.ui.contextMenu({ x: e.clientX, y: e.clientY }, [
+    { label: 'Rename', icon: 'pencil', onSelect: rename },
+    { label: 'Delete', icon: 'trash-2', danger: true, divider: true, onSelect: remove },
+  ])
+})
+```
+
+A browser tab's page is a native view drawn over all HTML. Mango's menus and dialogs make it step aside; for a popover
+or a drag of your own, hold it: `const hold = mango.ui.holdOverlay()`, then `hold.dispose()` when the layer is gone.
 
 **Status items** are small text-and-icon buttons in the titlebar or the sidebar foot. Location `project` (since
 0.1.41) is beside the project and branch, for what kind of project it is; in a narrow window it keeps only the icon,
@@ -539,7 +623,55 @@ mango.storage.keys()
 ```
 
 Storage is the plugin's own (namespaced by its id), lives in the app's local storage, and is meant for small
-values: state and notes, not files. It is not a secret store.
+values: state and notes, not files. It is not a secret store. For what a person makes in the plugin, use
+[saved documents](#saved-documents).
+
+### Saved documents
+
+Since 0.4.2 (`"minAppVersion": "0.4.2"`). `mango.data` keeps documents in a database in Mango's data folder:
+
+```js
+const [doc] = await mango.data.write([
+  { op: 'put', collection: 'tasks', id: 'task-1', data: { title: 'Write the docs' } },
+])
+await mango.data.list('tasks')           // every document in the collection
+await mango.data.get('tasks', 'task-1')  // one, or null
+await mango.data.write([{ op: 'delete', collection: 'tasks', id: 'task-1' }])
+await mango.data.changes(0)              // { seq, docs }: everything written after a seq, deleted documents too
+mango.data.onChange(({ docs, local }) => {})   // after every write, in this window (local) or another
+```
+
+Use `storage` for small state you can lose: what was open, a phase, a filter. Use `data` for what a person makes and
+would miss. It holds more, writes are safe with several windows open, and documents **outlive the plugin**: Remove keeps
+them for when it is installed again, unless the person ticks **Also delete what you made in it**. It is no secret store
+either.
+
+- A collection is just a name (letters, digits, `_`, `-`, up to 64). An id is yours to choose, up to 128 characters.
+  `data` is JSON (what `JSON.stringify` keeps of it), at most 1 MB per document.
+- One `write` takes up to 20 000 operations (and 64 MB of JSON) and lands whole or not at all. It returns the document after each operation,
+  in their order.
+- `rev` is 1 at first and one more on every write of that document. `seq` grows with every write of the plugin and is
+  never used twice, so `changes(lastSeq)` is what you missed. A deleted document stays in it as a tombstone
+  (`deleted: true`, `data: null`).
+- Register `onChange` before the first `list`, and nothing falls in between.
+
+**Conflicts.** Give an operation the `rev` you read as `expectedRev`, and it is refused when someone (another window)
+wrote the document since. `expectedRev: 0` means it must not exist. The write then rejects, nothing of it is saved,
+and the error's `conflicts` holds the documents as they are now (`rev: 0` for one that was never there):
+
+```js
+const put = (data, expectedRev) =>
+  mango.data.write([{ op: 'put', collection: 'tasks', id: doc.id, data, expectedRev }])
+try {
+  await put(mine, doc.rev)
+} catch (e) {
+  if (!e.conflicts) throw e
+  const [theirs] = e.conflicts
+  await put(merge(mine, theirs.data), theirs.rev)
+}
+```
+
+Without `expectedRev` the last write wins.
 
 ### Events between plugins
 
@@ -678,7 +810,8 @@ In **Settings > Plugins**:
 
 A plugin installed from a repository is copied into Mango's data folder, pinned to the commit it was installed at.
 **Check for updates** compares it with the repository; **Update** fetches the new commit and reloads the plugin.
-Turning a plugin off keeps it installed; **Remove** deletes the copy and the plugin's storage.
+Turning a plugin off keeps it installed; **Remove** deletes the copy and the plugin's storage,
+and its [saved documents](#saved-documents) only when asked to.
 
 ## Developing a plugin
 

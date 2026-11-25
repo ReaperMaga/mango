@@ -191,6 +191,7 @@ export const usePluginRuntime = defineStore('pluginRuntime', {
         delete this.logs[id]
         delete pluginNames[id]
       }
+      closeOrphans()
       await Promise.all(work)
     },
 
@@ -319,6 +320,19 @@ function afterGone(id: string, final = false) {
   // A colour scheme of a plugin the user turned off: Mango's own from now on.
   const ws = useWorkspace()
   if (ws.scheme.startsWith(`plugin:${id}.`)) ws.setScheme('mango')
+}
+
+/** Tabs restored with the layout whose plugin was removed or turned off meanwhile (or whose work is Mango's now) close. */
+function closeOrphans() {
+  const plugins = usePlugins()
+  if (!plugins.loaded) return
+  const threads = useThreads()
+  for (const tab of [...threads.tabs]) {
+    const id = parsePluginTab(tab)?.pluginId
+    // A running one closes its tabs when it has stopped (`afterGone`).
+    if (!id || instances.has(id)) continue
+    if (!plugins.byId(id)?.enabled || builtInPluginNote(id)) threads.closeTab(tab)
+  }
 }
 
 /**
