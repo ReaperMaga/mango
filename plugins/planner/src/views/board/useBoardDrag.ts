@@ -2,20 +2,29 @@
 
 import { nextTick, onBeforeUnmount, shallowRef, type Ref, type ShallowRef } from 'vue'
 import type { Disposable, MangoPluginApi } from '../../host.ts'
+import { EASE, MOVE_MS, reducedMotion } from '../../ui/motion.ts'
 import { cardKey, type CardRef } from './cards.ts'
 
+interface Held {
+  readonly width: number
+  readonly height: number
+  /** Where in it the pointer took it. */
+  readonly dx: number
+  readonly dy: number
+}
 export type Drag =
-  | { readonly kind: 'cards'; readonly cards: readonly CardRef[]; readonly keys: ReadonlySet<string>; readonly lead: CardRef; readonly width: number }
-  | { readonly kind: 'column'; readonly group: string; readonly width: number }
+  | Held & { readonly kind: 'cards'; readonly cards: readonly CardRef[]; readonly keys: ReadonlySet<string>; readonly ids: ReadonlySet<string>; readonly lead: CardRef }
+  | Held & { readonly kind: 'column'; readonly group: string }
 
 /** `index` is among what is not moving; null: at the end, or wherever the sort puts it. */
-export interface CardTarget { readonly group: string; readonly index: number | null; readonly y: number | null }
+export interface CardTarget { readonly group: string; readonly index: number | null }
 export interface ColumnTarget { readonly index: number; readonly x: number }
 
 const THRESHOLD = 4
 const EDGE = 44
 const SPEED = 16
-const CARD_GAP = 6
+/** A column's ghost is only its name: it stays near the pointer. */
+const COLUMN_DX = 40
 /** How far beside a column still counts as it. */
 const NEAR = 24
 
@@ -33,10 +42,18 @@ export interface BoardDragOptions {
   onDropCards(cards: readonly CardRef[], target: CardTarget): void
   onDropColumn(group: string, index: number): void
   onCancel(): void
+  /** What the thing let go of is now, in the page; null when it does not show. `group`: the column it went to. */
+  landsOn(drag: Drag, group: string | null): HTMLElement | null
 }
+
+/** Let go of, on its way to its place. */
+export interface Landing { readonly drag: Drag; readonly group: string | null }
 
 export interface BoardDrag {
   readonly drag: Readonly<ShallowRef<Drag | null>>
+  readonly landing: Readonly<ShallowRef<Landing | null>>
+  /** The first frame of a drag is past: what makes room may move now. */
+  readonly live: Readonly<ShallowRef<boolean>>
   readonly cardTarget: Readonly<ShallowRef<CardTarget | null>>
   readonly columnTarget: Readonly<ShallowRef<ColumnTarget | null>>
   onPointerDown(e: PointerEvent): void
@@ -62,10 +79,14 @@ const speedAt = (pos: number, from: number, to: number): number => {
 
 export function useBoardDrag(o: BoardDragOptions): BoardDrag {
   const drag = shallowRef<Drag | null>(null)
+  const landing = shallowRef<Landing | null>(null)
+  const live = shallowRef(false)
   const cardTarget = shallowRef<CardTarget | null>(null)
   const columnTarget = shallowRef<ColumnTarget | null>(null)
 
-  let start: { pointerId: number; x: number; y: number; card: CardRef | null; column: string; width: number } | null = null
+  let start: { pointerId: number; x: number; y: number; card: CardRef | null; column: string; held: Held } | null = null
+  let flight: Animation | null = null
+  let gone = false
   let at = { x: 0, y: 0 }
   let frame = 0
   let hold: Disposable | null = null
@@ -80,14 +101,16 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     const control = el.closest('input, textarea, button, a, [contenteditable]')
     if (!column || (control && control !== head)) return
     if (!card && !(head && column.dataset.sortable !== undefined)) return
+    settle()
     const box = (card ?? head!).getBoundingClientRect()
+    const dx = e.clientX - box.left
     start = {
       pointerId: e.pointerId,
       x: e.clientX,
       y: e.clientY,
       card: card ? { id: card.dataset.card!, group: card.dataset.group! } : null,
       column: column.dataset.col!,
-      width: box.width,
+      held: { width: box.width, height: box.height, dx: card ? dx : Math.min(dx, COLUMN_DX), dy: e.clientY - box.top },
     }
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
@@ -103,15 +126,20 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     document.documentElement.style.cursor = 'grabbing'
     if (start.card) {
       const cards = o.cardsFor(start.card)
-      drag.value = { kind: 'cards', cards, keys: new Set(cards.map(cardKey)), lead: start.card, width: start.width }
+      drag.value = { kind: 'cards', cards, keys: new Set(cards.map(cardKey)), ids: new Set(cards.map(c => c.id)), lead: start.card, ...start.held }
     } else {
-      drag.value = { kind: 'column', group: start.column, width: start.width }
+      drag.value = { kind: 'column', group: start.column, ...start.held }
     }
     o.onStart(drag.value)
     void nextTick(() => {
       if (!drag.value) return
       moveGhost()
-      frame = requestAnimationFrame(tick)
+      // The card has left its place and the gap stands there: from here on it may move.
+      void o.ghost.value?.offsetWidth
+      frame = requestAnimationFrame(() => {
+        live.value = true
+        tick()
+      })
     })
   }
 
@@ -127,8 +155,8 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
 
   function moveGhost() {
     const el = o.ghost.value
-    // Below the pointer, so that the line where it lands stays in view.
-    if (el) el.style.transform = `translate(${at.x + 12}px, ${at.y + 10}px)`
+    const d = drag.value
+    if (el && d) el.style.transform = `translate(${at.x - d.dx}px, ${at.y - d.dy}px)`
   }
 
   /** Every frame, as columns scroll under a pointer that rests at an edge. */
@@ -136,7 +164,7 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     const d = drag.value
     if (!d) return
     autoscroll()
-    if (d.kind === 'cards') cardTarget.value = same(cardTarget.value, findCardTarget(d.cards))
+    if (d.kind === 'cards') cardTarget.value = same(cardTarget.value, findCardTarget(d.ids))
     else columnTarget.value = same(columnTarget.value, findColumnTarget(d.group))
     frame = requestAnimationFrame(tick)
   }
@@ -168,13 +196,12 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     if (body && r && r.height > EDGE * 2) body.scrollTop += speedAt(at.y, r.top, r.bottom)
   }
 
-  function findCardTarget(moving: readonly CardRef[]): CardTarget | null {
+  function findCardTarget(ids: ReadonlySet<string>): CardTarget | null {
     const column = columnAt()
     if (!column) return null
     const group = column.dataset.col!
     const list = column.querySelector<HTMLElement>('[data-list]')
-    if (!list || !o.manual()) return { group, index: null, y: null }
-    const ids = new Set(moving.map(c => c.id))
+    if (!list || !o.manual()) return { group, index: null }
     const cards = [...list.querySelectorAll<HTMLElement>('[data-card]')].filter(c => !ids.has(c.dataset.card!))
     let low = 0
     let high = cards.length
@@ -184,10 +211,7 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
       if (at.y < r.top + r.height / 2) high = mid
       else low = mid + 1
     }
-    const next = cards[low]
-    const last = cards.at(-1)
-    const y = next ? next.offsetTop - CARD_GAP / 2 : last ? last.offsetTop + last.offsetHeight + CARD_GAP / 2 : 0
-    return { group, index: low, y: Math.max(1, y) }
+    return { group, index: low }
   }
 
   function findColumnTarget(group: string): ColumnTarget | null {
@@ -211,6 +235,7 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     hold = null
     if (drag.value) document.documentElement.style.cursor = ''
     drag.value = null
+    live.value = false
     cardTarget.value = null
     columnTarget.value = null
     window.removeEventListener('pointermove', onMove)
@@ -225,8 +250,9 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     const d = drag.value
     if (!d) return end()
     at = { x: e.clientX, y: e.clientY }
-    const cards = d.kind === 'cards' ? findCardTarget(d.cards) : null
+    const cards = d.kind === 'cards' ? findCardTarget(d.ids) : null
     const column = d.kind === 'column' ? findColumnTarget(d.group) : null
+    void land(d, cards?.group ?? null)
     end()
     swallowClick()
     if (d.kind === 'cards' && cards) o.onDropCards(d.cards, cards)
@@ -236,8 +262,41 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
 
   function cancel() {
     const was = drag.value
+    if (was && !gone) void land(was, null)
     end()
     if (was) o.onCancel()
+  }
+
+  /** The thing let go of glides to where it is now, or back; it fades where that is out of sight. */
+  async function land(d: Drag, group: string | null) {
+    const el = o.ghost.value
+    if (!el || reducedMotion()) return
+    const mine: Landing = { drag: d, group }
+    landing.value = mine
+    const from = el.style.transform
+    await nextTick()
+    const ghost = o.ghost.value
+    if (landing.value !== mine) return
+    if (!ghost) return settle()
+    const target = o.landsOn(d, group)
+    const box = o.board.value?.getBoundingClientRect()
+    const r = target?.getBoundingClientRect()
+    const body = target?.closest('[data-body]')?.getBoundingClientRect() ?? box
+    const seen = box && r && body && r.width > 0 && r.right > box.left && r.left < box.right && r.bottom > body.top && r.top < body.bottom
+    flight = ghost.animate(
+      seen
+        ? { transform: [from, `translate(${r.left}px, ${r.top}px)`] }
+        : { transform: [from, from], opacity: [1, 0] },
+      { duration: seen ? MOVE_MS : MOVE_MS / 2, easing: EASE, fill: 'forwards' },
+    )
+    flight.onfinish = () => {
+      if (landing.value === mine) settle()
+    }
+  }
+  function settle() {
+    landing.value = null
+    flight?.cancel()
+    flight = null
   }
 
   function onKey(e: KeyboardEvent) {
@@ -251,6 +310,10 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     window.addEventListener('pointerup', swallowClick, { capture: true, once: true })
   }
 
-  onBeforeUnmount(cancel)
-  return { drag, cardTarget, columnTarget, onPointerDown }
+  onBeforeUnmount(() => {
+    gone = true
+    cancel()
+    settle()
+  })
+  return { drag, landing, live, cardTarget, columnTarget, onPointerDown }
 }

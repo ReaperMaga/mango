@@ -108,7 +108,11 @@ const item = computed(() => {
   return id && collection.value && list.value?.items.some(i => i.id === id) ? id : null
 })
 const full = computed(() => item.value !== null && mode.value === 'full')
+/** Between side and full the one gives way to the other: nothing slides. */
+const swapping = ref(false)
 function toggleMode() {
+  swapping.value = true
+  void nextTick(() => { swapping.value = false })
   mode.value = mode.value === 'side' ? 'full' : 'side'
   props.mango.storage.set(MODE_KEY, mode.value)
 }
@@ -260,10 +264,14 @@ onBeforeUnmount(() => {
             @open="(id: string) => go({ itemId: id })"
           />
         </div>
-        <ItemPage v-if="item && full" :collection="collection" :item-id="item" mode="full" class="pl-full" @close="closeItem" @toggle-mode="toggleMode" />
-        <ItemPane v-else-if="item" :available="width" :overlay="sideOver">
-          <ItemPage :collection="collection" :item-id="item" mode="side" class="pl-full" @close="closeItem" @toggle-mode="toggleMode" />
-        </ItemPane>
+        <Transition name="pl-page">
+          <ItemPage v-if="item && full" :collection="collection" :item-id="item" mode="full" class="pl-full" @close="closeItem" @toggle-mode="toggleMode" />
+        </Transition>
+        <Transition name="pl-drawer" :css="!swapping">
+          <ItemPane v-if="item && !full" :available="width" :overlay="sideOver">
+            <ItemPage :collection="collection" :item-id="item" mode="side" class="pl-full" @close="closeItem" @toggle-mode="toggleMode" />
+          </ItemPane>
+        </Transition>
       </div>
     </template>
   </div>
@@ -272,10 +280,22 @@ onBeforeUnmount(() => {
 <style scoped>
 .pl-app { flex: 1; min-width: 0; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; container: planner / inline-size; background: var(--bg-canvas); }
 .pl-app:focus-visible { outline: none; }
-.pl-body { position: relative; flex: 1; min-height: 0; display: flex; }
+/* Clipped, not scrolled: focus in a drawer on its way in must not pull it. */
+.pl-body { position: relative; flex: 1; min-height: 0; display: flex; overflow: clip; }
 .pl-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .pl-view__in { flex: 1; min-height: 0; min-width: 0; }
 .pl-full { flex: 1; min-width: 0; min-height: 0; }
+/* The drawer slides over the view, which gets its new width while it is covered: nothing is laid out on the way. */
+.pl-body > .pl-drawer-enter-active, .pl-body > .pl-drawer-leave-active { position: absolute; inset: 0 0 0 auto; z-index: 6; will-change: transform; transition: transform calc(280ms * var(--motion-scale)) cubic-bezier(0.32, 0.72, 0, 1); }
+.pl-body > .pl-drawer-leave-active { pointer-events: none; transition-duration: calc(220ms * var(--motion-scale)); }
+.pl-body > .pl-drawer-enter-from, .pl-body > .pl-drawer-leave-to { transform: translateX(100%); }
+.pl-body > .pl-page-enter-active, .pl-body > .pl-page-leave-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
+.pl-body > .pl-page-leave-active { position: absolute; inset: 0; z-index: 6; pointer-events: none; transition-duration: var(--dur-fast); }
+.pl-body > .pl-page-enter-from, .pl-body > .pl-page-leave-to { opacity: 0; }
+.pl-body > .pl-page-enter-from { transform: translateY(6px); }
+@media (prefers-reduced-motion: reduce) {
+  .pl-body > .pl-drawer-enter-active, .pl-body > .pl-drawer-leave-active, .pl-body > .pl-page-enter-active, .pl-body > .pl-page-leave-active { transition-duration: 1ms; }
+}
 .pl-note { flex: none; display: flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: 4px var(--space-4); border-bottom: 1px solid var(--line-soft); font-size: var(--text-sm); color: var(--fg-muted); }
 .pl-note > svg { flex: none; width: 14px; height: 14px; stroke-width: 1.75; color: var(--fg-subtle); }
 .pl-note strong { font-weight: 600; color: var(--fg); }

@@ -1186,10 +1186,10 @@ defineExpose({ newItem, focus })
 .pl-none { position: sticky; left: 0; width: calc(100cqi - 14px); margin: 0; padding: var(--space-6); text-align: center; color: var(--fg-subtle); }
 
 /* ---------- dragging ---------- */
-.pl-dropline { position: absolute; z-index: 3; left: 0; right: 0; height: 2px; background: var(--accent); pointer-events: none; }
-.pl-colline { position: absolute; z-index: 4; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; }
+.pl-dropline { position: absolute; z-index: 3; left: 0; right: 0; height: 2px; background: var(--accent); pointer-events: none; transition: top var(--dur-fast) var(--ease-out); }
+.pl-colline { position: absolute; z-index: 4; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; transition: left var(--dur-fast) var(--ease-out); }
 .is-dragging .pl-tr { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
-  .pl-line__chevron, .pl-th, .pl-line { transition: none; }
+  .pl-line__chevron, .pl-th, .pl-line, .pl-dropline, .pl-colline { transition: none; }
 }
 </style>

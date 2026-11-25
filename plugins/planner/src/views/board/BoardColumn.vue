@@ -27,9 +27,18 @@ const props = defineProps<{
   focusKey: string | null
   adding: 'top' | 'end' | null
   renaming: boolean
-  /** A drop would land here; at this height, or wherever the sort puts it (null). */
+  /** The card in hand, out of its place. */
+  heldKey: string | null
+  /** A card on its way to its place here. */
+  landingKey: string | null
+  /** Items being moved: the gap's index does not count them. */
+  movingIds: ReadonlySet<string> | null
+  /** A drop would land here. */
   over: boolean
-  dropY: number | null
+  /** Room made for it; null where the sort decides. */
+  gap: { readonly index: number; readonly height: number } | null
+  /** The room opens and closes. */
+  live: boolean
 }>()
 const emit = defineEmits<{
   add: [title: string, at: 'top' | 'end']
@@ -57,6 +66,11 @@ const cards = computed(() => props.group.items.slice(0, limit.value).map((item) 
   const key = cardKey({ id: item.id, group: props.group.key })
   return { item, key }
 }))
+/** The cards that stay, and what the gap is in front of: a card's key, or `end`. */
+const staying = computed(() => (props.movingIds ? cards.value.filter(c => !props.movingIds!.has(c.item.id)) : cards.value))
+const gapAt = computed(() => (props.gap ? staying.value[props.gap.index]?.key ?? 'end' : null))
+/** Nothing to see in it: the place to drop shows. */
+const bare = computed(() => !props.gap && cards.value.every(c => c.key === props.heldKey))
 const body = ref<HTMLElement>()
 
 function onScroll() {
@@ -114,7 +128,7 @@ defineExpose({
   <section
     v-else
     class="pl-col"
-    :class="{ 'is-lit': over && dropY === null && group.items.length > 0 }"
+    :class="{ 'is-lit': over && !gap && !bare }"
     :style="colours"
     :data-col="group.key"
     :data-sortable="sortable || undefined"
@@ -137,7 +151,7 @@ defineExpose({
         <InlineInput :label="strings.newItemIn(one, name)" :placeholder="strings.itemTitle" :hint="strings.addHint" @add="onAdd($event, 'top')" @close="emit('stopAdd', $event)" />
       </div>
       <button
-        v-if="!cards.length && !readonly && adding === null"
+        v-if="bare && !readonly && adding === null"
         type="button"
         class="pl-col__zone"
         :class="{ 'is-lit': over }"
@@ -151,7 +165,8 @@ defineExpose({
       </button>
       <div
         class="pl-col__list"
-        :class="{ 'is-long': group.items.length > STEP }"
+        :class="{ 'is-long': group.items.length > STEP, 'is-live': live, 'is-gap': gapAt === 'end', 'is-only': !staying.length }"
+        :style="gap ? { '--pl-gap': `${gap.height}px` } : undefined"
         data-list
         :role="cards.length ? 'listbox' : undefined"
         :aria-multiselectable="cards.length ? true : undefined"
@@ -161,7 +176,7 @@ defineExpose({
           v-for="({ item, key }, i) in cards"
           :key="item.id"
           class="pl-col__card"
-          :class="{ 'is-selected': selected.has(key), 'is-open': item.id === openItemId, 'is-moving': moving?.has(key) }"
+          :class="{ 'is-selected': selected.has(key), 'is-open': item.id === openItemId, 'is-moving': moving?.has(key) && key !== heldKey, 'is-held': key === heldKey, 'is-landing': key === landingKey, 'is-after': key === gapAt }"
           role="option"
           :aria-selected="selected.has(key)"
           :aria-posinset="i + 1"
@@ -172,7 +187,6 @@ defineExpose({
         >
           <BoardCard :collection="collection" :view="view" :item="item" />
         </div>
-        <div v-if="over && dropY !== null && cards.length" class="pl-col__drop" :style="{ transform: `translateY(${dropY}px)` }" />
       </div>
     </div>
 
@@ -196,6 +210,7 @@ defineExpose({
   flex-direction: column;
   border-radius: 10px;
   background: var(--pl-tint);
+  transition: opacity var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   --pl-card-bg: var(--bg-canvas);
   --pl-card-line: var(--line-soft);
 }
@@ -205,7 +220,7 @@ defineExpose({
   --pl-card-bg: var(--bg-panel);
   --pl-card-line: var(--line);
 }
-/* Without a line to show where: the sort decides. */
+/* Without a gap to show where: the sort decides. */
 .pl-col.is-lit { box-shadow: inset 0 0 0 1px var(--pl-dot); }
 .pl-col__head { flex: none; display: flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 8px 0 14px; }
 .pl-col__head.is-sortable { cursor: grab; }
@@ -225,7 +240,7 @@ defineExpose({
 .pl-col__body { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 4px 0 8px; scrollbar-gutter: stable; }
 .pl-col__top { padding: 2px 2px 8px 0; }
 .pl-col__list { position: relative; display: flex; flex-direction: column; gap: 6px; }
-.pl-col__card { flex: none; border-radius: var(--radius-md); }
+.pl-col__card { position: relative; flex: none; border-radius: var(--radius-md); }
 /* Only there: a column as tall as its cards would be sized by the guess. */
 .pl-col__list.is-long > .pl-col__card { content-visibility: auto; contain-intrinsic-size: auto 68px; }
 .pl-col__card:hover > :deep(.pl-card) { --pl-card-line: var(--line-strong); }
@@ -235,17 +250,31 @@ defineExpose({
   background: color-mix(in oklab, var(--accent) 12%, var(--pl-card-bg));
 }
 .pl-col__card.is-moving { opacity: 0.45; }
-.pl-col__card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md); }
-.pl-col__drop {
+/* In hand: out of the way, but there, so that it keeps the focus. */
+.pl-col__card.is-held { position: absolute; inset: 0 0 auto; height: 0; overflow: hidden; opacity: 0; pointer-events: none; }
+.pl-col__card.is-landing { opacity: 0; }
+/* The room a drop would take: the cards after it move down. */
+.pl-col__card.is-after { margin-top: calc(var(--pl-gap) + 6px); }
+.pl-col__list.is-gap { padding-bottom: calc(var(--pl-gap) + 6px); }
+.pl-col__list.is-gap.is-only { padding-bottom: var(--pl-gap); }
+.pl-col__list.is-live { transition: padding-bottom var(--dur-med) var(--ease-out); }
+.pl-col__list.is-live > .pl-col__card { transition: margin-top var(--dur-med) var(--ease-out); }
+.pl-col__card.is-after::before, .pl-col__list.is-gap::after {
+  content: '';
   position: absolute;
   left: 0;
   right: 0;
-  top: -1px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
+  height: var(--pl-gap);
+  border: 1px dashed var(--pl-line);
+  border-radius: var(--radius-md);
+  background: var(--pl-strong);
   pointer-events: none;
+  animation: pl-slot var(--dur-med) var(--ease-out);
 }
+.pl-col__card.is-after::before { bottom: calc(100% + 6px); }
+.pl-col__list.is-gap::after { bottom: 0; }
+@keyframes pl-slot { from { opacity: 0; } }
+.pl-col__card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md); }
 
 .pl-col__zone {
   display: flex;
@@ -308,5 +337,8 @@ defineExpose({
 .pl-col__strip:focus-visible { outline-offset: -2px; border-radius: 10px; }
 .pl-col__strip .pl-col__dot, .pl-col__strip .pl-col__count { margin: 0; }
 .pl-col__vertical { writing-mode: vertical-rl; min-height: 0; max-height: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; color: var(--pl-fg); }
-@media (prefers-reduced-motion: reduce) { .pl-col__zone, .pl-col__strip, .pl-col__new { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .pl-col, .pl-col__zone, .pl-col__strip, .pl-col__new, .pl-col__list.is-live, .pl-col__list.is-live > .pl-col__card { transition: none; }
+  .pl-col__card.is-after::before, .pl-col__list.is-gap::after { animation: none; }
+}
 </style>

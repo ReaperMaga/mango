@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. c43a4ca2c62827ae79e3349201fa3fa9 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. ea2b9c3f1633a93fc5aec2e769df6605 */
 :where(.pl-icon[data-v-517fdef4]) { width: 15px; height: 15px; stroke-width: 1.75; flex: none;
 }
 
@@ -1200,6 +1200,7 @@ to { opacity: 0.45;
   flex-direction: column;
   border-radius: 10px;
   background: var(--pl-tint);
+  transition: opacity var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   --pl-card-bg: var(--bg-canvas);
   --pl-card-line: var(--line-soft);
 }
@@ -1209,7 +1210,7 @@ to { opacity: 0.45;
   --pl-card-bg: var(--bg-panel);
   --pl-card-line: var(--line);
 }
-/* Without a line to show where: the sort decides. */
+/* Without a gap to show where: the sort decides. */
 .pl-col.is-lit[data-v-c62c38e3] { box-shadow: inset 0 0 0 1px var(--pl-dot);
 }
 .pl-col__head[data-v-c62c38e3] { flex: none; display: flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 8px 0 14px;
@@ -1237,7 +1238,7 @@ to { opacity: 0.45;
 }
 .pl-col__list[data-v-c62c38e3] { position: relative; display: flex; flex-direction: column; gap: 6px;
 }
-.pl-col__card[data-v-c62c38e3] { flex: none; border-radius: var(--radius-md);
+.pl-col__card[data-v-c62c38e3] { position: relative; flex: none; border-radius: var(--radius-md);
 }
 /* Only there: a column as tall as its cards would be sized by the guess. */
 .pl-col__list.is-long > .pl-col__card[data-v-c62c38e3] { content-visibility: auto; contain-intrinsic-size: auto 68px;
@@ -1252,17 +1253,43 @@ to { opacity: 0.45;
 }
 .pl-col__card.is-moving[data-v-c62c38e3] { opacity: 0.45;
 }
-.pl-col__card[data-v-c62c38e3]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md);
+/* In hand: out of the way, but there, so that it keeps the focus. */
+.pl-col__card.is-held[data-v-c62c38e3] { position: absolute; inset: 0 0 auto; height: 0; overflow: hidden; opacity: 0; pointer-events: none;
 }
-.pl-col__drop[data-v-c62c38e3] {
+.pl-col__card.is-landing[data-v-c62c38e3] { opacity: 0;
+}
+/* The room a drop would take: the cards after it move down. */
+.pl-col__card.is-after[data-v-c62c38e3] { margin-top: calc(var(--pl-gap) + 6px);
+}
+.pl-col__list.is-gap[data-v-c62c38e3] { padding-bottom: calc(var(--pl-gap) + 6px);
+}
+.pl-col__list.is-gap.is-only[data-v-c62c38e3] { padding-bottom: var(--pl-gap);
+}
+.pl-col__list.is-live[data-v-c62c38e3] { transition: padding-bottom var(--dur-med) var(--ease-out);
+}
+.pl-col__list.is-live > .pl-col__card[data-v-c62c38e3] { transition: margin-top var(--dur-med) var(--ease-out);
+}
+.pl-col__card.is-after[data-v-c62c38e3]::before, .pl-col__list.is-gap[data-v-c62c38e3]::after {
+  content: '';
   position: absolute;
   left: 0;
   right: 0;
-  top: -1px;
-  height: 2px;
-  border-radius: 2px;
-  background: var(--accent);
+  height: var(--pl-gap);
+  border: 1px dashed var(--pl-line);
+  border-radius: var(--radius-md);
+  background: var(--pl-strong);
   pointer-events: none;
+  animation: pl-slot-c62c38e3 var(--dur-med) var(--ease-out);
+}
+.pl-col__card.is-after[data-v-c62c38e3]::before { bottom: calc(100% + 6px);
+}
+.pl-col__list.is-gap[data-v-c62c38e3]::after { bottom: 0;
+}
+@keyframes pl-slot-c62c38e3 {
+from { opacity: 0;
+}
+}
+.pl-col__card[data-v-c62c38e3]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md);
 }
 .pl-col__zone[data-v-c62c38e3] {
   display: flex;
@@ -1337,7 +1364,9 @@ to { opacity: 0.45;
 .pl-col__vertical[data-v-c62c38e3] { writing-mode: vertical-rl; min-height: 0; max-height: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; color: var(--pl-fg);
 }
 @media (prefers-reduced-motion: reduce) {
-.pl-col__zone[data-v-c62c38e3], .pl-col__strip[data-v-c62c38e3], .pl-col__new[data-v-c62c38e3] { transition: none;
+.pl-col[data-v-c62c38e3], .pl-col__zone[data-v-c62c38e3], .pl-col__strip[data-v-c62c38e3], .pl-col__new[data-v-c62c38e3], .pl-col__list.is-live[data-v-c62c38e3], .pl-col__list.is-live > .pl-col__card[data-v-c62c38e3] { transition: none;
+}
+.pl-col__card.is-after[data-v-c62c38e3]::before, .pl-col__list.is-gap[data-v-c62c38e3]::after { animation: none;
 }
 }
 
@@ -1363,6 +1392,7 @@ to { opacity: 0.45;
   border-radius: 2px;
   background: var(--accent);
   pointer-events: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .pl-board__end[data-v-b31ff853] { flex: none; width: min(290px, calc(100cqw - 32px)); max-height: 100%; overflow: hidden auto;
 }
@@ -1431,11 +1461,13 @@ to { opacity: 0.45;
 }
 
 /* Lies over the whole window while something is dragged. */
-.pl-ghost[data-v-b31ff853] { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; opacity: 0.92; will-change: transform;
+.pl-ghost[data-v-b31ff853] { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; will-change: transform;
 }
-.pl-ghost__card[data-v-b31ff853] { position: relative; border-radius: var(--radius-md); box-shadow: var(--shadow-pop);
+.pl-ghost__card[data-v-b31ff853] { position: relative; border-radius: var(--radius-md); transition: transform var(--dur-med) var(--ease-out), box-shadow var(--dur-med) var(--ease-out);
 }
-.pl-ghost__card[data-v-b31ff853] .pl-card { position: relative; background: var(--bg-raised); border-color: var(--line-strong); max-height: 160px; overflow: hidden;
+.pl-ghost__card.is-up[data-v-b31ff853] { transform: rotate(1.2deg) scale(1.02); box-shadow: var(--shadow-pop);
+}
+.pl-ghost__card[data-v-b31ff853] .pl-card { position: relative; background: var(--bg-raised); border-color: var(--line-strong);
 }
 .pl-ghost__card.is-stack[data-v-b31ff853]::before {
   content: '';
@@ -1765,14 +1797,14 @@ textarea.pl-cell-input[data-v-0f838fba] { padding-block: 5px; overflow-y: auto; 
 }
 
 /* ---------- dragging ---------- */
-.pl-dropline[data-v-3583e578] { position: absolute; z-index: 3; left: 0; right: 0; height: 2px; background: var(--accent); pointer-events: none;
+.pl-dropline[data-v-3583e578] { position: absolute; z-index: 3; left: 0; right: 0; height: 2px; background: var(--accent); pointer-events: none; transition: top var(--dur-fast) var(--ease-out);
 }
-.pl-colline[data-v-3583e578] { position: absolute; z-index: 4; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none;
+.pl-colline[data-v-3583e578] { position: absolute; z-index: 4; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none; transition: left var(--dur-fast) var(--ease-out);
 }
 .is-dragging .pl-tr[data-v-3583e578] { pointer-events: none;
 }
 @media (prefers-reduced-motion: reduce) {
-.pl-line__chevron[data-v-3583e578], .pl-th[data-v-3583e578], .pl-line[data-v-3583e578] { transition: none;
+.pl-line__chevron[data-v-3583e578], .pl-th[data-v-3583e578], .pl-line[data-v-3583e578], .pl-dropline[data-v-3583e578], .pl-colline[data-v-3583e578] { transition: none;
 }
 }
 
@@ -1780,13 +1812,33 @@ textarea.pl-cell-input[data-v-0f838fba] { padding-block: 5px; overflow-y: auto; 
 }
 .pl-app[data-v-7a7a37b1]:focus-visible { outline: none;
 }
-.pl-body[data-v-7a7a37b1] { position: relative; flex: 1; min-height: 0; display: flex;
+/* Clipped, not scrolled: focus in a drawer on its way in must not pull it. */
+.pl-body[data-v-7a7a37b1] { position: relative; flex: 1; min-height: 0; display: flex; overflow: clip;
 }
 .pl-view[data-v-7a7a37b1] { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column;
 }
 .pl-view__in[data-v-7a7a37b1] { flex: 1; min-height: 0; min-width: 0;
 }
 .pl-full[data-v-7a7a37b1] { flex: 1; min-width: 0; min-height: 0;
+}
+/* The drawer slides over the view, which gets its new width while it is covered: nothing is laid out on the way. */
+.pl-body > .pl-drawer-enter-active[data-v-7a7a37b1], .pl-body > .pl-drawer-leave-active[data-v-7a7a37b1] { position: absolute; inset: 0 0 0 auto; z-index: 6; will-change: transform; transition: transform calc(280ms * var(--motion-scale)) cubic-bezier(0.32, 0.72, 0, 1);
+}
+.pl-body > .pl-drawer-leave-active[data-v-7a7a37b1] { pointer-events: none; transition-duration: calc(220ms * var(--motion-scale));
+}
+.pl-body > .pl-drawer-enter-from[data-v-7a7a37b1], .pl-body > .pl-drawer-leave-to[data-v-7a7a37b1] { transform: translateX(100%);
+}
+.pl-body > .pl-page-enter-active[data-v-7a7a37b1], .pl-body > .pl-page-leave-active[data-v-7a7a37b1] { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out);
+}
+.pl-body > .pl-page-leave-active[data-v-7a7a37b1] { position: absolute; inset: 0; z-index: 6; pointer-events: none; transition-duration: var(--dur-fast);
+}
+.pl-body > .pl-page-enter-from[data-v-7a7a37b1], .pl-body > .pl-page-leave-to[data-v-7a7a37b1] { opacity: 0;
+}
+.pl-body > .pl-page-enter-from[data-v-7a7a37b1] { transform: translateY(6px);
+}
+@media (prefers-reduced-motion: reduce) {
+.pl-body > .pl-drawer-enter-active[data-v-7a7a37b1], .pl-body > .pl-drawer-leave-active[data-v-7a7a37b1], .pl-body > .pl-page-enter-active[data-v-7a7a37b1], .pl-body > .pl-page-leave-active[data-v-7a7a37b1] { transition-duration: 1ms;
+}
 }
 .pl-note[data-v-7a7a37b1] { flex: none; display: flex; align-items: center; gap: var(--space-2); min-height: 32px; padding: 4px var(--space-4); border-bottom: 1px solid var(--line-soft); font-size: var(--text-sm); color: var(--fg-muted);
 }

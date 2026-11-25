@@ -141,6 +141,11 @@ onBeforeUnmount(() => {
   // The field's blur may come with it.
   const e = editor.value
   editor.value = null
+  // What it shows stays while a drawer slides away with it.
+  const dom = e?.view.dom
+  const still = dom?.isConnected ? dom.cloneNode(true) as HTMLElement : null
+  still?.removeAttribute('contenteditable')
+  if (dom && still) dom.after(still)
   e?.destroy()
 })
 

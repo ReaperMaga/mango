@@ -9,6 +9,7 @@ import { NO_GROUP, type Group, type QueryResult } from '../../query.ts'
 import { strings as shared } from '../../strings.ts'
 import ColorPicker from '../../ui/ColorPicker.vue'
 import Icon from '../../ui/Icon.vue'
+import { captureMoves } from '../../ui/motion.ts'
 import OptionTag from '../../ui/OptionTag.vue'
 import Popover from '../../ui/Popover.vue'
 import PropertyIcon from '../../ui/PropertyIcon.vue'
@@ -20,7 +21,7 @@ import BoardColumn from './BoardColumn.vue'
 import { cardKey, isSamePlace, positionAt, stepIndex, type CardRef } from './cards.ts'
 import InlineInput from './InlineInput.vue'
 import { strings } from './strings.ts'
-import { useBoardDrag, type CardTarget } from './useBoardDrag.ts'
+import { useBoardDrag, type CardTarget, type Drag } from './useBoardDrag.ts'
 
 const props = defineProps<{
   collection: Collection
@@ -105,7 +106,9 @@ function moveColumn(key: string, index: number) {
   const next = rest[index]
   const last = rest.at(-1)
   if (!last) return
+  const play = captureMoves(board.value, '[data-col]', el => el.dataset.col!)
   store.moveOption(props.collection.id, p.id, key, next ? { before: next.key } : { after: last.key })
+  void nextTick(play)
   announce(strings.columnMoved(groupName(key), index + 1, rest.length + 1))
 }
 
@@ -388,7 +391,9 @@ function place(cards: readonly CardRef[], group: string, index: number | null): 
 }
 
 const ghost = ref<HTMLElement>()
-const { drag, cardTarget, columnTarget, onPointerDown } = useBoardDrag({
+/** Cards glide to where a change puts them, within their column. */
+const cardMoves = () => captureMoves(board.value, '[data-card]', el => `${el.dataset.group}/${el.dataset.card}`)
+const { drag, landing, live, cardTarget, columnTarget, onPointerDown } = useBoardDrag({
   mango,
   board,
   ghost,
@@ -404,21 +409,56 @@ const { drag, cardTarget, columnTarget, onPointerDown } = useBoardDrag({
     if (!g) return
     const ids = new Set(cards.map(c => c.id))
     const end = g.items.filter(i => !ids.has(i.id)).length
+    // One card with a place of its own: the gap made its room already.
+    const play = manual.value && target.index !== null && cards.length === 1 ? null : cardMoves()
     if (!place(cards, target.group, target.index ?? (manual.value ? end : null))) announce(strings.cancelled)
+    else if (play) void nextTick(play)
   },
   onDropColumn: moveColumn,
   onCancel: () => announce(strings.cancelled),
+  landsOn: (d: Drag, group) => {
+    const column = columnEl(d.kind === 'cards' ? group ?? d.lead.group : d.group)
+    if (!column) return null
+    if (d.kind === 'column') return column.querySelector<HTMLElement>('[data-head]')
+    return [...column.querySelectorAll<HTMLElement>('[data-card]')].find(e => e.dataset.card === d.lead.id)
+      // Folded: into its strip.
+      ?? column.querySelector<HTMLElement>('[data-strip]')
+  },
 })
-const movingKeys = computed(() => (drag.value?.kind === 'cards' ? drag.value.keys : null))
-const leadItem = computed(() => (drag.value?.kind === 'cards' ? store.item(props.collection.id, drag.value.lead.id) : null))
-const draggedGroup = computed(() => (drag.value?.kind === 'column' ? groupByKey.value.get(drag.value.group) ?? null : null))
-const draggedCount = computed(() => (drag.value?.kind === 'cards' ? idsOf(drag.value.cards).length : 0))
+const cardDrag = computed(() => (drag.value?.kind === 'cards' ? drag.value : null))
+/** What the ghost shows: in hand, or on its way to its place. */
+const shown = computed(() => drag.value ?? landing.value?.drag ?? null)
+const leadItem = computed(() => (shown.value?.kind === 'cards' ? store.item(props.collection.id, shown.value.lead.id) : null))
+const draggedGroup = computed(() => (shown.value?.kind === 'column' ? groupByKey.value.get(shown.value.group) ?? null : null))
+const draggedCount = computed(() => (shown.value?.kind === 'cards' ? shown.value.ids.size : 0))
+/** Out of its place; not where the sort decides, as nothing opens up elsewhere. */
+const heldKey = computed(() => (cardDrag.value && manual.value ? cardKey(cardDrag.value.lead) : null))
+const landingKey = computed(() => {
+  const l = landing.value
+  return l?.drag.kind === 'cards' ? cardKey({ id: l.drag.lead.id, group: l.group ?? l.drag.lead.group }) : null
+})
+/** Where room is made: under the pointer, or where the card came from while it is nowhere. */
+const gap = computed(() => {
+  const d = cardDrag.value
+  if (!d || !manual.value) return null
+  const t = cardTarget.value
+  if (t) return t.index === null ? null : { group: t.group, index: t.index, height: d.height }
+  const items = itemsIn(d.lead.group)
+  const before = items.slice(0, Math.max(0, items.findIndex(i => i.id === d.lead.id)))
+  return { group: d.lead.group, index: before.filter(i => !d.ids.has(i.id)).length, height: d.height }
+})
+/** An empty column shows its own place to drop. */
+const gapIn = (g: Group) => (gap.value?.group === g.key && g.items.length ? gap.value : null)
 
 function stepVertical(c: CardRef, step: -1 | 1) {
   if (!manual.value) return announce(strings.cannotOrder)
   const cards = cardsFor(c).filter(s => s.group === c.group)
   const index = stepIndex(itemsIn(c.group), new Set(cards.map(s => s.id)), step)
-  if (index !== null && place(cards, c.group, index)) void focusCard(c)
+  if (index === null) return
+  const play = cardMoves()
+  if (!place(cards, c.group, index)) return
+  void nextTick(play)
+  void focusCard(c)
 }
 function stepHorizontal(c: CardRef, step: -1 | 1) {
   const next = shownGroups.value[shownGroups.value.findIndex(g => g.key === c.group) + step]
@@ -426,7 +466,9 @@ function stepHorizontal(c: CardRef, step: -1 | 1) {
   const cards = cardsFor(c)
   const ids = new Set(cards.map(s => s.id))
   const room = next.items.filter(i => !ids.has(i.id)).length
+  const play = cardMoves()
   if (!place(cards, next.key, manual.value ? Math.min(Math.max(0, indexOf(c)), room) : null)) return
+  void nextTick(play)
   if (next.collapsed) void nextTick(() => focusInColumn(next.key, 0))
   else void focusCard({ id: c.id, group: next.key })
 }
@@ -683,7 +725,7 @@ const pickId = useId()
         v-for="g in shownGroups"
         :key="g.key"
         :ref="c => setColumn(g.key, c)"
-        :class="{ 'is-dragged': draggedGroup?.key === g.key }"
+        :class="{ 'is-dragged': drag?.kind === 'column' && drag.group === g.key }"
         :collection="collection"
         :view="view"
         :group="g"
@@ -692,12 +734,16 @@ const pickId = useId()
         :readonly="readonly"
         :open-item-id="openItemId"
         :selected="selectedKeys"
-        :moving="movingKeys"
+        :moving="cardDrag?.keys ?? null"
+        :held-key="heldKey"
+        :landing-key="landingKey"
+        :moving-ids="cardDrag?.ids ?? null"
+        :live="live"
+        :gap="gapIn(g)"
         :focus-key="focusKey"
         :adding="adding?.group === g.key ? adding.at : null"
         :renaming="renaming === g.key"
         :over="cardTarget?.group === g.key"
-        :drop-y="cardTarget?.group === g.key ? cardTarget.y : null"
         @add="(title, at) => add(title, g.key, at)"
         @start-add="startAdd(g.key, $event)"
         @stop-add="stopAdd"
@@ -741,8 +787,8 @@ const pickId = useId()
     <DeleteOption v-if="deleting" :collection-id="collection.id" :property-id="property.id" :option-id="deleting.key" :anchor="deleting.anchor" @close="closeDelete" />
 
     <Teleport to="body">
-      <div v-if="drag" ref="ghost" class="pl-ghost" :style="{ width: `${drag.width}px` }" aria-hidden="true">
-        <div v-if="leadItem" class="pl-ghost__card" :class="{ 'is-stack': draggedCount > 1 }">
+      <div v-if="shown" ref="ghost" class="pl-ghost" :style="{ width: `${shown.width}px` }" aria-hidden="true">
+        <div v-if="leadItem" class="pl-ghost__card" :class="{ 'is-stack': draggedCount > 1, 'is-up': live }" :style="{ transformOrigin: `${shown.dx}px ${shown.dy}px` }">
           <BoardCard :collection="collection" :view="view" :item="leadItem" />
           <span v-if="draggedCount > 1" class="pl-ghost__count">{{ draggedCount }}</span>
         </div>
@@ -775,6 +821,7 @@ const pickId = useId()
   border-radius: 2px;
   background: var(--accent);
   pointer-events: none;
+  transition: transform var(--dur-fast) var(--ease-out);
 }
 .pl-board__end { flex: none; width: min(290px, calc(100cqw - 32px)); max-height: 100%; overflow: hidden auto; }
 .pl-board__addbtn {
@@ -825,9 +872,10 @@ const pickId = useId()
 .pl-setup__row:hover { background: var(--bg-hover); color: var(--fg); }
 
 /* Lies over the whole window while something is dragged. */
-.pl-ghost { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; opacity: 0.92; will-change: transform; }
-.pl-ghost__card { position: relative; border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
-.pl-ghost__card :deep(.pl-card) { position: relative; background: var(--bg-raised); border-color: var(--line-strong); max-height: 160px; overflow: hidden; }
+.pl-ghost { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; will-change: transform; }
+.pl-ghost__card { position: relative; border-radius: var(--radius-md); transition: transform var(--dur-med) var(--ease-out), box-shadow var(--dur-med) var(--ease-out); }
+.pl-ghost__card.is-up { transform: rotate(1.2deg) scale(1.02); box-shadow: var(--shadow-pop); }
+.pl-ghost__card :deep(.pl-card) { position: relative; background: var(--bg-raised); border-color: var(--line-strong); }
 .pl-ghost__card.is-stack::before {
   content: '';
   position: absolute;

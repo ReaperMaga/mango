@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. c43a4ca2c62827ae79e3349201fa3fa9 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. ea2b9c3f1633a93fc5aec2e769df6605 */
 
 let active = null
 
@@ -21102,6 +21102,10 @@ img.ProseMirror-separator {
 			(0, vue.onBeforeUnmount)(() => {
 				const e = editor.value;
 				editor.value = null;
+				const dom = e?.view.dom;
+				const still = dom?.isConnected ? dom.cloneNode(true) : null;
+				still?.removeAttribute("contenteditable");
+				if (dom && still) dom.after(still);
 				e?.destroy();
 			});
 			let shift = false;
@@ -28755,6 +28759,40 @@ img.ProseMirror-separator {
 			};
 		}
 	}), [["__scopeId", "data-v-d9bd5ee7"]]);
+	// plugins/planner/src/ui/motion.ts
+	/** Motion that shows what moved where. Nothing moves for those who asked for less of it. */
+	var EASE = "cubic-bezier(0.2, 0, 0, 1)";
+	var reducedMotion = () => document.documentElement.dataset.motion === "reduced" || matchMedia("(prefers-reduced-motion: reduce)").matches;
+	var FLIP = "planner-move";
+	/**
+	* Where the elements are now. Call what it answers once the change is in the page: those still there glide from
+	* where they were. An element is known again by its key.
+	*/
+	function captureMoves(root, selector, keyOf) {
+		if (!root || reducedMotion()) return () => {};
+		const find = () => [...root.querySelectorAll(selector)];
+		const before = new Map(find().map((el) => [keyOf(el), el.getBoundingClientRect()]));
+		return () => {
+			const all = find();
+			for (const el of all) for (const a of el.getAnimations()) if (a.id === FLIP) a.cancel();
+			const moved = all.flatMap((el) => {
+				const was = before.get(keyOf(el));
+				const is = el.getBoundingClientRect();
+				const x = was ? was.left - is.left : 0;
+				const y = was ? was.top - is.top : 0;
+				return Math.abs(x) > .5 || Math.abs(y) > .5 ? [{
+					el,
+					x,
+					y
+				}] : [];
+			});
+			for (const { el, x, y } of moved) el.animate({ transform: [`translate(${x}px, ${y}px)`, "none"] }, {
+				id: FLIP,
+				duration: 200,
+				easing: EASE
+			});
+		};
+	}
 	// plugins/planner/src/views/board/cards.ts
 	var cardKey = (c) => `${c.group}/${c.id}`;
 	/** Where `index` is among `items` once the moving ones are out of it; undefined when there is nothing to be next to. */
@@ -29067,8 +29105,12 @@ img.ProseMirror-separator {
 			focusKey: {},
 			adding: {},
 			renaming: { type: Boolean },
+			heldKey: {},
+			landingKey: {},
+			movingIds: {},
 			over: { type: Boolean },
-			dropY: {}
+			gap: {},
+			live: { type: Boolean }
 		},
 		emits: [
 			"add",
@@ -29107,6 +29149,11 @@ img.ProseMirror-separator {
 					})
 				};
 			}));
+			/** The cards that stay, and what the gap is in front of: a card's key, or `end`. */
+			const staying = (0, vue.computed)(() => props.movingIds ? cards.value.filter((c) => !props.movingIds.has(c.item.id)) : cards.value);
+			const gapAt = (0, vue.computed)(() => props.gap ? staying.value[props.gap.index]?.key ?? "end" : null);
+			/** Nothing to see in it: the place to drop shows. */
+			const bare = (0, vue.computed)(() => !props.gap && cards.value.every((c) => c.key === props.heldKey));
 			const body = (0, vue.ref)();
 			function onScroll() {
 				const el = body.value;
@@ -29154,7 +29201,7 @@ img.ProseMirror-separator {
 					(0, vue.createElementVNode)("span", _hoisted_4$4, (0, vue.toDisplayString)(__props.name), 1)
 				], 8, _hoisted_2$4)], 14, _hoisted_1$4)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", {
 					key: 1,
-					class: (0, vue.normalizeClass)(["pl-col", { "is-lit": __props.over && __props.dropY === null && __props.group.items.length > 0 }]),
+					class: (0, vue.normalizeClass)(["pl-col", { "is-lit": __props.over && !__props.gap && !bare.value }]),
 					style: (0, vue.normalizeStyle)(colours.value),
 					"data-col": __props.group.key,
 					"data-sortable": __props.sortable || void 0,
@@ -29224,7 +29271,7 @@ img.ProseMirror-separator {
 							"placeholder",
 							"hint"
 						])])) : (0, vue.createCommentVNode)("v-if", true),
-						!cards.value.length && !__props.readonly && __props.adding === null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+						bare.value && !__props.readonly && __props.adding === null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 							key: 1,
 							type: "button",
 							class: (0, vue.normalizeClass)(["pl-col__zone", { "is-lit": __props.over }]),
@@ -29235,7 +29282,13 @@ img.ProseMirror-separator {
 							onClick: _cache[7] || (_cache[7] = ($event) => emit("startAdd", "top"))
 						}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$1).dropHere(many.value)), 1)], 10, _hoisted_9$3)) : (0, vue.createCommentVNode)("v-if", true),
 						(0, vue.createElementVNode)("div", {
-							class: (0, vue.normalizeClass)(["pl-col__list", { "is-long": __props.group.items.length > STEP }]),
+							class: (0, vue.normalizeClass)(["pl-col__list", {
+								"is-long": __props.group.items.length > STEP,
+								"is-live": __props.live,
+								"is-gap": gapAt.value === "end",
+								"is-only": !staying.value.length
+							}]),
+							style: (0, vue.normalizeStyle)(__props.gap ? { "--pl-gap": `${__props.gap.height}px` } : void 0),
 							"data-list": "",
 							role: cards.value.length ? "listbox" : void 0,
 							"aria-multiselectable": cards.value.length ? true : void 0,
@@ -29246,7 +29299,10 @@ img.ProseMirror-separator {
 								class: (0, vue.normalizeClass)(["pl-col__card", {
 									"is-selected": __props.selected.has(key),
 									"is-open": item.id === __props.openItemId,
-									"is-moving": __props.moving?.has(key)
+									"is-moving": __props.moving?.has(key) && key !== __props.heldKey,
+									"is-held": key === __props.heldKey,
+									"is-landing": key === __props.landingKey,
+									"is-after": key === gapAt.value
 								}]),
 								role: "option",
 								"aria-selected": __props.selected.has(key),
@@ -29264,11 +29320,7 @@ img.ProseMirror-separator {
 								"view",
 								"item"
 							])], 10, _hoisted_11$2);
-						}), 128)), __props.over && __props.dropY !== null && cards.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
-							key: 0,
-							class: "pl-col__drop",
-							style: (0, vue.normalizeStyle)({ transform: `translateY(${__props.dropY}px)` })
-						}, null, 4)) : (0, vue.createCommentVNode)("v-if", true)], 10, _hoisted_10$3)
+						}), 128))], 14, _hoisted_10$3)
 					], 544),
 					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("footer", _hoisted_12$2, [__props.adding === "end" ? ((0, vue.openBlock)(), (0, vue.createBlock)(InlineInput_default, {
 						key: 0,
@@ -29300,7 +29352,8 @@ img.ProseMirror-separator {
 	var THRESHOLD = 4;
 	var EDGE$1 = 44;
 	var SPEED = 16;
-	var CARD_GAP = 6;
+	/** A column's ghost is only its name: it stays near the pointer. */
+	var COLUMN_DX = 40;
 	/** How far beside a column still counts as it. */
 	var NEAR = 24;
 	/** The click that ends a drag is not a click on what is under it. */
@@ -29323,9 +29376,13 @@ img.ProseMirror-separator {
 	};
 	function useBoardDrag(o) {
 		const drag = (0, vue.shallowRef)(null);
+		const landing = (0, vue.shallowRef)(null);
+		const live = (0, vue.shallowRef)(false);
 		const cardTarget = (0, vue.shallowRef)(null);
 		const columnTarget = (0, vue.shallowRef)(null);
 		let start = null;
+		let flight = null;
+		let gone = false;
 		let at = {
 			x: 0,
 			y: 0
@@ -29341,7 +29398,9 @@ img.ProseMirror-separator {
 			const control = el.closest("input, textarea, button, a, [contenteditable]");
 			if (!column || control && control !== head) return;
 			if (!card && !(head && column.dataset.sortable !== void 0)) return;
+			settle();
 			const box = (card ?? head).getBoundingClientRect();
+			const dx = e.clientX - box.left;
 			start = {
 				pointerId: e.pointerId,
 				x: e.clientX,
@@ -29351,7 +29410,12 @@ img.ProseMirror-separator {
 					group: card.dataset.group
 				} : null,
 				column: column.dataset.col,
-				width: box.width
+				held: {
+					width: box.width,
+					height: box.height,
+					dx: card ? dx : Math.min(dx, COLUMN_DX),
+					dy: e.clientY - box.top
+				}
 			};
 			window.addEventListener("pointermove", onMove);
 			window.addEventListener("pointerup", onUp);
@@ -29372,19 +29436,24 @@ img.ProseMirror-separator {
 					kind: "cards",
 					cards,
 					keys: new Set(cards.map(cardKey)),
+					ids: new Set(cards.map((c) => c.id)),
 					lead: start.card,
-					width: start.width
+					...start.held
 				};
 			} else drag.value = {
 				kind: "column",
 				group: start.column,
-				width: start.width
+				...start.held
 			};
 			o.onStart(drag.value);
 			(0, vue.nextTick)(() => {
 				if (!drag.value) return;
 				moveGhost();
-				frame = requestAnimationFrame(tick);
+				o.ghost.value?.offsetWidth;
+				frame = requestAnimationFrame(() => {
+					live.value = true;
+					tick();
+				});
 			});
 		}
 		function onMove(e) {
@@ -29401,14 +29470,15 @@ img.ProseMirror-separator {
 		}
 		function moveGhost() {
 			const el = o.ghost.value;
-			if (el) el.style.transform = `translate(${at.x + 12}px, ${at.y + 10}px)`;
+			const d = drag.value;
+			if (el && d) el.style.transform = `translate(${at.x - d.dx}px, ${at.y - d.dy}px)`;
 		}
 		/** Every frame, as columns scroll under a pointer that rests at an edge. */
 		function tick() {
 			const d = drag.value;
 			if (!d) return;
 			autoscroll();
-			if (d.kind === "cards") cardTarget.value = same(cardTarget.value, findCardTarget(d.cards));
+			if (d.kind === "cards") cardTarget.value = same(cardTarget.value, findCardTarget(d.ids));
 			else columnTarget.value = same(columnTarget.value, findColumnTarget(d.group));
 			frame = requestAnimationFrame(tick);
 		}
@@ -29436,17 +29506,15 @@ img.ProseMirror-separator {
 			const r = body?.getBoundingClientRect();
 			if (body && r && r.height > 88) body.scrollTop += speedAt(at.y, r.top, r.bottom);
 		}
-		function findCardTarget(moving) {
+		function findCardTarget(ids) {
 			const column = columnAt();
 			if (!column) return null;
 			const group = column.dataset.col;
 			const list = column.querySelector("[data-list]");
 			if (!list || !o.manual()) return {
 				group,
-				index: null,
-				y: null
+				index: null
 			};
-			const ids = new Set(moving.map((c) => c.id));
 			const cards = [...list.querySelectorAll("[data-card]")].filter((c) => !ids.has(c.dataset.card));
 			let low = 0;
 			let high = cards.length;
@@ -29456,13 +29524,9 @@ img.ProseMirror-separator {
 				if (at.y < r.top + r.height / 2) high = mid;
 				else low = mid + 1;
 			}
-			const next = cards[low];
-			const last = cards.at(-1);
-			const y = next ? next.offsetTop - CARD_GAP / 2 : last ? last.offsetTop + last.offsetHeight + CARD_GAP / 2 : 0;
 			return {
 				group,
-				index: low,
-				y: Math.max(1, y)
+				index: low
 			};
 		}
 		function findColumnTarget(group) {
@@ -29487,6 +29551,7 @@ img.ProseMirror-separator {
 			hold = null;
 			if (drag.value) document.documentElement.style.cursor = "";
 			drag.value = null;
+			live.value = false;
 			cardTarget.value = null;
 			columnTarget.value = null;
 			window.removeEventListener("pointermove", onMove);
@@ -29503,8 +29568,9 @@ img.ProseMirror-separator {
 				x: e.clientX,
 				y: e.clientY
 			};
-			const cards = d.kind === "cards" ? findCardTarget(d.cards) : null;
+			const cards = d.kind === "cards" ? findCardTarget(d.ids) : null;
 			const column = d.kind === "column" ? findColumnTarget(d.group) : null;
+			land(d, cards?.group ?? null);
 			end();
 			swallowClick();
 			if (d.kind === "cards" && cards) o.onDropCards(d.cards, cards);
@@ -29513,8 +29579,45 @@ img.ProseMirror-separator {
 		}
 		function cancel() {
 			const was = drag.value;
+			if (was && !gone) land(was, null);
 			end();
 			if (was) o.onCancel();
+		}
+		/** The thing let go of glides to where it is now, or back; it fades where that is out of sight. */
+		async function land(d, group) {
+			const el = o.ghost.value;
+			if (!el || reducedMotion()) return;
+			const mine = {
+				drag: d,
+				group
+			};
+			landing.value = mine;
+			const from = el.style.transform;
+			await (0, vue.nextTick)();
+			const ghost = o.ghost.value;
+			if (landing.value !== mine) return;
+			if (!ghost) return settle();
+			const target = o.landsOn(d, group);
+			const box = o.board.value?.getBoundingClientRect();
+			const r = target?.getBoundingClientRect();
+			const body = target?.closest("[data-body]")?.getBoundingClientRect() ?? box;
+			const seen = box && r && body && r.width > 0 && r.right > box.left && r.left < box.right && r.bottom > body.top && r.top < body.bottom;
+			flight = ghost.animate(seen ? { transform: [from, `translate(${r.left}px, ${r.top}px)`] } : {
+				transform: [from, from],
+				opacity: [1, 0]
+			}, {
+				duration: seen ? 200 : 100,
+				easing: EASE,
+				fill: "forwards"
+			});
+			flight.onfinish = () => {
+				if (landing.value === mine) settle();
+			};
+		}
+		function settle() {
+			landing.value = null;
+			flight?.cancel();
+			flight = null;
 		}
 		function onKey(e) {
 			if (!drag.value) return;
@@ -29527,9 +29630,15 @@ img.ProseMirror-separator {
 				once: true
 			});
 		}
-		(0, vue.onBeforeUnmount)(cancel);
+		(0, vue.onBeforeUnmount)(() => {
+			gone = true;
+			cancel();
+			settle();
+		});
 		return {
 			drag,
+			landing,
+			live,
 			cardTarget,
 			columnTarget,
 			onPointerDown
@@ -29654,7 +29763,9 @@ img.ProseMirror-separator {
 				const next = rest[index];
 				const last = rest.at(-1);
 				if (!last) return;
+				const play = captureMoves(board.value, "[data-col]", (el) => el.dataset.col);
 				store.moveOption(props.collection.id, p.id, key, next ? { before: next.key } : { after: last.key });
+				(0, vue.nextTick)(play);
 				announce(strings$1.columnMoved(groupName(key), index + 1, rest.length + 1));
 			}
 			function columnMenu(g, anchor) {
@@ -29988,7 +30099,9 @@ img.ProseMirror-separator {
 				return true;
 			}
 			const ghost = (0, vue.ref)();
-			const { drag, cardTarget, columnTarget, onPointerDown } = useBoardDrag({
+			/** Cards glide to where a change puts them, within their column. */
+			const cardMoves = () => captureMoves(board.value, "[data-card]", (el) => `${el.dataset.group}/${el.dataset.card}`);
+			const { drag, landing, live, cardTarget, columnTarget, onPointerDown } = useBoardDrag({
 				mango,
 				board,
 				ghost,
@@ -30004,20 +30117,63 @@ img.ProseMirror-separator {
 					if (!g) return;
 					const ids = new Set(cards.map((c) => c.id));
 					const end = g.items.filter((i) => !ids.has(i.id)).length;
+					const play = manual.value && target.index !== null && cards.length === 1 ? null : cardMoves();
 					if (!place(cards, target.group, target.index ?? (manual.value ? end : null))) announce(strings$1.cancelled);
+					else if (play) (0, vue.nextTick)(play);
 				},
 				onDropColumn: moveColumn,
-				onCancel: () => announce(strings$1.cancelled)
+				onCancel: () => announce(strings$1.cancelled),
+				landsOn: (d, group) => {
+					const column = columnEl(d.kind === "cards" ? group ?? d.lead.group : d.group);
+					if (!column) return null;
+					if (d.kind === "column") return column.querySelector("[data-head]");
+					return [...column.querySelectorAll("[data-card]")].find((e) => e.dataset.card === d.lead.id) ?? column.querySelector("[data-strip]");
+				}
 			});
-			const movingKeys = (0, vue.computed)(() => drag.value?.kind === "cards" ? drag.value.keys : null);
-			const leadItem = (0, vue.computed)(() => drag.value?.kind === "cards" ? store.item(props.collection.id, drag.value.lead.id) : null);
-			const draggedGroup = (0, vue.computed)(() => drag.value?.kind === "column" ? groupByKey.value.get(drag.value.group) ?? null : null);
-			const draggedCount = (0, vue.computed)(() => drag.value?.kind === "cards" ? idsOf(drag.value.cards).length : 0);
+			const cardDrag = (0, vue.computed)(() => drag.value?.kind === "cards" ? drag.value : null);
+			/** What the ghost shows: in hand, or on its way to its place. */
+			const shown = (0, vue.computed)(() => drag.value ?? landing.value?.drag ?? null);
+			const leadItem = (0, vue.computed)(() => shown.value?.kind === "cards" ? store.item(props.collection.id, shown.value.lead.id) : null);
+			const draggedGroup = (0, vue.computed)(() => shown.value?.kind === "column" ? groupByKey.value.get(shown.value.group) ?? null : null);
+			const draggedCount = (0, vue.computed)(() => shown.value?.kind === "cards" ? shown.value.ids.size : 0);
+			/** Out of its place; not where the sort decides, as nothing opens up elsewhere. */
+			const heldKey = (0, vue.computed)(() => cardDrag.value && manual.value ? cardKey(cardDrag.value.lead) : null);
+			const landingKey = (0, vue.computed)(() => {
+				const l = landing.value;
+				return l?.drag.kind === "cards" ? cardKey({
+					id: l.drag.lead.id,
+					group: l.group ?? l.drag.lead.group
+				}) : null;
+			});
+			/** Where room is made: under the pointer, or where the card came from while it is nowhere. */
+			const gap = (0, vue.computed)(() => {
+				const d = cardDrag.value;
+				if (!d || !manual.value) return null;
+				const t = cardTarget.value;
+				if (t) return t.index === null ? null : {
+					group: t.group,
+					index: t.index,
+					height: d.height
+				};
+				const items = itemsIn(d.lead.group);
+				const before = items.slice(0, Math.max(0, items.findIndex((i) => i.id === d.lead.id)));
+				return {
+					group: d.lead.group,
+					index: before.filter((i) => !d.ids.has(i.id)).length,
+					height: d.height
+				};
+			});
+			/** An empty column shows its own place to drop. */
+			const gapIn = (g) => gap.value?.group === g.key && g.items.length ? gap.value : null;
 			function stepVertical(c, step) {
 				if (!manual.value) return announce(strings$1.cannotOrder);
 				const cards = cardsFor(c).filter((s) => s.group === c.group);
 				const index = stepIndex(itemsIn(c.group), new Set(cards.map((s) => s.id)), step);
-				if (index !== null && place(cards, c.group, index)) focusCard(c);
+				if (index === null) return;
+				const play = cardMoves();
+				if (!place(cards, c.group, index)) return;
+				(0, vue.nextTick)(play);
+				focusCard(c);
 			}
 			function stepHorizontal(c, step) {
 				const next = shownGroups.value[shownGroups.value.findIndex((g) => g.key === c.group) + step];
@@ -30025,7 +30181,9 @@ img.ProseMirror-separator {
 				const cards = cardsFor(c);
 				const ids = new Set(cards.map((s) => s.id));
 				const room = next.items.filter((i) => !ids.has(i.id)).length;
+				const play = cardMoves();
 				if (!place(cards, next.key, manual.value ? Math.min(Math.max(0, indexOf(c)), room) : null)) return;
+				(0, vue.nextTick)(play);
 				if (next.collapsed) (0, vue.nextTick)(() => focusInColumn(next.key, 0));
 				else focusCard({
 					id: c.id,
@@ -30316,7 +30474,7 @@ img.ProseMirror-separator {
 								key: g.key,
 								ref_for: true,
 								ref: (c) => setColumn(g.key, c),
-								class: (0, vue.normalizeClass)({ "is-dragged": draggedGroup.value?.key === g.key }),
+								class: (0, vue.normalizeClass)({ "is-dragged": (0, vue.unref)(drag)?.kind === "column" && (0, vue.unref)(drag).group === g.key }),
 								collection: __props.collection,
 								view: __props.view,
 								group: g,
@@ -30325,12 +30483,16 @@ img.ProseMirror-separator {
 								readonly: __props.readonly,
 								"open-item-id": __props.openItemId,
 								selected: selectedKeys.value,
-								moving: movingKeys.value,
+								moving: cardDrag.value?.keys ?? null,
+								"held-key": heldKey.value,
+								"landing-key": landingKey.value,
+								"moving-ids": cardDrag.value?.ids ?? null,
+								live: (0, vue.unref)(live),
+								gap: gapIn(g),
 								"focus-key": focusKey.value,
 								adding: adding.value?.group === g.key ? adding.value.at : null,
 								renaming: renaming.value === g.key,
 								over: (0, vue.unref)(cardTarget)?.group === g.key,
-								"drop-y": (0, vue.unref)(cardTarget)?.group === g.key ? (0, vue.unref)(cardTarget).y : null,
 								onAdd: (title, at) => add(title, g.key, at),
 								onStartAdd: ($event) => startAdd(g.key, $event),
 								onStopAdd: stopAdd,
@@ -30349,11 +30511,15 @@ img.ProseMirror-separator {
 								"open-item-id",
 								"selected",
 								"moving",
+								"held-key",
+								"landing-key",
+								"moving-ids",
+								"live",
+								"gap",
 								"focus-key",
 								"adding",
 								"renaming",
 								"over",
-								"drop-y",
 								"onAdd",
 								"onStartAdd",
 								"onMenu",
@@ -30434,16 +30600,20 @@ img.ProseMirror-separator {
 						"option-id",
 						"anchor"
 					])) : (0, vue.createCommentVNode)("v-if", true),
-					((0, vue.openBlock)(), (0, vue.createBlock)(vue.Teleport, { to: "body" }, [(0, vue.unref)(drag) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+					((0, vue.openBlock)(), (0, vue.createBlock)(vue.Teleport, { to: "body" }, [shown.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 						key: 0,
 						ref_key: "ghost",
 						ref: ghost,
 						class: "pl-ghost",
-						style: (0, vue.normalizeStyle)({ width: `${(0, vue.unref)(drag).width}px` }),
+						style: (0, vue.normalizeStyle)({ width: `${shown.value.width}px` }),
 						"aria-hidden": "true"
 					}, [leadItem.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 						key: 0,
-						class: (0, vue.normalizeClass)(["pl-ghost__card", { "is-stack": draggedCount.value > 1 }])
+						class: (0, vue.normalizeClass)(["pl-ghost__card", {
+							"is-stack": draggedCount.value > 1,
+							"is-up": (0, vue.unref)(live)
+						}]),
+						style: (0, vue.normalizeStyle)({ transformOrigin: `${shown.value.dx}px ${shown.value.dy}px` })
 					}, [(0, vue.createVNode)(BoardCard_default, {
 						collection: __props.collection,
 						view: __props.view,
@@ -30452,7 +30622,7 @@ img.ProseMirror-separator {
 						"collection",
 						"view",
 						"item"
-					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$1, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 2)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$1, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$1, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
+					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$1, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 6)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$1, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$1, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
 				]));
 			};
 		}
@@ -32251,7 +32421,13 @@ img.ProseMirror-separator {
 				return id && collection.value && list.value?.items.some((i) => i.id === id) ? id : null;
 			});
 			const full = (0, vue.computed)(() => item.value !== null && mode.value === "full");
+			/** Between side and full the one gives way to the other: nothing slides. */
+			const swapping = (0, vue.ref)(false);
 			function toggleMode() {
+				swapping.value = true;
+				(0, vue.nextTick)(() => {
+					swapping.value = false;
+				});
 				mode.value = mode.value === "side" ? "full" : "side";
 				props.mango.storage.set(MODE_KEY, mode.value);
 			}
@@ -32421,59 +32597,72 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$5).retry), 1)]),
 							_: 1
 						}))
-					])) : list.value?.status !== "ready" || !result.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PlannerSkeleton_default, { key: 3 })) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8, [(0, vue.withDirectives)((0, vue.createElementVNode)("div", {
-						class: "pl-view",
-						inert: full.value
-					}, [noMatches.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10, [
-						(0, vue.createVNode)(Icon_default, { name: "search-x" }),
-						(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(applied.value.trim() ? (0, vue.unref)(shell).noMatchesSearch(applied.value.trim(), (0, vue.unref)(itemWord)(collection.value, 2)) : (0, vue.unref)(shell).noMatches((0, vue.unref)(itemWord)(collection.value, 2))), 1),
-						(0, vue.createElementVNode)("button", {
-							type: "button",
-							class: "pl-small pl-note__act",
-							onClick: clearAll
-						}, (0, vue.toDisplayString)(applied.value.trim() && filtering.value ? (0, vue.unref)(shell).clearAll : filtering.value ? (0, vue.unref)(shell).clearFilters : (0, vue.unref)(shell).clearSearch), 1)
-					])) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)(view.value.type === "board" ? BoardView_default : TableView_default), {
-						key: `${collection.value.id}/${view.value.id}/${view.value.type}`,
-						ref_key: "viewRef",
-						ref: viewRef,
-						class: "pl-view__in",
-						collection: collection.value,
-						view: view.value,
-						result: result.value,
-						search: applied.value,
-						readonly: readonly.value,
-						"open-item-id": item.value,
-						onOpen: _cache[4] || (_cache[4] = (id) => go({ itemId: id }))
-					}, null, 40, [
-						"collection",
-						"view",
-						"result",
-						"search",
-						"readonly",
-						"open-item-id"
-					]))], 8, _hoisted_9), [[vue.vShow, !full.value]]), item.value && full.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(ItemPage_default, {
-						key: 0,
-						collection: collection.value,
-						"item-id": item.value,
-						mode: "full",
-						class: "pl-full",
-						onClose: closeItem,
-						onToggleMode: toggleMode
-					}, null, 8, ["collection", "item-id"])) : item.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(ItemPane_default, {
-						key: 1,
-						available: width.value,
-						overlay: sideOver.value
-					}, {
-						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(ItemPage_default, {
+					])) : list.value?.status !== "ready" || !result.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PlannerSkeleton_default, { key: 3 })) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8, [
+						(0, vue.withDirectives)((0, vue.createElementVNode)("div", {
+							class: "pl-view",
+							inert: full.value
+						}, [noMatches.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10, [
+							(0, vue.createVNode)(Icon_default, { name: "search-x" }),
+							(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(applied.value.trim() ? (0, vue.unref)(shell).noMatchesSearch(applied.value.trim(), (0, vue.unref)(itemWord)(collection.value, 2)) : (0, vue.unref)(shell).noMatches((0, vue.unref)(itemWord)(collection.value, 2))), 1),
+							(0, vue.createElementVNode)("button", {
+								type: "button",
+								class: "pl-small pl-note__act",
+								onClick: clearAll
+							}, (0, vue.toDisplayString)(applied.value.trim() && filtering.value ? (0, vue.unref)(shell).clearAll : filtering.value ? (0, vue.unref)(shell).clearFilters : (0, vue.unref)(shell).clearSearch), 1)
+						])) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)(view.value.type === "board" ? BoardView_default : TableView_default), {
+							key: `${collection.value.id}/${view.value.id}/${view.value.type}`,
+							ref_key: "viewRef",
+							ref: viewRef,
+							class: "pl-view__in",
 							collection: collection.value,
-							"item-id": item.value,
-							mode: "side",
-							class: "pl-full",
-							onClose: closeItem,
-							onToggleMode: toggleMode
-						}, null, 8, ["collection", "item-id"])]),
-						_: 1
-					}, 8, ["available", "overlay"])) : (0, vue.createCommentVNode)("v-if", true)]))
+							view: view.value,
+							result: result.value,
+							search: applied.value,
+							readonly: readonly.value,
+							"open-item-id": item.value,
+							onOpen: _cache[4] || (_cache[4] = (id) => go({ itemId: id }))
+						}, null, 40, [
+							"collection",
+							"view",
+							"result",
+							"search",
+							"readonly",
+							"open-item-id"
+						]))], 8, _hoisted_9), [[vue.vShow, !full.value]]),
+						(0, vue.createVNode)(vue.Transition, { name: "pl-page" }, {
+							default: (0, vue.withCtx)(() => [item.value && full.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(ItemPage_default, {
+								key: 0,
+								collection: collection.value,
+								"item-id": item.value,
+								mode: "full",
+								class: "pl-full",
+								onClose: closeItem,
+								onToggleMode: toggleMode
+							}, null, 8, ["collection", "item-id"])) : (0, vue.createCommentVNode)("v-if", true)]),
+							_: 1
+						}),
+						(0, vue.createVNode)(vue.Transition, {
+							name: "pl-drawer",
+							css: !swapping.value
+						}, {
+							default: (0, vue.withCtx)(() => [item.value && !full.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(ItemPane_default, {
+								key: 0,
+								available: width.value,
+								overlay: sideOver.value
+							}, {
+								default: (0, vue.withCtx)(() => [(0, vue.createVNode)(ItemPage_default, {
+									collection: collection.value,
+									"item-id": item.value,
+									mode: "side",
+									class: "pl-full",
+									onClose: closeItem,
+									onToggleMode: toggleMode
+								}, null, 8, ["collection", "item-id"])]),
+								_: 1
+							}, 8, ["available", "overlay"])) : (0, vue.createCommentVNode)("v-if", true)]),
+							_: 1
+						}, 8, ["css"])
+					]))
 				], 64))], 512);
 			};
 		}
