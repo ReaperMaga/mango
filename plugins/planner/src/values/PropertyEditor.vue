@@ -22,7 +22,7 @@ const { IconButton } = mango.ui.components
 
 const collection = computed(() => store.collection(props.collectionId))
 const property = computed(() => (collection.value && propertyOf(collection.value, props.propertyId)) ?? null)
-const readonly = computed(() => store.sourceStatus.value.readonly)
+const readonly = computed(() => store.statusOf(props.collectionId).readonly)
 const words = computed(() => optionWords(property.value ?? { name: '' }))
 const counts = useOptionCounts(() => props.collectionId, () => props.propertyId)
 watch(property, (p) => { if (!p) emit('gone') })

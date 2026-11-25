@@ -81,7 +81,9 @@ you rename or delete there, gives Unity's files their icons and highlighting, an
 project's details, a `.meta` check and a reference search.
 
 The official [Planner plugin](plugins/planner/) keeps tasks, bugs and notes beside your chats: boards and tables with
-properties of your own, and pages linked to chats, with notes that turn Markdown into rich text as you type.
+properties of your own, and pages linked to chats, with notes that turn Markdown into rich text as you type. With a
+[planner server](planner-server/) you host yourself, collections are shared between computers and people as they
+change.
 
 ## Run it
 

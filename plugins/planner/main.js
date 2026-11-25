@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. ea2b9c3f1633a93fc5aec2e769df6605 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. 555e1dec15c423eae11b3ff88936e612 */
 
 let active = null
 
@@ -242,7 +242,28 @@ var __plugin = (function(exports, vue) {
 			open: "Open planner",
 			newItem: "New item…",
 			newCollection: "New collection…",
-			addThread: "Add to planner"
+			addThread: "Add to planner",
+			server: "Connect to a planner server…"
+		},
+		server: {
+			title: "Planner server",
+			intro: "A planner server keeps collections for every computer and person connected to its space. Collections on this computer stay here: you choose where a new one goes, and can move one later. Chat links are never sent.",
+			address: "Server address",
+			token: "Access token",
+			tokenHint: "Made on the server with planner-server token add. It is sent only to this server.",
+			connect: "Connect",
+			disconnect: "Disconnect",
+			disconnectTitle: "Disconnect from the planner server?",
+			disconnectBody: "Its collections stay on the server and show again when you connect. Changes not sent yet are lost.",
+			space: "Space",
+			connection: "Connection",
+			connected: "Connected",
+			offline: "Cannot reach the server. Changes wait and are sent when it is back.",
+			refused: "The server did not accept the access token.",
+			access: "Access",
+			canEdit: "Can edit",
+			readOnly: "Read only",
+			collections: (n) => n === 1 ? "1 collection" : `${n} collections`
 		},
 		collection: "Collection",
 		newCollection: "New collection",
@@ -264,6 +285,7 @@ var __plugin = (function(exports, vue) {
 		gone: "It was deleted somewhere else, so the change was left out.",
 		retry: "Try again",
 		offline: "You are offline. The change is kept and saved when you are back.",
+		moveFailed: (place) => `Cannot move it to ${place} now`,
 		textKept: "It stays here until you leave, so copy it if you need it.",
 		copyText: "Copy text",
 		undoKept: "Some of it was changed since",
@@ -280,6 +302,7 @@ var __plugin = (function(exports, vue) {
 			createCollection: "new collection",
 			editCollection: "edit collection",
 			deleteCollection: "delete collection",
+			moveCollection: "move collection",
 			editProperty: "edit property",
 			deleteProperty: "delete property",
 			editOption: "edit option",
@@ -3542,8 +3565,8 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 		};
 	}
 	// plugins/planner/src/item/notes/MarkdownText.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$40 = ["data-text"];
-	var _hoisted_2$35 = [
+	var _hoisted_1$43 = ["data-text"];
+	var _hoisted_2$37 = [
 		"value",
 		"readonly",
 		"aria-label",
@@ -3644,7 +3667,7 @@ Please report this to https://github.com/markedjs/marked.`, e) {
 					onInput: _cache[0] || (_cache[0] = ($event) => save($event.target.value)),
 					onKeydown: onKey,
 					onBlur: _cache[1] || (_cache[1] = ($event) => emit("blur"))
-				}, null, 40, _hoisted_2$35)], 8, _hoisted_1$40);
+				}, null, 40, _hoisted_2$37)], 8, _hoisted_1$43);
 			};
 		}
 	}), [["__scopeId", "data-v-4de39441"]]);
@@ -20616,7 +20639,7 @@ img.ProseMirror-separator {
 		return true;
 	}
 	// plugins/planner/src/ui/Popover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$39 = ["aria-label"];
+	var _hoisted_1$42 = ["aria-label"];
 	/**
 	* A floating panel, shown while mounted. `cover`: lies over the anchor instead of hanging from it (an editor in
 	* place). What is marked `data-autofocus` (or the first control) gets the focus, and it goes back on close.
@@ -20768,18 +20791,18 @@ img.ProseMirror-separator {
 				}, [(0, vue.createElementVNode)("div", {
 					ref_key: "inner",
 					ref: inner
-				}, [(0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 512)], 44, _hoisted_1$39)]);
+				}, [(0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 512)], 44, _hoisted_1$42)]);
 			};
 		}
 	}), [["__scopeId", "data-v-f2b29bc6"]]);
 	// plugins/planner/src/item/notes/LinkPopover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$38 = ["aria-label", "aria-invalid"];
-	var _hoisted_2$34 = {
+	var _hoisted_1$41 = ["aria-label", "aria-invalid"];
+	var _hoisted_2$36 = {
 		key: 0,
 		class: "pl-link__bad",
 		role: "alert"
 	};
-	var _hoisted_3$31 = { class: "pl-link__row" };
+	var _hoisted_3$32 = { class: "pl-link__row" };
 	// plugins/planner/src/item/notes/LinkPopover.vue
 	var LinkPopover_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "LinkPopover",
@@ -20828,9 +20851,9 @@ img.ProseMirror-separator {
 							"aria-invalid": bad.value || void 0,
 							onInput: _cache[1] || (_cache[1] = ($event) => bad.value = false),
 							onFocus: _cache[2] || (_cache[2] = ($event) => $event.target.select())
-						}, null, 40, _hoisted_1$38), [[vue.vModelText, text.value]]),
-						bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$34, (0, vue.toDisplayString)((0, vue.unref)(strings$3).badLink), 1)) : (0, vue.createCommentVNode)("v-if", true),
-						(0, vue.createElementVNode)("div", _hoisted_3$31, [
+						}, null, 40, _hoisted_1$41), [[vue.vModelText, text.value]]),
+						bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$36, (0, vue.toDisplayString)((0, vue.unref)(strings$3).badLink), 1)) : (0, vue.createCommentVNode)("v-if", true),
+						(0, vue.createElementVNode)("div", _hoisted_3$32, [
 							__props.href ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 								key: 0,
 								variant: "ghost",
@@ -20858,15 +20881,15 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-382fe9d9"]]);
 	// plugins/planner/src/item/notes/SlashMenu.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$37 = ["id", "aria-label"];
-	var _hoisted_2$33 = [
+	var _hoisted_1$40 = ["id", "aria-label"];
+	var _hoisted_2$35 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_3$30 = { class: "pl-slash__label" };
-	var _hoisted_4$29 = {
+	var _hoisted_3$31 = { class: "pl-slash__label" };
+	var _hoisted_4$30 = {
 		key: 0,
 		class: "pl-slash__hint",
 		"aria-hidden": "true"
@@ -20951,17 +20974,17 @@ img.ProseMirror-separator {
 							name: b.icon,
 							class: "pl-slash__icon"
 						}, null, 8, ["name"]),
-						(0, vue.createElementVNode)("span", _hoisted_3$30, (0, vue.toDisplayString)((0, vue.unref)(strings$3).blocks[b.id]), 1),
-						b.hint ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$29, (0, vue.toDisplayString)(b.hint), 1)) : (0, vue.createCommentVNode)("v-if", true)
-					], 42, _hoisted_2$33);
-				}), 128))], 44, _hoisted_1$37)]);
+						(0, vue.createElementVNode)("span", _hoisted_3$31, (0, vue.toDisplayString)((0, vue.unref)(strings$3).blocks[b.id]), 1),
+						b.hint ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$30, (0, vue.toDisplayString)(b.hint), 1)) : (0, vue.createCommentVNode)("v-if", true)
+					], 42, _hoisted_2$35);
+				}), 128))], 44, _hoisted_1$40)]);
 			};
 		}
 	}), [["__scopeId", "data-v-b475f942"]]);
 	// plugins/planner/src/item/notes/NotesEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$36 = ["aria-label"];
-	var _hoisted_2$32 = ["title"];
-	var _hoisted_3$29 = {
+	var _hoisted_1$39 = ["aria-label"];
+	var _hoisted_2$34 = ["title"];
+	var _hoisted_3$30 = {
 		key: 1,
 		class: "pl-float__open is-text"
 	};
@@ -21478,7 +21501,7 @@ img.ProseMirror-separator {
 							tabindex: "-1",
 							title: (0, vue.unref)(strings$3).openLink,
 							onClick: _cache[1] || (_cache[1] = ($event) => open(float.value.href))
-						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1), (0, vue.createVNode)(Icon_default, { name: "external-link" })], 8, _hoisted_2$32)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$29, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1)])),
+						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1), (0, vue.createVNode)(Icon_default, { name: "external-link" })], 8, _hoisted_2$34)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$30, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(float.value.href), 1)])),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							label: (0, vue.unref)(strings$3).editLink,
 							shortcut: keyOf("K"),
@@ -21496,7 +21519,7 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "unlink" })]),
 							_: 1
 						}, 8, ["label"]))
-					], 64))], 44, _hoisted_1$36)) : (0, vue.createCommentVNode)("v-if", true)])),
+					], 64))], 44, _hoisted_1$39)) : (0, vue.createCommentVNode)("v-if", true)])),
 					slash.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(SlashMenu_default, {
 						key: 1,
 						id: menuId,
@@ -21524,12 +21547,12 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-85a21829"]]);
 	// plugins/planner/src/item/ItemBody.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$35 = { class: "pl-body" };
+	var _hoisted_1$38 = { class: "pl-body" };
 	/**
 	* An item's notes. Rich text, unless the user wants the Markdown or the text has something in it rich text would
 	* lose. Which one is looked at again only when the text comes from elsewhere, never while it is typed.
 	*/
-	var KEY$1 = "notesAsMarkdown";
+	var KEY$2 = "notesAsMarkdown";
 	// plugins/planner/src/item/ItemBody.vue
 	var ItemBody_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ItemBody",
@@ -21543,7 +21566,7 @@ img.ProseMirror-separator {
 			const props = __props;
 			const emit = __emit;
 			const { mango, store } = usePlanner();
-			const asMarkdown = (0, vue.ref)(mango.storage.get(KEY$1) === true);
+			const asMarkdown = (0, vue.ref)(mango.storage.get(KEY$2) === true);
 			const fits = (0, vue.ref)(fitsRichText(props.item.body));
 			const rich = (0, vue.computed)(() => fits.value && !asMarkdown.value);
 			const editor = (0, vue.ref)(null);
@@ -21572,7 +21595,7 @@ img.ProseMirror-separator {
 					asMarkdown.value = false;
 					fits.value = fitsRichText(props.item.body);
 				}
-				mango.storage.set(KEY$1, asMarkdown.value);
+				mango.storage.set(KEY$2, asMarkdown.value);
 				await (0, vue.nextTick)();
 				editor.value?.focus();
 			}
@@ -21582,7 +21605,7 @@ img.ProseMirror-separator {
 				asMarkdown: (0, vue.computed)(() => asMarkdown.value)
 			});
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_1$35, [!rich.value && !asMarkdown.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_1$38, [!rich.value && !asMarkdown.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
 					key: 0,
 					id: noteId,
 					class: "pl-body__note"
@@ -21934,14 +21957,14 @@ img.ProseMirror-separator {
 		}
 	};
 	// plugins/planner/src/values/AddProperty.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$34 = { class: "pl-add" };
-	var _hoisted_2$31 = [
+	var _hoisted_1$37 = { class: "pl-add" };
+	var _hoisted_2$33 = [
 		"aria-activedescendant",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_3$28 = ["aria-label"];
-	var _hoisted_4$28 = [
+	var _hoisted_3$29 = ["aria-label"];
+	var _hoisted_4$29 = [
 		"id",
 		"aria-selected",
 		"title",
@@ -21996,7 +22019,7 @@ img.ProseMirror-separator {
 					label: (0, vue.unref)(strings$2).newProperty,
 					onClose: _cache[1] || (_cache[1] = ($event) => emit("close"))
 				}, {
-					default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_1$34, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+					default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_1$37, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => name.value = $event),
 						class: "pl-add__name",
 						"data-autofocus": "",
@@ -22008,7 +22031,7 @@ img.ProseMirror-separator {
 						placeholder: (0, vue.unref)(strings$2).propertyName,
 						autocomplete: "off",
 						onKeydown: onKey
-					}, null, 40, _hoisted_2$31), [[vue.vModelText, name.value]]), (0, vue.createElementVNode)("div", {
+					}, null, 40, _hoisted_2$33), [[vue.vModelText, name.value]]), (0, vue.createElementVNode)("div", {
 						id: "pl-add-types",
 						ref_key: "list",
 						ref: list,
@@ -22028,8 +22051,8 @@ img.ProseMirror-separator {
 						}, [(0, vue.createVNode)(PropertyIcon_default, {
 							type: t,
 							class: "pl-add__icon"
-						}, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$5).propertyTypes[t]), 1)], 42, _hoisted_4$28);
-					}), 128))], 8, _hoisted_3$28)])]),
+						}, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$5).propertyTypes[t]), 1)], 42, _hoisted_4$29);
+					}), 128))], 8, _hoisted_3$29)])]),
 					_: 1
 				}, 8, ["anchor", "label"]);
 			};
@@ -22059,9 +22082,9 @@ img.ProseMirror-separator {
 		return `#${part(5)}${part(3)}${part(1)}`;
 	}
 	// plugins/planner/src/ui/ColorPicker.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$33 = ["aria-label"];
-	var _hoisted_2$30 = ["aria-label"];
-	var _hoisted_3$27 = [
+	var _hoisted_1$36 = ["aria-label"];
+	var _hoisted_2$32 = ["aria-label"];
+	var _hoisted_3$28 = [
 		"aria-checked",
 		"aria-label",
 		"title",
@@ -22070,13 +22093,13 @@ img.ProseMirror-separator {
 		"onClick",
 		"onKeydown"
 	];
-	var _hoisted_4$27 = [
+	var _hoisted_4$28 = [
 		"aria-label",
 		"aria-valuenow",
 		"aria-valuetext"
 	];
-	var _hoisted_5$24 = ["value", "aria-label"];
-	var _hoisted_6$21 = [
+	var _hoisted_5$25 = ["value", "aria-label"];
+	var _hoisted_6$22 = [
 		"value",
 		"aria-label",
 		"aria-invalid"
@@ -22278,8 +22301,8 @@ img.ProseMirror-separator {
 							"data-autofocus": c === tabStop.value ? "" : void 0,
 							onClick: ($event) => choose(c),
 							onKeydown: ($event) => onSwatchKey($event, i)
-						}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(isCustomColor)(c) ? c : (0, vue.unref)(colorVar)(c).dot }) }, null, 4)], 40, _hoisted_3$27);
-					}), 128))], 8, _hoisted_2$30),
+						}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(isCustomColor)(c) ? c : (0, vue.unref)(colorVar)(c).dot }) }, null, 4)], 40, _hoisted_3$28);
+					}), 128))], 8, _hoisted_2$32),
 					(0, vue.createElementVNode)("div", {
 						ref_key: "area",
 						ref: area,
@@ -22306,7 +22329,7 @@ img.ProseMirror-separator {
 							top: `${(1 - hsv.value.v) * 100}%`,
 							background: (0, vue.unref)(hsvToHex)(hsv.value)
 						})
-					}, null, 4)], 44, _hoisted_4$27),
+					}, null, 4)], 44, _hoisted_4$28),
 					(0, vue.createElementVNode)("input", {
 						type: "range",
 						class: "pl-color__hue",
@@ -22317,7 +22340,7 @@ img.ProseMirror-separator {
 						"aria-label": (0, vue.unref)(strings$2).hue,
 						onInput: _cache[0] || (_cache[0] = ($event) => setHsv({ h: Number($event.target.value) })),
 						onChange: settle
-					}, null, 40, _hoisted_5$24),
+					}, null, 40, _hoisted_5$25),
 					(0, vue.createElementVNode)("label", { class: (0, vue.normalizeClass)(["pl-color__hex", { "is-bad": hexBad.value }]) }, [(0, vue.createElementVNode)("span", {
 						style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(rawColor)(__props.modelValue) }),
 						"aria-hidden": "true"
@@ -22333,13 +22356,13 @@ img.ProseMirror-separator {
 						onInput: typeHex,
 						onChange: _cache[1] || (_cache[1] = ($event) => takeHex(true)),
 						onKeydown: _cache[2] || (_cache[2] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => takeHex(true), ["prevent"]), ["enter"]))
-					}, null, 40, _hoisted_6$21)], 2)
-				], 8, _hoisted_1$33);
+					}, null, 40, _hoisted_6$22)], 2)
+				], 8, _hoisted_1$36);
 			};
 		}
 	}), [["__scopeId", "data-v-e35e2cff"]]);
 	// plugins/planner/src/ui/ColorButton.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$32 = [
+	var _hoisted_1$35 = [
 		"aria-label",
 		"title",
 		"aria-expanded",
@@ -22367,7 +22390,7 @@ img.ProseMirror-separator {
 					"aria-expanded": !!anchor.value,
 					disabled: __props.disabled,
 					onClick: _cache[0] || (_cache[0] = ($event) => anchor.value = $event.currentTarget)
-				}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(colorVar)(__props.modelValue).dot }) }, null, 4)], 8, _hoisted_1$32), anchor.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
+				}, [(0, vue.createElementVNode)("span", { style: (0, vue.normalizeStyle)({ background: (0, vue.unref)(colorVar)(__props.modelValue).dot }) }, null, 4)], 8, _hoisted_1$35), anchor.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
 					key: 0,
 					anchor: anchor.value,
 					width: 236,
@@ -22386,18 +22409,18 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-48db138d"]]);
 	// plugins/planner/src/ui/PickPopover.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$31 = ["aria-label", "aria-activedescendant"];
-	var _hoisted_2$29 = {
+	var _hoisted_1$34 = ["aria-label", "aria-activedescendant"];
+	var _hoisted_2$31 = {
 		key: 0,
 		class: "pl-pick__head"
 	};
-	var _hoisted_3$26 = [
+	var _hoisted_3$27 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_4$26 = { class: "pl-pick__label" };
+	var _hoisted_4$27 = { class: "pl-pick__label" };
 	// plugins/planner/src/ui/PickPopover.vue
 	var PickPopover_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "PickPopover",
@@ -22451,7 +22474,7 @@ img.ProseMirror-separator {
 						"data-autofocus": "",
 						"aria-activedescendant": __props.rows[active.value] ? `pl-pick-${__props.rows[active.value].id}` : void 0,
 						onKeydown: onKey
-					}, [__props.heading ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$29, (0, vue.toDisplayString)(__props.heading), 1)) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(__props.rows, (r, i) => {
+					}, [__props.heading ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$31, (0, vue.toDisplayString)(__props.heading), 1)) : (0, vue.createCommentVNode)("v-if", true), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(__props.rows, (r, i) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							id: `pl-pick-${r.id}`,
 							key: r.id,
@@ -22471,14 +22494,14 @@ img.ProseMirror-separator {
 								name: r.icon,
 								class: "pl-pick__icon"
 							}, null, 8, ["name"])) : (0, vue.createCommentVNode)("v-if", true),
-							(0, vue.createElementVNode)("span", _hoisted_4$26, (0, vue.toDisplayString)(r.label), 1),
+							(0, vue.createElementVNode)("span", _hoisted_4$27, (0, vue.toDisplayString)(r.label), 1),
 							r.checked ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 2,
 								name: "check",
 								class: "pl-pick__check"
 							})) : (0, vue.createCommentVNode)("v-if", true)
-						], 42, _hoisted_3$26);
-					}), 128))], 40, _hoisted_1$31)]),
+						], 42, _hoisted_3$27);
+					}), 128))], 40, _hoisted_1$34)]),
 					_: 1
 				}, 8, [
 					"anchor",
@@ -22597,31 +22620,31 @@ img.ProseMirror-separator {
 		};
 	}
 	// plugins/planner/src/values/PropertyEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$30 = {
+	var _hoisted_1$33 = {
 		key: 0,
 		class: "pl-pe__gone"
 	};
-	var _hoisted_2$28 = {
+	var _hoisted_2$30 = {
 		key: 1,
 		class: "pl-pe"
 	};
-	var _hoisted_3$25 = { class: "pl-pe__top" };
-	var _hoisted_4$25 = { class: "pl-pe__field" };
-	var _hoisted_5$23 = { class: "pl-pe__label" };
-	var _hoisted_6$20 = ["value", "readonly"];
-	var _hoisted_7$18 = { class: "pl-pe__field" };
-	var _hoisted_8$17 = { class: "pl-pe__label" };
-	var _hoisted_9$15 = ["disabled"];
-	var _hoisted_10$14 = ["aria-label"];
-	var _hoisted_11$11 = ["data-option"];
-	var _hoisted_12$10 = [
+	var _hoisted_3$26 = { class: "pl-pe__top" };
+	var _hoisted_4$26 = { class: "pl-pe__field" };
+	var _hoisted_5$24 = { class: "pl-pe__label" };
+	var _hoisted_6$21 = ["value", "readonly"];
+	var _hoisted_7$19 = { class: "pl-pe__field" };
+	var _hoisted_8$18 = { class: "pl-pe__label" };
+	var _hoisted_9$17 = ["disabled"];
+	var _hoisted_10$16 = ["aria-label"];
+	var _hoisted_11$12 = ["data-option"];
+	var _hoisted_12$11 = [
 		"aria-label",
 		"title",
 		"disabled",
 		"onPointerdown",
 		"onKeydown"
 	];
-	var _hoisted_13$8 = [
+	var _hoisted_13$9 = [
 		"value",
 		"readonly",
 		"aria-label",
@@ -22629,8 +22652,8 @@ img.ProseMirror-separator {
 		"onBlur",
 		"onKeydown"
 	];
-	var _hoisted_14$6 = ["title"];
-	var _hoisted_15$5 = {
+	var _hoisted_14$7 = ["title"];
+	var _hoisted_15$6 = {
 		key: 0,
 		class: "pl-pe__default"
 	};
@@ -22653,7 +22676,7 @@ img.ProseMirror-separator {
 			const { IconButton } = mango.ui.components;
 			const collection = (0, vue.computed)(() => store.collection(props.collectionId));
 			const property = (0, vue.computed)(() => (collection.value && propertyOf(collection.value, props.propertyId)) ?? null);
-			const readonly = (0, vue.computed)(() => store.sourceStatus.value.readonly);
+			const readonly = (0, vue.computed)(() => store.statusOf(props.collectionId).readonly);
 			const words = (0, vue.computed)(() => optionWords(property.value ?? { name: "" }));
 			const counts = useOptionCounts(() => props.collectionId, () => props.propertyId);
 			(0, vue.watch)(property, (p) => {
@@ -22810,8 +22833,8 @@ img.ProseMirror-separator {
 				(0, vue.nextTick)(() => handle.focus());
 			}
 			return (_ctx, _cache) => {
-				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_1$30, (0, vue.toDisplayString)((0, vue.unref)(strings$2).gone), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$28, [
-					(0, vue.createElementVNode)("div", _hoisted_3$25, [(0, vue.createElementVNode)("label", _hoisted_4$25, [(0, vue.createElementVNode)("span", _hoisted_5$23, (0, vue.toDisplayString)((0, vue.unref)(strings$2).name), 1), (0, vue.createElementVNode)("input", {
+				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_1$33, (0, vue.toDisplayString)((0, vue.unref)(strings$2).gone), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$30, [
+					(0, vue.createElementVNode)("div", _hoisted_3$26, [(0, vue.createElementVNode)("label", _hoisted_4$26, [(0, vue.createElementVNode)("span", _hoisted_5$24, (0, vue.toDisplayString)((0, vue.unref)(strings$2).name), 1), (0, vue.createElementVNode)("input", {
 						class: "pl-pe__input",
 						value: property.value.name,
 						readonly: readonly.value,
@@ -22819,7 +22842,7 @@ img.ProseMirror-separator {
 						autocomplete: "off",
 						onInput: rename,
 						onBlur: _cache[0] || (_cache[0] = ($event) => settleName($event, property.value.name, (name) => (0, vue.unref)(store).renameProperty(__props.collectionId, __props.propertyId, name, { defer: true })))
-					}, null, 40, _hoisted_6$20)]), (0, vue.createElementVNode)("div", _hoisted_7$18, [(0, vue.createElementVNode)("span", _hoisted_8$17, (0, vue.toDisplayString)((0, vue.unref)(strings$2).type), 1), (0, vue.createElementVNode)("button", {
+					}, null, 40, _hoisted_6$21)]), (0, vue.createElementVNode)("div", _hoisted_7$19, [(0, vue.createElementVNode)("span", _hoisted_8$18, (0, vue.toDisplayString)((0, vue.unref)(strings$2).type), 1), (0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-pe__pick",
 						"aria-haspopup": "listbox",
@@ -22829,7 +22852,7 @@ img.ProseMirror-separator {
 						(0, vue.createVNode)(PropertyIcon_default, { type: property.value.type }, null, 8, ["type"]),
 						(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$5).propertyTypes[property.value.type]), 1),
 						(0, vue.createVNode)(Icon_default, { name: "chevron-down" })
-					], 8, _hoisted_9$15)])]),
+					], 8, _hoisted_9$17)])]),
 					(0, vue.unref)(hasOptions)(property.value) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createElementVNode)("div", {
 						ref_key: "list",
 						ref: list,
@@ -22851,7 +22874,7 @@ img.ProseMirror-separator {
 								disabled: readonly.value,
 								onPointerdown: ($event) => startDrag(o, $event),
 								onKeydown: ($event) => onHandleKey(o, i, $event)
-							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_12$10),
+							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_12$11),
 							(0, vue.createVNode)(ColorButton_default, {
 								"model-value": o.color,
 								label: (0, vue.unref)(strings$2).colorOf(o.name),
@@ -22875,12 +22898,12 @@ img.ProseMirror-separator {
 								onInput: ($event) => renameOption(o, $event),
 								onBlur: ($event) => settleName($event, o.name, (name) => setOption(o, { name })),
 								onKeydown: (0, vue.withKeys)((0, vue.withModifiers)(add, ["prevent"]), ["enter"])
-							}, null, 44, _hoisted_13$8),
+							}, null, 44, _hoisted_13$9),
 							(0, vue.unref)(counts) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 								key: 0,
 								class: "pl-pe__count",
 								title: (0, vue.unref)(strings$2).inUse((0, vue.unref)(counts).get(o.id) ?? 0, (0, vue.unref)(itemWord)(collection.value, (0, vue.unref)(counts).get(o.id) ?? 0))
-							}, (0, vue.toDisplayString)((0, vue.unref)(counts).get(o.id) ?? 0), 9, _hoisted_14$6)) : (0, vue.createCommentVNode)("v-if", true),
+							}, (0, vue.toDisplayString)((0, vue.unref)(counts).get(o.id) ?? 0), 9, _hoisted_14$7)) : (0, vue.createCommentVNode)("v-if", true),
 							!readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 								key: 1,
 								size: "sm",
@@ -22893,13 +22916,13 @@ img.ProseMirror-separator {
 								default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "trash-2" })]),
 								_: 1
 							}, 8, ["label", "onClick"])) : (0, vue.createCommentVNode)("v-if", true)
-						], 10, _hoisted_11$11);
+						], 10, _hoisted_11$12);
 					}), 128)), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 0,
 						type: "button",
 						class: "pl-pe__add",
 						onClick: add
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$14), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$5, [(0, vue.createElementVNode)("span", _hoisted_16$5, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).addOption(words.value.one)), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_10$16), property.value.type === "select" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_15$6, [(0, vue.createElementVNode)("span", _hoisted_16$5, (0, vue.toDisplayString)((0, vue.unref)(strings$2).defaultOption((0, vue.unref)(itemWord)(collection.value, 2))), 1), (0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-pe__pick",
 						"aria-haspopup": "listbox",
@@ -23169,9 +23192,9 @@ img.ProseMirror-separator {
 		return parseDate(text.trim().replace(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?!\d)/, (_, y, m, d) => `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`).replace(/([ T])(\d:\d\d)/g, (_, a, b) => `${a}0${b}`));
 	}
 	// plugins/planner/src/values/DateEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$29 = { class: "pl-date" };
-	var _hoisted_2$27 = { class: "pl-date__fields" };
-	var _hoisted_3$24 = [
+	var _hoisted_1$32 = { class: "pl-date" };
+	var _hoisted_2$29 = { class: "pl-date__fields" };
+	var _hoisted_3$25 = [
 		"onUpdate:modelValue",
 		"data-autofocus",
 		"aria-label",
@@ -23181,36 +23204,36 @@ img.ProseMirror-separator {
 		"onChange",
 		"onKeydown"
 	];
-	var _hoisted_4$24 = [
+	var _hoisted_4$25 = [
 		"value",
 		"aria-label",
 		"onFocus",
 		"onChange"
 	];
-	var _hoisted_5$22 = {
+	var _hoisted_5$23 = {
 		key: 0,
 		class: "pl-date__bad",
 		role: "alert"
 	};
-	var _hoisted_6$19 = { class: "pl-date__month" };
-	var _hoisted_7$17 = { "aria-live": "polite" };
-	var _hoisted_8$16 = ["aria-label"];
-	var _hoisted_9$14 = {
+	var _hoisted_6$20 = { class: "pl-date__month" };
+	var _hoisted_7$18 = { "aria-live": "polite" };
+	var _hoisted_8$17 = ["aria-label"];
+	var _hoisted_9$16 = {
 		class: "pl-date__week",
 		role: "row"
 	};
-	var _hoisted_10$13 = ["aria-selected"];
-	var _hoisted_11$10 = [
+	var _hoisted_10$15 = ["aria-selected"];
+	var _hoisted_11$11 = [
 		"data-day",
 		"tabindex",
 		"aria-label",
 		"aria-current",
 		"onClick"
 	];
-	var _hoisted_12$9 = { class: "pl-date__foot" };
-	var _hoisted_13$7 = ["aria-checked"];
-	var _hoisted_14$5 = ["aria-checked"];
-	var _hoisted_15$4 = { class: "pl-date__acts" };
+	var _hoisted_12$10 = { class: "pl-date__foot" };
+	var _hoisted_13$8 = ["aria-checked"];
+	var _hoisted_14$6 = ["aria-checked"];
+	var _hoisted_15$5 = { class: "pl-date__acts" };
 	var _hoisted_16$4 = ["title"];
 	// plugins/planner/src/values/DateEditor.vue
 	var DateEditor_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
@@ -23365,8 +23388,8 @@ img.ProseMirror-separator {
 				else save(s, `${day(end.value) ?? day(s)}T${t}`);
 			}
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$29, [
-					(0, vue.createElementVNode)("div", _hoisted_2$27, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(withEnd.value ? ["start", "end"] : ["start"], (which) => {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$32, [
+					(0, vue.createElementVNode)("div", _hoisted_2$29, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(withEnd.value ? ["start", "end"] : ["start"], (which) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 							key: which,
 							class: (0, vue.normalizeClass)(["pl-date__field", {
@@ -23388,7 +23411,7 @@ img.ProseMirror-separator {
 							},
 							onChange: ($event) => commit(which),
 							onKeydown: ($event) => onInputKey($event, which)
-						}, null, 40, _hoisted_3$24), [[vue.vModelText, drafts.value[which]]]), withTime.value && (which === "start" ? start.value : end.value) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+						}, null, 40, _hoisted_3$25), [[vue.vModelText, drafts.value[which]]]), withTime.value && (which === "start" ? start.value : end.value) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 							key: 0,
 							type: "time",
 							class: "pl-date__time",
@@ -23396,10 +23419,10 @@ img.ProseMirror-separator {
 							"aria-label": which === "start" ? (0, vue.unref)(strings$2).startTime : (0, vue.unref)(strings$2).endTime,
 							onFocus: ($event) => side.value = which,
 							onChange: ($event) => setTime(which, $event)
-						}, null, 40, _hoisted_4$24)) : (0, vue.createCommentVNode)("v-if", true)], 2);
-					}), 128)), bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_5$22, (0, vue.toDisplayString)((0, vue.unref)(strings$2).notADate), 1)) : (0, vue.createCommentVNode)("v-if", true)]),
-					(0, vue.createElementVNode)("div", _hoisted_6$19, [
-						(0, vue.createElementVNode)("span", _hoisted_7$17, (0, vue.toDisplayString)((0, vue.unref)(monthText)(month.value)), 1),
+						}, null, 40, _hoisted_4$25)) : (0, vue.createCommentVNode)("v-if", true)], 2);
+					}), 128)), bad.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_5$23, (0, vue.toDisplayString)((0, vue.unref)(strings$2).notADate), 1)) : (0, vue.createCommentVNode)("v-if", true)]),
+					(0, vue.createElementVNode)("div", _hoisted_6$20, [
+						(0, vue.createElementVNode)("span", _hoisted_7$18, (0, vue.toDisplayString)((0, vue.unref)(monthText)(month.value)), 1),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							size: "sm",
 							label: (0, vue.unref)(strings$2).previousMonth,
@@ -23424,7 +23447,7 @@ img.ProseMirror-separator {
 						role: "grid",
 						"aria-label": (0, vue.unref)(monthText)(month.value),
 						onKeydown: onGridKey
-					}, [(0, vue.createElementVNode)("div", _hoisted_9$14, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(names), (n) => {
+					}, [(0, vue.createElementVNode)("div", _hoisted_9$16, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(names), (n) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: n,
 							class: "pl-date__name",
@@ -23453,10 +23476,10 @@ img.ProseMirror-separator {
 								"aria-label": (0, vue.unref)(fullDate)(d),
 								"aria-current": d === today.value ? "date" : void 0,
 								onClick: ($event) => pick(d)
-							}, (0, vue.toDisplayString)(Number(d.slice(8))), 11, _hoisted_11$10)], 10, _hoisted_10$13);
+							}, (0, vue.toDisplayString)(Number(d.slice(8))), 11, _hoisted_11$11)], 10, _hoisted_10$15);
 						}), 128))]);
-					}), 128))], 40, _hoisted_8$16),
-					(0, vue.createElementVNode)("div", _hoisted_12$9, [
+					}), 128))], 40, _hoisted_8$17),
+					(0, vue.createElementVNode)("div", _hoisted_12$10, [
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__opt",
@@ -23466,7 +23489,7 @@ img.ProseMirror-separator {
 						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$2).endDate), 1), _cache[4] || (_cache[4] = (0, vue.createElementVNode)("i", {
 							class: "pl-date__switch",
 							"aria-hidden": "true"
-						}, null, -1))], 8, _hoisted_13$7),
+						}, null, -1))], 8, _hoisted_13$8),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__opt",
@@ -23476,8 +23499,8 @@ img.ProseMirror-separator {
 						}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$2).includeTime), 1), _cache[5] || (_cache[5] = (0, vue.createElementVNode)("i", {
 							class: "pl-date__switch",
 							"aria-hidden": "true"
-						}, null, -1))], 8, _hoisted_14$5),
-						(0, vue.createElementVNode)("div", _hoisted_15$4, [(0, vue.createElementVNode)("button", {
+						}, null, -1))], 8, _hoisted_14$6),
+						(0, vue.createElementVNode)("div", _hoisted_15$5, [(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-date__act",
 							onClick: _cache[2] || (_cache[2] = ($event) => pick(today.value))
@@ -23497,8 +23520,8 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-aacd3835"]]);
 	// plugins/planner/src/ui/OptionTag.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$28 = ["title"];
-	var _hoisted_2$26 = { class: "pl-tag__name" };
+	var _hoisted_1$31 = ["title"];
+	var _hoisted_2$28 = { class: "pl-tag__name" };
 	// plugins/planner/src/ui/OptionTag.vue
 	var OptionTag_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "OptionTag",
@@ -23515,50 +23538,50 @@ img.ProseMirror-separator {
 					class: "pl-tag__dot",
 					style: (0, vue.normalizeStyle)({ background: color.value.dot }),
 					"aria-hidden": "true"
-				}, null, 4), (0, vue.createElementVNode)("span", _hoisted_2$26, (0, vue.toDisplayString)(__props.option.name), 1)], 12, _hoisted_1$28);
+				}, null, 4), (0, vue.createElementVNode)("span", _hoisted_2$28, (0, vue.toDisplayString)(__props.option.name), 1)], 12, _hoisted_1$31);
 			};
 		}
 	}), [["__scopeId", "data-v-5e67d769"]]);
 	// plugins/planner/src/values/OptionEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$27 = {
+	var _hoisted_1$30 = {
 		key: 0,
 		class: "pl-oe"
 	};
-	var _hoisted_2$25 = { class: "pl-oe__head" };
-	var _hoisted_3$23 = ["aria-label", "title"];
-	var _hoisted_4$23 = [
+	var _hoisted_2$27 = { class: "pl-oe__head" };
+	var _hoisted_3$24 = ["aria-label", "title"];
+	var _hoisted_4$24 = [
 		"value",
 		"aria-label",
 		"onKeydown"
 	];
-	var _hoisted_5$21 = { class: "pl-oe__colors" };
-	var _hoisted_6$18 = { class: "pl-oe__rows is-plain" };
-	var _hoisted_7$16 = ["disabled"];
-	var _hoisted_8$15 = ["disabled"];
-	var _hoisted_9$13 = {
+	var _hoisted_5$22 = { class: "pl-oe__colors" };
+	var _hoisted_6$19 = { class: "pl-oe__rows is-plain" };
+	var _hoisted_7$17 = ["disabled"];
+	var _hoisted_8$16 = ["disabled"];
+	var _hoisted_9$15 = {
 		key: 1,
 		class: "pl-oe"
 	};
-	var _hoisted_10$12 = { class: "pl-oe__head" };
-	var _hoisted_11$9 = [
+	var _hoisted_10$14 = { class: "pl-oe__head" };
+	var _hoisted_11$10 = [
 		"aria-controls",
 		"aria-activedescendant",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_12$8 = [
+	var _hoisted_12$9 = [
 		"id",
 		"aria-label",
 		"aria-multiselectable"
 	];
-	var _hoisted_13$6 = [
+	var _hoisted_13$7 = [
 		"id",
 		"aria-selected",
 		"onPointermove",
 		"onClick"
 	];
-	var _hoisted_14$4 = { class: "pl-oe__tag" };
-	var _hoisted_15$3 = [
+	var _hoisted_14$5 = { class: "pl-oe__tag" };
+	var _hoisted_15$4 = [
 		"aria-label",
 		"title",
 		"onClick"
@@ -23724,14 +23747,14 @@ img.ProseMirror-separator {
 				if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: "hold" });
 			}
 			return (_ctx, _cache) => {
-				return edited.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$27, [
-					(0, vue.createElementVNode)("div", _hoisted_2$25, [(0, vue.createElementVNode)("button", {
+				return edited.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$30, [
+					(0, vue.createElementVNode)("div", _hoisted_2$27, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-oe__icon",
 						"aria-label": (0, vue.unref)(strings$2).back,
 						title: (0, vue.unref)(strings$2).back,
 						onClick: stopEdit
-					}, [(0, vue.createVNode)(Icon_default, { name: "arrow-left" })], 8, _hoisted_3$23), (0, vue.createElementVNode)("input", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "arrow-left" })], 8, _hoisted_3$24), (0, vue.createElementVNode)("input", {
 						ref_key: "nameInput",
 						ref: nameInput,
 						class: "pl-oe__input",
@@ -23741,26 +23764,26 @@ img.ProseMirror-separator {
 						spellcheck: "false",
 						onInput: rename,
 						onKeydown: (0, vue.withKeys)((0, vue.withModifiers)(stopEdit, ["prevent"]), ["enter"])
-					}, null, 40, _hoisted_4$23)]),
-					(0, vue.createElementVNode)("div", _hoisted_5$21, [(0, vue.createVNode)(ColorPicker_default, {
+					}, null, 40, _hoisted_4$24)]),
+					(0, vue.createElementVNode)("div", _hoisted_5$22, [(0, vue.createVNode)(ColorPicker_default, {
 						"model-value": edited.value.color,
 						label: (0, vue.unref)(strings$2).color,
 						"onUpdate:modelValue": recolor,
 						onChange: _cache[0] || (_cache[0] = ($event) => (0, vue.unref)(store).flush())
 					}, null, 8, ["model-value", "label"])]),
-					(0, vue.createElementVNode)("div", _hoisted_6$18, [
+					(0, vue.createElementVNode)("div", _hoisted_6$19, [
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row",
 							disabled: editIndex.value <= 0,
 							onClick: _cache[1] || (_cache[1] = ($event) => moveOption(-1))
-						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-up" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveUp), 1)], 8, _hoisted_7$16),
+						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-up" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveUp), 1)], 8, _hoisted_7$17),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row",
 							disabled: editIndex.value >= __props.property.options.length - 1,
 							onClick: _cache[2] || (_cache[2] = ($event) => moveOption(1))
-						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-down" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveDown), 1)], 8, _hoisted_8$15),
+						}, [(0, vue.createVNode)(Icon_default, { name: "arrow-down" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$2).moveDown), 1)], 8, _hoisted_8$16),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-oe__row is-danger",
@@ -23780,8 +23803,8 @@ img.ProseMirror-separator {
 						"option-id",
 						"anchor"
 					])) : (0, vue.createCommentVNode)("v-if", true)
-				])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_9$13, [
-					(0, vue.createElementVNode)("div", _hoisted_10$12, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+				])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_9$15, [
+					(0, vue.createElementVNode)("div", _hoisted_10$14, [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 						ref_key: "input",
 						ref: input,
 						"onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => query.value = $event),
@@ -23797,7 +23820,7 @@ img.ProseMirror-separator {
 						spellcheck: "false",
 						autocomplete: "off",
 						onKeydown: onKey
-					}, null, 40, _hoisted_11$9), [[vue.vModelText, query.value]])]),
+					}, null, 40, _hoisted_11$10), [[vue.vModelText, query.value]])]),
 					(0, vue.createElementVNode)("div", {
 						id: rowId("list"),
 						ref_key: "list",
@@ -23816,7 +23839,7 @@ img.ProseMirror-separator {
 							onPointermove: ($event) => active.value = i,
 							onClick: ($event) => pick(row)
 						}, [row.option ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
-							(0, vue.createElementVNode)("span", _hoisted_14$4, [(0, vue.createVNode)(OptionTag_default, { option: row.option }, null, 8, ["option"])]),
+							(0, vue.createElementVNode)("span", _hoisted_14$5, [(0, vue.createVNode)(OptionTag_default, { option: row.option }, null, 8, ["option"])]),
 							has(row.option) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 0,
 								name: "check",
@@ -23833,12 +23856,12 @@ img.ProseMirror-separator {
 								"aria-label": (0, vue.unref)(strings$2).editOption(row.option.name),
 								title: `${(0, vue.unref)(strings$2).editOption(row.option.name)} (F2)`,
 								onClick: (0, vue.withModifiers)(($event) => startEdit(row.option), ["stop"])
-							}, [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })], 8, _hoisted_15$3)
+							}, [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })], 8, _hoisted_15$4)
 						], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createVNode)(Icon_default, {
 							name: "plus",
 							class: "pl-oe__plus"
-						}), (0, vue.createElementVNode)("span", _hoisted_16$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).create(row.create ?? "")), 1)], 64))], 42, _hoisted_13$6);
-					}), 128)), !rows.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_17$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).noOptions), 1)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_12$8),
+						}), (0, vue.createElementVNode)("span", _hoisted_16$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).create(row.create ?? "")), 1)], 64))], 42, _hoisted_13$7);
+					}), 128)), !rows.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_17$3, (0, vue.toDisplayString)((0, vue.unref)(strings$2).noOptions), 1)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_12$9),
 					canClear.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18$2, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-oe__row",
@@ -23954,10 +23977,10 @@ img.ProseMirror-separator {
 		return parseValue(typeof value === "object" && !Array.isArray(value) ? formatDate(value) : valueText(value, from), type, options);
 	}
 	// plugins/planner/src/values/TextEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$26 = { class: "pl-text" };
-	var _hoisted_2$24 = ["data-text"];
-	var _hoisted_3$22 = ["aria-label"];
-	var _hoisted_4$22 = [
+	var _hoisted_1$29 = { class: "pl-text" };
+	var _hoisted_2$26 = ["data-text"];
+	var _hoisted_3$23 = ["aria-label"];
+	var _hoisted_4$23 = [
 		"inputmode",
 		"placeholder",
 		"aria-label",
@@ -24021,7 +24044,7 @@ img.ProseMirror-separator {
 				cancel
 			});
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$26, [__props.property.type === "text" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$29, [__props.property.type === "text" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 					key: 0,
 					class: "pl-text__grow",
 					"data-text": `${text.value} `
@@ -24033,7 +24056,7 @@ img.ProseMirror-separator {
 					rows: "1",
 					"aria-label": __props.property.name,
 					onKeydown: onKey
-				}, null, 40, _hoisted_3$22), [[vue.vModelText, text.value]])], 8, _hoisted_2$24)) : (0, vue.withDirectives)(((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 40, _hoisted_3$23), [[vue.vModelText, text.value]])], 8, _hoisted_2$26)) : (0, vue.withDirectives)(((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 1,
 					ref_key: "el",
 					ref: el,
@@ -24048,7 +24071,7 @@ img.ProseMirror-separator {
 					"aria-label": __props.property.name,
 					"aria-invalid": invalid.value || void 0,
 					onKeydown: onKey
-				}, null, 40, _hoisted_4$22)), [[vue.vModelText, text.value]]), problem.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
+				}, null, 40, _hoisted_4$23)), [[vue.vModelText, text.value]]), problem.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
 					key: 2,
 					class: (0, vue.normalizeClass)(["pl-text__note", { "is-error": invalid.value }]),
 					role: "status"
@@ -24186,15 +24209,15 @@ img.ProseMirror-separator {
 		}
 	});
 	// plugins/planner/src/values/ValueView.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$25 = ["aria-label"];
-	var _hoisted_2$23 = ["title"];
-	var _hoisted_3$21 = ["title"];
-	var _hoisted_4$21 = {
+	var _hoisted_1$28 = ["aria-label"];
+	var _hoisted_2$25 = ["title"];
+	var _hoisted_3$22 = ["title"];
+	var _hoisted_4$22 = {
 		key: 4,
 		class: "pl-value pl-value--number"
 	};
-	var _hoisted_5$20 = ["title"];
-	var _hoisted_6$17 = ["title"];
+	var _hoisted_5$21 = ["title"];
+	var _hoisted_6$18 = ["title"];
 	// plugins/planner/src/values/ValueView.vue
 	var ValueView_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ValueView",
@@ -24233,7 +24256,7 @@ img.ProseMirror-separator {
 					class: (0, vue.normalizeClass)(["pl-value pl-value--check", { "is-on": value.value === true }]),
 					role: "img",
 					"aria-label": value.value === true ? (0, vue.unref)(strings$2).yes : (0, vue.unref)(strings$2).no
-				}, [(0, vue.createVNode)(Icon_default, { name: value.value === true ? "square-check" : "square" }, null, 8, ["name"])], 10, _hoisted_1$25)) : options.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+				}, [(0, vue.createVNode)(Icon_default, { name: value.value === true ? "square-check" : "square" }, null, 8, ["name"])], 10, _hoisted_1$28)) : options.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 					key: 1,
 					class: (0, vue.normalizeClass)(["pl-value pl-value--tags", { "is-wrap": __props.wrap }])
 				}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(options.value, (o) => {
@@ -24245,34 +24268,34 @@ img.ProseMirror-separator {
 					key: 2,
 					class: "pl-value pl-value--date",
 					title: (0, vue.unref)(fullDate)(date.value.start)
-				}, (0, vue.toDisplayString)((0, vue.unref)(dateText)(date.value, (0, vue.unref)(store).now.value)), 9, _hoisted_2$23)) : href.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+				}, (0, vue.toDisplayString)((0, vue.unref)(dateText)(date.value, (0, vue.unref)(store).now.value)), 9, _hoisted_2$25)) : href.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 					key: 3,
 					class: "pl-value pl-value--url",
 					title: `${(0, vue.unref)(strings$2).openLink}: ${href.value}`,
 					onClick: (0, vue.withModifiers)(open, ["stop", "prevent"]),
 					onPointerdown: _cache[0] || (_cache[0] = (0, vue.withModifiers)(() => {}, ["stop"]))
-				}, (0, vue.toDisplayString)(shortUrl.value), 41, _hoisted_3$21)) : __props.property.type === "number" && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$21, (0, vue.toDisplayString)(value.value), 1)) : (__props.property.type === "text" || __props.property.type === "url") && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+				}, (0, vue.toDisplayString)(shortUrl.value), 41, _hoisted_3$22)) : __props.property.type === "number" && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_4$22, (0, vue.toDisplayString)(value.value), 1)) : (__props.property.type === "text" || __props.property.type === "url") && value.value !== null ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 					key: 5,
 					class: (0, vue.normalizeClass)(["pl-value", { "is-wrap": __props.wrap }]),
 					title: __props.property.type === "url" ? (0, vue.unref)(strings$2).badLink : __props.wrap ? void 0 : String(value.value)
-				}, (0, vue.toDisplayString)(value.value), 11, _hoisted_5$20)) : raw.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+				}, (0, vue.toDisplayString)(value.value), 11, _hoisted_5$21)) : raw.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 					key: 6,
 					class: "pl-value pl-value--raw",
 					title: (0, vue.unref)(strings$2).unsupported
-				}, (0, vue.toDisplayString)(raw.value), 9, _hoisted_6$17)) : (0, vue.createCommentVNode)("v-if", true);
+				}, (0, vue.toDisplayString)(raw.value), 9, _hoisted_6$18)) : (0, vue.createCommentVNode)("v-if", true);
 			};
 		}
 	}), [["__scopeId", "data-v-b9bf6c1e"]]);
 	// plugins/planner/src/item/ItemProperties.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$24 = ["aria-label"];
-	var _hoisted_2$22 = ["onContextmenu"];
-	var _hoisted_3$20 = [
+	var _hoisted_1$27 = ["aria-label"];
+	var _hoisted_2$24 = ["onContextmenu"];
+	var _hoisted_3$21 = [
 		"title",
 		"disabled",
 		"onClick"
 	];
-	var _hoisted_4$20 = { class: "pl-props__cell" };
-	var _hoisted_5$19 = [
+	var _hoisted_4$21 = { class: "pl-props__cell" };
+	var _hoisted_5$20 = [
 		"role",
 		"aria-checked",
 		"aria-label",
@@ -24282,7 +24305,7 @@ img.ProseMirror-separator {
 		"onClick",
 		"onKeydown"
 	];
-	var _hoisted_6$16 = {
+	var _hoisted_6$17 = {
 		key: 0,
 		class: "pl-props__empty"
 	};
@@ -24365,7 +24388,7 @@ img.ProseMirror-separator {
 							disabled: __props.readonly,
 							"aria-haspopup": "menu",
 							onClick: ($event) => menu(row.property, $event.currentTarget)
-						}, [(0, vue.createVNode)(PropertyIcon_default, { type: row.property.type }, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(row.property.name), 1)], 8, _hoisted_3$20), (0, vue.createElementVNode)("div", _hoisted_4$20, [
+						}, [(0, vue.createVNode)(PropertyIcon_default, { type: row.property.type }, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(row.property.name), 1)], 8, _hoisted_3$21), (0, vue.createElementVNode)("div", _hoisted_4$21, [
 							(0, vue.createCommentVNode)(" Not a button: a link in it is pressed on its own. "),
 							(0, vue.createElementVNode)("div", {
 								class: (0, vue.normalizeClass)(["pl-props__value", {
@@ -24380,12 +24403,12 @@ img.ProseMirror-separator {
 								"data-value": row.property.id,
 								onClick: ($event) => edit(row.property, $event),
 								onKeydown: ($event) => onValueKey(row.property, $event)
-							}, [row.empty ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$16, (0, vue.toDisplayString)((0, vue.unref)(strings$3).empty), 1)) : ((0, vue.openBlock)(), (0, vue.createBlock)(ValueView_default, {
+							}, [row.empty ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$17, (0, vue.toDisplayString)((0, vue.unref)(strings$3).empty), 1)) : ((0, vue.openBlock)(), (0, vue.createBlock)(ValueView_default, {
 								key: 1,
 								property: row.property,
 								item: __props.item,
 								wrap: ""
-							}, null, 8, ["property", "item"]))], 42, _hoisted_5$19),
+							}, null, 8, ["property", "item"]))], 42, _hoisted_5$20),
 							row.url ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(mango).ui.components.IconButton), {
 								key: 0,
 								size: "sm",
@@ -24395,7 +24418,7 @@ img.ProseMirror-separator {
 								default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "external-link" })]),
 								_: 1
 							}, 8, ["label", "onClick"])) : (0, vue.createCommentVNode)("v-if", true)
-						])], 40, _hoisted_2$22);
+						])], 40, _hoisted_2$24);
 					}), 128)),
 					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 0,
@@ -24424,43 +24447,43 @@ img.ProseMirror-separator {
 						onClose: _cache[2] || (_cache[2] = ($event) => addAnchor.value = null),
 						onAdded
 					}, null, 8, ["collection-id", "anchor"])) : (0, vue.createCommentVNode)("v-if", true)
-				], 8, _hoisted_1$24);
+				], 8, _hoisted_1$27);
 			};
 		}
 	}), [["__scopeId", "data-v-02d7aab5"]]);
 	// plugins/planner/src/item/ItemPage.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$23 = ["aria-label"];
-	var _hoisted_2$21 = { class: "pl-page__head" };
-	var _hoisted_3$19 = { class: "pl-page__chat" };
-	var _hoisted_4$19 = { class: "pl-page__col" };
-	var _hoisted_5$18 = ["data-text"];
-	var _hoisted_6$15 = [
+	var _hoisted_1$26 = ["aria-label"];
+	var _hoisted_2$23 = { class: "pl-page__head" };
+	var _hoisted_3$20 = { class: "pl-page__chat" };
+	var _hoisted_4$20 = { class: "pl-page__col" };
+	var _hoisted_5$19 = ["data-text"];
+	var _hoisted_6$16 = [
 		"value",
 		"readonly",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_7$15 = ["aria-label"];
-	var _hoisted_8$14 = ["title", "onClick"];
-	var _hoisted_9$12 = {
+	var _hoisted_7$16 = ["aria-label"];
+	var _hoisted_8$15 = ["title", "onClick"];
+	var _hoisted_9$14 = {
 		key: 1,
 		class: "pl-chat__open is-gone"
 	};
-	var _hoisted_10$11 = {
+	var _hoisted_10$13 = {
 		key: 0,
 		class: "pl-chat"
 	};
-	var _hoisted_11$8 = {
+	var _hoisted_11$9 = {
 		key: 1,
 		class: "pl-page__note",
 		role: "status"
 	};
-	var _hoisted_12$7 = { class: "pl-page__sub" };
-	var _hoisted_13$5 = {
+	var _hoisted_12$8 = { class: "pl-page__sub" };
+	var _hoisted_13$6 = {
 		key: 1,
 		class: "pl-page__sub"
 	};
-	var _hoisted_14$3 = { class: "pl-page__sub" };
+	var _hoisted_14$4 = { class: "pl-page__sub" };
 	// plugins/planner/src/item/ItemPage.vue
 	var ItemPage_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ItemPage",
@@ -24478,7 +24501,7 @@ img.ProseMirror-separator {
 			const { Button, IconButton, ThreadDot } = mango.ui.components;
 			const state = (0, vue.computed)(() => store.items(props.collection.id));
 			const item = (0, vue.computed)(() => store.item(props.collection.id, props.itemId));
-			const readonly = (0, vue.computed)(() => store.sourceStatus.value.readonly);
+			const readonly = (0, vue.computed)(() => store.statusOf(props.collection.id).readonly);
 			const root = (0, vue.ref)(null);
 			const titleEl = (0, vue.ref)(null);
 			const body = (0, vue.ref)(null);
@@ -24588,7 +24611,7 @@ img.ProseMirror-separator {
 					class: (0, vue.normalizeClass)(["pl-page", `is-${__props.mode}`]),
 					tabindex: "-1",
 					"aria-label": (0, vue.unref)(strings$3).page((0, vue.unref)(itemWord)(__props.collection, 1), item.value?.title ?? "")
-				}, [(0, vue.createElementVNode)("header", _hoisted_2$21, [
+				}, [(0, vue.createElementVNode)("header", _hoisted_2$23, [
 					__props.mode === "full" ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 						key: 0,
 						label: (0, vue.unref)(strings$3).back(collectionName.value),
@@ -24619,7 +24642,7 @@ img.ProseMirror-separator {
 						size: "sm",
 						onClick: chatMenu
 					}, {
-						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", _hoisted_3$19, (0, vue.toDisplayString)(chats.value.some((c) => c.title !== null) ? (0, vue.unref)(strings$3).chats : (0, vue.unref)(strings$3).startChat), 1)]),
+						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", _hoisted_3$20, (0, vue.toDisplayString)(chats.value.some((c) => c.title !== null) ? (0, vue.unref)(strings$3).chats : (0, vue.unref)(strings$3).startChat), 1)]),
 						_: 1
 					})), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 						label: (0, vue.unref)(strings$3).more,
@@ -24634,7 +24657,7 @@ img.ProseMirror-separator {
 					ref_key: "scroller",
 					ref: scroller,
 					class: "pl-page__scroll"
-				}, [(0, vue.createElementVNode)("div", _hoisted_4$19, [
+				}, [(0, vue.createElementVNode)("div", _hoisted_4$20, [
 					(0, vue.createElementVNode)("div", {
 						class: "pl-page__title",
 						"data-text": `${item.value.title || (0, vue.unref)(strings$3).untitled} `
@@ -24649,7 +24672,7 @@ img.ProseMirror-separator {
 						onInput: setTitle,
 						onKeydown: onTitleKey,
 						onBlur: _cache[3] || (_cache[3] = ($event) => (0, vue.unref)(store).flush())
-					}, null, 40, _hoisted_6$15)], 8, _hoisted_5$18),
+					}, null, 40, _hoisted_6$16)], 8, _hoisted_5$19),
 					(0, vue.createVNode)(ItemProperties_default, {
 						collection: __props.collection,
 						item: item.value,
@@ -24673,7 +24696,7 @@ img.ProseMirror-separator {
 							class: "pl-chat__open",
 							title: (0, vue.unref)(strings$3).showChat(c.title || (0, vue.unref)(strings$3).newChatTitle),
 							onClick: ($event) => (0, vue.unref)(mango).chat.show(c.id)
-						}, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), { "thread-id": c.id }, null, 8, ["thread-id"])), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(c.title || (0, vue.unref)(strings$3).newChatTitle), 1)], 8, _hoisted_8$14)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$12, [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).chatGone), 1)])), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
+						}, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), { "thread-id": c.id }, null, 8, ["thread-id"])), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(c.title || (0, vue.unref)(strings$3).newChatTitle), 1)], 8, _hoisted_8$15)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$14, [(0, vue.createVNode)(Icon_default, { name: "message-square" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).chatGone), 1)])), !readonly.value ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							key: 2,
 							size: "sm",
 							class: "pl-chat__unlink",
@@ -24683,11 +24706,11 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "unlink" })]),
 							_: 1
 						}, 8, ["label", "onClick"])) : (0, vue.createCommentVNode)("v-if", true)]);
-					}), 128)), linkable.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("li", _hoisted_10$11, [(0, vue.createElementVNode)("button", {
+					}), 128)), linkable.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("li", _hoisted_10$13, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-chat__open is-add",
 						onClick: _cache[4] || (_cache[4] = ($event) => (0, vue.unref)(store).linkChat(__props.collection.id, item.value.id, linkable.value.id))
-					}, [(0, vue.createVNode)(Icon_default, { name: "link" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).linkActive(linkable.value.title || (0, vue.unref)(strings$3).newChatTitle)), 1)])])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_7$15)) : (0, vue.createCommentVNode)("v-if", true),
+					}, [(0, vue.createVNode)(Icon_default, { name: "link" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).linkActive(linkable.value.title || (0, vue.unref)(strings$3).newChatTitle)), 1)])])) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_7$16)) : (0, vue.createCommentVNode)("v-if", true),
 					_cache[9] || (_cache[9] = (0, vue.createElementVNode)("hr", { class: "pl-page__rule" }, null, -1)),
 					((0, vue.openBlock)(), (0, vue.createBlock)(ItemBody_default, {
 						key: item.value.id,
@@ -24702,21 +24725,21 @@ img.ProseMirror-separator {
 						"item",
 						"readonly"
 					]))
-				])], 512)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_11$8, [state.value.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
+				])], 512)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_11$9, [state.value.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
 					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loadFailed), 1),
-					(0, vue.createElementVNode)("p", _hoisted_12$7, (0, vue.toDisplayString)(state.value.error), 1),
+					(0, vue.createElementVNode)("p", _hoisted_12$8, (0, vue.toDisplayString)(state.value.error), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[6] || (_cache[6] = ($event) => (0, vue.unref)(store).loadItems(__props.collection.id)) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).retry), 1)]),
 						_: 1
 					}))
-				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_13$5, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
+				], 64)) : state.value.status !== "ready" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_13$6, (0, vue.toDisplayString)((0, vue.unref)(strings$3).loading), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 2 }, [
 					(0, vue.createElementVNode)("p", null, (0, vue.toDisplayString)((0, vue.unref)(strings$3).gone((0, vue.unref)(itemWord)(__props.collection, 1))), 1),
-					(0, vue.createElementVNode)("p", _hoisted_14$3, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
+					(0, vue.createElementVNode)("p", _hoisted_14$4, (0, vue.toDisplayString)((0, vue.unref)(strings$3).goneBody), 1),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), { onClick: _cache[7] || (_cache[7] = ($event) => emit("close")) }, {
 						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$3).backToCollection), 1)]),
 						_: 1
 					}))
-				], 64))]))], 10, _hoisted_1$23);
+				], 64))]))], 10, _hoisted_1$26);
 			};
 		}
 	}), [["__scopeId", "data-v-8c609c4b"]]);
@@ -25152,6 +25175,13 @@ img.ProseMirror-separator {
 		deleteConfirm: (name) => `Delete ${name}?`,
 		deleteBody: (n, c) => n ? `Its ${n === 1 ? `${itemWord(c, 1)} goes` : `${n} ${itemWord(c, n)} go`} with it. You can undo this right after.` : "You can undo this right after.",
 		deleteLabel: "Delete",
+		moveTo: (place) => `Move to ${place}`,
+		moveHereTitle: (name) => `Move ${name} to this computer?`,
+		moveHereBody: (place) => `It leaves ${place}: nobody else connected to it sees it any more.`,
+		moveLabel: "Move",
+		moved: (name, place) => `${name} moved to ${place}`,
+		place: "Kept on",
+		keptOn: (place) => `Kept on ${place}`,
 		undo: (what) => what ? `Undo ${what}` : "Undo",
 		redo: (what) => what ? `Redo ${what}` : "Redo",
 		views: "Views",
@@ -25236,37 +25266,37 @@ img.ProseMirror-separator {
 		addAndOpen: "Add and open"
 	};
 	// plugins/planner/src/shell/PickList.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$22 = { class: "pl-pick" };
-	var _hoisted_2$20 = {
+	var _hoisted_1$25 = { class: "pl-pick" };
+	var _hoisted_2$22 = {
 		key: 0,
 		class: "pl-pick__search"
 	};
-	var _hoisted_3$18 = [
+	var _hoisted_3$19 = [
 		"aria-activedescendant",
 		"aria-label",
 		"placeholder"
 	];
-	var _hoisted_4$18 = {
+	var _hoisted_4$19 = {
 		key: 1,
 		class: "pl-pick__none"
 	};
-	var _hoisted_5$17 = [
+	var _hoisted_5$18 = [
 		"aria-label",
 		"aria-multiselectable",
 		"tabindex",
 		"aria-activedescendant"
 	];
-	var _hoisted_6$14 = {
+	var _hoisted_6$15 = {
 		key: 0,
 		class: "pl-pick__sep",
 		role: "presentation"
 	};
-	var _hoisted_7$14 = {
+	var _hoisted_7$15 = {
 		key: 1,
 		class: "pl-pick__group",
 		role: "presentation"
 	};
-	var _hoisted_8$13 = [
+	var _hoisted_8$14 = [
 		"id",
 		"aria-selected",
 		"data-rid",
@@ -25276,8 +25306,8 @@ img.ProseMirror-separator {
 		"onClick",
 		"onContextmenu"
 	];
-	var _hoisted_9$11 = { class: "pl-panel__label" };
-	var _hoisted_10$10 = {
+	var _hoisted_9$13 = { class: "pl-panel__label" };
+	var _hoisted_10$12 = {
 		key: 0,
 		class: "pl-pick__aside"
 	};
@@ -25389,8 +25419,8 @@ img.ProseMirror-separator {
 			});
 			__expose({ focus });
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$22, [
-					__props.search ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$20, [(0, vue.createVNode)(Icon_default, { name: "search" }), (0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$25, [
+					__props.search ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$22, [(0, vue.createVNode)(Icon_default, { name: "search" }), (0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 						ref_key: "input",
 						ref: input,
 						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => query.value = $event),
@@ -25405,8 +25435,8 @@ img.ProseMirror-separator {
 						autocomplete: "off",
 						spellcheck: "false",
 						onKeydown: onKey
-					}, null, 40, _hoisted_3$18), [[vue.vModelText, query.value]])])) : (0, vue.createCommentVNode)("v-if", true),
-					none.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_4$18, (0, vue.toDisplayString)((0, vue.unref)(shell).nothingFound), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					}, null, 40, _hoisted_3$19), [[vue.vModelText, query.value]])])) : (0, vue.createCommentVNode)("v-if", true),
+					none.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_4$19, (0, vue.toDisplayString)((0, vue.unref)(shell).nothingFound), 1)) : (0, vue.createCommentVNode)("v-if", true),
 					(0, vue.createElementVNode)("div", {
 						id: uid,
 						ref_key: "list",
@@ -25421,8 +25451,8 @@ img.ProseMirror-separator {
 						onKeydown: _cache[2] || (_cache[2] = ($event) => !__props.search && onKey($event))
 					}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(shown.value, (r, i) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: r.id }, [
-							divided(i) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_6$14)) : (0, vue.createCommentVNode)("v-if", true),
-							heading(i) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$14, (0, vue.toDisplayString)(heading(i)), 1)) : (0, vue.createCommentVNode)("v-if", true),
+							divided(i) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_6$15)) : (0, vue.createCommentVNode)("v-if", true),
+							heading(i) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$15, (0, vue.toDisplayString)(heading(i)), 1)) : (0, vue.createCommentVNode)("v-if", true),
 							(0, vue.createElementVNode)("div", {
 								id: `${uid}-${i}`,
 								class: (0, vue.normalizeClass)(["pl-panel__row pl-pick__row", [{ "is-active": i === active.value }, classes(r)]]),
@@ -25440,17 +25470,17 @@ img.ProseMirror-separator {
 								}), ["prevent"])
 							}, [
 								(0, vue.renderSlot)(_ctx.$slots, "icon", { row: r }, void 0, true),
-								(0, vue.renderSlot)(_ctx.$slots, "default", { row: r }, () => [(0, vue.createElementVNode)("span", _hoisted_9$11, (0, vue.toDisplayString)(r.label), 1)], true),
-								r.aside ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$10, (0, vue.toDisplayString)(r.aside), 1)) : (0, vue.createCommentVNode)("v-if", true),
+								(0, vue.renderSlot)(_ctx.$slots, "default", { row: r }, () => [(0, vue.createElementVNode)("span", _hoisted_9$13, (0, vue.toDisplayString)(r.label), 1)], true),
+								r.aside ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$12, (0, vue.toDisplayString)(r.aside), 1)) : (0, vue.createCommentVNode)("v-if", true),
 								r.checked ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 									key: 1,
 									name: "check",
 									class: "pl-pick__check"
 								})) : (0, vue.createCommentVNode)("v-if", true),
 								(0, vue.renderSlot)(_ctx.$slots, "end", { row: r }, void 0, true)
-							], 42, _hoisted_8$13)
+							], 42, _hoisted_8$14)
 						], 64);
-					}), 128))], 44, _hoisted_5$17)
+					}), 128))], 44, _hoisted_5$18)
 				]);
 			};
 		}
@@ -25510,17 +25540,17 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-d6073789"]]);
 	// plugins/planner/src/shell/IconPicker.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$21 = { class: "pl-icons" };
-	var _hoisted_2$19 = [
+	var _hoisted_1$24 = { class: "pl-icons" };
+	var _hoisted_2$21 = [
 		"placeholder",
 		"aria-label",
 		"onKeydown"
 	];
-	var _hoisted_3$17 = {
+	var _hoisted_3$18 = {
 		key: 0,
 		class: "pl-icons__none"
 	};
-	var _hoisted_4$17 = [
+	var _hoisted_4$18 = [
 		"aria-pressed",
 		"aria-label",
 		"title",
@@ -25630,7 +25660,7 @@ img.ProseMirror-separator {
 			}
 			(0, vue.onMounted)(() => void (0, vue.nextTick)(() => input.value?.focus({ preventScroll: true })));
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$21, [
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$24, [
 					(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
 						ref_key: "input",
 						ref: input,
@@ -25642,8 +25672,8 @@ img.ProseMirror-separator {
 						autocomplete: "off",
 						spellcheck: "false",
 						onKeydown: [(0, vue.withKeys)((0, vue.withModifiers)(enterGrid, ["prevent"]), ["down"]), _cache[1] || (_cache[1] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => current.value && emit("icon", current.value), ["prevent"]), ["enter"]))]
-					}, null, 40, _hoisted_2$19), [[vue.vModelText, query.value]]),
-					!shown.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3$17, (0, vue.toDisplayString)((0, vue.unref)(shell).nothingFound), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					}, null, 40, _hoisted_2$21), [[vue.vModelText, query.value]]),
+					!shown.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3$18, (0, vue.toDisplayString)((0, vue.unref)(shell).nothingFound), 1)) : (0, vue.createCommentVNode)("v-if", true),
 					(0, vue.createElementVNode)("div", {
 						ref_key: "grid",
 						ref: grid,
@@ -25659,7 +25689,7 @@ img.ProseMirror-separator {
 							title: n.replaceAll("-", " "),
 							tabindex: n === current.value ? 0 : -1,
 							onClick: ($event) => emit("icon", n)
-						}, [(0, vue.createVNode)(Icon_default, { name: n }, null, 8, ["name"])], 10, _hoisted_4$17);
+						}, [(0, vue.createVNode)(Icon_default, { name: n }, null, 8, ["name"])], 10, _hoisted_4$18);
 					}), 128))], 544)
 				]);
 			};
@@ -25745,8 +25775,8 @@ img.ProseMirror-separator {
 		});
 	}
 	// plugins/planner/src/shell/ScopeChoice.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$20 = ["aria-label", "title"];
-	var _hoisted_2$18 = [
+	var _hoisted_1$23 = ["aria-label", "title"];
+	var _hoisted_2$20 = [
 		"aria-checked",
 		"tabindex",
 		"onClick"
@@ -25792,53 +25822,53 @@ img.ProseMirror-separator {
 						"aria-checked": model.value === id,
 						tabindex: model.value === id ? 0 : -1,
 						onClick: ($event) => model.value = id
-					}, (0, vue.toDisplayString)(label), 9, _hoisted_2$18);
-				}), 64))], 40, _hoisted_1$20)) : (0, vue.createCommentVNode)("v-if", true);
+					}, (0, vue.toDisplayString)(label), 9, _hoisted_2$20);
+				}), 64))], 40, _hoisted_1$23)) : (0, vue.createCommentVNode)("v-if", true);
 			};
 		}
 	}), [["__scopeId", "data-v-566af589"]]);
 	// plugins/planner/src/shell/CollectionSettings.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$19 = ["data-own-escape"];
-	var _hoisted_2$17 = {
+	var _hoisted_1$22 = ["data-own-escape"];
+	var _hoisted_2$19 = {
 		key: 1,
 		class: "pl-set"
 	};
-	var _hoisted_3$16 = { class: "pl-set__name" };
-	var _hoisted_4$16 = [
+	var _hoisted_3$17 = { class: "pl-set__name" };
+	var _hoisted_4$17 = [
 		"disabled",
 		"aria-label",
 		"title",
 		"aria-expanded"
 	];
-	var _hoisted_5$16 = [
+	var _hoisted_5$17 = [
 		"value",
 		"readonly",
 		"aria-label"
 	];
-	var _hoisted_6$13 = ["value", "readonly"];
-	var _hoisted_7$13 = { class: "pl-set__pair" };
-	var _hoisted_8$12 = [
+	var _hoisted_6$14 = ["value", "readonly"];
+	var _hoisted_7$14 = { class: "pl-set__pair" };
+	var _hoisted_8$13 = [
 		"value",
 		"readonly",
 		"placeholder"
 	];
-	var _hoisted_9$10 = [
+	var _hoisted_9$12 = [
 		"value",
 		"readonly",
 		"placeholder"
 	];
-	var _hoisted_10$9 = {
+	var _hoisted_10$11 = {
 		key: 0,
 		class: "pl-set__line"
 	};
-	var _hoisted_11$7 = { class: "pl-set__label" };
-	var _hoisted_12$6 = {
+	var _hoisted_11$8 = { class: "pl-set__label" };
+	var _hoisted_12$7 = {
 		key: 1,
 		class: "pl-set__part"
 	};
-	var _hoisted_13$4 = { class: "pl-set__line" };
-	var _hoisted_14$2 = { class: "pl-set__label" };
-	var _hoisted_15$2 = ["disabled"];
+	var _hoisted_13$5 = { class: "pl-set__line" };
+	var _hoisted_14$3 = { class: "pl-set__label" };
+	var _hoisted_15$3 = ["disabled"];
 	var _hoisted_16$2 = { class: "pl-set__options" };
 	var _hoisted_17$2 = { class: "pl-set__part" };
 	var _hoisted_18$1 = { class: "pl-set__line" };
@@ -25872,7 +25902,7 @@ img.ProseMirror-separator {
 			(0, vue.watch)(collection, (c) => {
 				if (!c) emit("done");
 			});
-			const readonly = (0, vue.computed)(() => store.sourceStatus.value.readonly);
+			const readonly = (0, vue.computed)(() => store.statusOf(props.collectionId).readonly);
 			(0, vue.onBeforeUnmount)(() => {
 				store.flush();
 			});
@@ -25967,8 +25997,8 @@ img.ProseMirror-separator {
 						"collection-id": __props.collectionId,
 						"property-id": editing.value,
 						onGone: back
-					}, null, 8, ["collection-id", "property-id"]))], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$17, [
-						(0, vue.createElementVNode)("div", _hoisted_3$16, [
+					}, null, 8, ["collection-id", "property-id"]))], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$19, [
+						(0, vue.createElementVNode)("div", _hoisted_3$17, [
 							(0, vue.createElementVNode)("button", {
 								type: "button",
 								class: "pl-set__icon",
@@ -25978,7 +26008,7 @@ img.ProseMirror-separator {
 								"aria-haspopup": "dialog",
 								"aria-expanded": !!iconAt.value,
 								onClick: _cache[0] || (_cache[0] = ($event) => iconAt.value = $event.currentTarget)
-							}, [(0, vue.createVNode)(CollectionIcon_default, { collection: collection.value }, null, 8, ["collection"])], 8, _hoisted_4$16),
+							}, [(0, vue.createVNode)(CollectionIcon_default, { collection: collection.value }, null, 8, ["collection"])], 8, _hoisted_4$17),
 							(0, vue.createElementVNode)("input", {
 								value: name.value,
 								type: "text",
@@ -25992,7 +26022,7 @@ img.ProseMirror-separator {
 									setName();
 								}),
 								onBlur: restoreName
-							}, null, 40, _hoisted_5$16),
+							}, null, 40, _hoisted_5$17),
 							(0, vue.createVNode)(ColorButton_default, {
 								"model-value": collection.value.color,
 								label: (0, vue.unref)(shell).colour,
@@ -26020,10 +26050,10 @@ img.ProseMirror-separator {
 									description.value = read($event);
 									setDescription();
 								})
-							}, null, 40, _hoisted_6$13)]),
+							}, null, 40, _hoisted_6$14)]),
 							_: 1
 						}, 8, ["label"])),
-						(0, vue.createElementVNode)("div", _hoisted_7$13, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
+						(0, vue.createElementVNode)("div", _hoisted_7$14, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
 							label: (0, vue.unref)(shell).itemOne,
 							for: "pl-set-one"
 						}, {
@@ -26040,7 +26070,7 @@ img.ProseMirror-separator {
 									one.value = read($event);
 									setWords();
 								})
-							}, null, 40, _hoisted_8$12)]),
+							}, null, 40, _hoisted_8$13)]),
 							_: 1
 						}, 8, ["label"])), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
 							label: (0, vue.unref)(shell).itemMany,
@@ -26059,19 +26089,19 @@ img.ProseMirror-separator {
 									many.value = read($event);
 									setWords();
 								})
-							}, null, 40, _hoisted_9$10)]),
+							}, null, 40, _hoisted_9$12)]),
 							_: 1
 						}, 8, ["label"]))]),
-						(0, vue.unref)(store).projectPath.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$9, [(0, vue.createElementVNode)("span", _hoisted_11$7, (0, vue.toDisplayString)((0, vue.unref)(shell).scope), 1), (0, vue.createVNode)(ScopeChoice_default, {
+						(0, vue.unref)(store).projectPath.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$11, [(0, vue.createElementVNode)("span", _hoisted_11$8, (0, vue.toDisplayString)((0, vue.unref)(shell).scope), 1), (0, vue.createVNode)(ScopeChoice_default, {
 							modelValue: where.value,
 							"onUpdate:modelValue": _cache[7] || (_cache[7] = ($event) => where.value = $event)
 						}, null, 8, ["modelValue"])])) : (0, vue.createCommentVNode)("v-if", true),
-						status.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_12$6, [(0, vue.createElementVNode)("div", _hoisted_13$4, [(0, vue.createElementVNode)("h3", _hoisted_14$2, (0, vue.toDisplayString)((0, vue.unref)(shell).heading((0, vue.unref)(optionWords)(status.value).many)), 1), (0, vue.createElementVNode)("button", {
+						status.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", _hoisted_12$7, [(0, vue.createElementVNode)("div", _hoisted_13$5, [(0, vue.createElementVNode)("h3", _hoisted_14$3, (0, vue.toDisplayString)((0, vue.unref)(shell).heading((0, vue.unref)(optionWords)(status.value).many)), 1), (0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-small",
 							disabled: readonly.value,
 							onClick: _cache[8] || (_cache[8] = ($event) => edit(status.value.id))
-						}, [(0, vue.createVNode)(Icon_default, { name: "pencil" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).editOptions), 1)], 8, _hoisted_15$2)]), (0, vue.createElementVNode)("p", _hoisted_16$2, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(status.value.options, (o) => {
+						}, [(0, vue.createVNode)(Icon_default, { name: "pencil" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).editOptions), 1)], 8, _hoisted_15$3)]), (0, vue.createElementVNode)("p", _hoisted_16$2, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(status.value.options, (o) => {
 							return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 								key: o.id,
 								class: "pl-set__option",
@@ -26162,7 +26192,7 @@ img.ProseMirror-separator {
 						onClose: _cache[14] || (_cache[14] = ($event) => addAt.value = null),
 						onAdded: added
 					}, null, 8, ["collection-id", "anchor"])) : (0, vue.createCommentVNode)("v-if", true)
-				], 40, _hoisted_1$19)) : (0, vue.createCommentVNode)("v-if", true);
+				], 40, _hoisted_1$22)) : (0, vue.createCommentVNode)("v-if", true);
 			};
 		}
 	}), [["__scopeId", "data-v-1d60dd00"]]);
@@ -26431,9 +26461,9 @@ img.ProseMirror-separator {
 			input.click();
 		});
 	}
-	async function importAsCollection({ mango, store }, scope) {
+	async function importAsCollection({ mango, store }, scope, place) {
 		const file = await pickCsv(mango);
-		return file ? store.importCsvAsCollection(file.text, file.name, scope) : null;
+		return file ? store.importCsvAsCollection(file.text, file.name, scope, place) : null;
 	}
 	async function importInto({ mango, store }, id) {
 		const file = await pickCsv(mango);
@@ -26514,11 +26544,19 @@ img.ProseMirror-separator {
 	/** Without what reading or asking needs: the caller composes them. The last is Delete. */
 	function collectionRows(planner, c, groupBy) {
 		const { store, go } = planner;
-		const locked = store.sourceStatus.value.readonly;
+		const locked = store.statusOf(c.id).readonly;
+		const here = store.placeOf(c.id);
 		async function duplicate(items) {
 			const made = await store.duplicateCollection(c.id, { items });
 			if (made) go({ collectionId: made.id });
 		}
+		const moves = store.places.value.filter((p) => p.id !== here).map((p) => ({
+			label: shell.moveTo(p.label),
+			icon: p.id === "local" ? "monitor" : "cloud-upload",
+			disabled: locked || !p.status.online || p.status.readonly,
+			divider: true,
+			onSelect: () => void moveTo(planner, c, p.id, p.label)
+		}));
 		return [
 			{
 				label: shell.editCollection,
@@ -26537,6 +26575,10 @@ img.ProseMirror-separator {
 				disabled: locked,
 				onSelect: () => void duplicate(true)
 			},
+			...moves.map((row, i) => i ? {
+				...row,
+				divider: false
+			} : row),
 			{
 				label: shell.deleteCollection,
 				icon: "trash-2",
@@ -26549,6 +26591,24 @@ img.ProseMirror-separator {
 	}
 	async function editCollection(planner, c, groupBy) {
 		if (await askCollectionSettings(planner, c.id, groupBy ?? null) === "remove") await removeCollection(planner, c);
+	}
+	/** Off the server, it is gone for everyone else: that is asked first. */
+	async function moveTo({ mango, store, go, route }, c, place, label) {
+		const from = store.places.value.find((p) => p.id === store.placeOf(c.id));
+		if (place === "local" && from) {
+			if (!await mango.ui.confirm({
+				title: shell.moveHereTitle(c.name || shell.unnamed),
+				body: shell.moveHereBody(from.label),
+				confirmLabel: shell.moveLabel
+			})) return;
+		}
+		const made = await store.moveCollectionTo(c.id, place);
+		if (!made) return;
+		if (route.value.collectionId === c.id) go({ collectionId: made.id });
+		mango.ui.toast({
+			title: shell.moved(made.name || shell.unnamed, label),
+			kind: "success"
+		});
 	}
 	async function removeCollection({ mango, store, go, route }, c) {
 		if (!await store.loadItems(c.id)) return mango.ui.toast({
@@ -26570,7 +26630,7 @@ img.ProseMirror-separator {
 			{
 				label: shell.importInto,
 				icon: "file-input",
-				disabled: planner.store.sourceStatus.value.readonly,
+				disabled: planner.store.statusOf(c.id).readonly,
 				onSelect: () => void importInto(planner, c.id)
 			},
 			{
@@ -26598,19 +26658,82 @@ img.ProseMirror-separator {
 			}
 		];
 	}
+	// plugins/planner/src/shell/PlaceChoice.vue?vue&type=script&setup=true&lang.ts
+	var _hoisted_1$21 = ["aria-label"];
+	var _hoisted_2$18 = [
+		"aria-checked",
+		"tabindex",
+		"title",
+		"onClick"
+	];
+	// plugins/planner/src/shell/PlaceChoice.vue
+	var PlaceChoice_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
+		__name: "PlaceChoice",
+		props: {
+			"modelValue": { required: true },
+			"modelModifiers": {}
+		},
+		emits: ["update:modelValue"],
+		setup(__props) {
+			const model = (0, vue.useModel)(__props, "modelValue");
+			const { store } = usePlanner();
+			function onKey(e) {
+				const by = {
+					ArrowLeft: -1,
+					ArrowUp: -1,
+					ArrowRight: 1,
+					ArrowDown: 1
+				}[e.key];
+				if (!by) return;
+				e.preventDefault();
+				const list = store.places.value;
+				const at = list.findIndex((p) => p.id === model.value);
+				model.value = list[(at + by + list.length) % list.length].id;
+				const group = e.currentTarget;
+				requestAnimationFrame(() => group.querySelector("[aria-checked=\"true\"]")?.focus());
+			}
+			return (_ctx, _cache) => {
+				return (0, vue.unref)(store).places.value.length > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+					key: 0,
+					class: "pl-place",
+					role: "radiogroup",
+					"aria-label": (0, vue.unref)(shell).place,
+					onKeydown: onKey
+				}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(store).places.value, (p) => {
+					return (0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+						key: p.id,
+						type: "button",
+						role: "radio",
+						class: "pl-place__one",
+						"aria-checked": model.value === p.id,
+						tabindex: model.value === p.id ? 0 : -1,
+						title: p.status.online ? void 0 : p.status.message,
+						onClick: ($event) => model.value = p.id
+					}, [(0, vue.createVNode)(Icon_default, { name: p.id === "local" ? "monitor" : p.status.online ? "cloud" : "cloud-off" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(p.label), 1)], 8, _hoisted_2$18);
+				}), 128))], 40, _hoisted_1$21)) : (0, vue.createCommentVNode)("v-if", true);
+			};
+		}
+	}), [["__scopeId", "data-v-e4b39ba4"]]);
 	// plugins/planner/src/shell/NewCollection.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$18 = ["placeholder"];
-	var _hoisted_2$16 = { class: "pl-new__part" };
-	var _hoisted_3$15 = { class: "pl-new__label" };
-	var _hoisted_4$15 = ["aria-label"];
-	var _hoisted_5$15 = [
+	var _hoisted_1$20 = ["placeholder"];
+	var _hoisted_2$17 = { class: "pl-new__part" };
+	var _hoisted_3$16 = { class: "pl-new__label" };
+	var _hoisted_4$16 = ["aria-label"];
+	var _hoisted_5$16 = [
 		"aria-checked",
 		"tabindex",
 		"onClick"
 	];
-	var _hoisted_6$12 = { class: "pl-new__name" };
-	var _hoisted_7$12 = { class: "pl-panel__label is-off" };
-	var _hoisted_8$11 = { class: "pl-new__foot" };
+	var _hoisted_6$13 = { class: "pl-new__name" };
+	var _hoisted_7$13 = { class: "pl-panel__label is-off" };
+	var _hoisted_8$12 = {
+		key: 0,
+		class: "pl-new__part"
+	};
+	var _hoisted_9$11 = { class: "pl-new__label" };
+	var _hoisted_10$10 = { class: "pl-new__foot" };
+	/** A new collection: a name, what it starts with, where it shows. Enter creates it; arrows choose the template. */
+	var PLACE_KEY = "newCollectionPlace";
 	// plugins/planner/src/shell/NewCollection.vue
 	var NewCollection_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "NewCollection",
@@ -26623,18 +26746,23 @@ img.ProseMirror-separator {
 			const name = (0, vue.ref)("");
 			const template = (0, vue.ref)("tasks");
 			const where = (0, vue.ref)(store.projectPath.value ? "project" : "everywhere");
+			const remembered = mango.storage.get(PLACE_KEY);
+			const place = (0, vue.ref)(store.places.value.some((p) => p.id === remembered) ? remembered : "local");
 			const chosen = (0, vue.computed)(() => TEMPLATES.find((t) => t.id === template.value));
 			const group = (0, vue.ref)(null);
 			function create() {
+				mango.storage.set(PLACE_KEY, place.value);
 				const made = store.createCollection({
 					name: name.value,
 					template: template.value,
-					scope: scopeOf(planner, where.value)
+					scope: scopeOf(planner, where.value),
+					place: place.value
 				});
 				if (made) emit("made", made);
 			}
 			async function load() {
-				const made = await importAsCollection(planner, scopeOf(planner, where.value));
+				mango.storage.set(PLACE_KEY, place.value);
+				const made = await importAsCollection(planner, scopeOf(planner, where.value), place.value);
 				if (!made) return;
 				if (name.value.trim()) store.updateCollection(made.id, { name: name.value.trim() });
 				emit("made", store.collection(made.id) ?? made);
@@ -26670,11 +26798,11 @@ img.ProseMirror-separator {
 							autocomplete: "off",
 							spellcheck: "false",
 							onKeydown: onKey
-						}, null, 40, _hoisted_1$18), [[vue.vModelText, name.value]])]),
+						}, null, 40, _hoisted_1$20), [[vue.vModelText, name.value]])]),
 						_: 1
 					}, 8, ["label"])),
-					(0, vue.createElementVNode)("div", _hoisted_2$16, [
-						(0, vue.createElementVNode)("span", _hoisted_3$15, (0, vue.toDisplayString)((0, vue.unref)(shell).template), 1),
+					(0, vue.createElementVNode)("div", _hoisted_2$17, [
+						(0, vue.createElementVNode)("span", _hoisted_3$16, (0, vue.toDisplayString)((0, vue.unref)(shell).template), 1),
 						(0, vue.createElementVNode)("div", {
 							ref_key: "group",
 							ref: group,
@@ -26694,25 +26822,29 @@ img.ProseMirror-separator {
 								onDblclick: create
 							}, [
 								(0, vue.createVNode)(Icon_default, { name: t.icon }, null, 8, ["name"]),
-								(0, vue.createElementVNode)("span", _hoisted_6$12, (0, vue.toDisplayString)(t.name), 1),
-								(0, vue.createElementVNode)("span", _hoisted_7$12, (0, vue.toDisplayString)(t.description), 1)
-							], 42, _hoisted_5$15);
-						}), 128))], 40, _hoisted_4$15),
+								(0, vue.createElementVNode)("span", _hoisted_6$13, (0, vue.toDisplayString)(t.name), 1),
+								(0, vue.createElementVNode)("span", _hoisted_7$13, (0, vue.toDisplayString)(t.description), 1)
+							], 42, _hoisted_5$16);
+						}), 128))], 40, _hoisted_4$16),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-small",
 							onClick: load
 						}, [(0, vue.createVNode)(Icon_default, { name: "file-input" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).importCsv), 1)])
 					]),
-					(0, vue.createElementVNode)("footer", _hoisted_8$11, [
+					(0, vue.unref)(store).places.value.length > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$12, [(0, vue.createElementVNode)("span", _hoisted_9$11, (0, vue.toDisplayString)((0, vue.unref)(shell).place), 1), (0, vue.createVNode)(PlaceChoice_default, {
+						modelValue: place.value,
+						"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => place.value = $event)
+					}, null, 8, ["modelValue"])])) : (0, vue.createCommentVNode)("v-if", true),
+					(0, vue.createElementVNode)("footer", _hoisted_10$10, [
 						(0, vue.createVNode)(ScopeChoice_default, {
 							modelValue: where.value,
-							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => where.value = $event)
+							"onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => where.value = $event)
 						}, null, 8, ["modelValue"]),
-						_cache[3] || (_cache[3] = (0, vue.createElementVNode)("span", { class: "pl-new__space" }, null, -1)),
+						_cache[4] || (_cache[4] = (0, vue.createElementVNode)("span", { class: "pl-new__space" }, null, -1)),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 							variant: "ghost",
-							onClick: _cache[2] || (_cache[2] = ($event) => emit("cancel"))
+							onClick: _cache[3] || (_cache[3] = ($event) => emit("cancel"))
 						}, {
 							default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).cancel), 1)]),
 							_: 1
@@ -26750,11 +26882,11 @@ img.ProseMirror-separator {
 		].includes(target.type);
 	}
 	// plugins/planner/src/shell/QuickAdd.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$17 = ["placeholder", "aria-label"];
-	var _hoisted_2$15 = { class: "pl-quick__in" };
-	var _hoisted_3$14 = ["aria-expanded"];
-	var _hoisted_4$14 = { class: "pl-panel__label" };
-	var _hoisted_5$14 = { class: "pl-quick__foot" };
+	var _hoisted_1$19 = ["placeholder", "aria-label"];
+	var _hoisted_2$16 = { class: "pl-quick__in" };
+	var _hoisted_3$15 = ["aria-expanded"];
+	var _hoisted_4$15 = { class: "pl-panel__label" };
+	var _hoisted_5$15 = { class: "pl-quick__foot" };
 	// plugins/planner/src/shell/QuickAdd.vue
 	var QuickAdd_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "QuickAdd",
@@ -26811,8 +26943,8 @@ img.ProseMirror-separator {
 						placeholder: (0, vue.unref)(shell).quickAddTitle,
 						"aria-label": (0, vue.unref)(shell).quickAddTitle,
 						autocomplete: "off"
-					}, null, 8, _hoisted_1$17), [[vue.vModelText, title.value]]),
-					(0, vue.createElementVNode)("div", _hoisted_2$15, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(shell).quickAddTo), 1), collection.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+					}, null, 8, _hoisted_1$19), [[vue.vModelText, title.value]]),
+					(0, vue.createElementVNode)("div", _hoisted_2$16, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(shell).quickAddTo), 1), collection.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 0,
 						type: "button",
 						class: "pl-small pl-quick__pick",
@@ -26820,9 +26952,9 @@ img.ProseMirror-separator {
 						onClick: _cache[1] || (_cache[1] = ($event) => choosing.value = !choosing.value)
 					}, [
 						(0, vue.createVNode)(CollectionIcon_default, { collection: collection.value }, null, 8, ["collection"]),
-						(0, vue.createElementVNode)("span", _hoisted_4$14, (0, vue.toDisplayString)(collection.value.name || (0, vue.unref)(shell).unnamed), 1),
+						(0, vue.createElementVNode)("span", _hoisted_4$15, (0, vue.toDisplayString)(collection.value.name || (0, vue.unref)(shell).unnamed), 1),
 						(0, vue.createVNode)(Icon_default, { name: "chevron-down" })
-					], 8, _hoisted_3$14)) : (0, vue.createCommentVNode)("v-if", true)]),
+					], 8, _hoisted_3$15)) : (0, vue.createCommentVNode)("v-if", true)]),
 					choosing.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
 						key: 0,
 						rows: rows.value,
@@ -26843,7 +26975,7 @@ img.ProseMirror-separator {
 						"placeholder",
 						"search"
 					])) : (0, vue.createCommentVNode)("v-if", true),
-					(0, vue.createElementVNode)("footer", _hoisted_5$14, [
+					(0, vue.createElementVNode)("footer", _hoisted_5$15, [
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 							variant: "ghost",
 							onClick: _cache[2] || (_cache[2] = ($event) => emit("cancel"))
@@ -26975,31 +27107,31 @@ img.ProseMirror-separator {
 		store.updateView(c.id, v.id, { sorts });
 	}
 	// plugins/planner/src/shell/ConditionEditor.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$16 = { class: "pl-cond" };
-	var _hoisted_2$14 = { class: "pl-cond__head" };
-	var _hoisted_3$13 = { class: "pl-cond__name" };
-	var _hoisted_4$13 = [
+	var _hoisted_1$18 = { class: "pl-cond" };
+	var _hoisted_2$15 = { class: "pl-cond__head" };
+	var _hoisted_3$14 = { class: "pl-cond__name" };
+	var _hoisted_4$14 = [
 		"aria-label",
 		"aria-expanded",
 		"data-autofocus"
 	];
-	var _hoisted_5$13 = ["aria-label", "title"];
-	var _hoisted_6$11 = {
+	var _hoisted_5$14 = ["aria-label", "title"];
+	var _hoisted_6$12 = {
 		key: 0,
 		class: "pl-panel__note"
 	};
-	var _hoisted_7$11 = { class: "pl-cond__option" };
-	var _hoisted_8$10 = {
+	var _hoisted_7$12 = { class: "pl-cond__option" };
+	var _hoisted_8$11 = {
 		key: 3,
 		class: "pl-cond__field"
 	};
-	var _hoisted_9$9 = ["value", "aria-label"];
-	var _hoisted_10$8 = [
+	var _hoisted_9$10 = ["value", "aria-label"];
+	var _hoisted_10$9 = [
 		"value",
 		"placeholder",
 		"aria-label"
 	];
-	var _hoisted_11$6 = [
+	var _hoisted_11$7 = [
 		"value",
 		"placeholder",
 		"aria-label"
@@ -27078,8 +27210,8 @@ img.ProseMirror-separator {
 			}
 			(0, vue.onMounted)(() => void (0, vue.nextTick)(() => field.value?.select()));
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$16, [(0, vue.createElementVNode)("div", _hoisted_2$14, [
-					(0, vue.createElementVNode)("span", _hoisted_3$13, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, __props.condition.propertyId)), 1),
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$18, [(0, vue.createElementVNode)("div", _hoisted_2$15, [
+					(0, vue.createElementVNode)("span", _hoisted_3$14, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, __props.condition.propertyId)), 1),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-small pl-cond__op",
@@ -27087,21 +27219,21 @@ img.ProseMirror-separator {
 						"aria-expanded": choosing.value,
 						"data-autofocus": kind.value === "none" ? "" : void 0,
 						onClick: _cache[0] || (_cache[0] = ($event) => choosing.value = !choosing.value)
-					}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(operatorText)(__props.condition.operator)), 1), (0, vue.createVNode)(Icon_default, { name: "chevron-down" })], 8, _hoisted_4$13),
+					}, [(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(operatorText)(__props.condition.operator)), 1), (0, vue.createVNode)(Icon_default, { name: "chevron-down" })], 8, _hoisted_4$14),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-small pl-cond__remove",
 						"aria-label": (0, vue.unref)(shell).removeFilter,
 						title: (0, vue.unref)(shell).removeFilter,
 						onClick: _cache[1] || (_cache[1] = ($event) => emit("remove"))
-					}, [(0, vue.createVNode)(Icon_default, { name: "trash-2" })], 8, _hoisted_5$13)
+					}, [(0, vue.createVNode)(Icon_default, { name: "trash-2" })], 8, _hoisted_5$14)
 				]), choosing.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
 					key: 0,
 					rows: operators.value,
 					label: (0, vue.unref)(shell).condition,
 					search: false,
 					onPick: setOperator
-				}, null, 8, ["rows", "label"])) : kind.value === "options" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [!options.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_6$11, (0, vue.toDisplayString)((0, vue.unref)(shell).noOptions), 1)) : ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
+				}, null, 8, ["rows", "label"])) : kind.value === "options" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [!options.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_6$12, (0, vue.toDisplayString)((0, vue.unref)(shell).noOptions), 1)) : ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
 					key: 1,
 					rows: options.value,
 					label: (0, vue.unref)(shell).value,
@@ -27111,7 +27243,7 @@ img.ProseMirror-separator {
 					multi: "",
 					onPick: toggle
 				}, {
-					default: (0, vue.withCtx)(({ row }) => [(0, vue.createElementVNode)("span", _hoisted_7$11, [(0, vue.createVNode)(OptionTag_default, { option: optionOf(row.id) }, null, 8, ["option"])])]),
+					default: (0, vue.withCtx)(({ row }) => [(0, vue.createElementVNode)("span", _hoisted_7$12, [(0, vue.createVNode)(OptionTag_default, { option: optionOf(row.id) }, null, 8, ["option"])])]),
 					_: 1
 				}, 8, [
 					"rows",
@@ -27124,7 +27256,7 @@ img.ProseMirror-separator {
 					label: (0, vue.unref)(shell).value,
 					search: false,
 					onPick: _cache[2] || (_cache[2] = (id) => emit("change", { value: id === "true" }))
-				}, null, 8, ["rows", "label"])) : kind.value !== "none" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$10, [kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 8, ["rows", "label"])) : kind.value !== "none" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$11, [kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 0,
 					ref_key: "field",
 					ref: field,
@@ -27135,7 +27267,7 @@ img.ProseMirror-separator {
 					"aria-label": (0, vue.unref)(shell).value,
 					onInput: _cache[3] || (_cache[3] = ($event) => setDate($event.target.value)),
 					onKeydown: _cache[4] || (_cache[4] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_9$9)) : kind.value === "number" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 40, _hoisted_9$10)) : kind.value === "number" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 1,
 					ref_key: "field",
 					ref: field,
@@ -27148,7 +27280,7 @@ img.ProseMirror-separator {
 					"aria-label": type.value === "number" ? (0, vue.unref)(shell).value : (0, vue.unref)(shell).days,
 					onInput: _cache[5] || (_cache[5] = ($event) => setNumber($event.target.value)),
 					onKeydown: _cache[6] || (_cache[6] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_10$8)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
+				}, null, 40, _hoisted_10$9)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("input", {
 					key: 2,
 					ref_key: "field",
 					ref: field,
@@ -27162,7 +27294,7 @@ img.ProseMirror-separator {
 					spellcheck: "false",
 					onInput: _cache[7] || (_cache[7] = ($event) => setText($event.target.value)),
 					onKeydown: _cache[8] || (_cache[8] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("done"), ["prevent"]), ["enter"]))
-				}, null, 40, _hoisted_11$6)), kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+				}, null, 40, _hoisted_11$7)), kind.value === "date" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 					key: 3,
 					type: "button",
 					class: "pl-small",
@@ -27172,13 +27304,13 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-f7301b42"]]);
 	// plugins/planner/src/shell/SortPanel.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$15 = { class: "pl-panel pl-sort" };
-	var _hoisted_2$13 = ["data-rid", "onKeydown"];
-	var _hoisted_3$12 = ["title", "onPointerdown"];
-	var _hoisted_4$12 = { class: "pl-panel__label" };
-	var _hoisted_5$12 = ["onClick"];
-	var _hoisted_6$10 = { class: "pl-panel__label" };
-	var _hoisted_7$10 = { class: "pl-panel__label" };
+	var _hoisted_1$17 = { class: "pl-panel pl-sort" };
+	var _hoisted_2$14 = ["data-rid", "onKeydown"];
+	var _hoisted_3$13 = ["title", "onPointerdown"];
+	var _hoisted_4$13 = { class: "pl-panel__label" };
+	var _hoisted_5$13 = ["onClick"];
+	var _hoisted_6$11 = { class: "pl-panel__label" };
+	var _hoisted_7$11 = { class: "pl-panel__label" };
 	// plugins/planner/src/shell/SortPanel.vue
 	var SortPanel_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "SortPanel",
@@ -27227,7 +27359,7 @@ img.ProseMirror-separator {
 				direction: s.direction === "asc" ? "desc" : "asc"
 			} : s));
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$15, [(0, vue.createElementVNode)("div", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$17, [(0, vue.createElementVNode)("div", {
 					ref_key: "box",
 					ref: box
 				}, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(sorts.value, (s, i) => {
@@ -27241,14 +27373,14 @@ img.ProseMirror-separator {
 							class: "pl-panel__grip",
 							title: (0, vue.unref)(shell).reorder((0, vue.unref)(propertyName)(__props.collection, s.propertyId)),
 							onPointerdown: ($event) => (0, vue.unref)(reorder).start($event, s.propertyId)
-						}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_3$12),
+						}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_3$13),
 						(0, vue.createVNode)(PropertyIcon_default, { type: typeOf(s.propertyId) }, null, 8, ["type"]),
-						(0, vue.createElementVNode)("span", _hoisted_4$12, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, s.propertyId)), 1),
+						(0, vue.createElementVNode)("span", _hoisted_4$13, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, s.propertyId)), 1),
 						(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-small",
 							onClick: ($event) => flip(s.propertyId)
-						}, [(0, vue.createVNode)(Icon_default, { name: s.direction === "asc" ? "arrow-up" : "arrow-down" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(s.direction === "asc" ? (0, vue.unref)(shell).ascending : (0, vue.unref)(shell).descending), 1)], 8, _hoisted_5$12),
+						}, [(0, vue.createVNode)(Icon_default, { name: s.direction === "asc" ? "arrow-up" : "arrow-down" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(s.direction === "asc" ? (0, vue.unref)(shell).ascending : (0, vue.unref)(shell).descending), 1)], 8, _hoisted_5$13),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							size: "sm",
 							label: (0, vue.unref)(shell).removeSort,
@@ -27257,7 +27389,7 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "x" })]),
 							_: 1
 						}, 8, ["label", "onClick"]))
-					], 42, _hoisted_2$13);
+					], 42, _hoisted_2$14);
 				}), 128))], 512), adding.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PickList_default, {
 					key: 0,
 					rows: rest.value,
@@ -27279,7 +27411,7 @@ img.ProseMirror-separator {
 						type: "button",
 						class: "pl-panel__row",
 						onClick: _cache[0] || (_cache[0] = ($event) => adding.value = true)
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_6$10, (0, vue.toDisplayString)((0, vue.unref)(shell).addSort), 1)])) : (0, vue.createCommentVNode)("v-if", true),
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_6$11, (0, vue.toDisplayString)((0, vue.unref)(shell).addSort), 1)])) : (0, vue.createCommentVNode)("v-if", true),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-panel__row",
@@ -27287,14 +27419,14 @@ img.ProseMirror-separator {
 							set([]);
 							emit("close");
 						})
-					}, [(0, vue.createVNode)(Icon_default, { name: "x" }), (0, vue.createElementVNode)("span", _hoisted_7$10, (0, vue.toDisplayString)((0, vue.unref)(shell).clearSorts), 1)])
+					}, [(0, vue.createVNode)(Icon_default, { name: "x" }), (0, vue.createElementVNode)("span", _hoisted_7$11, (0, vue.toDisplayString)((0, vue.unref)(shell).clearSorts), 1)])
 				], 64))]);
 			};
 		}
 	}), [["__scopeId", "data-v-77a26838"]]);
 	// plugins/planner/src/shell/FilterBar.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$14 = ["disabled", "title"];
-	var _hoisted_2$12 = [
+	var _hoisted_1$16 = ["disabled", "title"];
+	var _hoisted_2$13 = [
 		"data-cid",
 		"disabled",
 		"aria-expanded",
@@ -27302,35 +27434,35 @@ img.ProseMirror-separator {
 		"onClick",
 		"onKeydown"
 	];
-	var _hoisted_3$11 = { class: "pl-chip__name" };
-	var _hoisted_4$11 = { class: "pl-chip__op" };
-	var _hoisted_5$11 = {
+	var _hoisted_3$12 = { class: "pl-chip__name" };
+	var _hoisted_4$12 = { class: "pl-chip__op" };
+	var _hoisted_5$12 = {
 		key: 0,
 		class: "pl-chip__value"
 	};
-	var _hoisted_6$9 = {
+	var _hoisted_6$10 = {
 		key: 1,
 		class: "pl-chip__op"
 	};
-	var _hoisted_7$9 = [
+	var _hoisted_7$10 = [
 		"aria-label",
 		"title",
 		"onClick"
 	];
-	var _hoisted_8$9 = ["title"];
-	var _hoisted_9$8 = {
+	var _hoisted_8$10 = ["title"];
+	var _hoisted_9$9 = {
 		key: 2,
 		class: "pl-bar__sep",
 		"aria-hidden": "true"
 	};
-	var _hoisted_10$7 = [
+	var _hoisted_10$8 = [
 		"disabled",
 		"aria-label",
 		"title",
 		"onKeydown"
 	];
-	var _hoisted_11$5 = { class: "pl-chip__name" };
-	var _hoisted_12$5 = [
+	var _hoisted_11$6 = { class: "pl-chip__name" };
+	var _hoisted_12$6 = [
 		"aria-label",
 		"title",
 		"onClick"
@@ -27405,7 +27537,7 @@ img.ProseMirror-separator {
 						disabled: __props.readonly,
 						title: (0, vue.unref)(shell).matchHint,
 						onClick: _cache[0] || (_cache[0] = ($event) => (0, vue.unref)(setFilter)((0, vue.unref)(store), __props.collection, __props.view, { match: __props.view.filter.match === "and" ? "or" : "and" }))
-					}, (0, vue.toDisplayString)(__props.view.filter.match === "and" ? (0, vue.unref)(shell).matchAll : (0, vue.unref)(shell).matchAny), 9, _hoisted_1$14)) : (0, vue.createCommentVNode)("v-if", true),
+					}, (0, vue.toDisplayString)(__props.view.filter.match === "and" ? (0, vue.unref)(shell).matchAll : (0, vue.unref)(shell).matchAny), 9, _hoisted_1$16)) : (0, vue.createCommentVNode)("v-if", true),
 					((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(conditions.value, (c) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: c.id,
@@ -27425,17 +27557,17 @@ img.ProseMirror-separator {
 							onKeydown: ($event) => onDelete($event, () => !__props.readonly && remove(c.id))
 						}, [
 							(0, vue.createVNode)(PropertyIcon_default, { type: c.propertyId === (0, vue.unref)("title") ? "text" : (0, vue.unref)(propertyOf)(__props.collection, c.propertyId)?.type ?? "text" }, null, 8, ["type"]),
-							(0, vue.createElementVNode)("span", _hoisted_3$11, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, c.propertyId)), 1),
-							(0, vue.createElementVNode)("span", _hoisted_4$11, (0, vue.toDisplayString)((0, vue.unref)(operatorText)(c.operator)), 1),
-							(0, vue.unref)(conditionText)(__props.collection, c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_5$11, (0, vue.toDisplayString)((0, vue.unref)(conditionText)(__props.collection, c)), 1)) : !(0, vue.unref)(isActive)(c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$9, "…")) : (0, vue.createCommentVNode)("v-if", true)
-						], 40, _hoisted_2$12), !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+							(0, vue.createElementVNode)("span", _hoisted_3$12, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, c.propertyId)), 1),
+							(0, vue.createElementVNode)("span", _hoisted_4$12, (0, vue.toDisplayString)((0, vue.unref)(operatorText)(c.operator)), 1),
+							(0, vue.unref)(conditionText)(__props.collection, c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_5$12, (0, vue.toDisplayString)((0, vue.unref)(conditionText)(__props.collection, c)), 1)) : !(0, vue.unref)(isActive)(c) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$10, "…")) : (0, vue.createCommentVNode)("v-if", true)
+						], 40, _hoisted_2$13), !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 							key: 0,
 							type: "button",
 							class: "pl-chip__x",
 							"aria-label": (0, vue.unref)(shell).removeFilter,
 							title: (0, vue.unref)(shell).removeFilter,
 							onClick: ($event) => remove(c.id)
-						}, [(0, vue.createVNode)(Icon_default, { name: "x" })], 8, _hoisted_7$9)) : (0, vue.createCommentVNode)("v-if", true)], 2);
+						}, [(0, vue.createVNode)(Icon_default, { name: "x" })], 8, _hoisted_7$10)) : (0, vue.createCommentVNode)("v-if", true)], 2);
 					}), 128)),
 					conditions.value.length && !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 1,
@@ -27443,8 +27575,8 @@ img.ProseMirror-separator {
 						class: "pl-small",
 						title: (0, vue.unref)(shell).addFilter,
 						onClick: _cache[1] || (_cache[1] = ($event) => emit("add", $event.currentTarget))
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).filter), 1)], 8, _hoisted_8$9)) : (0, vue.createCommentVNode)("v-if", true),
-					conditions.value.length && __props.view.sorts.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$8)) : (0, vue.createCommentVNode)("v-if", true),
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).filter), 1)], 8, _hoisted_8$10)) : (0, vue.createCommentVNode)("v-if", true),
+					conditions.value.length && __props.view.sorts.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$9)) : (0, vue.createCommentVNode)("v-if", true),
 					((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(__props.view.sorts, (s) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: s.propertyId,
@@ -27458,14 +27590,14 @@ img.ProseMirror-separator {
 							title: (0, vue.unref)(shell).editSort,
 							onClick: _cache[2] || (_cache[2] = ($event) => sorting.value = $event.currentTarget),
 							onKeydown: ($event) => onDelete($event, () => !__props.readonly && (0, vue.unref)(setSorts)((0, vue.unref)(store), __props.collection, __props.view, __props.view.sorts.filter((e) => e.propertyId !== s.propertyId)))
-						}, [(0, vue.createVNode)(Icon_default, { name: s.direction === "asc" ? "arrow-up" : "arrow-down" }, null, 8, ["name"]), (0, vue.createElementVNode)("span", _hoisted_11$5, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, s.propertyId)), 1)], 40, _hoisted_10$7), !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+						}, [(0, vue.createVNode)(Icon_default, { name: s.direction === "asc" ? "arrow-up" : "arrow-down" }, null, 8, ["name"]), (0, vue.createElementVNode)("span", _hoisted_11$6, (0, vue.toDisplayString)((0, vue.unref)(propertyName)(__props.collection, s.propertyId)), 1)], 40, _hoisted_10$8), !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 							key: 0,
 							type: "button",
 							class: "pl-chip__x",
 							"aria-label": (0, vue.unref)(shell).removeSort,
 							title: (0, vue.unref)(shell).removeSort,
 							onClick: ($event) => (0, vue.unref)(setSorts)((0, vue.unref)(store), __props.collection, __props.view, __props.view.sorts.filter((e) => e.propertyId !== s.propertyId))
-						}, [(0, vue.createVNode)(Icon_default, { name: "x" })], 8, _hoisted_12$5)) : (0, vue.createCommentVNode)("v-if", true)]);
+						}, [(0, vue.createVNode)(Icon_default, { name: "x" })], 8, _hoisted_12$6)) : (0, vue.createCommentVNode)("v-if", true)]);
 					}), 128)),
 					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 3,
@@ -27508,13 +27640,13 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-c565ea5d"]]);
 	// plugins/planner/src/shell/ItemPane.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$13 = [
+	var _hoisted_1$15 = [
 		"aria-label",
 		"aria-valuenow",
 		"aria-valuemax"
 	];
 	/** The item beside the view: its left edge resizes it, and the width is kept. `overlay`: over the view, for want of room. */
-	var KEY = "itemWidth";
+	var KEY$1 = "itemWidth";
 	var DEFAULT = 440;
 	var MIN = 340;
 	/** What the view keeps beside it. */
@@ -27530,7 +27662,7 @@ img.ProseMirror-separator {
 		setup(__props) {
 			const props = __props;
 			const { mango } = usePlanner();
-			const saved = mango.storage.get(KEY);
+			const saved = mango.storage.get(KEY$1);
 			const wanted = (0, vue.ref)(typeof saved === "number" && saved >= MIN ? saved : DEFAULT);
 			const max = (0, vue.computed)(() => props.overlay ? props.available : Math.max(MIN, props.available - VIEW_MIN));
 			/** Over the view it leaves a useful part of it, or none. */
@@ -27544,7 +27676,7 @@ img.ProseMirror-separator {
 			function set(n) {
 				wanted.value = Math.round(Math.max(MIN, Math.min(n, max.value)));
 			}
-			const keep = () => mango.storage.set(KEY, wanted.value);
+			const keep = () => mango.storage.set(KEY$1, wanted.value);
 			let stop = null;
 			function start(e) {
 				if (e.button !== 0) return;
@@ -27601,11 +27733,12 @@ img.ProseMirror-separator {
 					onPointerdown: start,
 					onDblclick: reset,
 					onKeydown: onKey
-				}, null, 42, _hoisted_1$13)) : (0, vue.createCommentVNode)("v-if", true), (0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 6);
+				}, null, 42, _hoisted_1$15)) : (0, vue.createCommentVNode)("v-if", true), (0, vue.renderSlot)(_ctx.$slots, "default", {}, void 0, true)], 6);
 			};
 		}
 	}), [["__scopeId", "data-v-bf38ca5f"]]);
 	// plugins/planner/src/shell/CollectionSwitcher.vue?vue&type=script&setup=true&lang.ts
+	var _hoisted_1$14 = ["title", "aria-label"];
 	/** The collections to switch to: the project's, then those shown everywhere. Dragging a row (or Alt+arrows) reorders. */
 	var NEW = "+";
 	// plugins/planner/src/shell/CollectionSwitcher.vue
@@ -27639,6 +27772,7 @@ img.ProseMirror-separator {
 				label: shell.newCollectionRow,
 				always: true
 			}]);
+			const placeLabel = (id) => store.places.value.find((p) => p.id === store.placeOf(id))?.label ?? "";
 			/** The collections of its group: it only moves among those. */
 			const group = (id) => list.value.filter((c) => c.scope.kind === byId.value.get(id)?.scope.kind).map((c) => c.id);
 			const reorder = useReorder({
@@ -27696,8 +27830,13 @@ img.ProseMirror-separator {
 						key: 1,
 						name: "plus"
 					}))]),
-					end: (0, vue.withCtx)(({ row }) => [byId.value.get(row.id) ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
+					end: (0, vue.withCtx)(({ row }) => [byId.value.get(row.id) && (0, vue.unref)(store).placeOf(row.id) !== "local" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 						key: 0,
+						class: "pl-switch__place",
+						title: (0, vue.unref)(shell).keptOn(placeLabel(row.id)),
+						"aria-label": (0, vue.unref)(shell).keptOn(placeLabel(row.id))
+					}, [(0, vue.createVNode)(Icon_default, { name: (0, vue.unref)(store).statusOf(row.id).online ? "cloud" : "cloud-off" }, null, 8, ["name"])], 8, _hoisted_1$14)) : (0, vue.createCommentVNode)("v-if", true), byId.value.get(row.id) ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
+						key: 1,
 						size: "sm",
 						class: "pl-switch__more",
 						tabindex: "-1",
@@ -27719,11 +27858,11 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-4c31956a"]]);
 	// plugins/planner/src/shell/GroupPanel.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$12 = { class: "pl-panel pl-group" };
-	var _hoisted_2$11 = { class: "pl-panel__note" };
-	var _hoisted_3$10 = { class: "pl-panel__label" };
-	var _hoisted_4$10 = { class: "pl-panel__head" };
-	var _hoisted_5$10 = { class: "pl-panel__head" };
+	var _hoisted_1$13 = { class: "pl-panel pl-group" };
+	var _hoisted_2$12 = { class: "pl-panel__note" };
+	var _hoisted_3$11 = { class: "pl-panel__label" };
+	var _hoisted_4$11 = { class: "pl-panel__head" };
+	var _hoisted_5$11 = { class: "pl-panel__head" };
 	/** What the view is grouped by, and which groups show. */
 	var NONE = "-";
 	// plugins/planner/src/shell/GroupPanel.vue
@@ -27776,12 +27915,12 @@ img.ProseMirror-separator {
 				store.updateView(props.collection.id, props.view.id, { hiddenGroups: hidden ? now : [...now, key] });
 			}
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$12, [!usable.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createElementVNode)("p", _hoisted_2$11, (0, vue.toDisplayString)((0, vue.unref)(shell).noGroupable), 1), (0, vue.createElementVNode)("button", {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$13, [!usable.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createElementVNode)("p", _hoisted_2$12, (0, vue.toDisplayString)((0, vue.unref)(shell).noGroupable), 1), (0, vue.createElementVNode)("button", {
 					type: "button",
 					class: "pl-panel__row",
 					onClick: _cache[0] || (_cache[0] = ($event) => emit("addProperty"))
-				}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_3$10, (0, vue.toDisplayString)((0, vue.unref)(shell).addProperty), 1)])], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [
-					(0, vue.createElementVNode)("div", _hoisted_4$10, (0, vue.toDisplayString)((0, vue.unref)(shell).groupBy), 1),
+				}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_3$11, (0, vue.toDisplayString)((0, vue.unref)(shell).addProperty), 1)])], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [
+					(0, vue.createElementVNode)("div", _hoisted_4$11, (0, vue.toDisplayString)((0, vue.unref)(shell).groupBy), 1),
 					(0, vue.createVNode)(PickList_default, {
 						rows: rows.value,
 						label: (0, vue.unref)(shell).groupBy,
@@ -27801,7 +27940,7 @@ img.ProseMirror-separator {
 					}, 8, ["rows", "label"]),
 					groups.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
 						_cache[1] || (_cache[1] = (0, vue.createElementVNode)("div", { class: "pl-panel__sep" }, null, -1)),
-						(0, vue.createElementVNode)("div", _hoisted_5$10, (0, vue.toDisplayString)((0, vue.unref)(shell).groups), 1),
+						(0, vue.createElementVNode)("div", _hoisted_5$11, (0, vue.toDisplayString)((0, vue.unref)(shell).groups), 1),
 						((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(groups.value, (g) => {
 							return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 								key: g.key,
@@ -27824,29 +27963,29 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-8a1acaf9"]]);
 	// plugins/planner/src/shell/PropertiesPanel.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$11 = { class: "pl-panel pl-props" };
-	var _hoisted_2$10 = {
+	var _hoisted_1$12 = { class: "pl-panel pl-props" };
+	var _hoisted_2$11 = {
 		key: 0,
 		class: "pl-panel__note"
 	};
-	var _hoisted_3$9 = {
+	var _hoisted_3$10 = {
 		key: 1,
 		class: "pl-panel__head"
 	};
-	var _hoisted_4$9 = ["data-rid", "onKeydown"];
-	var _hoisted_5$9 = ["title", "onPointerdown"];
-	var _hoisted_6$8 = [
+	var _hoisted_4$10 = ["data-rid", "onKeydown"];
+	var _hoisted_5$10 = ["title", "onPointerdown"];
+	var _hoisted_6$9 = [
 		"aria-checked",
 		"title",
 		"onClick"
 	];
-	var _hoisted_7$8 = {
+	var _hoisted_7$9 = {
 		key: 2,
 		class: "pl-panel__sep"
 	};
-	var _hoisted_8$8 = ["aria-checked"];
-	var _hoisted_9$7 = { class: "pl-panel__label" };
-	var _hoisted_10$6 = { class: "pl-panel__label" };
+	var _hoisted_8$9 = ["aria-checked"];
+	var _hoisted_9$8 = { class: "pl-panel__label" };
+	var _hoisted_10$7 = { class: "pl-panel__label" };
 	// plugins/planner/src/shell/PropertiesPanel.vue
 	var PropertiesPanel_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "PropertiesPanel",
@@ -27891,8 +28030,8 @@ img.ProseMirror-separator {
 			}
 			const menu = (e, p) => void propertyMenu(planner, props.collection, p, e.currentTarget);
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$11, [
-					!columns.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$10, (0, vue.toDisplayString)((0, vue.unref)(shell).noProperties), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_3$9, (0, vue.toDisplayString)((0, vue.unref)(shell).shown), 1)),
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$12, [
+					!columns.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_2$11, (0, vue.toDisplayString)((0, vue.unref)(shell).noProperties), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_3$10, (0, vue.toDisplayString)((0, vue.unref)(shell).shown), 1)),
 					(0, vue.createElementVNode)("div", {
 						ref_key: "box",
 						ref: box
@@ -27907,7 +28046,7 @@ img.ProseMirror-separator {
 								class: "pl-panel__grip",
 								title: (0, vue.unref)(shell).reorder(c.property.name),
 								onPointerdown: ($event) => (0, vue.unref)(reorder).start($event, c.propertyId)
-							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_5$9),
+							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_5$10),
 							(0, vue.createElementVNode)("button", {
 								type: "button",
 								class: "pl-props__main",
@@ -27922,7 +28061,7 @@ img.ProseMirror-separator {
 									name: c.visible ? "eye" : "eye-off",
 									class: (0, vue.normalizeClass)(["pl-props__eye", { "is-off": !c.visible }])
 								}, null, 8, ["name", "class"])
-							], 8, _hoisted_6$8),
+							], 8, _hoisted_6$9),
 							((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 								size: "sm",
 								label: (0, vue.unref)(shell).propertyMenu,
@@ -27931,9 +28070,9 @@ img.ProseMirror-separator {
 								default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })]),
 								_: 1
 							}, 8, ["label", "onClick"]))
-						], 42, _hoisted_4$9);
+						], 42, _hoisted_4$10);
 					}), 128))], 512),
-					columns.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$8)) : (0, vue.createCommentVNode)("v-if", true),
+					columns.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$9)) : (0, vue.createCommentVNode)("v-if", true),
 					__props.view.type === "board" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 3,
 						type: "button",
@@ -27943,33 +28082,33 @@ img.ProseMirror-separator {
 						onClick: _cache[0] || (_cache[0] = ($event) => (0, vue.unref)(store).updateView(__props.collection.id, __props.view.id, { cardPreview: __props.view.cardPreview === "body" ? "none" : "body" }))
 					}, [
 						(0, vue.createVNode)(Icon_default, { name: "text" }),
-						(0, vue.createElementVNode)("span", _hoisted_9$7, (0, vue.toDisplayString)((0, vue.unref)(shell).bodyPreview), 1),
+						(0, vue.createElementVNode)("span", _hoisted_9$8, (0, vue.toDisplayString)((0, vue.unref)(shell).bodyPreview), 1),
 						__props.view.cardPreview === "body" ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 							key: 0,
 							name: "check",
 							class: "pl-panel__check"
 						})) : (0, vue.createCommentVNode)("v-if", true)
-					], 8, _hoisted_8$8)) : (0, vue.createCommentVNode)("v-if", true),
+					], 8, _hoisted_8$9)) : (0, vue.createCommentVNode)("v-if", true),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-panel__row",
 						onClick: _cache[1] || (_cache[1] = ($event) => emit("addProperty"))
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_10$6, (0, vue.toDisplayString)((0, vue.unref)(shell).addProperty), 1)])
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", _hoisted_10$7, (0, vue.toDisplayString)((0, vue.unref)(shell).addProperty), 1)])
 				]);
 			};
 		}
 	}), [["__scopeId", "data-v-efde5021"]]);
 	// plugins/planner/src/shell/ViewTabs.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$10 = ["aria-label", "title"];
-	var _hoisted_2$9 = { class: "pl-tab__name" };
-	var _hoisted_3$8 = {
+	var _hoisted_1$11 = ["aria-label", "title"];
+	var _hoisted_2$10 = { class: "pl-tab__name" };
+	var _hoisted_3$9 = {
 		key: 1,
 		class: "pl-tabs"
 	};
-	var _hoisted_4$8 = ["aria-label"];
-	var _hoisted_5$8 = ["data-rid", "onContextmenu"];
-	var _hoisted_6$7 = ["aria-label", "size"];
-	var _hoisted_7$7 = [
+	var _hoisted_4$9 = ["aria-label"];
+	var _hoisted_5$9 = ["data-rid", "onContextmenu"];
+	var _hoisted_6$8 = ["aria-label", "size"];
+	var _hoisted_7$8 = [
 		"aria-selected",
 		"tabindex",
 		"title",
@@ -27978,7 +28117,7 @@ img.ProseMirror-separator {
 		"onDblclick",
 		"onKeydown"
 	];
-	var _hoisted_8$7 = { class: "pl-tab__name" };
+	var _hoisted_8$8 = { class: "pl-tab__name" };
 	// plugins/planner/src/shell/ViewTabs.vue
 	var ViewTabs_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "ViewTabs",
@@ -28166,12 +28305,12 @@ img.ProseMirror-separator {
 					onClick: openAll
 				}, [
 					(0, vue.createVNode)(Icon_default, { name: iconOf(__props.view.type) }, null, 8, ["name"]),
-					(0, vue.createElementVNode)("span", _hoisted_2$9, (0, vue.toDisplayString)(nameOf(__props.view)), 1),
+					(0, vue.createElementVNode)("span", _hoisted_2$10, (0, vue.toDisplayString)(nameOf(__props.view)), 1),
 					(0, vue.createVNode)(Icon_default, {
 						name: "chevron-down",
 						class: "pl-tab__chev"
 					})
-				], 8, _hoisted_1$10)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_3$8, [(0, vue.createElementVNode)("div", {
+				], 8, _hoisted_1$11)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_3$9, [(0, vue.createElementVNode)("div", {
 					ref_key: "strip",
 					ref: strip,
 					class: "pl-tabs__strip",
@@ -28196,7 +28335,7 @@ img.ProseMirror-separator {
 						autocomplete: "off",
 						onKeydown: [_cache[1] || (_cache[1] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => commit(true), ["prevent", "stop"]), ["enter"])), _cache[2] || (_cache[2] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => commit(false), ["prevent", "stop"]), ["esc"]))],
 						onBlur: _cache[3] || (_cache[3] = ($event) => renaming.value && commit(true))
-					}, null, 40, _hoisted_6$7)), [[vue.vModelText, draft.value]]) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
+					}, null, 40, _hoisted_6$8)), [[vue.vModelText, draft.value]]) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 1,
 						type: "button",
 						class: (0, vue.normalizeClass)(["pl-tab", { "is-on": v.id === __props.view.id }]),
@@ -28208,47 +28347,47 @@ img.ProseMirror-separator {
 						onClick: ($event) => emit("pick", v.id),
 						onDblclick: ($event) => rename(v),
 						onKeydown: ($event) => onKey($event, v)
-					}, [(0, vue.createVNode)(Icon_default, { name: iconOf(v.type) }, null, 8, ["name"]), (0, vue.createElementVNode)("span", _hoisted_8$7, (0, vue.toDisplayString)(nameOf(v)), 1)], 42, _hoisted_7$7))], 42, _hoisted_5$8);
-				}), 128))], 8, _hoisted_4$8)]));
+					}, [(0, vue.createVNode)(Icon_default, { name: iconOf(v.type) }, null, 8, ["name"]), (0, vue.createElementVNode)("span", _hoisted_8$8, (0, vue.toDisplayString)(nameOf(v)), 1)], 42, _hoisted_7$8))], 42, _hoisted_5$9);
+				}), 128))], 8, _hoisted_4$9)]));
 			};
 		}
 	}), [["__scopeId", "data-v-1133ba6f"]]);
 	// plugins/planner/src/shell/PlannerHeader.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$9 = [
+	var _hoisted_1$10 = [
 		"aria-expanded",
 		"aria-label",
 		"title"
 	];
-	var _hoisted_2$8 = { class: "pl-head__name" };
-	var _hoisted_3$7 = {
+	var _hoisted_2$9 = { class: "pl-head__name" };
+	var _hoisted_3$8 = {
 		key: 0,
 		class: "pl-head__count tabular"
 	};
-	var _hoisted_4$7 = ["title"];
-	var _hoisted_5$7 = ["title"];
-	var _hoisted_6$6 = {
+	var _hoisted_4$8 = ["title"];
+	var _hoisted_5$8 = ["title"];
+	var _hoisted_6$7 = {
 		key: 3,
 		class: "pl-head__count",
 		role: "status"
 	};
-	var _hoisted_7$6 = { class: "pl-head__tools" };
-	var _hoisted_8$6 = [
+	var _hoisted_7$7 = { class: "pl-head__tools" };
+	var _hoisted_8$7 = [
 		"value",
 		"placeholder",
 		"aria-label",
 		"title"
 	];
-	var _hoisted_9$6 = {
+	var _hoisted_9$7 = {
 		key: 1,
 		class: "tabular"
 	};
-	var _hoisted_10$5 = {
+	var _hoisted_10$6 = {
 		key: 0,
 		class: "pl-head__dot",
 		"aria-hidden": "true"
 	};
-	var _hoisted_11$4 = { class: "pl-head__pad" };
-	var _hoisted_12$4 = { class: "pl-head__pad" };
+	var _hoisted_11$5 = { class: "pl-head__pad" };
+	var _hoisted_12$5 = { class: "pl-head__pad" };
 	// plugins/planner/src/shell/PlannerHeader.vue
 	var PlannerHeader_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "PlannerHeader",
@@ -28431,26 +28570,26 @@ img.ProseMirror-separator {
 						}), ["prevent"]))
 					}, [
 						(0, vue.createVNode)(CollectionIcon_default, { collection: __props.collection }, null, 8, ["collection"]),
-						(0, vue.createElementVNode)("span", _hoisted_2$8, (0, vue.toDisplayString)(__props.collection.name || (0, vue.unref)(shell).unnamed), 1),
+						(0, vue.createElementVNode)("span", _hoisted_2$9, (0, vue.toDisplayString)(__props.collection.name || (0, vue.unref)(shell).unnamed), 1),
 						(0, vue.createVNode)(Icon_default, {
 							name: "chevron-down",
 							class: "pl-head__chev"
 						})
-					], 40, _hoisted_1$9),
-					__props.count !== null && roomy.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$7, (0, vue.toDisplayString)(__props.count) + " " + (0, vue.toDisplayString)((0, vue.unref)(itemWord)(__props.collection, __props.count)), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					], 40, _hoisted_1$10),
+					__props.count !== null && roomy.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_3$8, (0, vue.toDisplayString)(__props.count) + " " + (0, vue.toDisplayString)((0, vue.unref)(itemWord)(__props.collection, __props.count)), 1)) : (0, vue.createCommentVNode)("v-if", true),
 					(0, vue.unref)(repository)?.url && wide.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 						key: 1,
 						type: "button",
 						class: "pl-head__repo",
 						title: (0, vue.unref)(shell).openRepository((0, vue.unref)(repository).label),
 						onClick: _cache[2] || (_cache[2] = ($event) => (0, vue.unref)(mango).workspace.openBrowser((0, vue.unref)(repository).url))
-					}, [(0, vue.createVNode)(Icon_default, { name: "git-branch" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(repository).label), 1)], 8, _hoisted_4$7)) : (0, vue.unref)(repository) && wide.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
+					}, [(0, vue.createVNode)(Icon_default, { name: "git-branch" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(repository).label), 1)], 8, _hoisted_4$8)) : (0, vue.unref)(repository) && wide.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 						key: 2,
 						class: "pl-head__repo is-plain",
 						title: (0, vue.unref)(shell).projectNamed((0, vue.unref)(repository).label)
-					}, [(0, vue.createVNode)(Icon_default, { name: "folder" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(repository).label), 1)], 8, _hoisted_5$7)) : (0, vue.createCommentVNode)("v-if", true),
-					__props.saving && roomy.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$6, (0, vue.toDisplayString)((0, vue.unref)(shell).saving), 1)) : (0, vue.createCommentVNode)("v-if", true),
-					(0, vue.createElementVNode)("div", _hoisted_7$6, [
+					}, [(0, vue.createVNode)(Icon_default, { name: "folder" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(repository).label), 1)], 8, _hoisted_5$8)) : (0, vue.createCommentVNode)("v-if", true),
+					__props.saving && roomy.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$7, (0, vue.toDisplayString)((0, vue.unref)(shell).saving), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					(0, vue.createElementVNode)("div", _hoisted_7$7, [
 						(0, vue.createVNode)(ViewTabs_default, {
 							ref_key: "tabs",
 							ref: tabs,
@@ -28491,7 +28630,7 @@ img.ProseMirror-separator {
 									onInput: _cache[4] || (_cache[4] = ($event) => emit("update:search", $event.target.value)),
 									onKeydown: onSearchKey,
 									onBlur: _cache[5] || (_cache[5] = ($event) => !__props.search && (searchOpen.value = false))
-								}, null, 40, _hoisted_8$6),
+								}, null, 40, _hoisted_8$7),
 								__props.search ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 									key: 0,
 									size: "sm",
@@ -28526,7 +28665,7 @@ img.ProseMirror-separator {
 								default: (0, vue.withCtx)(() => [
 									(0, vue.createVNode)(Icon_default, { name: "list-filter" }),
 									roomy.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(shell).filter), 1)], 64)) : (0, vue.createCommentVNode)("v-if", true),
-									filters.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$6, (0, vue.toDisplayString)(filters.value), 1)) : (0, vue.createCommentVNode)("v-if", true)
+									filters.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_9$7, (0, vue.toDisplayString)(filters.value), 1)) : (0, vue.createCommentVNode)("v-if", true)
 								]),
 								_: 1
 							}, 8, [
@@ -28547,7 +28686,7 @@ img.ProseMirror-separator {
 						}, {
 							default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "ellipsis" })]),
 							_: 1
-						}, 8, ["label"])), marked.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$5)) : (0, vue.createCommentVNode)("v-if", true)], 512)
+						}, 8, ["label"])), marked.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_10$6)) : (0, vue.createCommentVNode)("v-if", true)], 512)
 					]),
 					pop.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 4 }, [pop.value.name === "switch" ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
 						key: 0,
@@ -28556,7 +28695,7 @@ img.ProseMirror-separator {
 						label: (0, vue.unref)(shell).switchCollection,
 						onClose: close
 					}, {
-						default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_11$4, [(0, vue.createVNode)(CollectionSwitcher_default, {
+						default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_11$5, [(0, vue.createVNode)(CollectionSwitcher_default, {
 							"current-id": __props.collection.id,
 							onPick: _cache[10] || (_cache[10] = (c) => {
 								close();
@@ -28577,7 +28716,7 @@ img.ProseMirror-separator {
 						label: (0, vue.unref)(shell).filterBy,
 						onClose: close
 					}, {
-						default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_12$4, [(0, vue.createVNode)(PickList_default, {
+						default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("div", _hoisted_12$5, [(0, vue.createVNode)(PickList_default, {
 							rows: (0, vue.unref)(propertyRows)(__props.collection),
 							label: (0, vue.unref)(shell).filterBy,
 							placeholder: (0, vue.unref)(shell).filterBy,
@@ -28644,8 +28783,8 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-876e3a69"]]);
 	// plugins/planner/src/shell/PlannerSkeleton.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$8 = ["aria-label"];
-	var _hoisted_2$7 = {
+	var _hoisted_1$9 = ["aria-label"];
+	var _hoisted_2$8 = {
 		key: 0,
 		class: "pl-skel__head"
 	};
@@ -28675,7 +28814,7 @@ img.ProseMirror-separator {
 					class: "pl-skel",
 					role: "status",
 					"aria-label": (0, vue.unref)(strings$5).loading
-				}, [late.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [__props.head ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$7, [..._cache[0] || (_cache[0] = [(0, vue.createElementVNode)("span", {
+				}, [late.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [__props.head ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_2$8, [..._cache[0] || (_cache[0] = [(0, vue.createElementVNode)("span", {
 					class: "pl-skel__bar",
 					style: { "width": "120px" }
 				}, null, -1), (0, vue.createElementVNode)("span", {
@@ -28689,24 +28828,24 @@ img.ProseMirror-separator {
 						class: "pl-skel__bar",
 						style: (0, vue.normalizeStyle)({ width: `${w}%` })
 					}, null, 4)]);
-				}), 64))], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_1$8);
+				}), 64))], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_1$9);
 			};
 		}
 	}), [["__scopeId", "data-v-41b255dc"]]);
 	// plugins/planner/src/shell/StartScreen.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$7 = { class: "pl-start" };
-	var _hoisted_2$6 = { class: "pl-start__in" };
-	var _hoisted_3$6 = { class: "pl-start__title" };
-	var _hoisted_4$6 = { class: "pl-start__body" };
-	var _hoisted_5$6 = { class: "pl-start__head" };
-	var _hoisted_6$5 = { class: "pl-start__sub" };
-	var _hoisted_7$5 = { class: "pl-start__list" };
-	var _hoisted_8$5 = ["onClick"];
-	var _hoisted_9$5 = { class: "pl-start__name" };
-	var _hoisted_10$4 = { class: "pl-start__hint" };
-	var _hoisted_11$3 = { class: "pl-start__last" };
-	var _hoisted_12$3 = { class: "pl-start__name" };
-	var _hoisted_13$3 = { class: "pl-start__hint" };
+	var _hoisted_1$8 = { class: "pl-start" };
+	var _hoisted_2$7 = { class: "pl-start__in" };
+	var _hoisted_3$7 = { class: "pl-start__title" };
+	var _hoisted_4$7 = { class: "pl-start__body" };
+	var _hoisted_5$7 = { class: "pl-start__head" };
+	var _hoisted_6$6 = { class: "pl-start__sub" };
+	var _hoisted_7$6 = { class: "pl-start__list" };
+	var _hoisted_8$6 = ["onClick"];
+	var _hoisted_9$6 = { class: "pl-start__name" };
+	var _hoisted_10$5 = { class: "pl-start__hint" };
+	var _hoisted_11$4 = { class: "pl-start__last" };
+	var _hoisted_12$4 = { class: "pl-start__name" };
+	var _hoisted_13$4 = { class: "pl-start__hint" };
 	// plugins/planner/src/shell/StartScreen.vue
 	var StartScreen_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "StartScreen",
@@ -28729,31 +28868,31 @@ img.ProseMirror-separator {
 				if (made) emit("made", made);
 			}
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$7, [(0, vue.createElementVNode)("div", _hoisted_2$6, [
-					(0, vue.createElementVNode)("h2", _hoisted_3$6, (0, vue.toDisplayString)((0, vue.unref)(shell).start), 1),
-					(0, vue.createElementVNode)("p", _hoisted_4$6, (0, vue.toDisplayString)((0, vue.unref)(shell).startBody), 1),
-					(0, vue.createElementVNode)("div", _hoisted_5$6, [(0, vue.createElementVNode)("h3", _hoisted_6$5, (0, vue.toDisplayString)((0, vue.unref)(shell).startList), 1), (0, vue.createVNode)(ScopeChoice_default, {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$8, [(0, vue.createElementVNode)("div", _hoisted_2$7, [
+					(0, vue.createElementVNode)("h2", _hoisted_3$7, (0, vue.toDisplayString)((0, vue.unref)(shell).start), 1),
+					(0, vue.createElementVNode)("p", _hoisted_4$7, (0, vue.toDisplayString)((0, vue.unref)(shell).startBody), 1),
+					(0, vue.createElementVNode)("div", _hoisted_5$7, [(0, vue.createElementVNode)("h3", _hoisted_6$6, (0, vue.toDisplayString)((0, vue.unref)(shell).startList), 1), (0, vue.createVNode)(ScopeChoice_default, {
 						modelValue: where.value,
 						"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => where.value = $event)
 					}, null, 8, ["modelValue"])]),
-					(0, vue.createElementVNode)("ul", _hoisted_7$5, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(TEMPLATES), (t) => {
+					(0, vue.createElementVNode)("ul", _hoisted_7$6, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)((0, vue.unref)(TEMPLATES), (t) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("li", { key: t.id }, [(0, vue.createElementVNode)("button", {
 							type: "button",
 							class: "pl-start__row",
 							onClick: ($event) => create(t.id)
 						}, [
 							(0, vue.createVNode)(Icon_default, { name: t.icon }, null, 8, ["name"]),
-							(0, vue.createElementVNode)("span", _hoisted_9$5, (0, vue.toDisplayString)(t.name), 1),
-							(0, vue.createElementVNode)("span", _hoisted_10$4, (0, vue.toDisplayString)(t.description), 1)
-						], 8, _hoisted_8$5)]);
-					}), 128)), (0, vue.createElementVNode)("li", _hoisted_11$3, [(0, vue.createElementVNode)("button", {
+							(0, vue.createElementVNode)("span", _hoisted_9$6, (0, vue.toDisplayString)(t.name), 1),
+							(0, vue.createElementVNode)("span", _hoisted_10$5, (0, vue.toDisplayString)(t.description), 1)
+						], 8, _hoisted_8$6)]);
+					}), 128)), (0, vue.createElementVNode)("li", _hoisted_11$4, [(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-start__row",
 						onClick: load
 					}, [
 						(0, vue.createVNode)(Icon_default, { name: "file-input" }),
-						(0, vue.createElementVNode)("span", _hoisted_12$3, (0, vue.toDisplayString)((0, vue.unref)(shell).importCsv), 1),
-						(0, vue.createElementVNode)("span", _hoisted_13$3, (0, vue.toDisplayString)((0, vue.unref)(shell).importCsvHint), 1)
+						(0, vue.createElementVNode)("span", _hoisted_12$4, (0, vue.toDisplayString)((0, vue.unref)(shell).importCsv), 1),
+						(0, vue.createElementVNode)("span", _hoisted_13$4, (0, vue.toDisplayString)((0, vue.unref)(shell).importCsvHint), 1)
 					])])])
 				])]);
 			};
@@ -28885,24 +29024,24 @@ img.ProseMirror-separator {
 		createStatus: "Create a Status property"
 	};
 	// plugins/planner/src/views/board/BoardCard.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$6 = { class: "pl-card" };
-	var _hoisted_2$5 = { class: "pl-card__head" };
-	var _hoisted_3$5 = {
+	var _hoisted_1$7 = { class: "pl-card" };
+	var _hoisted_2$6 = { class: "pl-card__head" };
+	var _hoisted_3$6 = {
 		key: 0,
 		class: "pl-card__preview"
 	};
-	var _hoisted_4$5 = {
+	var _hoisted_4$6 = {
 		key: 1,
 		class: "pl-card__foot"
 	};
-	var _hoisted_5$5 = ["title"];
-	var _hoisted_6$4 = {
+	var _hoisted_5$6 = ["title"];
+	var _hoisted_6$5 = {
 		key: 0,
 		class: "pl-card__marks"
 	};
-	var _hoisted_7$4 = ["title"];
-	var _hoisted_8$4 = ["title"];
-	var _hoisted_9$4 = ["title"];
+	var _hoisted_7$5 = ["title"];
+	var _hoisted_8$5 = ["title"];
+	var _hoisted_9$5 = ["title"];
 	// plugins/planner/src/views/board/BoardCard.vue
 	var BoardCard_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "BoardCard",
@@ -28926,14 +29065,14 @@ img.ProseMirror-separator {
 			/** The newest linked chat that is still there. */
 			const chat = (0, vue.computed)(() => props.item.chats.findLast((id) => mango.chat.get(id)) ?? null);
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$6, [
-					(0, vue.createElementVNode)("div", _hoisted_2$5, [__props.item.icon ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$7, [
+					(0, vue.createElementVNode)("div", _hoisted_2$6, [__props.item.icon ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 						key: 0,
 						name: __props.item.icon,
 						class: "pl-card__icon"
 					}, null, 8, ["name"])) : (0, vue.createCommentVNode)("v-if", true), (0, vue.createElementVNode)("span", { class: (0, vue.normalizeClass)(["pl-card__title", { "is-untitled": !__props.item.title }]) }, (0, vue.toDisplayString)(__props.item.title || (0, vue.unref)(strings$5).untitled), 3)]),
-					preview.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3$5, (0, vue.toDisplayString)(preview.value), 1)) : (0, vue.createCommentVNode)("v-if", true),
-					values.value.length || hasText.value || tasks.value || chat.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_4$5, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(values.value, (p) => {
+					preview.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3$6, (0, vue.toDisplayString)(preview.value), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					values.value.length || hasText.value || tasks.value || chat.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_4$6, [((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(values.value, (p) => {
 						return (0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: p.id,
 							class: "pl-card__value",
@@ -28941,18 +29080,18 @@ img.ProseMirror-separator {
 						}, [(0, vue.createVNode)(ValueView_default, {
 							property: p,
 							item: __props.item
-						}, null, 8, ["property", "item"]), p.type === "checkbox" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(p.name), 1)], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_5$5);
-					}), 128)), hasText.value || tasks.value || chat.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$4, [
+						}, null, 8, ["property", "item"]), p.type === "checkbox" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(p.name), 1)], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_5$6);
+					}), 128)), hasText.value || tasks.value || chat.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_6$5, [
 						hasText.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: 0,
 							class: "pl-card__mark",
 							title: (0, vue.unref)(strings$1).hasText
-						}, [(0, vue.createVNode)(Icon_default, { name: "align-left" })], 8, _hoisted_7$4)) : (0, vue.createCommentVNode)("v-if", true),
+						}, [(0, vue.createVNode)(Icon_default, { name: "align-left" })], 8, _hoisted_7$5)) : (0, vue.createCommentVNode)("v-if", true),
 						tasks.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: 1,
 							class: "pl-card__mark",
 							title: (0, vue.unref)(strings$1).tasks(tasks.value.done, tasks.value.all)
-						}, [(0, vue.createVNode)(Icon_default, { name: "square-check" }), (0, vue.createTextVNode)((0, vue.toDisplayString)(tasks.value.done) + "/" + (0, vue.toDisplayString)(tasks.value.all), 1)], 8, _hoisted_8$4)) : (0, vue.createCommentVNode)("v-if", true),
+						}, [(0, vue.createVNode)(Icon_default, { name: "square-check" }), (0, vue.createTextVNode)((0, vue.toDisplayString)(tasks.value.done) + "/" + (0, vue.toDisplayString)(tasks.value.all), 1)], 8, _hoisted_8$5)) : (0, vue.createCommentVNode)("v-if", true),
 						chat.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", {
 							key: 2,
 							class: "pl-card__mark",
@@ -28960,14 +29099,14 @@ img.ProseMirror-separator {
 						}, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), {
 							"thread-id": chat.value,
 							size: 11
-						}, null, 8, ["thread-id"])), __props.item.chats.length > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(__props.item.chats.length), 1)], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_9$4)) : (0, vue.createCommentVNode)("v-if", true)
+						}, null, 8, ["thread-id"])), __props.item.chats.length > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(__props.item.chats.length), 1)], 64)) : (0, vue.createCommentVNode)("v-if", true)], 8, _hoisted_9$5)) : (0, vue.createCommentVNode)("v-if", true)
 					])) : (0, vue.createCommentVNode)("v-if", true)])) : (0, vue.createCommentVNode)("v-if", true)
 				]);
 			};
 		}
 	}), [["__scopeId", "data-v-3272d10e"]]);
 	// plugins/planner/src/views/board/InlineInput.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$5 = [
+	var _hoisted_1$6 = [
 		"aria-label",
 		"placeholder",
 		"title"
@@ -29045,37 +29184,37 @@ img.ProseMirror-separator {
 					title: __props.hint,
 					onKeydown: onKey,
 					onBlur
-				}, null, 40, _hoisted_1$5)), [[vue.vModelText, text.value]]);
+				}, null, 40, _hoisted_1$6)), [[vue.vModelText, text.value]]);
 			};
 		}
 	}), [["__scopeId", "data-v-aa8f18f2"]]);
 	// plugins/planner/src/views/board/BoardColumn.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$4 = ["data-col", "data-sortable"];
-	var _hoisted_2$4 = [
+	var _hoisted_1$5 = ["data-col", "data-sortable"];
+	var _hoisted_2$5 = [
 		"data-group",
 		"aria-label",
 		"title"
 	];
-	var _hoisted_3$4 = { class: "pl-col__count" };
-	var _hoisted_4$4 = { class: "pl-col__vertical" };
-	var _hoisted_5$4 = [
+	var _hoisted_3$5 = { class: "pl-col__count" };
+	var _hoisted_4$5 = { class: "pl-col__vertical" };
+	var _hoisted_5$5 = [
 		"data-col",
 		"data-sortable",
 		"aria-label"
 	];
-	var _hoisted_6$3 = ["title"];
-	var _hoisted_7$3 = { class: "pl-col__count" };
-	var _hoisted_8$3 = {
+	var _hoisted_6$4 = ["title"];
+	var _hoisted_7$4 = { class: "pl-col__count" };
+	var _hoisted_8$4 = {
 		key: 0,
 		class: "pl-col__top"
 	};
-	var _hoisted_9$3 = ["data-group", "aria-label"];
-	var _hoisted_10$3 = [
+	var _hoisted_9$4 = ["data-group", "aria-label"];
+	var _hoisted_10$4 = [
 		"role",
 		"aria-multiselectable",
 		"aria-label"
 	];
-	var _hoisted_11$2 = [
+	var _hoisted_11$3 = [
 		"aria-selected",
 		"aria-posinset",
 		"aria-setsize",
@@ -29083,11 +29222,11 @@ img.ProseMirror-separator {
 		"data-card",
 		"data-group"
 	];
-	var _hoisted_12$2 = {
+	var _hoisted_12$3 = {
 		key: 0,
 		class: "pl-col__foot"
 	};
-	var _hoisted_13$2 = ["data-group", "aria-label"];
+	var _hoisted_13$3 = ["data-group", "aria-label"];
 	var STEP = 60;
 	// plugins/planner/src/views/board/BoardColumn.vue
 	var BoardColumn_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
@@ -29197,9 +29336,9 @@ img.ProseMirror-separator {
 					onClick: _cache[0] || (_cache[0] = ($event) => emit("expand"))
 				}, [
 					_cache[11] || (_cache[11] = (0, vue.createElementVNode)("span", { class: "pl-col__dot" }, null, -1)),
-					(0, vue.createElementVNode)("span", _hoisted_3$4, (0, vue.toDisplayString)(__props.group.items.length), 1),
-					(0, vue.createElementVNode)("span", _hoisted_4$4, (0, vue.toDisplayString)(__props.name), 1)
-				], 8, _hoisted_2$4)], 14, _hoisted_1$4)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", {
+					(0, vue.createElementVNode)("span", _hoisted_3$5, (0, vue.toDisplayString)(__props.group.items.length), 1),
+					(0, vue.createElementVNode)("span", _hoisted_4$5, (0, vue.toDisplayString)(__props.name), 1)
+				], 8, _hoisted_2$5)], 14, _hoisted_1$5)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("section", {
 					key: 1,
 					class: (0, vue.normalizeClass)(["pl-col", { "is-lit": __props.over && !__props.gap && !bare.value }]),
 					style: (0, vue.normalizeStyle)(colours.value),
@@ -29229,8 +29368,8 @@ img.ProseMirror-separator {
 						(0, vue.createElementVNode)("span", {
 							class: "pl-col__name",
 							title: __props.name
-						}, (0, vue.toDisplayString)(__props.name), 9, _hoisted_6$3),
-						(0, vue.createElementVNode)("span", _hoisted_7$3, (0, vue.toDisplayString)(__props.group.items.length), 1),
+						}, (0, vue.toDisplayString)(__props.name), 9, _hoisted_6$4),
+						(0, vue.createElementVNode)("span", _hoisted_7$4, (0, vue.toDisplayString)(__props.group.items.length), 1),
 						_cache[12] || (_cache[12] = (0, vue.createElementVNode)("span", { class: "pl-col__spring" }, null, -1)),
 						!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 							key: 0,
@@ -29260,7 +29399,7 @@ img.ProseMirror-separator {
 						tabindex: "-1",
 						onScrollPassive: onScroll
 					}, [
-						__props.adding === "top" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$3, [(0, vue.createVNode)(InlineInput_default, {
+						__props.adding === "top" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$4, [(0, vue.createVNode)(InlineInput_default, {
 							label: (0, vue.unref)(strings$1).newItemIn(one.value, __props.name),
 							placeholder: (0, vue.unref)(strings$1).itemTitle,
 							hint: (0, vue.unref)(strings$1).addHint,
@@ -29280,7 +29419,7 @@ img.ProseMirror-separator {
 							"data-group": __props.group.key,
 							"aria-label": (0, vue.unref)(strings$1).newItemIn(one.value, __props.name),
 							onClick: _cache[7] || (_cache[7] = ($event) => emit("startAdd", "top"))
-						}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$1).dropHere(many.value)), 1)], 10, _hoisted_9$3)) : (0, vue.createCommentVNode)("v-if", true),
+						}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings$1).dropHere(many.value)), 1)], 10, _hoisted_9$4)) : (0, vue.createCommentVNode)("v-if", true),
 						(0, vue.createElementVNode)("div", {
 							class: (0, vue.normalizeClass)(["pl-col__list", {
 								"is-long": __props.group.items.length > STEP,
@@ -29319,10 +29458,10 @@ img.ProseMirror-separator {
 								"collection",
 								"view",
 								"item"
-							])], 10, _hoisted_11$2);
-						}), 128))], 14, _hoisted_10$3)
+							])], 10, _hoisted_11$3);
+						}), 128))], 14, _hoisted_10$4)
 					], 544),
-					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("footer", _hoisted_12$2, [__props.adding === "end" ? ((0, vue.openBlock)(), (0, vue.createBlock)(InlineInput_default, {
+					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("footer", _hoisted_12$3, [__props.adding === "end" ? ((0, vue.openBlock)(), (0, vue.createBlock)(InlineInput_default, {
 						key: 0,
 						label: (0, vue.unref)(strings$1).newItemIn(one.value, __props.name),
 						placeholder: (0, vue.unref)(strings$1).itemTitle,
@@ -29342,8 +29481,8 @@ img.ProseMirror-separator {
 						"data-group": __props.group.key,
 						"aria-label": (0, vue.unref)(strings$1).newItemIn(one.value, __props.name),
 						onClick: _cache[10] || (_cache[10] = ($event) => emit("startAdd", "end"))
-					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$1).newItem(one.value)), 1)], 8, _hoisted_13$2))])) : (0, vue.createCommentVNode)("v-if", true)
-				], 14, _hoisted_5$4));
+					}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$1).newItem(one.value)), 1)], 8, _hoisted_13$3))])) : (0, vue.createCommentVNode)("v-if", true)
+				], 14, _hoisted_5$5));
 			};
 		}
 	}), [["__scopeId", "data-v-c62c38e3"]]);
@@ -29645,37 +29784,37 @@ img.ProseMirror-separator {
 		};
 	}
 	// plugins/planner/src/views/board/BoardView.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$3 = {
+	var _hoisted_1$4 = {
 		key: 0,
 		class: "pl-setup"
 	};
-	var _hoisted_2$3 = { class: "pl-setup__box" };
-	var _hoisted_3$3 = ["id"];
-	var _hoisted_4$3 = { class: "pl-setup__body" };
-	var _hoisted_5$3 = ["aria-labelledby"];
-	var _hoisted_6$2 = ["onClick"];
-	var _hoisted_7$2 = {
+	var _hoisted_2$4 = { class: "pl-setup__box" };
+	var _hoisted_3$4 = ["id"];
+	var _hoisted_4$4 = { class: "pl-setup__body" };
+	var _hoisted_5$4 = ["aria-labelledby"];
+	var _hoisted_6$3 = ["onClick"];
+	var _hoisted_7$3 = {
 		key: 1,
 		class: "pl-board"
 	};
-	var _hoisted_8$2 = ["aria-label"];
-	var _hoisted_9$2 = {
+	var _hoisted_8$3 = ["aria-label"];
+	var _hoisted_9$3 = {
 		key: 0,
 		class: "pl-board__end"
 	};
-	var _hoisted_10$2 = {
+	var _hoisted_10$3 = {
 		key: 0,
 		class: "pl-board__add"
 	};
-	var _hoisted_11$1 = { class: "pl-board__hidden" };
-	var _hoisted_12$1 = ["title"];
-	var _hoisted_13$1 = { class: "pl-board__count" };
-	var _hoisted_14$1 = {
+	var _hoisted_11$2 = { class: "pl-board__hidden" };
+	var _hoisted_12$2 = ["title"];
+	var _hoisted_13$2 = { class: "pl-board__count" };
+	var _hoisted_14$2 = {
 		class: "sr-only",
 		role: "status",
 		"aria-live": "polite"
 	};
-	var _hoisted_15$1 = {
+	var _hoisted_15$2 = {
 		key: 0,
 		class: "pl-ghost__count"
 	};
@@ -30428,12 +30567,12 @@ img.ProseMirror-separator {
 			});
 			const pickId = (0, vue.useId)();
 			return (_ctx, _cache) => {
-				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$3, [(0, vue.createElementVNode)("div", _hoisted_2$3, [
+				return !property.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$4, [(0, vue.createElementVNode)("div", _hoisted_2$4, [
 					(0, vue.createElementVNode)("h3", {
 						id: (0, vue.unref)(pickId),
 						class: "pl-setup__title"
-					}, (0, vue.toDisplayString)((0, vue.unref)(strings$1).groupTitle), 9, _hoisted_3$3),
-					(0, vue.createElementVNode)("p", _hoisted_4$3, (0, vue.toDisplayString)((0, vue.unref)(strings$1).groupBody), 1),
+					}, (0, vue.toDisplayString)((0, vue.unref)(strings$1).groupTitle), 9, _hoisted_3$4),
+					(0, vue.createElementVNode)("p", _hoisted_4$4, (0, vue.toDisplayString)((0, vue.unref)(strings$1).groupBody), 1),
 					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 						key: 0,
 						class: "pl-setup__list",
@@ -30445,8 +30584,8 @@ img.ProseMirror-separator {
 							type: "button",
 							class: "pl-setup__row",
 							onClick: ($event) => groupBy(p.id)
-						}, [(0, vue.createVNode)(PropertyIcon_default, { type: p.type }, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(p.name), 1)], 8, _hoisted_6$2);
-					}), 128))], 8, _hoisted_5$3)) : (0, vue.createCommentVNode)("v-if", true),
+						}, [(0, vue.createVNode)(PropertyIcon_default, { type: p.type }, null, 8, ["type"]), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(p.name), 1)], 8, _hoisted_6$3);
+					}), 128))], 8, _hoisted_5$4)) : (0, vue.createCommentVNode)("v-if", true),
 					!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 						key: 1,
 						variant: groupable.value.length ? "secondary" : "primary",
@@ -30455,7 +30594,7 @@ img.ProseMirror-separator {
 						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$1).createStatus), 1)]),
 						_: 1
 					}, 8, ["variant"])) : (0, vue.createCommentVNode)("v-if", true)
-				])])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$2, [
+				])])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_7$3, [
 					(0, vue.createElementVNode)("div", {
 						ref_key: "board",
 						ref: board,
@@ -30527,7 +30666,7 @@ img.ProseMirror-separator {
 								"onExpand"
 							]);
 						}), 128)),
-						hiddenGroups.value.length || canAddGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_9$2, [canAddGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$2, [addingGroup.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(InlineInput_default, {
+						hiddenGroups.value.length || canAddGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_9$3, [canAddGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$3, [addingGroup.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(InlineInput_default, {
 							key: 0,
 							single: "",
 							label: (0, vue.unref)(strings$1).groupName,
@@ -30540,7 +30679,7 @@ img.ProseMirror-separator {
 							class: "pl-board__addbtn",
 							"data-add-group": "",
 							onClick: _cache[0] || (_cache[0] = ($event) => addingGroup.value = true)
-						}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$1).addGroup((0, vue.unref)(optionWords)(property.value).one)), 1)]))])) : (0, vue.createCommentVNode)("v-if", true), hiddenGroups.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createElementVNode)("h3", _hoisted_11$1, (0, vue.toDisplayString)((0, vue.unref)(strings$1).hidden), 1), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(hiddenGroups.value, (g) => {
+						}, [(0, vue.createVNode)(Icon_default, { name: "plus" }), (0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$1).addGroup((0, vue.unref)(optionWords)(property.value).one)), 1)]))])) : (0, vue.createCommentVNode)("v-if", true), hiddenGroups.value.length ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createElementVNode)("h3", _hoisted_11$2, (0, vue.toDisplayString)((0, vue.unref)(strings$1).hidden), 1), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(hiddenGroups.value, (g) => {
 							return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 								key: g.key,
 								class: "pl-board__row"
@@ -30551,8 +30690,8 @@ img.ProseMirror-separator {
 								}, [isOption(g) ? ((0, vue.openBlock)(), (0, vue.createBlock)(OptionTag_default, {
 									key: 0,
 									option: g
-								}, null, 8, ["option"])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(nameOf(g)), 1)], 64))], 8, _hoisted_12$1),
-								(0, vue.createElementVNode)("span", _hoisted_13$1, (0, vue.toDisplayString)(g.items.length), 1),
+								}, null, 8, ["option"])) : ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 1 }, [(0, vue.createTextVNode)((0, vue.toDisplayString)(nameOf(g)), 1)], 64))], 8, _hoisted_12$2),
+								(0, vue.createElementVNode)("span", _hoisted_13$2, (0, vue.toDisplayString)(g.items.length), 1),
 								!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 									key: 0,
 									size: "sm",
@@ -30569,8 +30708,8 @@ img.ProseMirror-separator {
 							class: "pl-board__line",
 							style: (0, vue.normalizeStyle)({ transform: `translateX(${(0, vue.unref)(columnTarget).x}px)` })
 						}, null, 4)) : (0, vue.createCommentVNode)("v-if", true)
-					], 40, _hoisted_8$2),
-					(0, vue.createElementVNode)("div", _hoisted_14$1, (0, vue.toDisplayString)(message.value), 1),
+					], 40, _hoisted_8$3),
+					(0, vue.createElementVNode)("div", _hoisted_14$2, (0, vue.toDisplayString)(message.value), 1),
 					colouring.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(Popover_default, {
 						key: 0,
 						anchor: colouring.value.anchor,
@@ -30622,7 +30761,7 @@ img.ProseMirror-separator {
 						"collection",
 						"view",
 						"item"
-					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$1, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 6)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$1, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$1, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
+					]), draggedCount.value > 1 ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_15$2, (0, vue.toDisplayString)(draggedCount.value), 1)) : (0, vue.createCommentVNode)("v-if", true)], 6)) : draggedGroup.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_16$1, [(0, vue.createVNode)(OptionTag_default, { option: draggedGroup.value }, null, 8, ["option"]), (0, vue.createElementVNode)("span", _hoisted_17$1, (0, vue.toDisplayString)(draggedGroup.value.items.length), 1)])) : (0, vue.createCommentVNode)("v-if", true)], 4)) : (0, vue.createCommentVNode)("v-if", true)]))
 				]));
 			};
 		}
@@ -30666,14 +30805,14 @@ img.ProseMirror-separator {
 		notPasted: (n) => n === 1 ? "1 value did not fit its column" : `${n} values did not fit their columns`
 	};
 	// plugins/planner/src/views/table/BulkBar.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$2 = ["aria-label"];
-	var _hoisted_2$2 = {
+	var _hoisted_1$3 = ["aria-label"];
+	var _hoisted_2$3 = {
 		class: "pl-bulk__count",
 		role: "status"
 	};
-	var _hoisted_3$2 = ["title"];
-	var _hoisted_4$2 = ["title"];
-	var _hoisted_5$2 = ["title"];
+	var _hoisted_3$3 = ["title"];
+	var _hoisted_4$3 = ["title"];
+	var _hoisted_5$3 = ["title"];
 	// plugins/planner/src/views/table/BulkBar.vue
 	var BulkBar_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
 		__name: "BulkBar",
@@ -30712,26 +30851,26 @@ img.ProseMirror-separator {
 					"aria-label": (0, vue.unref)(strings).selectionActions((0, vue.unref)(itemWord)(__props.collection, 2)),
 					onKeydown: _cache[3] || (_cache[3] = (0, vue.withKeys)((0, vue.withModifiers)(($event) => emit("clear"), ["stop", "prevent"]), ["esc"]))
 				}, [
-					(0, vue.createElementVNode)("span", _hoisted_2$2, (0, vue.toDisplayString)((0, vue.unref)(strings).selected(__props.count, (0, vue.unref)(itemWord)(__props.collection, __props.count))), 1),
+					(0, vue.createElementVNode)("span", _hoisted_2$3, (0, vue.toDisplayString)((0, vue.unref)(strings).selected(__props.count, (0, vue.unref)(itemWord)(__props.collection, __props.count))), 1),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-bulk__btn",
 						title: (0, vue.unref)(strings).setProperty,
 						"aria-haspopup": "menu",
 						onClick: setProperty
-					}, [(0, vue.createVNode)(Icon_default, { name: "sliders-horizontal" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).setProperty), 1)], 8, _hoisted_3$2),
+					}, [(0, vue.createVNode)(Icon_default, { name: "sliders-horizontal" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).setProperty), 1)], 8, _hoisted_3$3),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-bulk__btn",
 						title: (0, vue.unref)(strings).duplicate,
 						onClick: _cache[0] || (_cache[0] = ($event) => emit("duplicate"))
-					}, [(0, vue.createVNode)(Icon_default, { name: "copy" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).duplicate), 1)], 8, _hoisted_4$2),
+					}, [(0, vue.createVNode)(Icon_default, { name: "copy" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).duplicate), 1)], 8, _hoisted_4$3),
 					(0, vue.createElementVNode)("button", {
 						type: "button",
 						class: "pl-bulk__btn is-danger",
 						title: (0, vue.unref)(strings).delete,
 						onClick: _cache[1] || (_cache[1] = ($event) => emit("delete"))
-					}, [(0, vue.createVNode)(Icon_default, { name: "trash-2" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).delete), 1)], 8, _hoisted_5$2),
+					}, [(0, vue.createVNode)(Icon_default, { name: "trash-2" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).delete), 1)], 8, _hoisted_5$3),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(IconButton)), {
 						size: "sm",
 						label: (0, vue.unref)(strings).clear,
@@ -30741,7 +30880,7 @@ img.ProseMirror-separator {
 						default: (0, vue.withCtx)(() => [(0, vue.createVNode)(Icon_default, { name: "x" })]),
 						_: 1
 					}, 8, ["label"]))
-				], 40, _hoisted_1$2);
+				], 40, _hoisted_1$3);
 			};
 		}
 	}), [["__scopeId", "data-v-18eb83c8"]]);
@@ -31047,22 +31186,22 @@ img.ProseMirror-separator {
 	}
 	var allIn = (items, result, key) => !result.groupBy || items.every((i) => groupsOf(i, result.groupBy).includes(key));
 	// plugins/planner/src/views/table/TableView.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1$1 = { class: "pl-table" };
-	var _hoisted_2$1 = [
+	var _hoisted_1$2 = { class: "pl-table" };
+	var _hoisted_2$2 = [
 		"aria-label",
 		"aria-rowcount",
 		"aria-colcount",
 		"aria-activedescendant",
 		"aria-readonly"
 	];
-	var _hoisted_3$1 = {
+	var _hoisted_3$2 = {
 		class: "pl-tr pl-tr--head",
 		role: "row",
 		"aria-rowindex": "1"
 	};
-	var _hoisted_4$1 = ["aria-label"];
-	var _hoisted_5$1 = ["aria-checked", "aria-label"];
-	var _hoisted_6$1 = [
+	var _hoisted_4$2 = ["aria-label"];
+	var _hoisted_5$2 = ["aria-checked", "aria-label"];
+	var _hoisted_6$2 = [
 		"id",
 		"aria-colindex",
 		"aria-sort",
@@ -31071,29 +31210,29 @@ img.ProseMirror-separator {
 		"onClick",
 		"onContextmenu"
 	];
-	var _hoisted_7$1 = { class: "pl-th__name" };
-	var _hoisted_8$1 = ["onPointerdown", "onDblclick"];
-	var _hoisted_9$1 = ["aria-label", "title"];
-	var _hoisted_10$1 = [
+	var _hoisted_7$2 = { class: "pl-th__name" };
+	var _hoisted_8$2 = ["onPointerdown", "onDblclick"];
+	var _hoisted_9$2 = ["aria-label", "title"];
+	var _hoisted_10$2 = [
 		"aria-rowindex",
 		"aria-selected",
 		"onContextmenu"
 	];
-	var _hoisted_11 = ["title", "onPointerdown"];
-	var _hoisted_12 = [
+	var _hoisted_11$1 = ["title", "onPointerdown"];
+	var _hoisted_12$1 = [
 		"aria-checked",
 		"aria-label",
 		"onClick"
 	];
-	var _hoisted_13 = [
+	var _hoisted_13$1 = [
 		"id",
 		"aria-colindex",
 		"aria-readonly",
 		"data-col",
 		"onMousedown"
 	];
-	var _hoisted_14 = ["title"];
-	var _hoisted_15 = [
+	var _hoisted_14$1 = ["title"];
+	var _hoisted_15$1 = [
 		"aria-label",
 		"title",
 		"onClick"
@@ -31949,7 +32088,7 @@ img.ProseMirror-separator {
 				focus
 			});
 			return (_ctx, _cache) => {
-				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$1, [
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$2, [
 					(0, vue.createElementVNode)("div", {
 						ref_key: "grid",
 						ref: grid,
@@ -31973,7 +32112,7 @@ img.ProseMirror-separator {
 						style: (0, vue.normalizeStyle)({ minWidth: `${rowWidth.value}px` }),
 						role: "presentation"
 					}, [
-						(0, vue.createElementVNode)("div", _hoisted_3$1, [
+						(0, vue.createElementVNode)("div", _hoisted_3$2, [
 							(0, vue.createElementVNode)("div", {
 								class: (0, vue.normalizeClass)(["pl-gutter", { "is-on": selection.value.size }]),
 								role: "columnheader",
@@ -31994,7 +32133,7 @@ img.ProseMirror-separator {
 							})) : selection.value.size ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 1,
 								name: "minus"
-							})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_5$1)) : (0, vue.createCommentVNode)("v-if", true)], 10, _hoisted_4$1),
+							})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_5$2)) : (0, vue.createCommentVNode)("v-if", true)], 10, _hoisted_4$2),
 							((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(cols.value, (c, i) => {
 								return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 									id: cellId(HEAD, c.id),
@@ -32022,7 +32161,7 @@ img.ProseMirror-separator {
 										type: c.field?.type ?? "text",
 										class: "pl-th__icon"
 									}, null, 8, ["type"]),
-									(0, vue.createElementVNode)("span", _hoisted_7$1, (0, vue.toDisplayString)(c.name), 1),
+									(0, vue.createElementVNode)("span", _hoisted_7$2, (0, vue.toDisplayString)(c.name), 1),
 									sortOf(c.id) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 										key: 0,
 										class: "pl-th__sort",
@@ -32035,8 +32174,8 @@ img.ProseMirror-separator {
 										onPointerdown: (0, vue.withModifiers)(($event) => resize($event, c), ["stop", "prevent"]),
 										onClick: _cache[0] || (_cache[0] = (0, vue.withModifiers)(() => {}, ["stop"])),
 										onDblclick: (0, vue.withModifiers)(($event) => setWidth(c.id, null), ["stop"])
-									}, null, 42, _hoisted_8$1)) : (0, vue.createCommentVNode)("v-if", true)
-								], 46, _hoisted_6$1);
+									}, null, 42, _hoisted_8$2)) : (0, vue.createCommentVNode)("v-if", true)
+								], 46, _hoisted_6$2);
 							}), 128)),
 							!__props.readonly ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 								key: 0,
@@ -32049,7 +32188,7 @@ img.ProseMirror-separator {
 									kind: "add",
 									anchor: $event.currentTarget
 								})
-							}, [(0, vue.createVNode)(Icon_default, { name: "plus" })], 10, _hoisted_9$1)) : (0, vue.createCommentVNode)("v-if", true)
+							}, [(0, vue.createVNode)(Icon_default, { name: "plus" })], 10, _hoisted_9$2)) : (0, vue.createCommentVNode)("v-if", true)
 						]),
 						(0, vue.createElementVNode)("div", {
 							class: "pl-body",
@@ -32079,7 +32218,7 @@ img.ProseMirror-separator {
 								title: (0, vue.unref)(strings).reorder,
 								"aria-hidden": "true",
 								onPointerdown: (0, vue.withModifiers)(($event) => dragRow($event, line), ["prevent"])
-							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_11)) : (0, vue.createCommentVNode)("v-if", true), (0, vue.createElementVNode)("button", {
+							}, [(0, vue.createVNode)(Icon_default, { name: "grip-vertical" })], 40, _hoisted_11$1)) : (0, vue.createCommentVNode)("v-if", true), (0, vue.createElementVNode)("button", {
 								type: "button",
 								class: "pl-check",
 								role: "checkbox",
@@ -32090,7 +32229,7 @@ img.ProseMirror-separator {
 							}, [(0, vue.createElementVNode)("span", { class: (0, vue.normalizeClass)(["pl-box", { "is-on": selection.value.has(line.item.id) }]) }, [selection.value.has(line.item.id) ? ((0, vue.openBlock)(), (0, vue.createBlock)(Icon_default, {
 								key: 0,
 								name: "check"
-							})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_12)], 2), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(cols.value, (c, i) => {
+							})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_12$1)], 2), ((0, vue.openBlock)(true), (0, vue.createElementBlock)(vue.Fragment, null, (0, vue.renderList)(cols.value, (c, i) => {
 								return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 									id: cellId(line.key, c.id),
 									key: c.id,
@@ -32133,7 +32272,7 @@ img.ProseMirror-separator {
 									(0, vue.createElementVNode)("span", {
 										class: (0, vue.normalizeClass)(["pl-title__text", { "is-untitled": !line.item.title }]),
 										title: line.item.title || void 0
-									}, (0, vue.toDisplayString)(line.item.title || (0, vue.unref)(strings).untitled), 11, _hoisted_14),
+									}, (0, vue.toDisplayString)(line.item.title || (0, vue.unref)(strings).untitled), 11, _hoisted_14$1),
 									line.item.chats.length ? ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(ThreadDot)), {
 										key: 1,
 										"thread-id": line.item.chats.at(-1),
@@ -32148,7 +32287,7 @@ img.ProseMirror-separator {
 										title: `${(0, vue.unref)(strings).open} (${(0, vue.unref)(openKey)})`,
 										onMousedown: _cache[2] || (_cache[2] = (0, vue.withModifiers)(() => {}, ["stop", "prevent"])),
 										onClick: (0, vue.withModifiers)(($event) => emit("open", line.item.id), ["stop"])
-									}, [(0, vue.createVNode)(Icon_default, { name: "panel-right-open" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).open), 1)], 40, _hoisted_15)
+									}, [(0, vue.createVNode)(Icon_default, { name: "panel-right-open" }), (0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)((0, vue.unref)(strings).open), 1)], 40, _hoisted_15$1)
 								], 64)) : c.field.type === "checkbox" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("button", {
 									key: 2,
 									type: "button",
@@ -32165,8 +32304,8 @@ img.ProseMirror-separator {
 								})) : (0, vue.createCommentVNode)("v-if", true)], 2)], 8, _hoisted_16)) : c.field.type === "unsupported" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("span", _hoisted_17, (0, vue.toDisplayString)((0, vue.unref)(valueText)((0, vue.unref)(valueOf)(line.item, c.field), c.field)), 1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_18, [(0, vue.createVNode)(ValueView_default, {
 									property: c.field,
 									item: line.item
-								}, null, 8, ["property", "item"])]))], 46, _hoisted_13);
-							}), 128))], 46, _hoisted_10$1)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
+								}, null, 8, ["property", "item"])]))], 46, _hoisted_13$1);
+							}), 128))], 46, _hoisted_10$2)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", {
 								key: 1,
 								class: (0, vue.normalizeClass)(["pl-tr", line.kind === "group" ? "pl-tr--group" : "pl-tr--add"]),
 								style: (0, vue.normalizeStyle)({ top: `${index * (0, vue.unref)(32)}px` }),
@@ -32245,7 +32384,7 @@ img.ProseMirror-separator {
 							style: (0, vue.normalizeStyle)({ left: `${colDrag.value.x - 1}px` }),
 							"aria-hidden": "true"
 						}, null, 4)) : (0, vue.createCommentVNode)("v-if", true)
-					], 4)], 42, _hoisted_2$1),
+					], 4)], 42, _hoisted_2$2),
 					selection.value.size && !__props.readonly ? ((0, vue.openBlock)(), (0, vue.createBlock)(BulkBar_default, {
 						key: 0,
 						collection: __props.collection,
@@ -32280,37 +32419,37 @@ img.ProseMirror-separator {
 		}
 	}), [["__scopeId", "data-v-3583e578"]]);
 	// plugins/planner/src/App.vue?vue&type=script&setup=true&lang.ts
-	var _hoisted_1 = {
+	var _hoisted_1$1 = {
 		key: 0,
 		class: "pl-fail",
 		role: "alert"
 	};
-	var _hoisted_2 = { class: "pl-fail__title" };
-	var _hoisted_3 = {
+	var _hoisted_2$1 = { class: "pl-fail__title" };
+	var _hoisted_3$1 = {
 		key: 0,
 		class: "pl-fail__body selectable"
 	};
-	var _hoisted_4 = {
+	var _hoisted_4$1 = {
 		key: 0,
 		class: "pl-note",
 		role: "status"
 	};
-	var _hoisted_5 = {
+	var _hoisted_5$1 = {
 		key: 2,
 		class: "pl-fail",
 		role: "alert"
 	};
-	var _hoisted_6 = { class: "pl-fail__title" };
-	var _hoisted_7 = {
+	var _hoisted_6$1 = { class: "pl-fail__title" };
+	var _hoisted_7$1 = {
 		key: 0,
 		class: "pl-fail__body selectable"
 	};
-	var _hoisted_8 = {
+	var _hoisted_8$1 = {
 		key: 4,
 		class: "pl-body"
 	};
-	var _hoisted_9 = ["inert"];
-	var _hoisted_10 = {
+	var _hoisted_9$1 = ["inert"];
+	var _hoisted_10$1 = {
 		key: 0,
 		class: "pl-note",
 		role: "status"
@@ -32354,7 +32493,9 @@ img.ProseMirror-separator {
 				return c && (viewOf(c, route.value.viewId) ?? viewOf(c, props.store.lastView(c.id)) ?? c.views[0] ?? null);
 			});
 			const list = (0, vue.computed)(() => collection.value ? props.store.items(collection.value.id) : null);
-			const readonly = (0, vue.computed)(() => sourceStatus.value.readonly);
+			/** Of the place the collection on screen lives in. */
+			const here = (0, vue.computed)(() => collection.value ? props.store.statusOf(collection.value.id) : sourceStatus.value);
+			const readonly = (0, vue.computed)(() => here.value.readonly);
 			(0, vue.watchEffect)(() => {
 				const id = route.value.collectionId;
 				if (id && props.store.lastCollection() !== id) props.store.rememberCollection(id);
@@ -32468,7 +32609,7 @@ img.ProseMirror-separator {
 				else slow.value = false;
 			});
 			const banner = (0, vue.computed)(() => {
-				const s = sourceStatus.value;
+				const s = here.value;
 				if (!s.online) return {
 					icon: "cloud-off",
 					title: shell.offline,
@@ -32524,9 +32665,9 @@ img.ProseMirror-separator {
 					class: "pl-app",
 					"data-own-find": "",
 					tabindex: "-1"
-				}, [(0, vue.unref)(status) === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1, [
-					(0, vue.createElementVNode)("p", _hoisted_2, (0, vue.toDisplayString)((0, vue.unref)(strings$5).loadFailed), 1),
-					(0, vue.unref)(error) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3, (0, vue.toDisplayString)((0, vue.unref)(error)), 1)) : (0, vue.createCommentVNode)("v-if", true),
+				}, [(0, vue.unref)(status) === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1$1, [
+					(0, vue.createElementVNode)("p", _hoisted_2$1, (0, vue.toDisplayString)((0, vue.unref)(strings$5).loadFailed), 1),
+					(0, vue.unref)(error) ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_3$1, (0, vue.toDisplayString)((0, vue.unref)(error)), 1)) : (0, vue.createCommentVNode)("v-if", true),
 					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 						size: "sm",
 						onClick: _cache[0] || (_cache[0] = ($event) => __props.store.load())
@@ -32569,7 +32710,7 @@ img.ProseMirror-separator {
 						"width",
 						"covered"
 					]),
-					banner.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_4, [
+					banner.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_4$1, [
 						(0, vue.createVNode)(Icon_default, { name: banner.value.icon }, null, 8, ["name"]),
 						(0, vue.createElementVNode)("strong", null, (0, vue.toDisplayString)(banner.value.title), 1),
 						(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(banner.value.body), 1)
@@ -32587,9 +32728,9 @@ img.ProseMirror-separator {
 						"view",
 						"readonly"
 					])) : (0, vue.createCommentVNode)("v-if", true),
-					list.value?.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_5, [
-						(0, vue.createElementVNode)("p", _hoisted_6, (0, vue.toDisplayString)((0, vue.unref)(shell).itemsFailed((0, vue.unref)(itemWord)(collection.value, 2))), 1),
-						list.value.error ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_7, (0, vue.toDisplayString)(list.value.error), 1)) : (0, vue.createCommentVNode)("v-if", true),
+					list.value?.status === "error" ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_5$1, [
+						(0, vue.createElementVNode)("p", _hoisted_6$1, (0, vue.toDisplayString)((0, vue.unref)(shell).itemsFailed((0, vue.unref)(itemWord)(collection.value, 2))), 1),
+						list.value.error ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", _hoisted_7$1, (0, vue.toDisplayString)(list.value.error), 1)) : (0, vue.createCommentVNode)("v-if", true),
 						((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
 							size: "sm",
 							onClick: _cache[3] || (_cache[3] = ($event) => __props.store.loadItems(collection.value.id))
@@ -32597,11 +32738,11 @@ img.ProseMirror-separator {
 							default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(strings$5).retry), 1)]),
 							_: 1
 						}))
-					])) : list.value?.status !== "ready" || !result.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PlannerSkeleton_default, { key: 3 })) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8, [
+					])) : list.value?.status !== "ready" || !result.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(PlannerSkeleton_default, { key: 3 })) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_8$1, [
 						(0, vue.withDirectives)((0, vue.createElementVNode)("div", {
 							class: "pl-view",
 							inert: full.value
-						}, [noMatches.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10, [
+						}, [noMatches.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$1, [
 							(0, vue.createVNode)(Icon_default, { name: "search-x" }),
 							(0, vue.createElementVNode)("span", null, (0, vue.toDisplayString)(applied.value.trim() ? (0, vue.unref)(shell).noMatchesSearch(applied.value.trim(), (0, vue.unref)(itemWord)(collection.value, 2)) : (0, vue.unref)(shell).noMatches((0, vue.unref)(itemWord)(collection.value, 2))), 1),
 							(0, vue.createElementVNode)("button", {
@@ -32628,7 +32769,7 @@ img.ProseMirror-separator {
 							"search",
 							"readonly",
 							"open-item-id"
-						]))], 8, _hoisted_9), [[vue.vShow, !full.value]]),
+						]))], 8, _hoisted_9$1), [[vue.vShow, !full.value]]),
 						(0, vue.createVNode)(vue.Transition, { name: "pl-page" }, {
 							default: (0, vue.withCtx)(() => [item.value && full.value ? ((0, vue.openBlock)(), (0, vue.createBlock)(ItemPage_default, {
 								key: 0,
@@ -32667,180 +32808,6 @@ img.ProseMirror-separator {
 			};
 		}
 	}), [["__scopeId", "data-v-7a7a37b1"]]);
-	// plugins/planner/src/csv.ts
-	/** Collections as CSV and Markdown, and CSV read back. Pure functions; the store runs them. */
-	/** What a spreadsheet would run as a formula. Such a cell gets a leading apostrophe, which reading takes off. */
-	var FORMULA = /^\s*[=+\-@]|^[\t\r]/;
-	var GUARDED = /^'(?=\s*[=+\-@]|[\t\r'])/;
-	function csvCell(text, isNumber = false) {
-		let t = text;
-		if (!isNumber && (FORMULA.test(t) || GUARDED.test(t))) t = `'${t}`;
-		return /[",\r\n;\t]|^\s|\s$/.test(t) ? `"${t.replaceAll("\"", "\"\"")}"` : t;
-	}
-	/** Rows of cells. Quotes, doubled quotes, line breaks in quotes; comma, semicolon or tab, whichever the first line uses. */
-	function parseCsv(source) {
-		const text = source.replace(/^﻿/, "");
-		const delimiter = detectDelimiter(text);
-		const rows = [];
-		let row = [];
-		let cell = "";
-		let quoted = false;
-		for (let i = 0; i < text.length; i++) {
-			const c = text[i];
-			if (quoted) {
-				if (c !== "\"") cell += c;
-				else if (text[i + 1] === "\"") {
-					cell += "\"";
-					i++;
-				} else quoted = false;
-			} else if (c === "\"" && cell === "") quoted = true;
-			else if (c === delimiter) {
-				row.push(cell);
-				cell = "";
-			} else if (c === "\n" || c === "\r") {
-				if (c === "\r" && text[i + 1] === "\n") i++;
-				row.push(cell);
-				rows.push(row);
-				row = [];
-				cell = "";
-			} else cell += c;
-		}
-		if (cell !== "" || row.length) {
-			row.push(cell);
-			rows.push(row);
-		}
-		return rows.filter((r) => r.some((c) => c.trim() !== "")).map((r) => r.map((c) => c.replace(GUARDED, "")));
-	}
-	function detectDelimiter(text) {
-		const counts = {
-			",": 0,
-			";": 0,
-			"	": 0
-		};
-		let quoted = false;
-		for (const c of text) if (c === "\"") quoted = !quoted;
-		else if (!quoted && (c === "\n" || c === "\r")) break;
-		else if (!quoted && c in counts) counts[c]++;
-		return Object.entries(counts).reduce((best, e) => e[1] > best[1] ? e : best)[0];
-	}
-	/** Title, properties and body, one row per item; a UTF-8 mark in front so spreadsheets read it right. */
-	function toCsv(collection, items, options = {}) {
-		const properties = options.properties ?? collection.properties;
-		return `﻿${[[
-			options.titleLabel ?? "Title",
-			...properties.map((p) => p.name),
-			options.bodyLabel ?? "Body"
-		].map((c) => csvCell(c)), ...items.map((item) => [
-			csvCell(item.title),
-			...properties.map((p) => csvCell(valueText(valueOf(item, p), p), p.type === "number")),
-			csvCell(item.body)
-		])].map((r) => r.join(",")).join("\r\n")}\r\n`;
-	}
-	var oneLine = (s) => s.replace(/\s+/g, " ").trim();
-	/** Text that must not turn into Markdown of its own. */
-	var escapeInline = (s) => oneLine(s).replace(/([\\`*_[\]<>#|])/g, "\\$1");
-	/** One item as Markdown: a heading, its properties, its body. */
-	function itemToMarkdown(collection, item, level = 1) {
-		const lines = [`${"#".repeat(level)} ${escapeInline(item.title) || "Untitled"}`, ""];
-		const props = collection.properties.map((p) => {
-			const v = valueText(valueOf(item, p), p);
-			const url = p.type === "url" ? safeUrl(v) : null;
-			return v ? `- **${escapeInline(p.name)}:** ${url ? `<${url}>` : escapeInline(v)}` : "";
-		}).filter(Boolean);
-		if (props.length) lines.push(...props, "");
-		if (item.body.trim()) lines.push(item.body.trim(), "");
-		return lines.join("\n");
-	}
-	function toMarkdown(collection, items) {
-		return [`# ${escapeInline(collection.name) || "Untitled"}\n`, ...items.map((i) => itemToMarkdown(collection, i, 2))].join("\n");
-	}
-	var TITLE_NAMES = /* @__PURE__ */ new Set([
-		"title",
-		"name",
-		"task",
-		"summary",
-		"item"
-	]);
-	var BODY_NAMES = /* @__PURE__ */ new Set([
-		"body",
-		"notes",
-		"description",
-		"content"
-	]);
-	/** The type a column's texts look like; text when they disagree. */
-	function inferType(texts) {
-		const filled = texts.map((t) => t.trim()).filter(Boolean);
-		if (!filled.length) return "text";
-		if (filled.every((t) => /^(yes|no|true|false|x)$/i.test(t))) return "checkbox";
-		if (filled.every((t) => parseNumber(t) !== null)) return "number";
-		if (filled.every((t) => parseDate(t) !== null)) return "date";
-		if (filled.every((t) => /^https?:\/\/\S+$/i.test(t))) return "url";
-		const distinct = new Set(filled.map((t) => t.toLowerCase()));
-		return filled.every((t) => t.length <= 40 && !t.includes("\n")) && distinct.size <= 12 && filled.length >= 3 && distinct.size <= filled.length / 2 ? "select" : "text";
-	}
-	/**
-	* How rows (the first is the header) come into a collection: columns go to properties of the same name, others
-	* become new ones of the type they look like. Nothing is dropped but values a typed property cannot hold.
-	*/
-	function planImport(rows, existing = []) {
-		const [head, ...body] = rows;
-		if (!head) return {
-			properties: [],
-			items: []
-		};
-		const names = head.map((h) => h.trim());
-		const lower = names.map((n) => n.toLowerCase());
-		const owned = new Set(existing.map((p) => p.name.trim().toLowerCase()));
-		const titleAt = Math.max(0, lower.findIndex((n) => TITLE_NAMES.has(n) && !owned.has(n)));
-		const bodyAt = lower.findIndex((n, i) => i !== titleAt && BODY_NAMES.has(n) && !owned.has(n));
-		const used = /* @__PURE__ */ new Set();
-		const changed = /* @__PURE__ */ new Map();
-		let lastOrder = existing.at(-1)?.order ?? null;
-		const fresh = spread(names.length);
-		const columns = names.map((name, at) => {
-			if (at === titleAt || at === bodyAt) return null;
-			const texts = body.map((r) => r[at] ?? "");
-			if (!name && texts.every((t) => !t.trim())) return null;
-			let property = existing.find((p) => !used.has(p.id) && p.name.trim().toLowerCase() === lower[at]);
-			if (!property) {
-				lastOrder = between(lastOrder, null) ?? fresh[at];
-				property = {
-					id: newId(),
-					name: name || `Column ${at + 1}`,
-					type: inferType(texts),
-					order: lastOrder,
-					options: []
-				};
-				changed.set(property.id, property);
-			}
-			used.add(property.id);
-			return {
-				at,
-				property,
-				options: new OptionSet(property.options)
-			};
-		}).filter((c) => c !== null);
-		const items = body.map((row) => {
-			const values = {};
-			for (const { at, property, options } of columns) {
-				const v = parseValue(row[at] ?? "", property.type, options);
-				if (v !== null && v !== false) values[property.id] = v;
-			}
-			return {
-				title: oneLine(row[titleAt] ?? ""),
-				body: bodyAt < 0 ? "" : row[bodyAt] ?? "",
-				values
-			};
-		});
-		for (const { property, options } of columns) if (hasOptions(property) && options.options.length > property.options.length) changed.set(property.id, {
-			...property,
-			options: options.list()
-		});
-		return {
-			properties: [...changed.values()],
-			items
-		};
-	}
 	// plugins/planner/src/data/source.ts
 	var SourceError = class extends Error {
 		kind;
@@ -32850,6 +32817,524 @@ img.ProseMirror-separator {
 			this.kind = kind;
 		}
 	};
+	/** `https://host:port/path` as the server is addressed, or null when it is not an address. */
+	function serverUrl(input) {
+		let text = input.trim();
+		if (!text) return null;
+		if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = `https://${text}`;
+		let url;
+		try {
+			url = new URL(text);
+		} catch {
+			return null;
+		}
+		if (url.protocol !== "https:" && url.protocol !== "http:" || !url.hostname || url.username || url.password) return null;
+		return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+	}
+	var SECOND = 1e3;
+	var STATUS_CONNECTING = {
+		online: false,
+		readonly: false,
+		message: "Connecting to the planner server…"
+	};
+	/** By the protocol's table of errors. */
+	function kindOfStatus(status, code) {
+		if (status === 401 || status === 403) return "refused";
+		if (status === 429 || status === 502 || status === 503 || status === 504) return "offline";
+		if (status >= 500) return "unknown";
+		if (status >= 400) return code === "unauthorized" || code === "forbidden" ? "refused" : "invalid";
+		return "unknown";
+	}
+	function isDocShape(v) {
+		if (!isObject(v)) return false;
+		return (v.kind === "collection" || v.kind === "item") && typeof v.id === "string" && typeof v.collectionId === "string" && typeof v.seq === "number" && (v.data === null || isObject(v.data));
+	}
+	function docsOf(answer) {
+		const list = isObject(answer) && Array.isArray(answer.docs) ? answer.docs : null;
+		if (!list) throw new SourceError("unknown", "The planner server answered something this version of the planner does not read.");
+		return list.filter(isDocShape).map((d) => ({
+			kind: d.kind,
+			id: d.id,
+			collectionId: d.collectionId,
+			seq: d.seq,
+			createdAt: typeof d.createdAt === "number" ? d.createdAt : 0,
+			updatedAt: typeof d.updatedAt === "number" ? d.updatedAt : 0,
+			data: d.data
+		}));
+	}
+	function chatsOf(v) {
+		const out = {};
+		if (Array.isArray(v)) v.forEach((id, i) => {
+			if (typeof id === "string" && isSafeKey(id)) out[id] = i;
+		});
+		else if (isObject(v)) {
+			for (const [id, at] of Object.entries(v)) if (isSafeKey(id)) out[id] = typeof at === "number" ? at : 0;
+		}
+		return out;
+	}
+	/** Reads `event:` / `data:` blocks out of a byte stream as it comes. */
+	var EventReader = class {
+		buffer = "";
+		event = "";
+		data = [];
+		emit;
+		constructor(emit) {
+			this.emit = emit;
+		}
+		push(text) {
+			this.buffer += text;
+			for (;;) {
+				const at = this.buffer.search(/\r\n|\r|\n/);
+				if (at < 0) return;
+				const line = this.buffer.slice(0, at);
+				this.buffer = this.buffer.slice(at + (this.buffer.startsWith("\r\n", at) ? 2 : 1));
+				this.line(line);
+			}
+		}
+		line(line) {
+			if (line === "") {
+				if (this.data.length) this.emit(this.event || "message", this.data.join("\n"));
+				this.event = "";
+				this.data = [];
+				return;
+			}
+			if (line.startsWith(":")) return;
+			const colon = line.indexOf(":");
+			const field = colon < 0 ? line : line.slice(0, colon);
+			const value = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+			if (field === "event") this.event = value;
+			else if (field === "data") this.data.push(value);
+		}
+	};
+	/** Asks the server who it is and what this token may do. Throws a `SourceError` otherwise. */
+	async function hello(config, fetcher = globalThis.fetch, timeoutMs = 15 * SECOND) {
+		return checkHello(await request(config, fetcher, timeoutMs, "GET", "/v1/hello"));
+	}
+	function checkHello(answer) {
+		const a = isObject(answer) ? answer : {};
+		const space = isObject(a.space) ? a.space : {};
+		if (typeof a.protocol !== "number" || typeof space.id !== "string") throw new SourceError("invalid", "That address does not answer like a planner server.");
+		if (a.protocol !== 1) throw new SourceError("invalid", `The planner server speaks version ${a.protocol} of the protocol, this planner 1. Update the older one.`);
+		return {
+			protocol: a.protocol,
+			server: typeof a.server === "string" ? a.server : "",
+			space: {
+				id: space.id,
+				name: typeof space.name === "string" && space.name ? space.name : space.id
+			},
+			role: a.role === "write" ? "write" : "read",
+			seq: typeof a.seq === "number" ? a.seq : 0
+		};
+	}
+	async function request(config, fetcher, timeoutMs, method, path, body, signal) {
+		const abort = new AbortController();
+		const timer = setTimeout(() => abort.abort(), timeoutMs);
+		const stop = () => abort.abort();
+		signal?.addEventListener("abort", stop);
+		let response;
+		try {
+			response = await fetcher(config.url + path, {
+				method,
+				headers: {
+					Authorization: `Bearer ${config.token}`,
+					...body === void 0 ? {} : { "Content-Type": "application/json" }
+				},
+				body: body === void 0 ? void 0 : JSON.stringify(body),
+				signal: abort.signal,
+				cache: "no-store",
+				credentials: "omit"
+			});
+		} catch {
+			throw new SourceError("offline", abort.signal.aborted && !signal?.aborted ? "The planner server did not answer in time." : "The planner server cannot be reached.");
+		} finally {
+			clearTimeout(timer);
+			signal?.removeEventListener("abort", stop);
+		}
+		let answer = null;
+		try {
+			answer = await response.json();
+		} catch {
+			if (response.ok) throw new SourceError("unknown", "The planner server answered something that is not JSON.");
+		}
+		if (response.ok) return answer;
+		const error = answer?.error;
+		const code = typeof error?.code === "string" ? error.code : "";
+		const message = typeof error?.message === "string" && error.message ? error.message : `The planner server answered ${response.status}.`;
+		throw new SourceError(kindOfStatus(response.status, code), message);
+	}
+	var RemoteSource = class {
+		label;
+		config;
+		host;
+		fetcher;
+		timeoutMs;
+		retryMs;
+		maxRetryMs;
+		silenceMs;
+		chatsKey;
+		current = STATUS_CONNECTING;
+		handlers = /* @__PURE__ */ new Set();
+		resyncs = /* @__PURE__ */ new Set();
+		statusHandlers = /* @__PURE__ */ new Set();
+		/** The last `seq` heard on the stream: where it goes on after a lost connection. */
+		seq = 0;
+		/** Read before the stream said where the space stands: what it missed in between is asked for then. */
+		readBefore = 0;
+		heard = false;
+		stream = null;
+		retryTimer;
+		silence;
+		failures = 0;
+		disposed = false;
+		onBrowserOnline = () => {
+			if (!this.current.online) this.reconnectSoon(0);
+		};
+		constructor(config, host, options = {}) {
+			this.config = config;
+			this.host = host;
+			this.fetcher = host.fetch ?? ((...args) => globalThis.fetch(...args));
+			this.timeoutMs = options.timeoutMs ?? 30 * SECOND;
+			this.retryMs = options.retryMs ?? SECOND;
+			this.maxRetryMs = options.maxRetryMs ?? 30 * SECOND;
+			this.silenceMs = options.silenceMs ?? 60 * SECOND;
+			this.label = new URL(config.url).host;
+			this.chatsKey = `remoteChats:${config.url}`;
+			if (typeof window !== "undefined") window.addEventListener("online", this.onBrowserOnline);
+			this.connect();
+		}
+		async loadCollections() {
+			return this.read("/v1/collections");
+		}
+		async loadItems(collectionId) {
+			return this.read(`/v1/collections/${encodeURIComponent(collectionId)}/items`);
+		}
+		async read(path) {
+			const answer = await this.call("GET", path);
+			if (!this.heard && isObject(answer) && typeof answer.seq === "number") this.readBefore = Math.max(this.readBefore, answer.seq);
+			return this.withChats(docsOf(answer));
+		}
+		async write(ops, mutationId) {
+			if (this.current.readonly) throw new SourceError("refused", this.current.message ?? "The planner server only lets this token read.");
+			const book = this.chats();
+			let changed = false;
+			const sent = ops.map((op) => {
+				if (op.kind !== "item") return op;
+				if (op.op === "create") {
+					if (op.data.chats === void 0) return op;
+					const { chats: _chats, ...data } = op.data;
+					return {
+						...op,
+						data
+					};
+				}
+				if (op.op === "patch") return {
+					...op,
+					patch: op.patch.filter((p) => p.path[0] !== "chats")
+				};
+				return op;
+			});
+			const answer = await this.call("POST", "/v1/write", {
+				mutationId,
+				ops: sent
+			});
+			for (const op of ops) {
+				if (op.kind !== "item") continue;
+				if (op.op === "create" && op.data.chats !== void 0) {
+					if (book[op.id] === void 0) {
+						const chats = chatsOf(op.data.chats);
+						if (Object.keys(chats).length) book[op.id] = chats;
+						changed = true;
+					}
+				} else if (op.op === "patch") {
+					const local = op.patch.filter((p) => p.path[0] === "chats");
+					if (!local.length) continue;
+					const next = chatsOf(applyPatch({ chats: book[op.id] ?? {} }, local).chats);
+					if (Object.keys(next).length) book[op.id] = next;
+					else delete book[op.id];
+					changed = true;
+				} else if (op.op === "delete" && book[op.id]) {
+					delete book[op.id];
+					changed = true;
+				}
+			}
+			if (changed) this.host.storage.set(this.chatsKey, book);
+			return this.withChats(docsOf(answer), book);
+		}
+		subscribe(handler, resync) {
+			this.handlers.add(handler);
+			if (resync) this.resyncs.add(resync);
+			return () => {
+				this.handlers.delete(handler);
+				if (resync) this.resyncs.delete(resync);
+			};
+		}
+		status() {
+			return this.current;
+		}
+		onStatus(handler) {
+			this.statusHandlers.add(handler);
+			return () => {
+				this.statusHandlers.delete(handler);
+			};
+		}
+		dispose() {
+			if (this.disposed) return;
+			this.disposed = true;
+			clearTimeout(this.retryTimer);
+			clearTimeout(this.silence);
+			this.stream?.abort();
+			this.handlers.clear();
+			this.resyncs.clear();
+			this.statusHandlers.clear();
+			if (typeof window !== "undefined") window.removeEventListener("online", this.onBrowserOnline);
+		}
+		async call(method, path, body) {
+			try {
+				return await request(this.config, this.fetcher, this.timeoutMs, method, path, body);
+			} catch (e) {
+				if (e instanceof SourceError && e.kind === "offline") this.reconnectSoon(0);
+				throw e;
+			}
+		}
+		setStatus(status) {
+			const c = this.current;
+			if (c.online === status.online && c.readonly === status.readonly && c.message === status.message) return;
+			this.current = status;
+			for (const h of [...this.statusHandlers]) h(status);
+		}
+		chats() {
+			const v = this.host.storage.get(this.chatsKey);
+			if (!isObject(v)) return {};
+			const out = {};
+			for (const [id, chats] of Object.entries(v)) if (isSafeKey(id)) out[id] = chatsOf(chats);
+			return out;
+		}
+		/** Items with this computer's links, and nobody else's. */
+		withChats(docs, book = this.chats()) {
+			return docs.map((d) => {
+				if (d.kind !== "item" || !d.data) return d;
+				const { chats: _theirs, ...data } = d.data;
+				return {
+					...d,
+					data: {
+						...data,
+						chats: book[d.id] ?? {}
+					}
+				};
+			});
+		}
+		deliver(docs) {
+			if (!docs.length) return;
+			const withChats = this.withChats(docs);
+			for (const h of [...this.handlers]) h(withChats);
+		}
+		resync() {
+			for (const r of [...this.resyncs]) r();
+		}
+		reconnectSoon(delay) {
+			if (this.disposed) return;
+			clearTimeout(this.retryTimer);
+			const wait = delay ?? Math.min(this.maxRetryMs, this.retryMs * 2 ** Math.max(0, this.failures - 1));
+			if (delay === 0 && this.stream) return;
+			this.retryTimer = setTimeout(() => {
+				this.connect();
+			}, wait);
+		}
+		keepAlive() {
+			clearTimeout(this.silence);
+			this.silence = setTimeout(() => this.stream?.abort(), this.silenceMs);
+		}
+		async connect() {
+			if (this.disposed || this.stream) return;
+			clearTimeout(this.retryTimer);
+			const abort = new AbortController();
+			this.stream = abort;
+			const since = this.seq;
+			let helloSeen = false;
+			let refused = false;
+			try {
+				const response = await this.fetcher(`${this.config.url}/v1/events${since ? `?since=${since}` : ""}`, {
+					headers: {
+						Authorization: `Bearer ${this.config.token}`,
+						Accept: "text/event-stream"
+					},
+					signal: abort.signal,
+					cache: "no-store",
+					credentials: "omit"
+				});
+				if (!response.ok || !response.body) {
+					let message = `The planner server answered ${response.status}.`;
+					try {
+						const error = (await response.json())?.error;
+						if (typeof error?.message === "string" && error.message) message = error.message;
+					} catch {}
+					if (response.status === 401 || response.status === 403) {
+						refused = true;
+						this.setStatus({
+							online: false,
+							readonly: true,
+							message
+						});
+					} else this.setStatus({
+						online: false,
+						readonly: false,
+						message
+					});
+					return;
+				}
+				this.keepAlive();
+				const reader = new EventReader((event, data) => {
+					let payload;
+					try {
+						payload = JSON.parse(data);
+					} catch {
+						return;
+					}
+					if (event === "hello") {
+						helloSeen = true;
+						this.greeted(checkHello(payload), since);
+					} else if (event === "docs" && isObject(payload)) {
+						const docs = docsOf(payload);
+						if (typeof payload.seq === "number") this.seq = Math.max(this.seq, payload.seq);
+						this.deliver(docs);
+					} else if (event === "resync" && isObject(payload)) {
+						if (typeof payload.seq === "number") this.seq = payload.seq;
+						this.resync();
+					}
+				});
+				const decoder = new TextDecoder();
+				const body = response.body.getReader();
+				for (;;) {
+					const { done, value } = await body.read();
+					if (done) break;
+					this.keepAlive();
+					reader.push(decoder.decode(value, { stream: true }));
+				}
+				this.setStatus({
+					online: false,
+					readonly: this.current.readonly,
+					message: "The connection to the planner server was lost."
+				});
+			} catch (e) {
+				if (!this.disposed) {
+					const message = e instanceof SourceError ? e.message : "The planner server cannot be reached.";
+					if (e instanceof SourceError && e.kind === "invalid") refused = true;
+					this.setStatus({
+						online: false,
+						readonly: this.current.readonly,
+						message
+					});
+				}
+			} finally {
+				clearTimeout(this.silence);
+				if (this.stream === abort) this.stream = null;
+				abort.abort();
+				if (!this.disposed && !refused) {
+					this.failures = helloSeen ? 1 : this.failures + 1;
+					this.reconnectSoon();
+				}
+			}
+		}
+		/** The stream is up: where the space stands, and what this token may do. */
+		greeted(h, since) {
+			this.label = h.space.name;
+			const behind = h.seq < this.seq;
+			const missed = !since && this.readBefore > 0 && this.readBefore < h.seq ? this.readBefore : 0;
+			if (!since || behind) this.seq = h.seq;
+			this.heard = true;
+			this.failures = 0;
+			this.setStatus({
+				online: true,
+				readonly: h.role !== "write",
+				...h.role !== "write" ? { message: `Your access to ${h.space.name} is read only.` } : {}
+			});
+			if (behind) this.resync();
+			else if (missed) this.catchUp(missed);
+		}
+		/** What was written between a read and the stream. */
+		async catchUp(since) {
+			try {
+				for (let from = since, more = true; more && !this.disposed;) {
+					const answer = await this.call("GET", `/v1/changes?since=${from}`);
+					if (!isObject(answer) || answer.resync === true) return this.resync();
+					this.deliver(docsOf(answer));
+					more = answer.more === true && typeof answer.seq === "number" && answer.seq > from;
+					if (typeof answer.seq === "number") from = answer.seq;
+				}
+			} catch (e) {
+				this.host.log.warn("Catching up with the planner server:", e);
+				this.resync();
+			}
+		}
+	};
+	// plugins/planner/src/data/connection.ts
+	/**
+	* The planner server this computer is connected to, if any: its address and access token (kept in the plugin's
+	* storage), and the `RemoteSource` that the routed source reads it through.
+	*/
+	var KEY = "server";
+	function saved(host) {
+		const v = host.storage.get(KEY);
+		if (!isObject(v) || typeof v.url !== "string" || typeof v.token !== "string") return null;
+		const url = serverUrl(v.url);
+		return url ? {
+			url,
+			token: v.token,
+			...isObject(v.hello) ? { hello: v.hello } : {}
+		} : null;
+	}
+	function createConnection(host, routed) {
+		const url = (0, vue.shallowRef)(null);
+		const space = (0, vue.shallowRef)(null);
+		function use(config, said) {
+			const remote = new RemoteSource(config, {
+				storage: host.storage,
+				log: host.log
+			});
+			if (said) remote.label = said.space.name;
+			url.value = config.url;
+			space.value = said;
+			routed.setServer(remote);
+		}
+		const start = saved(host);
+		if (start) use(start, start.hello ?? null);
+		return {
+			url,
+			space,
+			async connect(address, token) {
+				const at = serverUrl(address);
+				if (!at) return "That is not a web address. It looks like https://planner.example.com.";
+				const key = token.trim();
+				if (!key) return "Paste the access token the server gave you.";
+				let said;
+				try {
+					said = await hello({
+						url: at,
+						token: key
+					});
+				} catch (e) {
+					if (e instanceof SourceError && e.kind === "refused") return "The server did not accept that access token.";
+					return e instanceof Error ? e.message : String(e);
+				}
+				host.storage.set(KEY, {
+					url: at,
+					token: key,
+					hello: said
+				});
+				use({
+					url: at,
+					token: key
+				}, said);
+				return null;
+			},
+			disconnect() {
+				host.storage.delete(KEY);
+				url.value = null;
+				space.value = null;
+				routed.setServer(null);
+			}
+		};
+	}
 	// plugins/planner/src/data/local.ts
 	var COLLECTIONS = "collections";
 	var ITEMS = "items_";
@@ -33027,6 +33512,511 @@ img.ProseMirror-separator {
 			};
 		}
 	};
+	// plugins/planner/src/data/routed.ts
+	/**
+	* The planner's sources together: this computer's, and a planner server's space when one is connected. Every
+	* collection lives in one of them with all its items; the store sees one source.
+	*
+	* A collection's place is learned from where it was read or heard of; a new one goes where `place` said, or here.
+	* Collections are never in two places at once: moving one copies it under new ids (`store.moveCollection`), so each
+	* document's `seq` only ever comes from one source.
+	*/
+	var HERE = "local";
+	var SERVER = "server";
+	var ONLINE = {
+		online: true,
+		readonly: false
+	};
+	var RoutedSource = class {
+		label = "Planner";
+		local;
+		server = null;
+		placeOf = /* @__PURE__ */ new Map();
+		handlers = /* @__PURE__ */ new Set();
+		resyncs = /* @__PURE__ */ new Set();
+		statusHandlers = /* @__PURE__ */ new Set();
+		unlisten = [];
+		serverUnlisten = [];
+		/** The server's collections, read since it was connected: what says where a collection is. */
+		serverRead = null;
+		/** The server's collections as last read: shown while it cannot be reached, rather than taken from view. */
+		serverCollections = [];
+		/** Whether they were read at all: if not (it was offline from the start), they are once it is back. */
+		serverLoaded = false;
+		constructor(local) {
+			this.local = local;
+			this.unlisten.push(local.subscribe((docs) => this.heard(HERE, docs), () => this.resyncAll()), local.onStatus(() => this.statusChanged()));
+		}
+		places() {
+			const out = [{
+				id: HERE,
+				label: this.local.label,
+				status: this.local.status()
+			}];
+			if (this.server) out.push({
+				id: SERVER,
+				label: this.server.label,
+				status: this.server.status()
+			});
+			return out;
+		}
+		/** Where a collection lives: here unless the server said it has it. */
+		placeOfCollection(collectionId) {
+			return this.placeOf.get(collectionId) ?? "local";
+		}
+		/** The next create of this collection goes there. */
+		place(collectionId, place) {
+			if (place === "local" || place === "server") this.placeOf.set(collectionId, place);
+		}
+		statusOf(collectionId) {
+			return this.sourceOf(this.placeOfCollection(collectionId))?.status() ?? {
+				online: false,
+				readonly: true,
+				message: "Its planner server is not connected."
+			};
+		}
+		/**
+		* Connects a server's space, or none. What was read from the one before goes from view; the store reads everything
+		* again, the new server's collections with it.
+		*/
+		setServer(server) {
+			const old = this.server;
+			if (old === server) return;
+			if (old) {
+				this.serverUnlisten.forEach((u) => u());
+				this.serverUnlisten = [];
+				[...this.placeOf].filter(([, p]) => p === SERVER).map(([id]) => id).forEach((id) => this.placeOf.delete(id));
+				old.dispose();
+			}
+			this.server = server;
+			this.serverRead = null;
+			this.serverCollections = [];
+			this.serverLoaded = false;
+			if (server) this.serverUnlisten.push(server.subscribe((docs) => this.heard(SERVER, docs), () => this.resyncAll()), server.onStatus((s) => {
+				this.statusChanged();
+				if (s.online && !this.serverLoaded) this.resyncAll();
+			}));
+			this.statusChanged();
+			this.resyncAll();
+		}
+		async loadCollections() {
+			const server = this.server;
+			const fromServer = server ? this.readServer(server) : Promise.resolve([]);
+			const [here, there] = await Promise.all([this.local.loadCollections(), fromServer.catch(() => this.serverCollections)]);
+			for (const d of here) if (!this.placeOf.has(d.id)) this.placeOf.set(d.id, HERE);
+			return [...here, ...there];
+		}
+		async loadItems(collectionId) {
+			if (!this.placeOf.has(collectionId) && this.server) await (this.serverRead ?? this.readServer(this.server).catch(() => []));
+			return this.need(this.placeOfCollection(collectionId)).loadItems(collectionId);
+		}
+		/** In order, one write per place. Not all or nothing across places: a change rarely spans two. */
+		async write(ops, mutationId) {
+			const groups = /* @__PURE__ */ new Map();
+			for (const op of ops) {
+				const place = this.placeOfCollection(op.collectionId);
+				let list = groups.get(place);
+				if (!list) groups.set(place, list = []);
+				list.push(op);
+			}
+			const out = [];
+			for (const [place, list] of groups) {
+				const docs = await this.need(place).write(list, groups.size > 1 ? `${mutationId}-${place}` : mutationId);
+				this.learn(place, docs);
+				out.push(...docs);
+			}
+			return out;
+		}
+		subscribe(handler, resync) {
+			this.handlers.add(handler);
+			if (resync) this.resyncs.add(resync);
+			return () => {
+				this.handlers.delete(handler);
+				if (resync) this.resyncs.delete(resync);
+			};
+		}
+		/** Online while every place is; read only when every place is. */
+		status() {
+			const all = this.places().map((p) => p.status);
+			const off = all.find((s) => !s.online);
+			const writable = all.some((s) => !s.readonly);
+			if (!off && writable) return ONLINE;
+			return {
+				online: !off,
+				readonly: !writable,
+				...off?.message ? { message: off.message } : {}
+			};
+		}
+		onStatus(handler) {
+			this.statusHandlers.add(handler);
+			return () => {
+				this.statusHandlers.delete(handler);
+			};
+		}
+		dispose() {
+			this.unlisten.forEach((u) => u());
+			this.serverUnlisten.forEach((u) => u());
+			this.server?.dispose();
+			this.local.dispose();
+			this.handlers.clear();
+			this.resyncs.clear();
+			this.statusHandlers.clear();
+		}
+		sourceOf(place) {
+			return place === "local" ? this.local : this.server;
+		}
+		need(place) {
+			const source = this.sourceOf(place);
+			if (!source) throw new SourceError("offline", "Its planner server is not connected.");
+			return source;
+		}
+		async readServer(server) {
+			const job = server.loadCollections().then((docs) => {
+				if (this.server === server) {
+					this.learn(SERVER, docs);
+					this.serverCollections = docs;
+					this.serverLoaded = true;
+				}
+				return docs;
+			});
+			this.serverRead = job.then(() => {}, () => {});
+			return job;
+		}
+		/** Collections the server has are there. */
+		learn(place, docs) {
+			for (const d of docs) if (d.kind === "collection" && d.data) this.placeOf.set(d.id, place);
+		}
+		heard(place, docs) {
+			if (place === "server" && !this.server) return;
+			this.learn(place, docs);
+			const mine = docs.filter((d) => this.placeOfCollection(d.collectionId) === place || d.kind === "collection" && !this.placeOf.has(d.id));
+			if (mine.length) for (const h of [...this.handlers]) h(mine);
+		}
+		resyncAll() {
+			for (const r of [...this.resyncs]) r();
+		}
+		statusChanged() {
+			const s = this.status();
+			for (const h of [...this.statusHandlers]) h(s);
+		}
+	};
+	// plugins/planner/src/shell/ServerSettings.vue?vue&type=script&setup=true&lang.ts
+	var _hoisted_1 = { class: "pl-server" };
+	var _hoisted_2 = { class: "pl-server__intro" };
+	var _hoisted_3 = { class: "pl-server__row" };
+	var _hoisted_4 = { class: "pl-server__text" };
+	var _hoisted_5 = { class: "pl-server__label" };
+	var _hoisted_6 = { class: "pl-server__hint" };
+	var _hoisted_7 = { class: "pl-server__url" };
+	var _hoisted_8 = { class: "pl-server__row" };
+	var _hoisted_9 = { class: "pl-server__text" };
+	var _hoisted_10 = { class: "pl-server__label" };
+	var _hoisted_11 = { class: "pl-server__row" };
+	var _hoisted_12 = { class: "pl-server__text" };
+	var _hoisted_13 = { class: "pl-server__label" };
+	var _hoisted_14 = { class: "pl-server__hint" };
+	var _hoisted_15 = { class: "pl-server__foot" };
+	// plugins/planner/src/shell/ServerSettings.vue
+	var ServerSettings_default = /*#__PURE__*/ _plugin_vue_export_helper_default(/* @__PURE__ */ (0, vue.defineComponent)({
+		__name: "ServerSettings",
+		props: {
+			planner: {},
+			server: {}
+		},
+		setup(__props) {
+			const props = __props;
+			(0, vue.provide)(PLANNER, props.planner);
+			const { mango, store } = props.planner;
+			const { Button, Field } = mango.ui.components;
+			const s = strings$5.server;
+			const address = (0, vue.ref)("");
+			const token = (0, vue.ref)("");
+			const error = (0, vue.ref)(null);
+			const busy = (0, vue.ref)(false);
+			const url = (0, vue.computed)(() => props.server.url.value);
+			const said = (0, vue.computed)(() => props.server.space.value);
+			const place = (0, vue.computed)(() => store.places.value.find((p) => p.id === "server") ?? null);
+			const state = (0, vue.computed)(() => {
+				const status = place.value?.status;
+				if (!status) return null;
+				if (!status.online && status.readonly) return {
+					tone: "bad",
+					text: status.message ?? s.refused
+				};
+				if (!status.online) return {
+					tone: "warn",
+					text: status.message ?? s.offline
+				};
+				return {
+					tone: "good",
+					text: s.connected
+				};
+			});
+			const onServer = (0, vue.computed)(() => store.allCollections.value.filter((c) => store.placeOf(c.id) === SERVER).length);
+			async function connect() {
+				if (busy.value) return;
+				busy.value = true;
+				error.value = null;
+				try {
+					error.value = await props.server.connect(address.value, token.value);
+					if (!error.value) {
+						address.value = "";
+						token.value = "";
+					}
+				} finally {
+					busy.value = false;
+				}
+			}
+			async function disconnect() {
+				if (await mango.ui.confirm({
+					title: s.disconnectTitle,
+					body: s.disconnectBody,
+					confirmLabel: s.disconnect
+				})) props.server.disconnect();
+			}
+			return (_ctx, _cache) => {
+				return (0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_1, [(0, vue.createElementVNode)("p", _hoisted_2, (0, vue.toDisplayString)((0, vue.unref)(s).intro), 1), url.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)(vue.Fragment, { key: 0 }, [
+					(0, vue.createElementVNode)("div", _hoisted_3, [(0, vue.createElementVNode)("div", _hoisted_4, [(0, vue.createElementVNode)("div", _hoisted_5, (0, vue.toDisplayString)(said.value?.space.name ?? (0, vue.unref)(s).space), 1), (0, vue.createElementVNode)("p", _hoisted_6, [(0, vue.createElementVNode)("span", _hoisted_7, (0, vue.toDisplayString)(url.value), 1)])]), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
+						variant: "secondary",
+						onClick: disconnect
+					}, {
+						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(s).disconnect), 1)]),
+						_: 1
+					}))]),
+					(0, vue.createElementVNode)("div", _hoisted_8, [(0, vue.createElementVNode)("div", _hoisted_9, [(0, vue.createElementVNode)("div", _hoisted_10, (0, vue.toDisplayString)((0, vue.unref)(s).connection), 1), state.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("p", {
+						key: 0,
+						class: (0, vue.normalizeClass)(["pl-server__state", `is-${state.value.tone}`]),
+						role: "status"
+					}, [(0, vue.createVNode)(Icon_default, { name: state.value.tone === "good" ? "cloud" : "cloud-off" }, null, 8, ["name"]), (0, vue.createTextVNode)((0, vue.toDisplayString)(state.value.text), 1)], 2)) : (0, vue.createCommentVNode)("v-if", true)])]),
+					(0, vue.createElementVNode)("div", _hoisted_11, [(0, vue.createElementVNode)("div", _hoisted_12, [(0, vue.createElementVNode)("div", _hoisted_13, (0, vue.toDisplayString)((0, vue.unref)(s).access), 1), (0, vue.createElementVNode)("p", _hoisted_14, (0, vue.toDisplayString)(said.value?.role === "write" ? (0, vue.unref)(s).canEdit : (0, vue.unref)(s).readOnly) + " · " + (0, vue.toDisplayString)((0, vue.unref)(s).collections(onServer.value)), 1)])])
+				], 64)) : ((0, vue.openBlock)(), (0, vue.createElementBlock)("form", {
+					key: 1,
+					class: "pl-server__form",
+					onSubmit: (0, vue.withModifiers)(connect, ["prevent"])
+				}, [
+					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
+						label: (0, vue.unref)(s).address,
+						for: "pl-server-address"
+					}, {
+						default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							id: "pl-server-address",
+							"onUpdate:modelValue": _cache[0] || (_cache[0] = ($event) => address.value = $event),
+							class: "input",
+							type: "url",
+							inputmode: "url",
+							placeholder: "https://planner.example.com",
+							autocomplete: "off",
+							spellcheck: "false"
+						}, null, 512), [[vue.vModelText, address.value]])]),
+						_: 1
+					}, 8, ["label"])),
+					((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
+						label: (0, vue.unref)(s).token,
+						hint: (0, vue.unref)(s).tokenHint,
+						error: error.value,
+						for: "pl-server-token"
+					}, {
+						default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							id: "pl-server-token",
+							"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => token.value = $event),
+							class: "input pl-server__token",
+							type: "password",
+							placeholder: "pls_…",
+							autocomplete: "off",
+							spellcheck: "false"
+						}, null, 512), [[vue.vModelText, token.value]])]),
+						_: 1
+					}, 8, [
+						"label",
+						"hint",
+						"error"
+					])),
+					(0, vue.createElementVNode)("div", _hoisted_15, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Button)), {
+						variant: "primary",
+						type: "submit",
+						loading: busy.value
+					}, {
+						default: (0, vue.withCtx)(() => [(0, vue.createTextVNode)((0, vue.toDisplayString)((0, vue.unref)(s).connect), 1)]),
+						_: 1
+					}, 8, ["loading"]))])
+				], 32))]);
+			};
+		}
+	}), [["__scopeId", "data-v-bce68b9e"]]);
+	// plugins/planner/src/csv.ts
+	/** Collections as CSV and Markdown, and CSV read back. Pure functions; the store runs them. */
+	/** What a spreadsheet would run as a formula. Such a cell gets a leading apostrophe, which reading takes off. */
+	var FORMULA = /^\s*[=+\-@]|^[\t\r]/;
+	var GUARDED = /^'(?=\s*[=+\-@]|[\t\r'])/;
+	function csvCell(text, isNumber = false) {
+		let t = text;
+		if (!isNumber && (FORMULA.test(t) || GUARDED.test(t))) t = `'${t}`;
+		return /[",\r\n;\t]|^\s|\s$/.test(t) ? `"${t.replaceAll("\"", "\"\"")}"` : t;
+	}
+	/** Rows of cells. Quotes, doubled quotes, line breaks in quotes; comma, semicolon or tab, whichever the first line uses. */
+	function parseCsv(source) {
+		const text = source.replace(/^﻿/, "");
+		const delimiter = detectDelimiter(text);
+		const rows = [];
+		let row = [];
+		let cell = "";
+		let quoted = false;
+		for (let i = 0; i < text.length; i++) {
+			const c = text[i];
+			if (quoted) {
+				if (c !== "\"") cell += c;
+				else if (text[i + 1] === "\"") {
+					cell += "\"";
+					i++;
+				} else quoted = false;
+			} else if (c === "\"" && cell === "") quoted = true;
+			else if (c === delimiter) {
+				row.push(cell);
+				cell = "";
+			} else if (c === "\n" || c === "\r") {
+				if (c === "\r" && text[i + 1] === "\n") i++;
+				row.push(cell);
+				rows.push(row);
+				row = [];
+				cell = "";
+			} else cell += c;
+		}
+		if (cell !== "" || row.length) {
+			row.push(cell);
+			rows.push(row);
+		}
+		return rows.filter((r) => r.some((c) => c.trim() !== "")).map((r) => r.map((c) => c.replace(GUARDED, "")));
+	}
+	function detectDelimiter(text) {
+		const counts = {
+			",": 0,
+			";": 0,
+			"	": 0
+		};
+		let quoted = false;
+		for (const c of text) if (c === "\"") quoted = !quoted;
+		else if (!quoted && (c === "\n" || c === "\r")) break;
+		else if (!quoted && c in counts) counts[c]++;
+		return Object.entries(counts).reduce((best, e) => e[1] > best[1] ? e : best)[0];
+	}
+	/** Title, properties and body, one row per item; a UTF-8 mark in front so spreadsheets read it right. */
+	function toCsv(collection, items, options = {}) {
+		const properties = options.properties ?? collection.properties;
+		return `﻿${[[
+			options.titleLabel ?? "Title",
+			...properties.map((p) => p.name),
+			options.bodyLabel ?? "Body"
+		].map((c) => csvCell(c)), ...items.map((item) => [
+			csvCell(item.title),
+			...properties.map((p) => csvCell(valueText(valueOf(item, p), p), p.type === "number")),
+			csvCell(item.body)
+		])].map((r) => r.join(",")).join("\r\n")}\r\n`;
+	}
+	var oneLine = (s) => s.replace(/\s+/g, " ").trim();
+	/** Text that must not turn into Markdown of its own. */
+	var escapeInline = (s) => oneLine(s).replace(/([\\`*_[\]<>#|])/g, "\\$1");
+	/** One item as Markdown: a heading, its properties, its body. */
+	function itemToMarkdown(collection, item, level = 1) {
+		const lines = [`${"#".repeat(level)} ${escapeInline(item.title) || "Untitled"}`, ""];
+		const props = collection.properties.map((p) => {
+			const v = valueText(valueOf(item, p), p);
+			const url = p.type === "url" ? safeUrl(v) : null;
+			return v ? `- **${escapeInline(p.name)}:** ${url ? `<${url}>` : escapeInline(v)}` : "";
+		}).filter(Boolean);
+		if (props.length) lines.push(...props, "");
+		if (item.body.trim()) lines.push(item.body.trim(), "");
+		return lines.join("\n");
+	}
+	function toMarkdown(collection, items) {
+		return [`# ${escapeInline(collection.name) || "Untitled"}\n`, ...items.map((i) => itemToMarkdown(collection, i, 2))].join("\n");
+	}
+	var TITLE_NAMES = /* @__PURE__ */ new Set([
+		"title",
+		"name",
+		"task",
+		"summary",
+		"item"
+	]);
+	var BODY_NAMES = /* @__PURE__ */ new Set([
+		"body",
+		"notes",
+		"description",
+		"content"
+	]);
+	/** The type a column's texts look like; text when they disagree. */
+	function inferType(texts) {
+		const filled = texts.map((t) => t.trim()).filter(Boolean);
+		if (!filled.length) return "text";
+		if (filled.every((t) => /^(yes|no|true|false|x)$/i.test(t))) return "checkbox";
+		if (filled.every((t) => parseNumber(t) !== null)) return "number";
+		if (filled.every((t) => parseDate(t) !== null)) return "date";
+		if (filled.every((t) => /^https?:\/\/\S+$/i.test(t))) return "url";
+		const distinct = new Set(filled.map((t) => t.toLowerCase()));
+		return filled.every((t) => t.length <= 40 && !t.includes("\n")) && distinct.size <= 12 && filled.length >= 3 && distinct.size <= filled.length / 2 ? "select" : "text";
+	}
+	/**
+	* How rows (the first is the header) come into a collection: columns go to properties of the same name, others
+	* become new ones of the type they look like. Nothing is dropped but values a typed property cannot hold.
+	*/
+	function planImport(rows, existing = []) {
+		const [head, ...body] = rows;
+		if (!head) return {
+			properties: [],
+			items: []
+		};
+		const names = head.map((h) => h.trim());
+		const lower = names.map((n) => n.toLowerCase());
+		const owned = new Set(existing.map((p) => p.name.trim().toLowerCase()));
+		const titleAt = Math.max(0, lower.findIndex((n) => TITLE_NAMES.has(n) && !owned.has(n)));
+		const bodyAt = lower.findIndex((n, i) => i !== titleAt && BODY_NAMES.has(n) && !owned.has(n));
+		const used = /* @__PURE__ */ new Set();
+		const changed = /* @__PURE__ */ new Map();
+		let lastOrder = existing.at(-1)?.order ?? null;
+		const fresh = spread(names.length);
+		const columns = names.map((name, at) => {
+			if (at === titleAt || at === bodyAt) return null;
+			const texts = body.map((r) => r[at] ?? "");
+			if (!name && texts.every((t) => !t.trim())) return null;
+			let property = existing.find((p) => !used.has(p.id) && p.name.trim().toLowerCase() === lower[at]);
+			if (!property) {
+				lastOrder = between(lastOrder, null) ?? fresh[at];
+				property = {
+					id: newId(),
+					name: name || `Column ${at + 1}`,
+					type: inferType(texts),
+					order: lastOrder,
+					options: []
+				};
+				changed.set(property.id, property);
+			}
+			used.add(property.id);
+			return {
+				at,
+				property,
+				options: new OptionSet(property.options)
+			};
+		}).filter((c) => c !== null);
+		const items = body.map((row) => {
+			const values = {};
+			for (const { at, property, options } of columns) {
+				const v = parseValue(row[at] ?? "", property.type, options);
+				if (v !== null && v !== false) values[property.id] = v;
+			}
+			return {
+				title: oneLine(row[titleAt] ?? ""),
+				body: bodyAt < 0 ? "" : row[bodyAt] ?? "",
+				values
+			};
+		});
+		for (const { property, options } of columns) if (hasOptions(property) && options.options.length > property.options.length) changed.set(property.id, {
+			...property,
+			options: options.list()
+		});
+		return {
+			properties: [...changed.values()],
+			items
+		};
+	}
 	// plugins/planner/src/store.ts
 	/**
 	* The planner's state, made once per activation: reactive to read, and the only way to change anything.
@@ -33110,6 +34100,12 @@ img.ProseMirror-separator {
 		const status = (0, vue.ref)("idle");
 		const error = (0, vue.ref)(null);
 		const sourceStatus = (0, vue.shallowRef)(source.status());
+		const onePlace = (status) => [{
+			id: "local",
+			label: source.label,
+			status
+		}];
+		const places = (0, vue.shallowRef)(source.places?.() ?? onePlace(sourceStatus.value));
 		const projectPath = (0, vue.ref)(mango.workspace.activeProject());
 		const now = (0, vue.ref)(Date.now());
 		const saving = (0, vue.ref)(false);
@@ -33331,6 +34327,26 @@ img.ProseMirror-separator {
 			}
 			return inverse;
 		}
+		function placeOf(collectionId) {
+			places.value;
+			allCollections.value;
+			return source.placeOfCollection?.(collectionId) ?? "local";
+		}
+		function statusOf(collectionId) {
+			places.value;
+			allCollections.value;
+			return source.statusOf?.(collectionId) ?? sourceStatus.value;
+		}
+		/** The status of a read-only place these change, if any. */
+		function readonlyFor(ops) {
+			if (sourceStatus.value.readonly) return sourceStatus.value;
+			if (!source.statusOf) return null;
+			for (const id of new Set(ops.map((o) => o.collectionId))) {
+				const s = source.statusOf(id);
+				if (s.readonly) return s;
+			}
+			return null;
+		}
 		/** Makes a change. False when it may not be made. */
 		function mutate(ops, label, opts = {}, settle) {
 			ops = ops.filter((o) => o.op !== "patch" || o.patch.length);
@@ -33338,8 +34354,9 @@ img.ProseMirror-separator {
 				settle?.(true);
 				return true;
 			}
-			if (sourceStatus.value.readonly) {
-				toast(strings$5.readonly, sourceStatus.value.message);
+			const locked = readonlyFor(ops);
+			if (locked) {
+				toast(strings$5.readonly, locked.message);
 				return false;
 			}
 			if (opts.defer) {
@@ -33609,7 +34626,8 @@ img.ProseMirror-separator {
 			settleDeferred();
 			const entry = from.value.at(-1);
 			if (!entry) return;
-			if (sourceStatus.value.readonly) return toast(strings$5.readonly, sourceStatus.value.message);
+			const locked = readonlyFor(entry[which]);
+			if (locked) return toast(strings$5.readonly, locked.message);
 			from.value = from.value.slice(0, -1);
 			const { ops, kept } = stillApplies(entry, which);
 			tellKept(kept);
@@ -33657,6 +34675,7 @@ img.ProseMirror-separator {
 				path: projectPath.value
 			} : { kind: "everywhere" });
 			const id = newId();
+			if (input.place) source.place?.(id, input.place);
 			const place = placeAt(allCollections.value, [id], "end");
 			const ops = [{
 				...collectionTarget(id),
@@ -33680,7 +34699,7 @@ img.ProseMirror-separator {
 		}
 		/** Patches for collections whose order changed around a new one. */
 		function reorderOps(place, except) {
-			return [...place].filter(([id]) => id !== except).map(([id, order]) => ({
+			return [...place].filter(([id]) => id !== except && !(source.statusOf?.(id).readonly ?? false)).map(([id, order]) => ({
 				...collectionTarget(id),
 				op: "patch",
 				patch: [{
@@ -33701,6 +34720,7 @@ img.ProseMirror-separator {
 			const model = collection(id);
 			if (!list || !raw || !model) return null;
 			const copy = newId();
+			source.place?.(copy, placeOf(id));
 			const at = Date.now();
 			const place = placeAt(allCollections.value, [copy], { after: id });
 			const ops = [
@@ -33729,6 +34749,56 @@ img.ProseMirror-separator {
 			];
 			startEmpty(copy);
 			return mutate(ops, strings$5.did.duplicate) ? collection(copy) : null;
+		}
+		async function moveCollectionTo(id, to) {
+			if (placeOf(id) === to) return collection(id);
+			const target = places.value.find((p) => p.id === to);
+			if (!target) return null;
+			if (!target.status.online || target.status.readonly) {
+				toast(strings$5.moveFailed(target.label), target.status.message);
+				return null;
+			}
+			const list = await withItems(id);
+			const raw = rawCollection(id);
+			if (!list || !raw) return null;
+			const copy = newId();
+			source.place?.(copy, to);
+			const ops = [
+				{
+					...collectionTarget(copy),
+					op: "create",
+					data: raw
+				},
+				...list.flatMap((i) => {
+					const data = rawItem(id, i.id);
+					return data ? [{
+						...itemTarget(copy, newId()),
+						op: "create",
+						data
+					}] : [];
+				}),
+				{
+					...collectionTarget(id),
+					op: "delete"
+				},
+				...list.map((i) => ({
+					...itemTarget(id, i.id),
+					op: "delete"
+				}))
+			];
+			startEmpty(copy);
+			if (!await mutateAndWait(ops, strings$5.did.moveCollection)) return null;
+			const before = ui();
+			const view = before.views?.[id];
+			mango.storage.set(uiKey(), {
+				...before,
+				...before.collection === id ? { collection: copy } : {},
+				...view ? { views: {
+					...before.views,
+					[copy]: view
+				} } : {}
+			});
+			return collection(copy);
 		}
 		async function deleteCollection(id) {
 			const list = await withItems(id);
@@ -34380,8 +35450,9 @@ img.ProseMirror-separator {
 				patch
 			}, ...ops], strings$5.did.import) ? plan.items.length : 0;
 		}
-		async function importCsvAsCollection(csv, name, scope) {
+		async function importCsvAsCollection(csv, name, scope, where) {
 			const id = newId();
+			if (where) source.place?.(id, where);
 			const { plan, ops } = importOps(id, csv, [], []);
 			if (!ops.length) {
 				toast(strings$5.importEmpty);
@@ -34425,6 +35496,7 @@ img.ProseMirror-separator {
 		const unsubscribeStatus = source.onStatus((s) => {
 			const back = s.online && !sourceStatus.value.online;
 			sourceStatus.value = s;
+			places.value = source.places?.() ?? onePlace(s);
 			if (back && unsaved.length) settleDeferred();
 		});
 		const project = mango.workspace.onProjectChange((path) => {
@@ -34477,6 +35549,9 @@ img.ProseMirror-separator {
 			status,
 			error,
 			sourceStatus,
+			places,
+			placeOf,
+			statusOf,
 			projectPath,
 			allCollections,
 			collections,
@@ -34492,6 +35567,7 @@ img.ProseMirror-separator {
 			updateCollection,
 			moveCollection,
 			duplicateCollection,
+			moveCollectionTo,
 			deleteCollection,
 			createItem,
 			updateItem: (c, id, change, opts) => changeItems(c, [id], change, opts),
@@ -34558,7 +35634,9 @@ img.ProseMirror-separator {
 	var ICON = "square-kanban";
 	var current = null;
 	function activate(mango) {
-		const store = createStore(mango);
+		const source = new RoutedSource(new LocalSource(mango.data));
+		const store = createStore(mango, { source });
+		const server = createConnection(mango, source);
 		current = store;
 		const stopIdentifying = identifyProjects(mango, store);
 		mango.onBeforeClose(() => store.flushAll());
@@ -34613,6 +35691,18 @@ img.ProseMirror-separator {
 				props: {
 					mango,
 					store
+				}
+			}
+		});
+		mango.ui.settingsPages.register({
+			id: "server",
+			title: strings$5.server.title,
+			icon: "cloud",
+			view: {
+				component: ServerSettings_default,
+				props: {
+					planner,
+					server
 				}
 			}
 		});
@@ -34674,6 +35764,13 @@ img.ProseMirror-separator {
 				const collection = await askNewCollection(planner);
 				if (collection) open({ collectionId: collection.id });
 			}
+		});
+		mango.commands.register({
+			id: "server",
+			title: strings$5.commands.server,
+			icon: "cloud",
+			keywords: "planner sync share team remote",
+			run: () => mango.ui.openSettings("server")
 		});
 		mango.ui.menus.register("thread", {
 			id: "add",

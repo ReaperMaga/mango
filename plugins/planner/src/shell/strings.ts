@@ -64,6 +64,13 @@ export const shell = {
   deleteConfirm: (name: string) => `Delete ${name}?`,
   deleteBody: (n: number, c: Collection) => (n ? `Its ${n === 1 ? `${itemWord(c, 1)} goes` : `${n} ${itemWord(c, n)} go`} with it. You can undo this right after.` : 'You can undo this right after.'),
   deleteLabel: 'Delete',
+  moveTo: (place: string) => `Move to ${place}`,
+  moveHereTitle: (name: string) => `Move ${name} to this computer?`,
+  moveHereBody: (place: string) => `It leaves ${place}: nobody else connected to it sees it any more.`,
+  moveLabel: 'Move',
+  moved: (name: string, place: string) => `${name} moved to ${place}`,
+  place: 'Kept on',
+  keptOn: (place: string) => `Kept on ${place}`,
   undo: (what: string | null) => (what ? `Undo ${what}` : 'Undo'),
   redo: (what: string | null) => (what ? `Redo ${what}` : 'Redo'),
 

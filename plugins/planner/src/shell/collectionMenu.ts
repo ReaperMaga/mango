@@ -33,9 +33,9 @@ function pickCsv(mango: MangoPluginApi): Promise<{ name: string; text: string } 
   })
 }
 
-export async function importAsCollection({ mango, store }: Host, scope?: Scope): Promise<Collection | null> {
+export async function importAsCollection({ mango, store }: Host, scope?: Scope, place?: string): Promise<Collection | null> {
   const file = await pickCsv(mango)
-  return file ? store.importCsvAsCollection(file.text, file.name, scope) : null
+  return file ? store.importCsvAsCollection(file.text, file.name, scope, place) : null
 }
 
 async function importInto({ mango, store }: Host, id: string) {
@@ -92,22 +92,44 @@ async function save({ mango, store }: Host, c: Collection, format: Format) {
 /** Without what reading or asking needs: the caller composes them. The last is Delete. */
 export function collectionRows(planner: Planner, c: Collection, groupBy?: string | null): PluginMenuRow[] {
   const { store, go } = planner
-  const locked = store.sourceStatus.value.readonly
+  const locked = store.statusOf(c.id).readonly
+  const here = store.placeOf(c.id)
 
   async function duplicate(items: boolean) {
     const made = await store.duplicateCollection(c.id, { items })
     if (made) go({ collectionId: made.id })
   }
+  const moves = store.places.value.filter(p => p.id !== here).map((p): PluginMenuRow => ({
+    label: shell.moveTo(p.label),
+    icon: p.id === 'local' ? 'monitor' : 'cloud-upload',
+    disabled: locked || !p.status.online || p.status.readonly,
+    divider: true,
+    onSelect: () => void moveTo(planner, c, p.id, p.label),
+  }))
   return [
     { label: shell.editCollection, icon: 'settings-2', onSelect: () => void editCollection(planner, c, groupBy) },
     { label: shell.duplicate, icon: 'copy', disabled: locked, onSelect: () => void duplicate(false) },
     { label: shell.duplicateItems(itemWord(c, 2)), icon: 'copy-plus', disabled: locked, onSelect: () => void duplicate(true) },
+    ...moves.map((row, i) => (i ? { ...row, divider: false } : row)),
     { label: shell.deleteCollection, icon: 'trash-2', danger: true, divider: true, disabled: locked, onSelect: () => void removeCollection(planner, c) },
   ]
 }
 
 export async function editCollection(planner: Planner, c: Collection, groupBy?: string | null) {
   if (await askCollectionSettings(planner, c.id, groupBy ?? null) === 'remove') await removeCollection(planner, c)
+}
+
+/** Off the server, it is gone for everyone else: that is asked first. */
+async function moveTo({ mango, store, go, route }: Planner, c: Collection, place: string, label: string) {
+  const from = store.places.value.find(p => p.id === store.placeOf(c.id))
+  if (place === 'local' && from) {
+    const ok = await mango.ui.confirm({ title: shell.moveHereTitle(c.name || shell.unnamed), body: shell.moveHereBody(from.label), confirmLabel: shell.moveLabel })
+    if (!ok) return
+  }
+  const made = await store.moveCollectionTo(c.id, place)
+  if (!made) return
+  if (route.value.collectionId === c.id) go({ collectionId: made.id })
+  mango.ui.toast({ title: shell.moved(made.name || shell.unnamed, label), kind: 'success' })
 }
 
 async function removeCollection({ mango, store, go, route }: Planner, c: Collection) {
@@ -121,7 +143,7 @@ async function removeCollection({ mango, store, go, route }: Planner, c: Collect
 export function transferRows(planner: Planner, c: Collection): PluginMenuRow[] {
   const project = planner.store.projectPath.value
   return [
-    { label: shell.importInto, icon: 'file-input', disabled: planner.store.sourceStatus.value.readonly, onSelect: () => void importInto(planner, c.id) },
+    { label: shell.importInto, icon: 'file-input', disabled: planner.store.statusOf(c.id).readonly, onSelect: () => void importInto(planner, c.id) },
     { label: shell.copyCsv, icon: 'table', divider: true, onSelect: () => void copy(planner, c.id, 'csv') },
     { label: shell.copyMarkdown, icon: 'file-text', onSelect: () => void copy(planner, c.id, 'md') },
     { label: shell.saveCsv, icon: 'file-down', disabled: !project, onSelect: () => void save(planner, c, 'csv') },

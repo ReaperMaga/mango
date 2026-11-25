@@ -5,6 +5,7 @@ import type { Collection } from '../model.ts'
 import { TEMPLATES, type TemplateId } from '../templates.ts'
 import Icon from '../ui/Icon.vue'
 import { importAsCollection } from './collectionMenu.ts'
+import PlaceChoice from './PlaceChoice.vue'
 import ScopeChoice from './ScopeChoice.vue'
 import { scopeOf } from './repository.ts'
 import { shell } from './strings.ts'
@@ -18,15 +19,20 @@ const { Button, Field } = mango.ui.components
 const name = ref('')
 const template = ref<TemplateId>('tasks')
 const where = ref<'project' | 'everywhere'>(store.projectPath.value ? 'project' : 'everywhere')
+const PLACE_KEY = 'newCollectionPlace'
+const remembered = mango.storage.get<string>(PLACE_KEY)
+const place = ref(store.places.value.some(p => p.id === remembered) ? remembered! : 'local')
 const chosen = computed(() => TEMPLATES.find(t => t.id === template.value)!)
 const group = ref<HTMLElement | null>(null)
 
 function create() {
-  const made = store.createCollection({ name: name.value, template: template.value, scope: scopeOf(planner, where.value) })
+  mango.storage.set(PLACE_KEY, place.value)
+  const made = store.createCollection({ name: name.value, template: template.value, scope: scopeOf(planner, where.value), place: place.value })
   if (made) emit('made', made)
 }
 async function load() {
-  const made = await importAsCollection(planner, scopeOf(planner, where.value))
+  mango.storage.set(PLACE_KEY, place.value)
+  const made = await importAsCollection(planner, scopeOf(planner, where.value), place.value)
   if (!made) return
   if (name.value.trim()) store.updateCollection(made.id, { name: name.value.trim() })
   emit('made', store.collection(made.id) ?? made)
@@ -69,6 +75,10 @@ function onKey(e: KeyboardEvent) {
         </button>
       </div>
       <button type="button" class="pl-small" @click="load"><Icon name="file-input" />{{ shell.importCsv }}</button>
+    </div>
+    <div v-if="store.places.value.length > 1" class="pl-new__part">
+      <span class="pl-new__label">{{ shell.place }}</span>
+      <PlaceChoice v-model="place" />
     </div>
     <footer class="pl-new__foot">
       <ScopeChoice v-model="where" />

@@ -21,7 +21,7 @@ const { Button, IconButton, ThreadDot } = mango.ui.components
 
 const state = computed(() => store.items(props.collection.id))
 const item = computed(() => store.item(props.collection.id, props.itemId))
-const readonly = computed(() => store.sourceStatus.value.readonly)
+const readonly = computed(() => store.statusOf(props.collection.id).readonly)
 
 /* ---------- title */
 
