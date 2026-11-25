@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import PluginNavItems from '~/plugin-host/ui/PluginNavItems.vue'
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
 import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
@@ -206,7 +205,6 @@ const branchTitle = computed(() => {
       >
         <PanelLeftOpen />
       </UiIconButton>
-      <PluginNavItems v-if="!chatWindow && ws.hasProject && !ws.sidebarOpen" place="titlebar" />
 
       <!-- A chat window: its project, as a plain label, and the way back. -->
       <template v-if="chatWindow">

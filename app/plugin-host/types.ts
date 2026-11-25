@@ -243,17 +243,16 @@ export interface PluginTabView {
 }
 
 /**
- * Since 0.4.2. A place of the plugin's own in Mango's navigation: a row at the top of the sidebar, under New
- * chat, for a plugin whose main thing is a tab in the main area. While the sidebar is hidden it is an icon in
- * the titlebar, beside the button that brings the sidebar back.
+ * Since 0.4.2. A place of the plugin's own in Mango's navigation: an icon on the tool strip at the right edge,
+ * set apart under the tool windows, for a plugin whose main thing is a tab in the main area.
  */
 export interface PluginNavItem {
   id: string
   title: string
   icon: PluginIcon
-  /** The `shortcuts.register` id of its shortcut: shown on the row and in the tooltip (as the user rebound it). */
+  /** The `shortcuts.register` id of its shortcut: shown in the tooltip (as the user rebound it). */
   shortcut?: string
-  /** Small number on the row. */
+  /** Small number on the icon. */
   badge?: Reactive<number | null>
   /** Marked as the place in view, e.g. while its tab shows (`tabs.active`). */
   active?: Reactive<boolean>

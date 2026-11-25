@@ -377,8 +377,8 @@ and small (up to 256 KB): what to show, not the data itself. `ctx.setState` repl
 `state` leaves the one it has. Give such a tab a fixed `key`. A restored tab waits, empty, until your plugin has
 registered its view, so register it in `activate` before anything slow. Turning the plugin off closes its tabs.
 
-**Navigation** (`ui.navItems`, since 0.4.2) is for a plugin whose main thing is a tab: a row at the top of the sidebar
-under New chat, and an icon in the titlebar while the sidebar is hidden. Not shown in a window of a single chat.
+**Navigation** (`ui.navItems`, since 0.4.2) is for a plugin whose main thing is a tab: an icon on the tool strip at the
+right edge, set apart under the tool windows. Not shown in a window of a single chat.
 
 ```js
 mango.shortcuts.register({ id: 'open', label: 'Open report', key: 'Mod+Shift+R', run: openReport })

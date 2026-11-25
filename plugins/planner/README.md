@@ -4,7 +4,7 @@ Plan work beside your chats: collections of items (tasks, bugs, notes, whatever 
 seen as boards and tables. Every item opens as a page, at the side or full width, with its properties and a Markdown
 body.
 
-Open it with **Planner** in the sidebar, with <kbd>Ctrl/⌘</kbd> <kbd>Shift</kbd> <kbd>D</kbd>, or from the command
+Open it with the **Planner** icon on the tool strip at the right, with <kbd>Ctrl/⌘</kbd> <kbd>Shift</kbd> <kbd>D</kbd>, or from the command
 palette. Nothing is there until you make it: a new collection starts from a template (Tasks, Bugs, Notes) or empty, and
 belongs to the project or shows everywhere. Its settings hold its name, icon, color, a description, what its items are
 called (task, note, bug) and its properties.

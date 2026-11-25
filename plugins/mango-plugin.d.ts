@@ -245,12 +245,12 @@ export interface PluginTabView {
   restore?: boolean
 }
 
-/** Since 0.4.2. A row in the sidebar under New chat; an icon in the titlebar while the sidebar is hidden. */
+/** Since 0.4.2. An icon on the tool strip at the right edge, under the tool windows; it opens a tab. */
 export interface PluginNavItem {
   id: string
   title: string
   icon: PluginIcon
-  /** The `shortcuts.register` id of its shortcut, shown on the row. */
+  /** The `shortcuts.register` id of its shortcut, shown in the tooltip. */
   shortcut?: string
   badge?: Reactive<number | null>
   /** Marked as the place in view. */
