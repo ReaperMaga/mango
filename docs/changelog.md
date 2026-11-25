@@ -2,6 +2,17 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.6.0
+
+### New
+
+- Planner server: each space has people, and everyone can rename themselves (`POST /v1/me`, `planner-server person rename`).
+- Assign people in planner collections, Notion-style.
+
+### Fixes
+
+- Show a planner server's collections when Mango starts.
+
 ## 0.5.0
 
 ### New
