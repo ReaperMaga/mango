@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.3.1
+
+### Fixes
+
+- Stop re-sending edited instruction files with every message to Claude Code.
+
 ## 0.3.0
 
 ### New
