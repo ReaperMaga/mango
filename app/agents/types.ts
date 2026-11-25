@@ -36,6 +36,9 @@ export interface KeptProcess {
   handlers: SpawnHandlers
   /** Folders outside the project it was started with access to. */
   readDirs: string[]
+  /** The model and effort it runs at, as they were asked for (`AgentRunOptions`). */
+  model: string
+  effort: string | null
   /** The ids of the conversation's messages it has printed, as its transcript names them. */
   seen: Set<string>
   /** What it has spent so far, over all its turns. */
