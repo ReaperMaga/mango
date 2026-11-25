@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. a7c3d3ce936ad37eb37dc7bb64910aa7 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. d08241a9f2b08f4c98b71e7a5a6b1d9d */
 
 let active = null
 
@@ -1177,6 +1177,16 @@ var __plugin = (function(exports, vue) {
 		const t = taskMarks(text)[index];
 		return t ? `${text.slice(0, t.at)}${t.done ? " " : "x"}${text.slice(t.at + 1)}` : text;
 	}
+	// plugins/planner/src/values/onCommit.ts
+	var EVENTS = ["planner:commit", "pagehide"];
+	/**
+	* The window is about to close, or the page to go: what is typed and not given to the store yet has to be, right
+	* away. The editor stays, as the closing may be called off.
+	*/
+	function onCommit(commit) {
+		(0, vue.onMounted)(() => EVENTS.forEach((e) => window.addEventListener(e, commit)));
+		(0, vue.onBeforeUnmount)(() => EVENTS.forEach((e) => window.removeEventListener(e, commit)));
+	}
 	// plugins/planner/src/item/ItemBody.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$36 = ["aria-label"];
 	var _hoisted_2$32 = ["data-text"];
@@ -1215,6 +1225,9 @@ var __plugin = (function(exports, vue) {
 			function save(body) {
 				store.updateItem(props.collection.id, props.item.id, { body }, { defer: true });
 			}
+			onCommit(() => {
+				if (editing.value && area.value && area.value.value !== props.item.body) save(area.value.value);
+			});
 			async function edit(at = null) {
 				if (props.readonly) return;
 				editing.value = true;
@@ -3252,6 +3265,10 @@ var __plugin = (function(exports, vue) {
 				cursor.value = d.start.slice(0, 10);
 				return true;
 			}
+			onCommit(() => {
+				commit("start");
+				if (withEnd.value) commit("end");
+			});
 			function onInputKey(e, which) {
 				if (e.isComposing) return;
 				if (e.key === "Enter") {
@@ -3955,13 +3972,18 @@ var __plugin = (function(exports, vue) {
 				return props.property.type === "url" && text.value.trim() && !safeUrl(text.value) ? strings$2.badLink : null;
 			});
 			let settled = false;
-			function commit() {
-				if (settled) return;
-				settled = true;
-				if (text.value === initial || invalid.value) return;
+			let last = initial;
+			function write() {
+				if (settled || text.value === last || invalid.value) return;
+				last = text.value;
 				if (isNumber) emit("change", number.value);
 				else emit("change", (props.property.type === "url" ? text.value.trim() : text.value.trimEnd()) || null);
 			}
+			function commit() {
+				write();
+				settled = true;
+			}
+			onCommit(write);
 			function cancel() {
 				settled = true;
 			}
@@ -4450,6 +4472,10 @@ var __plugin = (function(exports, vue) {
 				}
 				store.updateItem(props.collection.id, props.itemId, { title }, { defer: true });
 			}
+			onCommit(() => {
+				const el = titleEl.value;
+				if (el && item.value && el.value !== item.value.title) store.updateItem(props.collection.id, props.itemId, { title: el.value.replace(/\s*\n\s*/g, " ") });
+			});
 			function onTitleKey(e) {
 				if (e.isComposing) return;
 				if (e.key === "Enter") {
@@ -5609,6 +5635,85 @@ var __plugin = (function(exports, vue) {
 			};
 		}
 	}), [["__scopeId", "data-v-e6f39b8f"]]);
+	// plugins/planner/src/shell/repository.ts
+	/** The repository a project belongs to, as the app already knows it (Mango's forge store). */
+	/** Mango's stores come without a promise: without this one the repository is just not known. */
+	function forgeOf(mango) {
+		try {
+			return mango.stores.byId("forge") ?? null;
+		} catch {
+			return null;
+		}
+	}
+	function linkOf(mango, path) {
+		const link = forgeOf(mango)?.links?.[path];
+		if (!isObject(link)) return null;
+		const { host, owner, repo } = link;
+		return typeof host === "string" && typeof owner === "string" && typeof repo === "string" && host && owner && repo ? {
+			host,
+			owner,
+			repo
+		} : null;
+	}
+	function ensure(mango, path) {
+		const forge = forgeOf(mango);
+		if (typeof forge?.ensure === "function") forge.ensure(path);
+	}
+	/** `host/owner/name` of a project's repository, or null while it is not known. Reactive. */
+	function repoOf(mango, path) {
+		const l = linkOf(mango, path);
+		return l ? `${l.host}/${l.owner}/${l.repo}` : null;
+	}
+	/** A new collection's place: the project in view, with its repository when known, or everywhere. */
+	function scopeOf({ mango, store }, where) {
+		const path = store.projectPath.value;
+		if (where !== "project" || !path) return { kind: "everywhere" };
+		const repo = repoOf(mango, path);
+		return {
+			kind: "project",
+			path,
+			...repo ? { repo } : {}
+		};
+	}
+	/** Keeps the store told which repository is open, and which project folders are this computer's. */
+	function identifyProjects(mango, store) {
+		return (0, vue.watchEffect)(() => {
+			const path = store.projectPath.value;
+			if (!path) return store.identifyProject(null);
+			ensure(mango, path);
+			const workspace = mango.stores?.workspace;
+			const recent = Array.isArray(workspace?.recent) ? workspace.recent.map((r) => isObject(r) ? r.path : null) : [];
+			const here = new Set([...mango.workspace.openProjects(), ...recent].filter((p) => typeof p === "string").map(projectKey));
+			const identity = {
+				repo: repoOf(mango, path),
+				hasPath: (p) => here.has(projectKey(p))
+			};
+			store.identifyProject(identity);
+		});
+	}
+	function useRepository(mango, store, collection) {
+		const path = (0, vue.computed)(() => {
+			const { scope } = collection();
+			return scope.kind === "project" ? scope.repo && store.projectPath.value && repoOf(mango, store.projectPath.value) === scope.repo ? store.projectPath.value : scope.path : null;
+		});
+		(0, vue.watchEffect)(() => {
+			if (path.value) ensure(mango, path.value);
+		});
+		return (0, vue.computed)(() => {
+			if (!path.value) return null;
+			const l = linkOf(mango, path.value);
+			const url = l ? safeUrl(`https://${l.host}/${l.owner}/${l.repo}`) : null;
+			if (l && url) return {
+				label: `${l.owner}/${l.repo}`,
+				url
+			};
+			const name = path.value.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1);
+			return name ? {
+				label: name,
+				url: null
+			} : null;
+		});
+	}
 	// plugins/planner/src/shell/ScopeChoice.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$20 = ["aria-label", "title"];
 	var _hoisted_2$18 = [
@@ -5675,11 +5780,23 @@ var __plugin = (function(exports, vue) {
 		"title",
 		"aria-expanded"
 	];
-	var _hoisted_5$16 = ["readonly", "aria-label"];
-	var _hoisted_6$13 = ["readonly"];
+	var _hoisted_5$16 = [
+		"value",
+		"readonly",
+		"aria-label"
+	];
+	var _hoisted_6$13 = ["value", "readonly"];
 	var _hoisted_7$13 = { class: "pl-set__pair" };
-	var _hoisted_8$12 = ["readonly", "placeholder"];
-	var _hoisted_9$10 = ["readonly", "placeholder"];
+	var _hoisted_8$12 = [
+		"value",
+		"readonly",
+		"placeholder"
+	];
+	var _hoisted_9$10 = [
+		"value",
+		"readonly",
+		"placeholder"
+	];
 	var _hoisted_10$9 = {
 		key: 0,
 		class: "pl-set__line"
@@ -5718,7 +5835,8 @@ var __plugin = (function(exports, vue) {
 		setup(__props, { emit: __emit }) {
 			const props = __props;
 			const emit = __emit;
-			const { store, mango } = usePlanner();
+			const planner = usePlanner();
+			const { store, mango } = planner;
 			const { Button, Field, IconButton } = mango.ui.components;
 			const collection = (0, vue.computed)(() => store.collection(props.collectionId));
 			(0, vue.watch)(collection, (c) => {
@@ -5732,6 +5850,9 @@ var __plugin = (function(exports, vue) {
 			const description = (0, vue.ref)(collection.value?.description ?? "");
 			const one = (0, vue.ref)(collection.value?.itemName?.one ?? "");
 			const many = (0, vue.ref)(collection.value?.itemName?.many ?? "");
+			function read(e) {
+				return e.target.value;
+			}
 			function setName() {
 				if (name.value.trim()) store.updateCollection(props.collectionId, { name: name.value.trim() }, { defer: true });
 			}
@@ -5751,12 +5872,7 @@ var __plugin = (function(exports, vue) {
 			const where = (0, vue.computed)({
 				get: () => collection.value?.scope.kind === "project" ? "project" : "everywhere",
 				set(to) {
-					const path = store.projectPath.value;
-					if (to === "everywhere") store.updateCollection(props.collectionId, { scope: { kind: "everywhere" } });
-					else if (path) store.updateCollection(props.collectionId, { scope: {
-						kind: "project",
-						path
-					} });
+					if (to !== where.value) store.updateCollection(props.collectionId, { scope: scopeOf(planner, to) });
 				}
 			});
 			const iconAt = (0, vue.shallowRef)(null);
@@ -5833,17 +5949,20 @@ var __plugin = (function(exports, vue) {
 								"aria-expanded": !!iconAt.value,
 								onClick: _cache[0] || (_cache[0] = ($event) => iconAt.value = $event.currentTarget)
 							}, [(0, vue.createVNode)(CollectionIcon_default, { collection: collection.value }, null, 8, ["collection"])], 8, _hoisted_4$16),
-							(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
-								"onUpdate:modelValue": _cache[1] || (_cache[1] = ($event) => name.value = $event),
+							(0, vue.createElementVNode)("input", {
+								value: name.value,
 								type: "text",
 								class: "pl-input",
 								readonly: readonly.value,
 								"aria-label": (0, vue.unref)(shell).name,
 								autocomplete: "off",
 								spellcheck: "false",
-								onInput: setName,
+								onInput: _cache[1] || (_cache[1] = ($event) => {
+									name.value = read($event);
+									setName();
+								}),
 								onBlur: restoreName
-							}, null, 40, _hoisted_5$16), [[vue.vModelText, name.value]]),
+							}, null, 40, _hoisted_5$16),
 							(0, vue.createVNode)(ColorButton_default, {
 								"model-value": collection.value.color,
 								label: (0, vue.unref)(shell).colour,
@@ -5860,48 +5979,57 @@ var __plugin = (function(exports, vue) {
 							label: (0, vue.unref)(shell).description,
 							for: "pl-set-desc"
 						}, {
-							default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("input", {
 								id: "pl-set-desc",
-								"onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => description.value = $event),
+								value: description.value,
 								class: "pl-input",
 								type: "text",
 								readonly: readonly.value,
 								autocomplete: "off",
-								onInput: setDescription
-							}, null, 40, _hoisted_6$13), [[vue.vModelText, description.value]])]),
+								onInput: _cache[4] || (_cache[4] = ($event) => {
+									description.value = read($event);
+									setDescription();
+								})
+							}, null, 40, _hoisted_6$13)]),
 							_: 1
 						}, 8, ["label"])),
 						(0, vue.createElementVNode)("div", _hoisted_7$13, [((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
 							label: (0, vue.unref)(shell).itemOne,
 							for: "pl-set-one"
 						}, {
-							default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("input", {
 								id: "pl-set-one",
-								"onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => one.value = $event),
+								value: one.value,
 								class: "pl-input",
 								type: "text",
 								readonly: readonly.value,
 								placeholder: (0, vue.unref)(strings$5).item,
 								autocomplete: "off",
 								spellcheck: "false",
-								onInput: setWords
-							}, null, 40, _hoisted_8$12), [[vue.vModelText, one.value]])]),
+								onInput: _cache[5] || (_cache[5] = ($event) => {
+									one.value = read($event);
+									setWords();
+								})
+							}, null, 40, _hoisted_8$12)]),
 							_: 1
 						}, 8, ["label"])), ((0, vue.openBlock)(), (0, vue.createBlock)((0, vue.resolveDynamicComponent)((0, vue.unref)(Field)), {
 							label: (0, vue.unref)(shell).itemMany,
 							for: "pl-set-many"
 						}, {
-							default: (0, vue.withCtx)(() => [(0, vue.withDirectives)((0, vue.createElementVNode)("input", {
+							default: (0, vue.withCtx)(() => [(0, vue.createElementVNode)("input", {
 								id: "pl-set-many",
-								"onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => many.value = $event),
+								value: many.value,
 								class: "pl-input",
 								type: "text",
 								readonly: readonly.value,
 								placeholder: (0, vue.unref)(strings$5).items,
 								autocomplete: "off",
 								spellcheck: "false",
-								onInput: setWords
-							}, null, 40, _hoisted_9$10), [[vue.vModelText, many.value]])]),
+								onInput: _cache[6] || (_cache[6] = ($event) => {
+									many.value = read($event);
+									setWords();
+								})
+							}, null, 40, _hoisted_9$10)]),
 							_: 1
 						}, 8, ["label"]))]),
 						(0, vue.unref)(store).projectPath.value && !readonly.value ? ((0, vue.openBlock)(), (0, vue.createElementBlock)("div", _hoisted_10$9, [(0, vue.createElementVNode)("span", _hoisted_11$7, (0, vue.toDisplayString)((0, vue.unref)(shell).scope), 1), (0, vue.createVNode)(ScopeChoice_default, {
@@ -6325,7 +6453,7 @@ var __plugin = (function(exports, vue) {
 		const join = (names) => [project.replace(/[\\/]+$/, ""), ...names].join(sep);
 		const name = parts.at(-1);
 		try {
-			if ((await mango.files.list(join(parts.slice(0, -1))).catch(() => [])).some((e) => e.name.toLowerCase() === name.toLowerCase())) {
+			if ((await mango.files.list(join(parts.slice(0, -1)))).some((e) => e.name.toLowerCase() === name.toLowerCase())) {
 				if (!await mango.ui.confirm({
 					title: shell.replace(name),
 					body: shell.replaceBody,
@@ -6440,14 +6568,6 @@ var __plugin = (function(exports, vue) {
 			}
 		];
 	}
-	// plugins/planner/src/shell/scope.ts
-	function scopeOf(store, where) {
-		const path = store.projectPath.value;
-		return where === "project" && path ? {
-			kind: "project",
-			path
-		} : { kind: "everywhere" };
-	}
 	// plugins/planner/src/shell/NewCollection.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$18 = ["placeholder"];
 	var _hoisted_2$16 = { class: "pl-new__part" };
@@ -6479,12 +6599,12 @@ var __plugin = (function(exports, vue) {
 				const made = store.createCollection({
 					name: name.value,
 					template: template.value,
-					scope: scopeOf(store, where.value)
+					scope: scopeOf(planner, where.value)
 				});
 				if (made) emit("made", made);
 			}
 			async function load() {
-				const made = await importAsCollection(planner, scopeOf(store, where.value));
+				const made = await importAsCollection(planner, scopeOf(planner, where.value));
 				if (!made) return;
 				if (name.value.trim()) store.updateCollection(made.id, { name: name.value.trim() });
 				emit("made", store.collection(made.id) ?? made);
@@ -7395,8 +7515,10 @@ var __plugin = (function(exports, vue) {
 				wanted.value = Math.round(Math.max(MIN, Math.min(n, max.value)));
 			}
 			const keep = () => mango.storage.set(KEY, wanted.value);
+			let stop = null;
 			function start(e) {
 				if (e.button !== 0) return;
+				stop?.();
 				e.preventDefault();
 				const hold = mango.ui.holdOverlay();
 				const el = e.currentTarget;
@@ -7404,7 +7526,8 @@ var __plugin = (function(exports, vue) {
 				el.setPointerCapture(e.pointerId);
 				resizing.value = true;
 				const move = (ev) => set(right - ev.clientX);
-				const end = () => {
+				const end = stop = () => {
+					stop = null;
 					el.removeEventListener("pointermove", move);
 					el.removeEventListener("lostpointercapture", end);
 					hold.dispose();
@@ -7414,6 +7537,7 @@ var __plugin = (function(exports, vue) {
 				el.addEventListener("pointermove", move);
 				el.addEventListener("lostpointercapture", end);
 			}
+			(0, vue.onBeforeUnmount)(() => stop?.());
 			function onKey(e) {
 				const by = {
 					ArrowLeft: 16,
@@ -7805,39 +7929,6 @@ var __plugin = (function(exports, vue) {
 			};
 		}
 	}), [["__scopeId", "data-v-efde5021"]]);
-	// plugins/planner/src/shell/repository.ts
-	/** The repository a project collection belongs to, as the app already knows it. */
-	function useRepository(mango, collection) {
-		const forge = (() => {
-			try {
-				return mango.stores.byId("forge");
-			} catch {
-				return null;
-			}
-		})();
-		const path = (0, vue.computed)(() => {
-			const { scope } = collection();
-			return scope.kind === "project" ? scope.path : null;
-		});
-		(0, vue.watchEffect)(() => {
-			if (path.value && typeof forge?.ensure === "function") forge.ensure(path.value);
-		});
-		return (0, vue.computed)(() => {
-			if (!path.value) return null;
-			const link = forge?.links?.[path.value];
-			const text = (k) => isObject(link) && typeof link[k] === "string" ? link[k] : "";
-			const url = text("host") && text("owner") && text("repo") ? safeUrl(`https://${text("host")}/${text("owner")}/${text("repo")}`) : null;
-			if (url) return {
-				label: `${text("owner")}/${text("repo")}`,
-				url
-			};
-			const name = path.value.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1);
-			return name ? {
-				label: name,
-				url
-			} : null;
-		});
-	}
 	// plugins/planner/src/shell/ViewTabs.vue?vue&type=script&setup=true&lang.ts
 	var _hoisted_1$10 = ["aria-label", "title"];
 	var _hoisted_2$9 = { class: "pl-tab__name" };
@@ -7915,6 +8006,13 @@ var __plugin = (function(exports, vue) {
 				if (save && v && name && name !== v.name) store.updateView(props.collection.id, v.id, { name });
 				if (v) (0, vue.nextTick)(() => strip.value?.querySelector(`[data-rid="${CSS.escape(v.id)}"] [role=tab]`)?.focus());
 			}
+			onCommit(() => {
+				const name = draft.value.trim();
+				if (renaming.value && name) store.updateView(props.collection.id, renaming.value, { name });
+			});
+			(0, vue.onBeforeUnmount)(() => {
+				if (renaming.value) commit(true);
+			});
 			/** A property a board groups by is not worth repeating on its cards. */
 			function add(type) {
 				const c = props.collection;
@@ -8164,7 +8262,7 @@ var __plugin = (function(exports, vue) {
 			const marked = (0, vue.computed)(() => props.view.sorts.length > 0 || props.view.type === "table" && props.view.groupBy !== null || props.view.hiddenGroups.length > 0);
 			const many = (0, vue.computed)(() => itemWord(props.collection, 2));
 			const one = (0, vue.computed)(() => itemWord(props.collection, 1));
-			const repository = useRepository(mango, () => props.collection);
+			const repository = useRepository(mango, store, () => props.collection);
 			function open(name, anchor) {
 				if (anchor) pop.value = {
 					name,
@@ -8588,7 +8686,7 @@ var __plugin = (function(exports, vue) {
 			const planner = usePlanner();
 			const { store } = planner;
 			const where = (0, vue.ref)(store.projectPath.value ? "project" : "everywhere");
-			const scope = () => scopeOf(store, where.value);
+			const scope = () => scopeOf(planner, where.value);
 			function create(template) {
 				const made = store.createCollection({
 					template,
@@ -8855,6 +8953,15 @@ var __plugin = (function(exports, vue) {
 					close(true);
 				}
 			}
+			onCommit(() => {
+				if (done || !add()) return;
+				if (props.single) close(false);
+			});
+			(0, vue.onBeforeUnmount)(() => {
+				if (done) return;
+				done = true;
+				add();
+			});
 			function onBlur() {
 				if (done || !document.hasFocus()) return;
 				add();
@@ -9605,7 +9712,7 @@ var __plugin = (function(exports, vue) {
 				if (document.activeElement === document.body) focus();
 			}, { flush: "post" });
 			function renameGroup(key, name) {
-				if (property.value && name !== groupName(key)) store.updateOption(props.collection.id, property.value.id, key, { name });
+				if (property.value?.options.some((o) => o.id === key) && name !== groupName(key)) store.updateOption(props.collection.id, property.value.id, key, { name });
 			}
 			/** While a colour is picked it shows; it is written once that is settled. */
 			function setColour(color) {
@@ -10453,8 +10560,9 @@ var __plugin = (function(exports, vue) {
 			selectAll: { type: Boolean }
 		},
 		emits: ["commit", "cancel"],
-		setup(__props, { emit: __emit }) {
+		setup(__props, { expose: __expose, emit: __emit }) {
 			const props = __props;
+			/** `keep`: the editing goes on. */
 			const emit = __emit;
 			const el = (0, vue.ref)(null);
 			const start = props.multiline ? props.text : props.text.replace(/\s*\n\s*/g, " ");
@@ -10476,10 +10584,13 @@ var __plugin = (function(exports, vue) {
 			});
 			function commit(then) {
 				if (over) return;
-				over = true;
+				over = then !== "keep";
 				const text = el.value?.value ?? start;
 				emit("commit", text === start ? props.text : text, then);
 			}
+			onCommit(() => commit("keep"));
+			(0, vue.onBeforeUnmount)(() => commit("blur"));
+			__expose({ commit });
 			function onKey(e) {
 				if (e.isComposing) return;
 				if ([
@@ -10964,17 +11075,12 @@ var __plugin = (function(exports, vue) {
 				const at = lineIndex.value.get(now.key);
 				if (at !== void 0) return void (lastIndex = at);
 				const id = now.key.startsWith("i/") ? now.key.slice(now.key.lastIndexOf("/") + 1) : null;
-				const moved = id ? list.find((l) => l.kind === "item" && l.item.id === id) : void 0;
-				const next = moved ?? list[Math.min(lastIndex, list.length - 1)];
-				if (!moved && editing.value) editing.value = null;
+				const next = (id ? list.find((l) => l.kind === "item" && l.item.id === id) : void 0) ?? list[Math.min(lastIndex, list.length - 1)];
+				cellInput?.commit("blur");
 				active.value = next ? {
 					key: next.key,
 					col: now.col
 				} : null;
-				if (editing.value && next) editing.value = {
-					...editing.value,
-					key: next.key
-				};
 			});
 			function elementOf(cell = activeId.value) {
 				return cell ? document.getElementById(cell) : null;
@@ -11032,7 +11138,7 @@ var __plugin = (function(exports, vue) {
 			(0, vue.watch)(() => props.view.id, () => {
 				selection.value = /* @__PURE__ */ new Set();
 				active.value = null;
-				editing.value = null;
+				cellInput?.commit("blur");
 				popover.value = null;
 				if (grid.value) grid.value.scrollTop = grid.value.scrollLeft = 0;
 			});
@@ -11064,6 +11170,10 @@ var __plugin = (function(exports, vue) {
 				selection.value = allSelected.value ? /* @__PURE__ */ new Set() : new Set(props.result.items.map((i) => i.id));
 			}
 			const editing = (0, vue.shallowRef)(null);
+			let cellInput = null;
+			function setCellInput(el) {
+				cellInput = el;
+			}
 			const popover = (0, vue.shallowRef)(null);
 			const liveProperty = (0, vue.computed)(() => popover.value?.kind === "value" ? propertyOf(props.collection, popover.value.property.id) : null);
 			const isEditing = (key, col) => editing.value?.key === key && editing.value.col === col;
@@ -11079,6 +11189,7 @@ var __plugin = (function(exports, vue) {
 				if (inPlace(field)) {
 					editing.value = {
 						key: line.key,
+						itemId: line.item.id,
 						col: id,
 						text: typed ?? cellText(line.item, field),
 						selectAll: typed === void 0 && field?.type !== "text"
@@ -11096,23 +11207,22 @@ var __plugin = (function(exports, vue) {
 			}
 			function commitEdit(text, then) {
 				const was = editing.value;
-				editing.value = null;
+				if (then !== "keep") editing.value = null;
 				const index = currentIndex();
-				const line = was && lines.value[lineIndex.value.get(was.key) ?? -1];
-				const col = was && cols.value[colIndex.value.get(was.col) ?? -1];
-				if (line?.kind === "item" && col && text !== cellText(line.item, col.field)) {
-					const { field } = col;
-					if (!field) store.updateItem(props.collection.id, line.item.id, { title: text.trim() });
+				const item = was && store.item(props.collection.id, was.itemId);
+				const field = was && was.col !== "title" ? propertyOf(props.collection, was.col) : null;
+				if (item && (field || was.col === "title") && text !== cellText(item, field)) {
+					if (!field) store.updateItem(props.collection.id, item.id, { title: text.trim() });
 					else {
 						const value = field.type === "number" ? parseNumber(text) : text.trim() ? field.type === "url" ? text.trim() : text : null;
 						if (field.type === "number" && value === null && text.trim()) mango.ui.toast({
 							title: strings.notPasted(1),
 							kind: "warning"
 						});
-						else store.updateItem(props.collection.id, line.item.id, { values: { [field.id]: value } });
+						else store.updateItem(props.collection.id, item.id, { values: { [field.id]: value } });
 					}
 				}
-				if (then === "blur") return;
+				if (then === "blur" || then === "keep") return;
 				grid.value?.focus({ preventScroll: true });
 				if (then === "down") activate(index + 1, was?.col);
 				else if (then !== "stay") step(then === "right" ? 1 : -1, index, was?.col);
@@ -11803,6 +11913,8 @@ var __plugin = (function(exports, vue) {
 									onDblclick: onCellDouble
 								}, [isEditing(line.key, c.id) ? ((0, vue.openBlock)(), (0, vue.createBlock)(CellInput_default, {
 									key: cellId(line.key, c.id),
+									ref_for: true,
+									ref: setCellInput,
 									text: editing.value.text,
 									"select-all": editing.value.selectAll,
 									multiline: c.field?.type === "text",
@@ -14233,7 +14345,10 @@ var __plugin = (function(exports, vue) {
 	function activate(mango) {
 		const store = createStore(mango);
 		current = store;
+		const stopIdentifying = identifyProjects(mango, store);
+		mango.onBeforeClose(() => store.flushAll());
 		mango.onDispose(() => {
+			stopIdentifying();
 			store.dispose();
 			if (current === store) current = null;
 		});
@@ -14375,7 +14490,7 @@ var __plugin = (function(exports, vue) {
 	}
 	/** Before the plugin goes: what was typed is written. */
 	async function deactivate() {
-		await current?.flush();
+		await current?.flushAll();
 	}
 	exports.activate = activate;
 	exports.deactivate = deactivate;

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { onCommit } from '../../values/onCommit.ts'
 
 /** One line typed in place: Enter takes it and (unless `single`) stays for another, Escape leaves. */
 const props = defineProps<{ label: string; placeholder: string; value?: string; single?: boolean; hint?: string }>()
@@ -38,6 +39,17 @@ function onKey(e: KeyboardEvent) {
     close(true)
   }
 }
+onCommit(() => {
+  if (done || !add()) return
+  // It was taken: a second time would be another.
+  if (props.single) close(false)
+})
+// Its column or the view went from under it.
+onBeforeUnmount(() => {
+  if (done) return
+  done = true
+  add()
+})
 function onBlur() {
   // Another window in front is no reason to stop typing here.
   if (done || !document.hasFocus()) return

@@ -9,6 +9,7 @@ import { startChat } from './chats.ts'
 import ItemBody from './ItemBody.vue'
 import { itemMenu } from './itemMenu.ts'
 import ItemProperties from './ItemProperties.vue'
+import { onCommit } from '../values/onCommit.ts'
 import { strings } from './strings.ts'
 
 /** An item as a page, at the side of its collection or in place of it. Fills its container. */
@@ -38,6 +39,10 @@ function setTitle(e: Event) {
   }
   store.updateItem(props.collection.id, props.itemId, { title }, { defer: true })
 }
+onCommit(() => {
+  const el = titleEl.value
+  if (el && item.value && el.value !== item.value.title) store.updateItem(props.collection.id, props.itemId, { title: el.value.replace(/\s*\n\s*/g, ' ') })
+})
 function onTitleKey(e: KeyboardEvent) {
   if (e.isComposing) return
   if (e.key === 'Enter') {

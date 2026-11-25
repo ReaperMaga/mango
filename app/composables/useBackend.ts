@@ -361,6 +361,7 @@ const mock = (() => {
       for (const id of args.remove) delete threads[id]
       localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
     }
+    if (cmd === 'plugin_data_write') return mockPluginData(cmd, args, emit)
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
       case 'recent_projects': return [...recent]

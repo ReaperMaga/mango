@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { parseNumber } from '../convert.ts'
 import { safeUrl, type Property, type Value } from '../model.ts'
+import { onCommit } from './onCommit.ts'
 import { strings } from './strings.ts'
 
 /** Text, a number or a link. Written once: on Enter or when the user moves on. */
@@ -20,13 +21,18 @@ const problem = computed(() => {
 })
 
 let settled = false
-function commit() {
-  if (settled) return
-  settled = true
-  if (text.value === initial || invalid.value) return
+let last = initial
+function write() {
+  if (settled || text.value === last || invalid.value) return
+  last = text.value
   if (isNumber) emit('change', number.value)
   else emit('change', (props.property.type === 'url' ? text.value.trim() : text.value.trimEnd()) || null)
 }
+function commit() {
+  write()
+  settled = true
+}
+onCommit(write)
 function cancel() {
   settled = true
 }

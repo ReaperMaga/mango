@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePlanner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
 import { isGroupable, propertyOf, type Collection, type View, type ViewType } from '../model.ts'
 import Icon from '../ui/Icon.vue'
+import { onCommit } from '../values/onCommit.ts'
 import { dropClass, stepPosition, useReorder } from './reorder.ts'
 import { shell } from './strings.ts'
 
@@ -55,6 +56,12 @@ function commit(save: boolean) {
   if (save && v && name && name !== v.name) store.updateView(props.collection.id, v.id, { name })
   if (v) void nextTick(() => strip.value?.querySelector<HTMLElement>(`[data-rid="${CSS.escape(v.id)}"] [role=tab]`)?.focus())
 }
+
+onCommit(() => {
+  const name = draft.value.trim()
+  if (renaming.value && name) store.updateView(props.collection.id, renaming.value, { name })
+})
+onBeforeUnmount(() => { if (renaming.value) commit(true) })
 
 /** A property a board groups by is not worth repeating on its cards. */
 function add(type: ViewType) {

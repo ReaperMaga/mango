@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. a7c3d3ce936ad37eb37dc7bb64910aa7 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. d08241a9f2b08f4c98b71e7a5a6b1d9d */
 :where(.pl-icon[data-v-517fdef4]) { width: 15px; height: 15px; stroke-width: 1.75; flex: none;
 }
 
@@ -1043,7 +1043,7 @@ to { opacity: 0.45;
 }
 .pl-col__spring[data-v-c62c38e3] { flex: 1;
 }
-.pl-col__body[data-v-c62c38e3] { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 0 0 8px; scrollbar-gutter: stable;
+.pl-col__body[data-v-c62c38e3] { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 4px 0 8px; scrollbar-gutter: stable;
 }
 .pl-col__top[data-v-c62c38e3] { padding: 2px 2px 8px 0;
 }

@@ -222,7 +222,7 @@ defineExpose({
 .pl-col__count { flex: none; margin-left: 4px; font-size: var(--text-xs); color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 .pl-col__spring { flex: 1; }
 
-.pl-col__body { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 0 0 8px; scrollbar-gutter: stable; }
+.pl-col__body { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 4px 0 8px; scrollbar-gutter: stable; }
 .pl-col__top { padding: 2px 2px 8px 0; }
 .pl-col__list { position: relative; display: flex; flex-direction: column; gap: 6px; }
 .pl-col__card { flex: none; border-radius: var(--radius-md); }

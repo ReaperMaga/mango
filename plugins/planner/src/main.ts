@@ -3,6 +3,7 @@ import App from './App.vue'
 import { readRoute, TAB_KEY, VIEW_ID, type Planner, type Route } from './context.ts'
 import type { MangoPluginApi } from './host.ts'
 import { askCollection, askNewCollection, askNewItem } from './shell/dialogs.ts'
+import { identifyProjects } from './shell/repository.ts'
 import './shell/shell.css'
 import { shell } from './shell/strings.ts'
 import { createStore, type PlannerStore } from './store.ts'
@@ -15,7 +16,10 @@ let current: PlannerStore | null = null
 export function activate(mango: MangoPluginApi) {
   const store = createStore(mango)
   current = store
+  const stopIdentifying = identifyProjects(mango, store)
+  mango.onBeforeClose(() => store.flushAll())
   mango.onDispose(() => {
+    stopIdentifying()
     store.dispose()
     if (current === store) current = null
   })
@@ -113,5 +117,5 @@ export function activate(mango: MangoPluginApi) {
 
 /** Before the plugin goes: what was typed is written. */
 export async function deactivate() {
-  await current?.flush()
+  await current?.flushAll()
 }

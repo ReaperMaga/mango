@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { nextTick, onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { onCommit } from '../../values/onCommit.ts'
 
 /** The text of a cell while it is edited, in place. */
 const props = defineProps<{ text: string; label: string; multiline: boolean; numeric: boolean; selectAll: boolean }>()
-const emit = defineEmits<{ commit: [text: string, then: 'down' | 'right' | 'left' | 'stay' | 'blur']; cancel: [] }>()
+/** `keep`: the editing goes on. */
+type Then = 'down' | 'right' | 'left' | 'stay' | 'blur' | 'keep'
+const emit = defineEmits<{ commit: [text: string, then: Then]; cancel: [] }>()
 
 const el = ref<HTMLInputElement | HTMLTextAreaElement | null>(null)
 const start = props.multiline ? props.text : props.text.replace(/\s*\n\s*/g, ' ')
@@ -25,13 +28,18 @@ onMounted(async () => {
   fit()
 })
 
-function commit(then: 'down' | 'right' | 'left' | 'stay' | 'blur') {
+function commit(then: Then) {
   if (over) return
-  over = true
+  over = then !== 'keep'
   // Text that was not touched stays as it is stored, however it is shown here.
   const text = el.value?.value ?? start
   emit('commit', text === start ? props.text : text, then)
 }
+onCommit(() => commit('keep'))
+// Its row scrolled out, or the view went.
+onBeforeUnmount(() => commit('blur'))
+defineExpose({ commit })
+
 function onKey(e: KeyboardEvent) {
   if (e.isComposing) return
   if (['Enter', 'Tab', 'Escape'].includes(e.key)) e.stopPropagation()

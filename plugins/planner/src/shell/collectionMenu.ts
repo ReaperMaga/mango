@@ -74,7 +74,7 @@ async function save({ mango, store }: Host, c: Collection, format: Format) {
   const join = (names: string[]) => [project.replace(/[\\/]+$/, ''), ...names].join(sep)
   const name = parts.at(-1)!
   try {
-    const there = await mango.files.list(join(parts.slice(0, -1))).catch(() => [])
+    const there = await mango.files.list(join(parts.slice(0, -1)))
     if (there.some(e => e.name.toLowerCase() === name.toLowerCase())) {
       const ok = await mango.ui.confirm({ title: shell.replace(name), body: shell.replaceBody, confirmLabel: shell.replaceLabel, danger: true })
       if (!ok) return

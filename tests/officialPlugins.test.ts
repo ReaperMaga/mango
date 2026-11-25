@@ -204,6 +204,7 @@ function fakeApi(id: string) {
     assets: { text: async () => '', url: async () => '' },
     log: { info() {}, warn() {}, error() {} },
     onDispose: (fn: () => void) => { disposers.push(fn) },
+    onBeforeClose: reg('beforeClose'),
   }
   return { api, registered, dispose: () => disposers.forEach(fn => fn()) }
 }

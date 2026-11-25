@@ -13,6 +13,7 @@ import { optionWords } from '../values/optionWords.ts'
 import PropertyEditor from '../values/PropertyEditor.vue'
 import CollectionIcon from './CollectionIcon.vue'
 import IconPicker from './IconPicker.vue'
+import { scopeOf } from './repository.ts'
 import { dropClass, stepPosition, useReorder } from './reorder.ts'
 import ScopeChoice from './ScopeChoice.vue'
 import { shell } from './strings.ts'
@@ -23,7 +24,8 @@ import { shell } from './strings.ts'
  */
 const props = defineProps<{ collectionId: string; groupBy?: string | null; startAt?: string | null }>()
 const emit = defineEmits<{ done: []; remove: [] }>()
-const { store, mango } = usePlanner()
+const planner = usePlanner()
+const { store, mango } = planner
 const { Button, Field, IconButton } = mango.ui.components
 
 const collection = computed(() => store.collection(props.collectionId))
@@ -35,6 +37,9 @@ const name = ref(collection.value?.name ?? '')
 const description = ref(collection.value?.description ?? '')
 const one = ref(collection.value?.itemName?.one ?? '')
 const many = ref(collection.value?.itemName?.many ?? '')
+function read(e: Event) {
+  return (e.target as HTMLInputElement).value
+}
 function setName() {
   if (name.value.trim()) store.updateCollection(props.collectionId, { name: name.value.trim() }, { defer: true })
 }
@@ -51,9 +56,7 @@ function setWords() {
 const where = computed<'project' | 'everywhere'>({
   get: () => (collection.value?.scope.kind === 'project' ? 'project' : 'everywhere'),
   set(to) {
-    const path = store.projectPath.value
-    if (to === 'everywhere') store.updateCollection(props.collectionId, { scope: { kind: 'everywhere' } })
-    else if (path) store.updateCollection(props.collectionId, { scope: { kind: 'project', path } })
+    if (to !== where.value) store.updateCollection(props.collectionId, { scope: scopeOf(planner, to) })
   },
 })
 const iconAt = shallowRef<HTMLElement | null>(null)
@@ -120,7 +123,7 @@ function onKey(e: KeyboardEvent) {
         <button type="button" class="pl-set__icon" :disabled="readonly" :aria-label="shell.icon" :title="shell.icon" aria-haspopup="dialog" :aria-expanded="!!iconAt" @click="iconAt = $event.currentTarget as HTMLElement">
           <CollectionIcon :collection="collection" />
         </button>
-        <input v-model="name" type="text" class="pl-input" :readonly="readonly" :aria-label="shell.name" autocomplete="off" spellcheck="false" @input="setName" @blur="restoreName">
+        <input :value="name" type="text" class="pl-input" :readonly="readonly" :aria-label="shell.name" autocomplete="off" spellcheck="false" @input="name = read($event); setName()" @blur="restoreName">
         <ColorButton
           :model-value="collection.color"
           :label="shell.colour"
@@ -130,14 +133,14 @@ function onKey(e: KeyboardEvent) {
         />
       </div>
       <component :is="Field" :label="shell.description" for="pl-set-desc">
-        <input id="pl-set-desc" v-model="description" class="pl-input" type="text" :readonly="readonly" autocomplete="off" @input="setDescription">
+        <input id="pl-set-desc" :value="description" class="pl-input" type="text" :readonly="readonly" autocomplete="off" @input="description = read($event); setDescription()">
       </component>
       <div class="pl-set__pair">
         <component :is="Field" :label="shell.itemOne" for="pl-set-one">
-          <input id="pl-set-one" v-model="one" class="pl-input" type="text" :readonly="readonly" :placeholder="shared.item" autocomplete="off" spellcheck="false" @input="setWords">
+          <input id="pl-set-one" :value="one" class="pl-input" type="text" :readonly="readonly" :placeholder="shared.item" autocomplete="off" spellcheck="false" @input="one = read($event); setWords()">
         </component>
         <component :is="Field" :label="shell.itemMany" for="pl-set-many">
-          <input id="pl-set-many" v-model="many" class="pl-input" type="text" :readonly="readonly" :placeholder="shared.items" autocomplete="off" spellcheck="false" @input="setWords">
+          <input id="pl-set-many" :value="many" class="pl-input" type="text" :readonly="readonly" :placeholder="shared.items" autocomplete="off" spellcheck="false" @input="many = read($event); setWords()">
         </component>
       </div>
       <div v-if="store.projectPath.value && !readonly" class="pl-set__line">

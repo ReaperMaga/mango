@@ -147,9 +147,9 @@ watch(lines, (list) => {
   const id = now.key.startsWith('i/') ? now.key.slice(now.key.lastIndexOf('/') + 1) : null
   const moved = id ? list.find(l => l.kind === 'item' && l.item.id === id) : undefined
   const next = moved ?? list[Math.min(lastIndex, list.length - 1)]
-  if (!moved && editing.value) editing.value = null
+  // What is typed so far counts, wherever its row went.
+  cellInput?.commit('blur')
   active.value = next ? { key: next.key, col: now.col } : null
-  if (editing.value && next) editing.value = { ...editing.value, key: next.key }
 })
 
 function elementOf(cell = activeId.value): HTMLElement | null {
@@ -210,7 +210,7 @@ watch(() => props.result.items, (items) => {
 watch(() => props.view.id, () => {
   selection.value = new Set()
   active.value = null
-  editing.value = null
+  cellInput?.commit('blur')
   popover.value = null
   if (grid.value) grid.value.scrollTop = grid.value.scrollLeft = 0
 })
@@ -246,7 +246,11 @@ function selectAll() {
 
 /* ---------------------------------------------------------------- editing */
 
-const editing = shallowRef<{ key: string; col: string; text: string; selectAll: boolean } | null>(null)
+const editing = shallowRef<{ key: string; itemId: string; col: string; text: string; selectAll: boolean } | null>(null)
+let cellInput: { commit(then: 'blur' | 'keep'): void } | null = null
+function setCellInput(el: unknown) {
+  cellInput = el as typeof cellInput
+}
 type Popover =
   | { kind: 'value'; property: Property; itemIds: string[]; anchor: HTMLElement }
   | { kind: 'add'; anchor: HTMLElement }
@@ -265,7 +269,7 @@ async function edit(typed?: string) {
   if (field?.type === 'checkbox') return toggleCheckbox(line.item, field)
   scrollTo(currentIndex(), id)
   if (inPlace(field)) {
-    editing.value = { key: line.key, col: id, text: typed ?? cellText(line.item, field), selectAll: typed === undefined && field?.type !== 'text' }
+    editing.value = { key: line.key, itemId: line.item.id, col: id, text: typed ?? cellText(line.item, field), selectAll: typed === undefined && field?.type !== 'text' }
     return
   }
   await nextTick()
@@ -273,22 +277,22 @@ async function edit(typed?: string) {
   if (el && field) popover.value = { kind: 'value', property: field, itemIds: [line.item.id], anchor: el }
 }
 
-function commitEdit(text: string, then: 'down' | 'right' | 'left' | 'stay' | 'blur') {
+function commitEdit(text: string, then: 'down' | 'right' | 'left' | 'stay' | 'blur' | 'keep') {
   const was = editing.value
-  editing.value = null
+  if (then !== 'keep') editing.value = null
   const index = currentIndex()
-  const line = was && lines.value[lineIndex.value.get(was.key) ?? -1]
-  const col = was && cols.value[colIndex.value.get(was.col) ?? -1]
-  if (line?.kind === 'item' && col && text !== cellText(line.item, col.field)) {
-    const { field } = col
-    if (!field) store.updateItem(props.collection.id, line.item.id, { title: text.trim() })
+  // The item it was begun on, also when the view does not show it any more.
+  const item = was && store.item(props.collection.id, was.itemId)
+  const field = was && was.col !== TITLE ? propertyOf(props.collection, was.col) : null
+  if (item && (field || was.col === TITLE) && text !== cellText(item, field)) {
+    if (!field) store.updateItem(props.collection.id, item.id, { title: text.trim() })
     else {
       const value: Value | null = field.type === 'number' ? parseNumber(text) : text.trim() ? (field.type === 'url' ? text.trim() : text) : null
       if (field.type === 'number' && value === null && text.trim()) mango.ui.toast({ title: strings.notPasted(1), kind: 'warning' })
-      else store.updateItem(props.collection.id, line.item.id, { values: { [field.id]: value } })
+      else store.updateItem(props.collection.id, item.id, { values: { [field.id]: value } })
     }
   }
-  if (then === 'blur') return
+  if (then === 'blur' || then === 'keep') return
   grid.value?.focus({ preventScroll: true })
   // Where the neighbours were before the edit sorted or grouped the item elsewhere.
   if (then === 'down') activate(index + 1, was?.col)
@@ -909,6 +913,7 @@ defineExpose({ newItem, focus })
                 <CellInput
                   v-if="isEditing(line.key, c.id)"
                   :key="cellId(line.key, c.id)"
+                  :ref="setCellInput"
                   :text="editing!.text"
                   :select-all="editing!.selectAll"
                   :multiline="c.field?.type === 'text'"

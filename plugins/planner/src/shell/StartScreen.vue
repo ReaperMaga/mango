@@ -6,7 +6,7 @@ import { TEMPLATES, type TemplateId } from '../templates.ts'
 import Icon from '../ui/Icon.vue'
 import { importAsCollection } from './collectionMenu.ts'
 import ScopeChoice from './ScopeChoice.vue'
-import { scopeOf } from './scope.ts'
+import { scopeOf } from './repository.ts'
 import { shell } from './strings.ts'
 
 /** Nothing here yet: what the planner is, and what to start with. */
@@ -14,7 +14,7 @@ const emit = defineEmits<{ made: [collection: Collection] }>()
 const planner = usePlanner()
 const { store } = planner
 const where = ref<'project' | 'everywhere'>(store.projectPath.value ? 'project' : 'everywhere')
-const scope = (): Scope => scopeOf(store, where.value)
+const scope = (): Scope => scopeOf(planner, where.value)
 
 function create(template: TemplateId) {
   const made = store.createCollection({ template, scope: scope() })

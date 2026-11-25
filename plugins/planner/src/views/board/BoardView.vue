@@ -157,7 +157,7 @@ watch(() => props.result.groups, (groups) => {
 }, { flush: 'post' })
 
 function renameGroup(key: string, name: string) {
-  if (property.value && name !== groupName(key)) store.updateOption(props.collection.id, property.value.id, key, { name })
+  if (property.value?.options.some(o => o.id === key) && name !== groupName(key)) store.updateOption(props.collection.id, property.value.id, key, { name })
 }
 /** While a colour is picked it shows; it is written once that is settled. */
 function setColour(color: Color) {

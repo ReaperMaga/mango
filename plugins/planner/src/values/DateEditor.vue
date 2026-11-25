@@ -4,6 +4,7 @@ import { usePlanner } from '../context.ts'
 import { addDays, localDate, type DateValue, type Value } from '../model.ts'
 import Icon from '../ui/Icon.vue'
 import { addMonths, dateText, firstWeekday, fullDate, monthText, readDate, sameDayIn, weekdayNames } from './dates.ts'
+import { onCommit } from './onCommit.ts'
 import { strings } from './strings.ts'
 
 /** A typed date or one from the calendar, with an optional end and time. Every step is kept at once. */
@@ -73,6 +74,10 @@ function commit(which: 'start' | 'end'): boolean {
   cursor.value = d.start.slice(0, 10)
   return true
 }
+onCommit(() => {
+  commit('start')
+  if (withEnd.value) commit('end')
+})
 function onInputKey(e: KeyboardEvent, which: 'start' | 'end') {
   if (e.isComposing) return
   if (e.key === 'Enter') {

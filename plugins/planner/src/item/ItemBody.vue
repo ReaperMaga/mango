@@ -4,6 +4,7 @@ import { usePlanner } from '../context.ts'
 import type { Collection, Item } from '../model.ts'
 import Icon from '../ui/Icon.vue'
 import { link, onEnter, onTab, taskMarks, toggleList, toggleTask, wrap, type Edit } from './markdownEdit.ts'
+import { onCommit } from '../values/onCommit.ts'
 import { strings } from './strings.ts'
 
 /** An item's notes: rendered Markdown, or its text while it is edited. */
@@ -22,6 +23,10 @@ const base = computed(() => (props.collection.scope.kind === 'project' ? props.c
 function save(body: string) {
   store.updateItem(props.collection.id, props.item.id, { body }, { defer: true })
 }
+
+onCommit(() => {
+  if (editing.value && area.value && area.value.value !== props.item.body) save(area.value.value)
+})
 
 async function edit(at: number | null = null) {
   if (props.readonly) return

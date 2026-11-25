@@ -6,7 +6,7 @@ import { TEMPLATES, type TemplateId } from '../templates.ts'
 import Icon from '../ui/Icon.vue'
 import { importAsCollection } from './collectionMenu.ts'
 import ScopeChoice from './ScopeChoice.vue'
-import { scopeOf } from './scope.ts'
+import { scopeOf } from './repository.ts'
 import { shell } from './strings.ts'
 
 /** A new collection: a name, what it starts with, where it shows. Enter creates it; arrows choose the template. */
@@ -22,11 +22,11 @@ const chosen = computed(() => TEMPLATES.find(t => t.id === template.value)!)
 const group = ref<HTMLElement | null>(null)
 
 function create() {
-  const made = store.createCollection({ name: name.value, template: template.value, scope: scopeOf(store, where.value) })
+  const made = store.createCollection({ name: name.value, template: template.value, scope: scopeOf(planner, where.value) })
   if (made) emit('made', made)
 }
 async function load() {
-  const made = await importAsCollection(planner, scopeOf(store, where.value))
+  const made = await importAsCollection(planner, scopeOf(planner, where.value))
   if (!made) return
   if (name.value.trim()) store.updateCollection(made.id, { name: name.value.trim() })
   emit('made', store.collection(made.id) ?? made)

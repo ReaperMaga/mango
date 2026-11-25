@@ -66,7 +66,7 @@ const filters = computed(() => props.view.filter.conditions.length)
 const marked = computed(() => props.view.sorts.length > 0 || (props.view.type === 'table' && props.view.groupBy !== null) || props.view.hiddenGroups.length > 0)
 const many = computed(() => itemWord(props.collection, 2))
 const one = computed(() => itemWord(props.collection, 1))
-const repository = useRepository(mango, () => props.collection)
+const repository = useRepository(mango, store, () => props.collection)
 
 function open(name: Pop, anchor: EventTarget | HTMLElement | null) {
   if (anchor) pop.value = { name, anchor: anchor as HTMLElement }

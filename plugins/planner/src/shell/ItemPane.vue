@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { usePlanner } from '../context.ts'
 import { shell } from './strings.ts'
 
@@ -31,8 +31,10 @@ function set(n: number) {
 }
 const keep = () => mango.storage.set(KEY, wanted.value)
 
+let stop: (() => void) | null = null
 function start(e: PointerEvent) {
   if (e.button !== 0) return
+  stop?.()
   e.preventDefault()
   const hold = mango.ui.holdOverlay()
   const el = e.currentTarget as HTMLElement
@@ -40,7 +42,8 @@ function start(e: PointerEvent) {
   el.setPointerCapture(e.pointerId)
   resizing.value = true
   const move = (ev: PointerEvent) => set(right - ev.clientX)
-  const end = () => {
+  const end = stop = () => {
+    stop = null
     el.removeEventListener('pointermove', move)
     el.removeEventListener('lostpointercapture', end)
     hold.dispose()
@@ -50,6 +53,7 @@ function start(e: PointerEvent) {
   el.addEventListener('pointermove', move)
   el.addEventListener('lostpointercapture', end)
 }
+onBeforeUnmount(() => stop?.())
 function onKey(e: KeyboardEvent) {
   const by = { ArrowLeft: 16, ArrowRight: -16 }[e.key]
   if (!by) return
