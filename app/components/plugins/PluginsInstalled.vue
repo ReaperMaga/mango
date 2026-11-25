@@ -138,8 +138,17 @@ function menu(p: InstalledPlugin): MenuItem[] {
   ]
 }
 
+/** Whether it saved documents: they stay, unless the box that then shows is ticked. */
+const documents = ref(false)
+const deleteDocuments = ref(false)
+const removeAsk = (p: InstalledPlugin) => documents.value
+  ? (p.source.kind === 'local' ? 'plugins.remove.askLocalDocuments' : 'plugins.remove.askDocuments')
+  : (p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask')
 function askRemove(p: InstalledPlugin) {
-  removing.value = p.manifest.id
+  const id = p.manifest.id
+  removing.value = id
+  documents.value = deleteDocuments.value = false
+  void plugins.documentCount(id).then((n) => { if (removing.value === id) documents.value = n > 0 })
   void nextTick(() => listEl.value?.querySelector<HTMLElement>('.pi__ask [data-autofocus]')?.focus())
 }
 function keep() {
@@ -148,7 +157,7 @@ function keep() {
   void nextTick(() => listEl.value?.querySelector<HTMLElement>(`[data-more="${id}"]`)?.focus())
 }
 async function remove(p: InstalledPlugin) {
-  if (await run(p.manifest.id, () => plugins.remove(p.manifest.id))) removing.value = null
+  if (await run(p.manifest.id, () => plugins.remove(p.manifest.id, deleteDocuments.value))) removing.value = null
 }
 
 const adding = ref(false)
@@ -238,9 +247,15 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
             :aria-label="t('plugins.remove.label', { name: p.manifest.name })"
             @keydown.esc.stop.prevent="keep"
           >
-            <i18n-t :keypath="p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask'" tag="p" scope="global" class="pi__ask-text">
-              <template #name><strong>{{ p.manifest.name }}</strong></template>
-            </i18n-t>
+            <div class="pi__ask-body">
+              <i18n-t :keypath="removeAsk(p)" tag="p" scope="global" class="pi__ask-text">
+                <template #name><strong>{{ p.manifest.name }}</strong></template>
+              </i18n-t>
+              <label v-if="documents" class="pi__ask-docs">
+                <input v-model="deleteDocuments" type="checkbox" :disabled="busy === p.manifest.id">
+                <span>{{ t('plugins.remove.documents') }}</span>
+              </label>
+            </div>
             <UiButton size="sm" variant="ghost" data-autofocus @click="keep">{{ t('plugins.remove.keep') }}</UiButton>
             <UiButton size="sm" variant="danger" :loading="busy === p.manifest.id" @click="remove(p)">{{ t('plugins.remove.confirm') }}</UiButton>
           </div>
@@ -358,7 +373,10 @@ const nameId = (p: InstalledPlugin) => `plugin-name-${p.manifest.id}`
   border-radius: var(--radius-sm);
   background: color-mix(in oklch, var(--ripe-error) 7%, transparent);
 }
-.pi__ask-text { flex: 1 1 30ch; margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
+.pi__ask-body { flex: 1 1 30ch; display: grid; justify-items: start; gap: var(--space-1); }
+.pi__ask-docs { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--fg-muted); cursor: pointer; }
+.pi__ask-docs input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.pi__ask-text { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
 .pi__ask-text strong { font-weight: 600; color: var(--fg); }
 
 .pi__empty { display: grid; justify-items: start; gap: var(--space-3); padding: var(--space-2) 0; }

@@ -1195,6 +1195,31 @@ export interface PluginUpdateInfo {
   error: string | null
 }
 
+/** A plugin's saved document (`mango.data`, plugin_data.rs): a `PluginDoc` with its data as JSON text. */
+export interface PluginDataRow {
+  collection: string
+  id: string
+  rev: number
+  seq: number
+  createdAt: number
+  updatedAt: number
+  deleted: boolean
+  /** JSON text; null once deleted. */
+  data: string | null
+}
+
+export type PluginDataWriteOp =
+  | { op: 'put'; collection: string; id: string; data: string; expectedRev?: number }
+  | { op: 'delete'; collection: string; id: string; expectedRev?: number }
+
+export interface PluginDataWritten {
+  /** The document after each operation, in their order; empty when there are conflicts. */
+  docs: PluginDataRow[]
+  /** Documents not at their `expectedRev`, as they are now (`rev` 0: there is none). Then nothing was written. */
+  conflicts: PluginDataRow[]
+  seq: number
+}
+
 export interface PluginProgress {
   jobId: string
   /** A raw line of git's progress output. */
@@ -1779,6 +1804,17 @@ export interface Commands {
   plugins_reveal: [{ id: string | null }, void]
   /** The folder plugins are installed in (for "Open plugins folder"). */
   plugins_dir: [Record<string, never>, string]
+  /** A plugin's saved documents (`app/plugin-host/data.ts`): a collection's, without the deleted ones. */
+  plugin_data_list: [{ pluginId: string; collection: string }, PluginDataRow[]]
+  plugin_data_get: [{ pluginId: string; collection: string; id: string }, PluginDataRow | null]
+  /** How many documents a plugin has (removing it asks about them). */
+  plugin_data_count: [{ pluginId: string }, number]
+  /** Everything written after `since`, tombstones included, oldest first. */
+  plugin_data_changes: [{ pluginId: string; since: number }, { seq: number; docs: PluginDataRow[] }]
+  /** All of `ops` or none; `origin` comes back in `plugins://data`. */
+  plugin_data_write: [{ pluginId: string; ops: PluginDataWriteOp[]; origin: string }, PluginDataWritten]
+  /** Delete a plugin's documents for good. While it is not installed, it can save none after this. */
+  plugin_data_clear: [{ pluginId: string }, void]
 }
 
 /** Events emitted by the backend. */
@@ -1809,4 +1845,6 @@ export interface Events {
   'window://parked': Record<string, never>
   /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */
   'plugins://progress': PluginProgress
+  /** A plugin's documents were written, by any window (`origin`: the one `plugin_data_write` was given). */
+  'plugins://data': { pluginId: string; seq: number; docs: PluginDataRow[]; origin: string }
 }

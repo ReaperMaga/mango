@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { BadgeCheck, CircleAlert, Copy, ExternalLink, FolderOpen, RefreshCw, RotateCw, Settings2, Trash2 } from 'lucide-vue-next'
+import type { InstalledPlugin } from '~/types/ipc'
 import type { PluginRunStatus } from '~/plugin-host/types'
 import { usePlugins } from '~/stores/plugins'
 import { usePluginRuntime } from '~/plugin-host/runtime'
@@ -80,8 +81,16 @@ async function openDir() {
 async function copyDir() {
   if (p.value) notice.value = (await copyText(p.value.dir)) ? t('plugins.detail.copied') : null
 }
+/** Whether it saved documents: they stay, unless the box that then shows is ticked. */
+const documents = ref(false)
+const deleteDocuments = ref(false)
+const removeAsk = (p: InstalledPlugin) => documents.value
+  ? (p.source.kind === 'local' ? 'plugins.remove.askLocalDocuments' : 'plugins.remove.askDocuments')
+  : (p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask')
 function askRemove() {
   removing.value = true
+  documents.value = deleteDocuments.value = false
+  void plugins.documentCount(props.id).then((n) => { documents.value = n > 0 })
   void nextTick(() => root.value?.querySelector<HTMLElement>('.pd__ask [data-autofocus]')?.focus())
 }
 function keep() {
@@ -89,7 +98,7 @@ function keep() {
   void nextTick(() => root.value?.querySelector<HTMLElement>('[data-remove]')?.focus())
 }
 async function remove() {
-  if (await run('remove', () => plugins.remove(props.id))) emit('removed')
+  if (await run('remove', () => plugins.remove(props.id, deleteDocuments.value))) emit('removed')
 }
 
 /* ---------- facts ---------- */
@@ -170,9 +179,15 @@ const nameId = useId()
     <p v-else-if="notice" class="pd__notice" role="status">{{ notice }}</p>
 
     <div v-if="removing" class="pd__ask" role="alertdialog" :aria-label="t('plugins.remove.label', { name: m.name })" @keydown.esc.stop.prevent="keep">
-      <i18n-t :keypath="p.source.kind === 'local' ? 'plugins.remove.askLocal' : 'plugins.remove.ask'" tag="p" scope="global" class="pd__ask-text">
-        <template #name><strong>{{ m.name }}</strong></template>
-      </i18n-t>
+      <div class="pd__ask-body">
+        <i18n-t :keypath="removeAsk(p)" tag="p" scope="global" class="pd__ask-text">
+          <template #name><strong>{{ m.name }}</strong></template>
+        </i18n-t>
+        <label v-if="documents" class="pd__ask-docs">
+          <input v-model="deleteDocuments" type="checkbox" :disabled="busy === 'remove'">
+          <span>{{ t('plugins.remove.documents') }}</span>
+        </label>
+      </div>
       <UiButton size="sm" variant="ghost" data-autofocus @click="keep">{{ t('plugins.remove.keep') }}</UiButton>
       <UiButton size="sm" variant="danger" :loading="busy === 'remove'" @click="remove">{{ t('plugins.remove.confirm') }}</UiButton>
     </div>
@@ -332,7 +347,10 @@ const nameId = useId()
   border-radius: var(--radius-sm);
   background: color-mix(in oklch, var(--ripe-error) 7%, transparent);
 }
-.pd__ask-text { flex: 1 1 30ch; margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
+.pd__ask-body { flex: 1 1 30ch; display: grid; justify-items: start; gap: var(--space-1); }
+.pd__ask-docs { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-sm); color: var(--fg-muted); cursor: pointer; }
+.pd__ask-docs input { flex: none; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+.pd__ask-text { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
 .pd__ask-text strong { font-weight: 600; color: var(--fg); }
 
 /* ---- facts: label column and value, between soft rules ---- */
