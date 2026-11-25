@@ -1,9 +1,10 @@
-import { h, type Component } from 'vue'
+import { computed, type Component } from 'vue'
 import App from './App.vue'
-import { readRoute, TAB_KEY, VIEW_ID, type Route } from './context.ts'
+import { readRoute, TAB_KEY, VIEW_ID, type Planner, type Route } from './context.ts'
 import type { MangoPluginApi } from './host.ts'
-import type { Collection } from './model.ts'
-import PickCollection from './PickCollection.vue'
+import { askCollection, askNewCollection, askNewItem } from './shell/dialogs.ts'
+import './shell/shell.css'
+import { shell } from './shell/strings.ts'
 import { createStore, type PlannerStore } from './store.ts'
 import { strings } from './strings.ts'
 
@@ -20,14 +21,33 @@ export function activate(mango: MangoPluginApi) {
 
   const isOpen = () => mango.ui.tabs.active()?.viewId === VIEW_ID
 
+  /** Shows the planner's tab, where it was or at `route`. */
   function open(route?: Route) {
-    if (!mango.workspace.activeProject()) return mango.ui.toast({ title: strings.noProject })
+    if (!mango.workspace.activeProject()) return mango.ui.toast({ title: strings.noProject, body: shell.noProjectBody })
     mango.ui.tabs.open(VIEW_ID, { title: strings.planner, key: TAB_KEY, state: route ? { ...route } : undefined })
   }
 
   function toggle() {
     if (isOpen()) mango.ui.tabs.close(VIEW_ID, TAB_KEY)
     else open()
+  }
+
+  /** For dialogs outside of the tab: going somewhere opens it there. */
+  const planner: Planner = {
+    mango,
+    store,
+    route: computed(() => readRoute(mango.ui.tabs.active()?.state) ?? { collectionId: store.lastCollection() }),
+    go: route => open({ collectionId: route.collectionId ?? store.lastCollection(), ...route }),
+  }
+
+  /** The collections are there; says so when they could not be read. */
+  async function loaded(): Promise<boolean> {
+    if (store.status.value !== 'ready') await store.load()
+    // Another load was under way.
+    for (let i = 0; i < 100 && store.status.value === 'loading'; i++) await new Promise(r => setTimeout(r, 50))
+    if (store.status.value === 'ready') return true
+    mango.ui.toast({ title: strings.loadFailed, body: store.error.value ?? '', kind: 'error' })
+    return false
   }
 
   mango.ui.tabs.register({
@@ -40,50 +60,23 @@ export function activate(mango: MangoPluginApi) {
   mango.ui.navItems.register({ id: 'planner', title: strings.planner, icon: ICON, shortcut: 'planner', active: isOpen, run: () => open() })
   mango.shortcuts.register({ id: 'planner', label: strings.commands.open, key: 'Mod+Shift+D', run: toggle })
 
-  /** The only collection, or the one the user picks; says so when there is none. */
-  async function chooseCollection(): Promise<Collection | null> {
-    const list = store.collections.value
-    if (!list.length) {
-      mango.ui.toast({ title: strings.noCollections, body: strings.noCollectionsForItem, action: { label: strings.commands.open, run: () => open() } })
-      return null
-    }
-    if (list.length === 1) return list[0]!
-    let picked: Collection | null = null
-    await mango.ui.dialog({
-      title: strings.chooseCollection,
-      width: 360,
-      view: {
-        component: {
-          props: ['ctx'],
-          setup: (props: { ctx?: { close(): void } }) => () => h(PickCollection, {
-            mango,
-            collections: list,
-            onPick: (c: Collection) => {
-              picked = c
-              props.ctx?.close()
-            },
-          }),
-        } as Component,
-      },
-    })
-    return picked
-  }
-
   mango.commands.register({ id: 'open', title: strings.commands.open, icon: ICON, keywords: 'board kanban tasks notes table', run: () => open() })
   mango.commands.register({
     id: 'new-item',
     title: strings.commands.newItem,
     icon: ICON,
-    keywords: 'planner task bug note',
+    keywords: 'planner task bug note add',
     run: async () => {
+      if (!await loaded()) return
       // In the planner it goes into the collection on screen.
-      const shown = isOpen() ? readRoute(mango.ui.tabs.active()?.state)?.collectionId ?? store.lastCollection() : null
-      const collection = store.collections.value.find(c => c.id === shown) ?? await chooseCollection()
+      const shown = (isOpen() ? readRoute(mango.ui.tabs.active()?.state)?.collectionId : null) ?? store.lastCollection()
+      const collection = store.collections.value.find(c => c.id === shown) ?? store.collections.value[0] ?? await askNewCollection(planner)
       if (!collection) return
-      const title = (await mango.ui.prompt({ title: strings.newItemIn(collection.name), placeholder: strings.newItemPrompt }))?.trim()
-      if (!title) return
-      const item = await store.createItem(collection.id, { title })
-      if (item) open({ collectionId: collection.id, itemId: item.id })
+      const added = await askNewItem(planner, collection.id)
+      if (!added) return
+      const route: Route = { collectionId: added.collection.id, itemId: added.item.id }
+      if (added.open) return open(route)
+      mango.ui.toast({ title: strings.itemAdded(added.collection.name), kind: 'success', action: { label: strings.show, run: () => open(route) } })
     },
   })
   mango.commands.register({
@@ -92,9 +85,8 @@ export function activate(mango: MangoPluginApi) {
     icon: ICON,
     keywords: 'planner board table',
     run: async () => {
-      const name = (await mango.ui.prompt({ title: strings.newCollection, placeholder: strings.templates.tasks.name }))?.trim()
-      if (!name) return
-      const collection = store.createCollection({ name, template: 'tasks' })
+      if (!await loaded()) return
+      const collection = await askNewCollection(planner)
       if (collection) open({ collectionId: collection.id })
     },
   })
@@ -104,7 +96,8 @@ export function activate(mango: MangoPluginApi) {
     icon: ICON,
     run: async ({ threadId }) => {
       const title = mango.chat.get(threadId)?.title
-      const collection = title === undefined ? null : await chooseCollection()
+      if (title === undefined || !await loaded()) return
+      const collection = await askCollection(planner)
       if (!collection) return
       const item = await store.createItem(collection.id, { title, chats: [threadId] })
       if (!item) return
@@ -115,7 +108,6 @@ export function activate(mango: MangoPluginApi) {
       })
     },
   })
-
 }
 
 /** Before the plugin goes: what was typed is written. */
