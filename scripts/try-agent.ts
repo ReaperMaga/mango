@@ -3,7 +3,7 @@
  *
  *   node scripts/try-agent.ts <claude|codex> <cwd> "<prompt>" [--mode ask|plan|edits|auto]
  *        [--model id] [--effort level] [--session id] [--image file.png] [--deny] [--dismiss] [--interrupt-after ms]
- *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
+ *        [--steer "<text>" [--steer-after ms]] [--then "<text>" [--then-after ms] [--no-keep] [--between "<text>"] [--then-model id] [--then-effort level]] [--task-output-after ms] [--stop-task-after ms] [--mcp servers.json] [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --models [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --usage [--raw]
  *   node scripts/try-agent.ts <claude|codex> <cwd> --commands [--raw]
@@ -19,16 +19,19 @@
  * --image attaches a PNG, JPEG, GIF or WebP the way the app does (inline for Claude, by path for Codex).
  * --steer sends another message while the turn runs (after --steer-after ms, default 3000), as typing during a run does.
  * --then sends a second turn --then-after ms (default 1000) after the first, in the process kept from it, as the app
- *  does for a chat's next message; with --no-keep a new process resumes the session instead.
+ *  does for a chat's next message; with --no-keep a new process resumes the session instead. --between first sends
+ *  a message to the same session from a `claude -p --resume` of its own, as someone in a terminal would (Claude Code only).
+ *  --then-model and --then-effort give the second turn another model or effort.
  * --task-output-after reads each background task's output that long after it starts (no quota);
  * --stop-task-after stops each background task that long after it starts.
  * --mcp hands the run MCP servers as Settings > MCP servers would: a JSON array of AgentMcpServer
  * (app/agents/types.ts), e.g. [{"name":"x","transport":"stdio","command":"node","args":["s.js"],"env":{}}].
  * --raw also prints the CLI's own stdout lines (prefixed "<<") and stdin writes (">>").
  */
-import { spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { basename, dirname, extname, resolve } from 'node:path'
+import { execFileSync, spawn } from 'node:child_process'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, dirname, extname, join, resolve } from 'node:path'
 import { KeptProcesses } from '../app/agents/keeper.ts'
 
 const [agentId, cwd, prompt, ...rest] = process.argv.slice(2)
@@ -107,16 +110,23 @@ const kept = has('no-keep') ? null : new KeptProcesses()
 let session: string | null = flag('session') ?? null
 let then = flag('then')
 
-const turn = (prompt: string) => adapter.run({
+/** The app's `agent_transcript`, without its cuts. */
+const readTranscript = async (id: string) => {
+  const projects = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects')
+  const file = readdirSync(projects).map(d => join(projects, d, `${id}.jsonl`)).find(f => existsSync(f))
+  return file ? { lines: readFileSync(file, 'utf8').split('\n').slice(0, -1), whole: true } : null
+}
+
+const turn = (prompt: string, second = false) => adapter.run({
   cwd,
   prompt,
   images,
   readDirs: imagePath ? [dirname(imagePath)] : [],
-  model: flag('model') ?? 'default',
+  model: (second && flag('then-model')) || flag('model') || 'default',
   mode: flag('mode') ?? 'ask',
-  effort: flag('effort') ?? null,
+  effort: (second && flag('then-effort')) || flag('effort') || null,
   sessionId: session,
-  ...(kept ? { keeper: kept.keeperFor({ chat: 'try', agent: agentId, folder: cwd }, '', () => '') } : {}),
+  ...(kept ? { keeper: kept.keeperFor({ chat: 'try', agent: agentId, folder: cwd }, '', () => ''), readTranscript } : {}),
   ...(flag('mcp') ? { mcpServers: JSON.parse(readFileSync(resolve(flag('mcp')!), 'utf8')) } : {}),
   spawn: spawnCli,
   emit(event: any) {
@@ -132,7 +142,17 @@ const turn = (prompt: string) => adapter.run({
     if (event.type === 'turn-end') {
       const next = then
       then = undefined
-      if (next) setTimeout(() => { console.log('-- then', kept?.size ? '(a process is kept)' : '(no process is kept)'); run = turn(next) }, Number(flag('then-after')) || 1000)
+      if (next) {
+        setTimeout(() => {
+          const between = flag('between')
+          if (between && session) {
+            const answer = execFileSync('claude', ['-p', '--resume', session, '--model', flag('model') ?? 'default', between], { cwd, encoding: 'utf8' })
+            console.log('-- between:', answer.trim())
+          }
+          console.log('-- then', kept?.size ? '(a process is kept)' : '(no process is kept)')
+          run = turn(next, true)
+        }, Number(flag('then-after')) || 1000)
+      }
       else setTimeout(async () => { await kept?.release(() => true); process.exit(0) }, 1500)
     }
     if (event.type === 'task-start') {

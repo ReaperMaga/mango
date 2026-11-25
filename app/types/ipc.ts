@@ -5,6 +5,7 @@
  * Rust structs serialize with #[serde(rename_all = "camelCase")].
  */
 
+import type { TranscriptTail } from '~/agents/types'
 import type { Attachment } from '~/types/chat'
 
 /** A stored attachment as the backend reports it (the preview is made in the webview). */
@@ -1275,6 +1276,11 @@ export interface Commands {
   agent_close_stdin: [{ id: string }, void]
   /** Kills the process and everything it started. Unknown ids succeed silently. */
   agent_kill: [{ id: string }, void]
+  /**
+   * The last lines of a Claude Code session's transcript on this computer, at most `maxBytes` of it (32 MB
+   * at the very most); null when it has no transcript.
+   */
+  agent_transcript: [{ sessionId: string; maxBytes: number }, TranscriptTail | null]
   /**
    * The connection to `hostId` (every host when null) is back: remote runs attach again now
    * instead of after their wait, runs stopped while it was gone are stopped there, and the
