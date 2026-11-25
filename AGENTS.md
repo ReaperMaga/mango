@@ -160,7 +160,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   again, the last message in the session's transcript (`agent_transcript`) must be one it printed: the user may have gone on
   with the session in a terminal. Transcripts are only ever read. Model and effort are the exception to the key: a kept process is
   asked to change them, and used only once `get_settings` says it runs at them (`wake` in `claude.ts`); it is never asked back to
-  a default, which comes out different there. The permission mode stays in the key: a process started with bypassPermissions
+  a default, which comes out different there. Folders to read (attachments) are opened to it the same way, always as the whole list:
+  a new one replaces the last. The permission mode stays in the key: a process started with bypassPermissions
   can fall back to that after an approved plan.
 - Anything that spends quota without the user asking is off until they choose it. Compacting a chat by itself
   (`useIdleCompaction.ts`) also stays away from a session used elsewhere since its last reply (`sessionMovedOn`), tries once per

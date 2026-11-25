@@ -34,7 +34,7 @@ export interface KeptProcess {
   transport: AgentTransport
   /** Where its output goes: whoever holds the process sets this. */
   handlers: SpawnHandlers
-  /** Folders outside the project it was started with access to. */
+  /** Folders outside the project it can read: given at its start, or asked for since. */
   readDirs: string[]
   /** The model and effort it runs at, as they were asked for (`AgentRunOptions`). */
   model: string

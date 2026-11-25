@@ -302,6 +302,9 @@ function userContent(options: SteerInput): unknown[] {
   return content
 }
 
+/** What a request failed on that has nothing to do with the process: the next one may well go through. */
+const PASSING_ERRORS = new Set(['server_error', 'overloaded', 'rate_limit'])
+
 /** A command that changes the session's own settings: it must not reach further than its turn. */
 const changesSession = (prompt: string) => isSlash(prompt) && HIDDEN_COMMANDS.has(prompt.trim().slice(1).split(/\s/)[0]!)
 
@@ -356,7 +359,7 @@ async function missedMessages(p: KeptProcess, read: (maxBytes: number) => Promis
 const WAKE_MS = 3000
 
 /** What a turn wants of the process it goes to. */
-interface Wanted { mode: string; model: string; effort: string | null }
+interface Wanted { mode: string; model: string; effort: string | null; readDirs: string[] }
 
 /**
  * Whether a process can be asked to go on at another model or effort. Not back to what Claude Code would pick
@@ -368,7 +371,8 @@ const canSwitch = (p: KeptProcess, model: string, effort: string | null) =>
 /**
  * Make a kept process ready for a turn. The session may have left the mode it was started in (a plan
  * that was approved, a plan mode the agent entered), so it is always put back. Another model or effort counts
- * only once the process says it runs at it: an effort it does not know is accepted, and ignored.
+ * only once the process says it runs at it: an effort it does not know is accepted, and ignored. The same goes
+ * for the folders the turn reads from, always sent with the earlier ones: a new list takes the place of the last.
  * False: use another process (also when `missed` says the session went on without this one).
  */
 function wake(p: KeptProcess, to: Wanted, missed: () => Promise<boolean>): Promise<boolean> {
@@ -414,6 +418,13 @@ function wake(p: KeptProcess, to: Wanted, missed: () => Promise<boolean>): Promi
         if (to.effort !== null && applied?.effort !== to.effort) return done(false)
         p.model = to.model
         p.effort = to.effort
+      }
+      const dirs = [...new Set([...p.readDirs, ...to.readDirs])]
+      if (dirs.length > p.readDirs.length) {
+        await ask({ subtype: 'apply_flag_settings', settings: { permissions: { additionalDirectories: dirs } } })
+        const granted = (await ask({ subtype: 'get_settings' })).effective?.permissions?.additionalDirectories
+        if (!Array.isArray(granted) || !dirs.every(d => granted.includes(d))) return done(false)
+        p.readDirs = dirs
       }
       // Last, as close to the prompt as can be.
       done(!(await missed()))
@@ -493,6 +504,10 @@ function run(options: AgentRunOptions): AgentRun {
   let closing = false
   /** Claude Code started another turn while the run was closing: not a process to keep. */
   let wentOn = false
+  /** The turn was stopped, or failed on a passing error, and the CLI is done with it. */
+  let cutShort = false
+  /** What the last answer says its request failed on. */
+  let failedOn: unknown
   let exited = false
 
   const end = (status: 'done' | 'error' | 'stopped', error?: string) => {
@@ -505,8 +520,8 @@ function run(options: AgentRunOptions): AgentRun {
     for (const resolve of requests.values()) resolve(null)
     requests.clear()
     emit({ type: 'turn-end', status, error })
-    // Only a turn that ended cleanly, in the folder it was started for, leaves a process worth keeping.
-    const worthKeeping = status === 'done' && closing && !exited && !wentOn && !runningTasks()
+    // Only a turn the CLI is done with, in the folder it was started for, leaves a process worth keeping.
+    const worthKeeping = (cutShort || (status === 'done' && closing)) && !exited && !wentOn && !runningTasks()
       && !movedFrom(cwd, workdir) && !changesSession(options.prompt)
     if (worthKeeping && options.keeper && proc && sessionId) options.keeper.keep(processKey(sessionId), proc)
     else transport?.closeStdin().catch(() => {})
@@ -641,6 +656,7 @@ function run(options: AgentRunOptions): AgentRun {
   /** Full assistant message. With partial streaming on it mostly repeats what the deltas built. */
   function onAssistant(m: any) {
     const msg = m.message ?? {}
+    failedOn = m.error
     const streamed = streamedMessages.has(msg.id)
     if (!streamed) onTurnActivity()
     const content: any[] = Array.isArray(msg.content) ? msg.content : []
@@ -960,6 +976,8 @@ function run(options: AgentRunOptions): AgentRun {
         const cost = typeof total === 'number' && spentBefore !== null ? Math.max(0, total - spentBefore) : undefined
         const spent = addClaudeUsage(runUsage, { ...m, total_cost_usd: cost })
         if (spent && spent !== runUsage) { runUsage = spent; emit({ type: 'usage', usage: spent }) }
+        // A message it has not read yet would be answered next, unseen.
+        cutShort = (interrupted || (!!m.is_error && PASSING_ERRORS.has(String(failedOn)))) && readMessages >= sentMessages && !isSlash(options.prompt)
         if (interrupted) end('stopped')
         // A steering message came too late for this answer: the CLI answers it next, in the same process.
         else if (readMessages < sentMessages && !m.is_error && (!m.subtype || m.subtype === 'success')) break
@@ -1001,7 +1019,7 @@ function run(options: AgentRunOptions): AgentRun {
   if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
   /**
    * What a process was started with, and the conversation it holds: a later turn must share all of it. Not the
-   * model and the effort, which a process can be asked to change (`canSwitch`).
+   * model and the effort, which a process can be asked to change (`canSwitch`), nor the folders it can read (`wake`).
    */
   const processKey = (session: string | null) => JSON.stringify([cwd, args, mcp.env, session])
   const readDirs = options.readDirs ?? []
@@ -1068,12 +1086,12 @@ function run(options: AgentRunOptions): AgentRun {
   }
 
   let grantedDirs = new Set(readDirs)
-  const kept = options.keeper?.take(processKey(options.sessionId), p => canSwitch(p, model, effort) && readDirs.every(d => p.readDirs.includes(d)))
+  const kept = options.keeper?.take(processKey(options.sessionId), p => canSwitch(p, model, effort))
   if (!kept) start()
   else {
     const { readTranscript, sessionId: session } = options
     const missed = async () => !!readTranscript && !!session && missedMessages(kept, maxBytes => readTranscript(session, maxBytes))
-    void wake(kept, { mode: MODES[options.mode] ?? 'default', model, effort }, missed).then((awake) => {
+    void wake(kept, { mode: MODES[options.mode] ?? 'default', model, effort, readDirs }, missed).then((awake) => {
       if (!awake || ended || interrupted) kept.transport.kill().catch(() => {})
       if (ended) return
       if (interrupted) return end('stopped')
@@ -1089,7 +1107,7 @@ function run(options: AgentRunOptions): AgentRun {
 
   return {
     async steer(input) {
-      // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
+      // A message reading files from a folder not opened yet waits for the next turn, which opens it.
       if (ended || closing || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
       // A command runs as a turn of its own, not in the middle of this one; nothing is read while the conversation is compacted.
       if (isSlash(input.prompt) || isCompact(options.prompt)) return false
