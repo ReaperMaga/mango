@@ -12,6 +12,11 @@
  *   computer, works offline and sends what is missing later).
  * - `status` says whether it is online and may be written to; the store shows it and refuses edits when read-only.
  *   Ids are random UUIDs, so documents made offline on two computers never collide.
+ * - `Scope.path` and the chats of an item mean something on this computer only. A scope's portable form is its
+ *   `repo` (`host/owner/name`): elsewhere a collection is matched by it where its path does not exist. Chat links
+ *   have no portable form: a remote source strips `chats` (data, and patches to `['chats', …]`) before sending, and
+ *   keeps them on this computer.
+ * - Errors are `SourceError`s: what the store does with a change depends on their kind.
  * - Several sources at once (local and a team's): one store per source is enough, or a source that routes by
  *   collection id. Documents never refer to their source.
  */
@@ -45,6 +50,25 @@ export interface SourceStatus {
   readonly message?: string
 }
 
+/**
+ * Why a write failed.
+ * - `offline`: it may work later. The change stays, and is written again when the source is online.
+ * - `refused`: not allowed. `invalid`: it can never be written as it is (too large, say). Neither is tried again.
+ * - `unknown`: anything else. A change is taken back; typed text stays and is written again with the next change.
+ * Text the user typed stays on screen whatever the kind.
+ */
+export type SourceErrorKind = 'offline' | 'refused' | 'invalid' | 'unknown'
+
+export class SourceError extends Error {
+  readonly kind: SourceErrorKind
+
+  constructor(kind: SourceErrorKind, message: string) {
+    super(message)
+    this.name = 'SourceError'
+    this.kind = kind
+  }
+}
+
 export interface PlannerSource {
   /** Names the source in the UI once there are several. */
   readonly label: string
@@ -52,11 +76,17 @@ export interface PlannerSource {
   loadItems(collectionId: string): Promise<SourceDoc[]>
   /**
    * All of it, or nothing. Answers every document named, as it is now; one that was patched but is gone comes
-   * back as a tombstone (that is not an error).
+   * back as a tombstone (that is not an error), and so does one nobody ever heard of (`seq` 0).
+   *
+   * `mutationId` is the same when a write is tried again, as its answer may have been lost: a source that made it
+   * answers as it did, and does not make it twice. A `create` of a document that is there is that document.
    */
-  write(ops: readonly SourceOp[]): Promise<SourceDoc[]>
-  /** Every write, the source's own too; applying one twice must do no harm. */
-  subscribe(handler: (docs: SourceDoc[]) => void): () => void
+  write(ops: readonly SourceOp[], mutationId: string): Promise<SourceDoc[]>
+  /**
+   * Every write, the source's own too; applying one twice must do no harm. `resync`: writes may have been missed and
+   * cannot be named one by one (after a long time offline), so everything loaded is read again.
+   */
+  subscribe(handler: (docs: SourceDoc[]) => void, resync?: () => void): () => void
   status(): SourceStatus
   onStatus(handler: (status: SourceStatus) => void): () => void
   dispose(): void

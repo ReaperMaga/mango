@@ -12,15 +12,15 @@ import { computed, ref, shallowReactive, shallowRef, type ComputedRef, type Ref,
 import { convertProperty } from './convert.ts'
 import { parseCsv, planImport, toCsv, toMarkdown } from './csv.ts'
 import { LocalSource } from './data/local.ts'
-import type { PlannerSource, SourceDoc, SourceOp, SourceStatus } from './data/source.ts'
+import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourceStatus } from './data/source.ts'
 import type { MangoPluginApi } from './host.ts'
 import {
   colorAt, isGroupable, isInScope, itemWord, newId, normalizeCollection, normalizeItem, ordered, projectKey, propertyOf,
   storedValue, TITLE, viewOf, type Collection, type Color, type Item, type Option, type Property, type PropertyType,
-  type Scope, type Value, type View,
+  type ProjectIdentity, type Scope, type Value, type View,
 } from './model.ts'
-import { manyBetween, placeAt, spread, type Position } from './order.ts'
-import { applyPatch, entriesById, invertPatch, isObject, readPath, type Json, type JsonObject, type Patch, type PatchOp } from './patch.ts'
+import { between, manyBetween, placeAt, spread, type Position } from './order.ts'
+import { applyPatch, entriesById, invertPatch, isObject, readPath, sameJson, type Json, type JsonObject, type Patch, type PatchOp } from './patch.ts'
 import { defaultValues, valueForGroup } from './query.ts'
 import { strings } from './strings.ts'
 import { propertyData, templateData, viewData, type NewProperty, type NewView, type TemplateId } from './templates.ts'
@@ -161,8 +161,12 @@ export interface PlannerStore {
   /* ---- in and out */
   exportCsv(collectionId: string, itemIds?: readonly string[]): Promise<string | null>
   exportMarkdown(collectionId: string, itemIds?: readonly string[]): Promise<string | null>
-  /** Into a collection: columns join properties of the same name. Answers how many items came in. */
+  /**
+   * Into a collection: columns join properties of the same name. Answers how many items came in, once they are
+   * written: 0 when they could not be (a toast says why).
+   */
   importCsv(collectionId: string, csv: string): Promise<number>
+  /** Null when it could not be written. */
   importCsvAsCollection(csv: string, name: string, scope?: Scope): Promise<Collection | null>
 
   /* ---- undo */
@@ -171,6 +175,7 @@ export interface PlannerStore {
   /** What it would undo or redo, e.g. `delete item`. */
   readonly undoLabel: ComputedRef<string | null>
   readonly redoLabel: ComputedRef<string | null>
+  /** What was changed since, by another window or person, is kept (a toast says so). */
   undo(): void
   redo(): void
 
@@ -180,8 +185,16 @@ export interface PlannerStore {
   lastView(collectionId: string): string | null
   rememberView(collectionId: string, viewId: string): void
 
+  /** What is known of the open project beside its path: matches collections made on another computer. */
+  identifyProject(identity: ProjectIdentity | null): void
+
   /** Writes what is waiting; resolves when nothing is under way. */
   flush(): Promise<void>
+  /**
+   * Before the window closes: open editors commit (a `planner:commit` event on `window`, which they handle at once),
+   * then everything is written or has failed.
+   */
+  flushAll(): Promise<void>
   dispose(): void
 }
 
@@ -196,12 +209,19 @@ export interface StoreOptions {
   /** This computer's when left out. */
   source?: PlannerSource
   deferMs?: number
+  copyText?: (text: string) => void
 }
 
 /* ---------------------------------------------------------------- internals */
 
 /** One change: its operations, and what takes it back. */
 interface Mutation {
+  /** The same each time it is tried. */
+  id: string
+  /** Later changes have higher numbers, however often they are tried. */
+  readonly number: number
+  /** Whether it was written (or is kept to be, while offline), after the first try. */
+  settle?: (ok: boolean) => void
   ops: SourceOp[]
   at: number
   deferred: boolean
@@ -230,6 +250,8 @@ const LAYOUT = new Set<keyof ViewChange>(['collapsedGroups', 'widths'])
 
 const keyOf = (o: Pick<SourceOp, 'kind' | 'id' | 'collectionId'>) => `${o.kind}/${o.collectionId}/${o.id}`
 const messageOf = (e: unknown) => (e instanceof Error ? e.message : String(e))
+const kindOf = (e: unknown) => (e instanceof SourceError ? e.kind : 'unknown')
+const covers = (a: readonly string[], b: readonly string[]) => a.length <= b.length && a.every((k, i) => k === b[i])
 const json = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json
 const samePath = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((k, i) => k === b[i])
 const collectionTarget = (id: string) => ({ kind: 'collection' as const, id, collectionId: id })
@@ -245,6 +267,50 @@ function applyOps(data: JsonObject | null, ops: readonly SourceOp[]): JsonObject
   return out
 }
 
+/** Operations by document; found again for the same list, as a large import asks for every one of its documents. */
+const grouped = new WeakMap<readonly SourceOp[], Map<string, SourceOp[]>>()
+function opsOn(ops: readonly SourceOp[], key: string): readonly SourceOp[] {
+  let map = grouped.get(ops)
+  if (!map) {
+    map = new Map()
+    for (const op of ops) {
+      const k = keyOf(op)
+      const list = map.get(k)
+      if (list) list.push(op)
+      else map.set(k, [op])
+    }
+    grouped.set(ops, map)
+  }
+  return map.get(key) ?? []
+}
+
+/** What a change left at a path: its last word there, with what it then did below. */
+function writtenAt(ops: readonly SourceOp[], path: readonly string[]): Json | undefined {
+  const patch = ops.flatMap(o => (o.op === 'patch' ? o.patch : []))
+  const at = patch.findLastIndex(p => samePath(p.path, path))
+  let value = patch[at]?.value
+  for (const p of patch.slice(at + 1)) {
+    if (p.path.length > path.length && covers(path, p.path) && isObject(value)) value = setBelow(value, p.path.slice(path.length), p.value)
+  }
+  return value
+}
+function setBelow(doc: JsonObject, path: readonly string[], value: Json | undefined): JsonObject {
+  const [key, ...rest] = path as [string, ...string[]]
+  const next: JsonObject = { ...doc }
+  if (!rest.length && value === undefined) delete next[key]
+  else next[key] = rest.length ? setBelow(isObject(next[key]) ? next[key] : {}, rest, value) : value!
+  return next
+}
+
+/** A document without what is only how it looks right now, which is no edit. */
+function withoutLayout(data: JsonObject): JsonObject {
+  if (!data.views) return data
+  return {
+    ...data,
+    views: Object.fromEntries(entriesById(data.views).map(([id, v]) => [id, Object.fromEntries(Object.entries(v).filter(([k]) => !LAYOUT.has(k as keyof ViewChange)))])),
+  }
+}
+
 /* ---------------------------------------------------------------- the store */
 
 export function createStore(mango: StoreHost, options: StoreOptions = {}): PlannerStore {
@@ -258,7 +324,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   const now = ref(Date.now())
   const saving = ref(false)
   const allCollections: ShallowRef<readonly Collection[]> = shallowRef([])
-  const collections = computed(() => allCollections.value.filter(c => isInScope(c.scope, projectPath.value)))
+  const identity: ShallowRef<ProjectIdentity | null> = shallowRef(null)
+  const collections = computed(() => allCollections.value.filter(c => isInScope(c.scope, projectPath.value, identity.value)))
   const undoStack: ShallowRef<readonly UndoEntry[]> = shallowRef([])
   const redoStack: ShallowRef<readonly UndoEntry[]> = shallowRef([])
 
@@ -270,8 +337,15 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   let disposed = false
   let deferred: Mutation | null = null
   let timer: ReturnType<typeof setTimeout> | undefined
-  /** Text that could not be written: still shown, and written again with the next change. */
+  /** Could not be written: still shown, and written again with the next change, or once online. */
   let unsaved: Mutation[] = []
+  /** Of those, the ones that wait for a connection: what came after them on the same documents waits too. */
+  const waiting = new Set<Mutation>()
+  /** Text that can never be written as it is: shown until the same text is changed and saved. */
+  let stuck: Mutation[] = []
+  /** Documents whose text the user was told cannot be saved. */
+  const told = new Set<string>()
+  let made = 0
   let chain: Promise<void> = Promise.resolve()
   let writing = 0
   const lastToasts = new Map<string, number>()
@@ -288,10 +362,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   /** The stored document as it will be once everything is written. */
   function currentOf(e: Entry | undefined): JsonObject | null {
     if (!e) return null
-    return e.pending.reduce<JsonObject | null>(
-      (data, m) => applyOps(data, m.ops.filter(o => o.kind === e.kind && o.id === e.id && o.collectionId === e.collectionId)),
-      e.base?.data ?? null,
-    )
+    const key = keyOf(e)
+    return e.pending.reduce<JsonObject | null>((data, m) => applyOps(data, opsOn(m.ops, key)), e.base?.data ?? null)
   }
 
   const rawCollection = (id: string) => currentOf(entries.get(keyOf(collectionTarget(id))))
@@ -356,6 +428,29 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       error.value = messageOf(e)
       mango.log.error('Loading collections:', e)
     }
+  }
+
+  /** Reads everything loaded again: what is not listed any more is gone, unless it was heard of meanwhile. */
+  async function resync() {
+    const read = async (kind: SourceDoc['kind'], collectionId: string | null, list: () => Promise<SourceDoc[]>) => {
+      const before = [...entries.values()].filter(e => e.kind === kind && (collectionId === null || e.collectionId === collectionId) && e.base?.data)
+        .map(e => ({ e, base: e.base! }))
+      const docs = await list()
+      const listed = new Set(docs.map(keyOf))
+      const changed = take(docs)
+      for (const { e, base } of before) {
+        if (listed.has(keyOf(e)) || e.base !== base) continue
+        e.base = { ...base, data: null }
+        changed.push(keyOf(e))
+      }
+      publish(changed)
+    }
+    const ready = [...itemStates].filter(([, s]) => s.status === 'ready').map(([id]) => id)
+    const jobs = [
+      ...(status.value === 'ready' ? [read('collection', null, () => source.loadCollections())] : []),
+      ...ready.map(id => read('item', id, () => source.loadItems(id))),
+    ]
+    for (const r of await Promise.allSettled(jobs)) if (r.status === 'rejected') mango.log.error('Reading again:', r.reason)
   }
 
   function stateOf(collectionId: string): MutableItems {
@@ -436,9 +531,12 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   /** Makes a change. False when it may not be made. */
-  function mutate(ops: SourceOp[], label: string | null, opts: ChangeOptions = {}): boolean {
+  function mutate(ops: SourceOp[], label: string | null, opts: ChangeOptions = {}, settle?: (ok: boolean) => void): boolean {
     ops = ops.filter(o => o.op !== 'patch' || o.patch.length)
-    if (!ops.length) return true
+    if (!ops.length) {
+      settle?.(true)
+      return true
+    }
     if (sourceStatus.value.readonly) {
       toast(strings.readonly, sourceStatus.value.message)
       return false
@@ -449,15 +547,23 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     }
     settleDeferred()
     const m = newMutation(ops, label, false)
+    m.settle = settle
     show(m)
     enqueue(m)
     return true
   }
 
+  /** The same, and whether it was written. */
+  function mutateAndWait(ops: SourceOp[], label: string): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!mutate(ops, label, {}, resolve)) resolve(false)
+    })
+  }
+
   function newMutation(ops: SourceOp[], label: string | null, isDeferred: boolean): Mutation {
     const undoEntry = label === null ? null : { label, undo: inverseOf(ops), redo: [...ops] }
     if (undoEntry) record(undoEntry)
-    return { ops, at: Date.now(), deferred: isDeferred, undoEntry }
+    return { id: newId(), number: ++made, ops, at: Date.now(), deferred: isDeferred, undoEntry }
   }
 
   function record(entry: UndoEntry) {
@@ -490,7 +596,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       m.at = Date.now()
       const fresh: SourceOp[] = []
       for (const op of ops) {
-        if (op.op !== 'patch' || !replaceIn(m.ops, op)) fresh.push(op)
+        if (op.op !== 'patch' || !replaceIn(m, op)) fresh.push(op)
       }
       if (m.undoEntry) {
         if (fresh.length) m.undoEntry.undo = [...inverseOf(fresh), ...m.undoEntry.undo]
@@ -511,11 +617,11 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   /** Replaces the values of a patch that is waiting already; false when one of its fields is not in it. */
-  function replaceIn(ops: SourceOp[], op: SourceOp & { op: 'patch' }): boolean {
-    const at = ops.findIndex(o => o.op === 'patch' && keyOf(o) === keyOf(op) && op.patch.every(p => o.patch.some(q => samePath(p.path, q.path))))
-    const old = ops[at]
+  function replaceIn(m: Mutation, op: SourceOp & { op: 'patch' }): boolean {
+    const at = m.ops.findIndex(o => o.op === 'patch' && keyOf(o) === keyOf(op) && op.patch.every(p => o.patch.some(q => samePath(p.path, q.path))))
+    const old = m.ops[at]
     if (old?.op !== 'patch') return false
-    ops[at] = { ...old, patch: old.patch.map(q => op.patch.findLast(p => samePath(p.path, q.path)) ?? q) }
+    m.ops = m.ops.with(at, { ...old, patch: old.patch.map(q => op.patch.findLast(p => samePath(p.path, q.path)) ?? q) })
     return true
   }
 
@@ -524,6 +630,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     clearTimeout(timer)
     const again = unsaved
     unsaved = []
+    waiting.clear()
     again.forEach(enqueue)
     const m = deferred
     deferred = null
@@ -539,19 +646,87 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     })
   }
 
+  /** Older text waiting to be written loses the fields a newer change has taken over, so it cannot come back over them. */
+  function supersede(m: Mutation) {
+    const trim = (list: Mutation[]) => list.filter((old) => {
+      if (old === m || old.number > m.number) return true
+      const ops = old.ops.flatMap((op): SourceOp[] => {
+        const newer = opsOn(m.ops, keyOf(op))
+        if (!newer.length || op.op !== 'patch') return [op]
+        if (newer.some(n => n.op === 'delete')) return []
+        const taken = newer.flatMap(n => (n.op === 'patch' ? n.patch : []))
+        const patch = op.patch.filter(p => !taken.some(t => covers(t.path, p.path)))
+        return patch.length ? [{ ...op, patch }] : []
+      })
+      if (ops.length === old.ops.length && ops.every((o, i) => o === old.ops[i] || (o.op === 'patch' && o.patch.length === (old.ops[i] as typeof o).patch.length))) return true
+      hide(old)
+      if (!ops.length) {
+        waiting.delete(old)
+        return false
+      }
+      old.ops = ops
+      old.id = newId()
+      for (const op of ops) {
+        const e = entryFor(op)
+        // At its place in time: what came later stays over it.
+        e.pending = [...e.pending, old].sort((a, b) => a.number - b.number)
+      }
+      publish(ops.map(keyOf))
+      return true
+    })
+    unsaved = trim(unsaved)
+    stuck = trim(stuck)
+  }
+
+  /** The text of changes to documents that are gone. */
+  function textIn(m: Mutation, keys: ReadonlySet<string>): string {
+    return m.ops.flatMap(o => (o.op === 'patch' && keys.has(keyOf(o)) ? o.patch : []))
+      .filter(p => p.path[0] === 'title' || p.path[0] === 'body' || (m.deferred && p.path[0] === 'values'))
+      .map(p => p.value).filter(v => typeof v === 'string' && v.trim() !== '').join('\n\n')
+  }
+
+  function copyText(text: string) {
+    if (options.copyText) options.copyText(text)
+    else void navigator.clipboard?.writeText(text).catch((e: unknown) => mango.log.error('Copying:', e))
+  }
+
   async function writeOut(m: Mutation) {
     try {
-      const docs = await source.write(m.ops)
+      const keys = new Set(m.ops.map(keyOf))
+      if ([...waiting].some(w => w.number < m.number && w.ops.some(o => keys.has(keyOf(o))))) return keepOffline(m)
+      const docs = await source.write(m.ops, m.id)
       take(docs)
       hide(m)
+      supersede(m)
+      for (const key of keys) told.delete(key)
+      m.settle?.(true)
       const patched = new Set(m.ops.filter(o => o.op === 'patch').map(keyOf))
       const removed = new Set(m.ops.filter(o => o.op === 'delete').map(keyOf))
-      if (docs.some(d => d.data === null && patched.has(keyOf(d)) && !removed.has(keyOf(d)))) toast(strings.saveFailed, strings.gone)
+      const gone = new Set(docs.filter(d => d.data === null && patched.has(keyOf(d)) && !removed.has(keyOf(d))).map(keyOf))
+      if (!gone.size) return
+      const text = textIn(m, gone)
+      if (text) mango.ui.toast({ title: strings.saveFailed, body: strings.gone, kind: 'error', timeout: 0, action: { label: strings.copyText, run: () => copyText(text) } })
+      else toast(strings.saveFailed, strings.gone)
     } catch (e) {
       mango.log.error('Saving:', e)
+      const kind = kindOf(e)
+      if (kind === 'offline' && !disposed) {
+        toast(strings.saveFailed, strings.offline, { label: strings.retry, run: settleDeferred })
+        return keepOffline(m)
+      }
+      m.settle?.(false)
       if (m.deferred && !disposed) {
-        unsaved.push(m)
-        return toast(strings.saveFailed, messageOf(e), { label: strings.retry, run: settleDeferred })
+        if (kind === 'unknown') {
+          unsaved.push(m)
+          supersede(m)
+          return toast(strings.saveFailed, messageOf(e), { label: strings.retry, run: settleDeferred })
+        }
+        stuck.push(m)
+        supersede(m)
+        const keys = [...new Set(m.ops.map(keyOf))]
+        if (keys.every(k => told.has(k))) return
+        keys.forEach(k => told.add(k))
+        return mango.ui.toast({ title: strings.saveFailed, body: `${messageOf(e)} ${strings.textKept}`, kind: 'error' })
       }
       hide(m)
       if (m.undoEntry) {
@@ -562,15 +737,60 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     }
   }
 
+  function keepOffline(m: Mutation) {
+    unsaved.push(m)
+    waiting.add(m)
+    m.settle?.(true)
+  }
+
+  /**
+   * An entry's operations without those that would undo what came after it: fields that no longer hold what the
+   * change put there, and documents changed since.
+   */
+  function stillApplies(entry: UndoEntry, which: 'undo' | 'redo'): { ops: SourceOp[]; kept: boolean } {
+    const done = entry[which === 'undo' ? 'redo' : 'undo']
+    let kept = false
+    const keptItems = new Set<string>()
+    const ops = entry[which].flatMap((op): SourceOp[] => {
+      const key = keyOf(op)
+      const current = currentOf(entries.get(key))
+      const wrote = opsOn(done, key)
+      const drop = () => {
+        kept = true
+        if (op.kind === 'item') keptItems.add(op.collectionId)
+        return []
+      }
+      // There again, or gone: nothing to make or remove.
+      if (op.op === 'create') return current ? drop() : [op]
+      if (!current) return op.op === 'delete' ? [] : drop()
+      if (op.op === 'delete') {
+        const created = applyOps(null, wrote)
+        return created && sameJson(withoutLayout(current), withoutLayout(created)) ? [op] : drop()
+      }
+      const patch = op.patch.filter(p => sameJson(readPath(current, p.path), writtenAt(wrote, p.path)))
+      if (patch.length < op.patch.length) kept = true
+      return patch.length ? [{ ...op, patch }] : []
+    })
+    // A collection stays for the items that stay.
+    const left = ops.filter(o => !(o.op === 'delete' && o.kind === 'collection' && keptItems.has(o.id)))
+    return { ops: left, kept }
+  }
+
+  function tellKept(kept: boolean) {
+    if (kept) mango.ui.toast({ title: strings.undoKept, body: strings.undoKeptBody, kind: 'info' })
+  }
+
   function step(from: typeof undoStack, to: typeof redoStack, which: 'undo' | 'redo') {
     settleDeferred()
     const entry = from.value.at(-1)
     if (!entry) return
-    const m: Mutation = { ops: [...entry[which]], at: Date.now(), deferred: false, undoEntry: entry }
     if (sourceStatus.value.readonly) return toast(strings.readonly, sourceStatus.value.message)
     from.value = from.value.slice(0, -1)
+    const { ops, kept } = stillApplies(entry, which)
+    tellKept(kept)
+    if (!ops.length) return
     to.value = [...to.value, entry]
-    if (!m.ops.length) return
+    const m: Mutation = { ...newMutation(ops, null, false), undoEntry: entry }
     show(m)
     enqueue(m)
   }
@@ -590,7 +810,9 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
           if (undoStack.value.at(-1) === entry) return undo()
           if (!undoStack.value.includes(entry)) return
           undoStack.value = undoStack.value.filter(u => u !== entry)
-          mutate([...entry.undo], null)
+          const { ops, kept } = stillApplies(entry, 'undo')
+          tellKept(kept)
+          mutate(ops, null)
         },
       },
     })
@@ -798,23 +1020,32 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   }
 
   function duplicateItems(collectionId: string, itemIds: readonly string[]): Item[] {
-    let list = stateOf(collectionId).items
+    const list = stateOf(collectionId).items
     const at = Date.now()
-    const ops: SourceOp[] = []
-    const copies: string[] = []
-    for (const original of list.filter(i => itemIds.includes(i.id))) {
-      const raw = rawItem(collectionId, original.id)
-      if (!raw) continue
-      const id = newId()
-      const place = placeAt(list, [id], { after: original.id })
-      const data: JsonObject = { ...raw, title: strings.copyOf(original.title), order: place.get(id)!, chats: {}, createdAt: at }
-      ops.push({ ...itemTarget(collectionId, id), op: 'create', data }, ...itemOrderOps(collectionId, place, new Set([id])))
-      // The next copy is placed among these.
-      list = [...list.map(i => (place.has(i.id) ? { ...i, order: place.get(i.id)! } : i)), { ...original, id, order: place.get(id)! }]
-      copies.push(id)
+    const wanted = new Set(itemIds)
+    const copyOf = new Map(list.filter(i => wanted.has(i.id) && rawItem(collectionId, i.id)).map(i => [i.id, newId()]))
+    if (!copyOf.size) return []
+    // Each right after its original; where that leaves no room, everything is spaced anew.
+    const place = new Map<string, string>()
+    const fits = list.every((i, n) => {
+      const copy = copyOf.get(i.id)
+      const key = copy ? between(i.order, list[n + 1]?.order ?? null) : ''
+      if (copy && key) place.set(copy, key)
+      return key !== null
+    })
+    if (!fits) {
+      const all = list.flatMap(i => [i.id, ...(copyOf.has(i.id) ? [copyOf.get(i.id)!] : [])])
+      spread(all.length).forEach((key, n) => place.set(all[n]!, key))
     }
-    if (!mutate(ops, strings.did.duplicate)) return []
-    return copies.map(id => item(collectionId, id)).filter(i => i !== null)
+    const copies = new Set(copyOf.values())
+    const ops = list.flatMap((i): SourceOp[] => {
+      const id = copyOf.get(i.id)
+      if (!id) return []
+      const data: JsonObject = { ...rawItem(collectionId, i.id)!, title: strings.copyOf(i.title), order: place.get(id)!, chats: {}, createdAt: at }
+      return [{ ...itemTarget(collectionId, id), op: 'create', data }]
+    })
+    if (!mutate([...ops, ...itemOrderOps(collectionId, place, copies)], strings.did.duplicate)) return []
+    return stateOf(collectionId).items.filter(i => copies.has(i.id))
   }
 
   function deleteItems(collectionId: string, itemIds: readonly string[]) {
@@ -1115,7 +1346,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       return p.options.filter(o => !old.options.some(e => e.id === o.id))
         .map(o => ({ path: ['properties', p.id, 'options', o.id], value: { name: o.name, color: o.color, order: o.order } }))
     })
-    return mutate([{ ...collectionTarget(collectionId), op: 'patch', patch }, ...ops], strings.did.import) ? plan.items.length : 0
+    return await mutateAndWait([{ ...collectionTarget(collectionId), op: 'patch', patch }, ...ops], strings.did.import) ? plan.items.length : 0
   }
 
   async function importCsvAsCollection(csv: string, name: string, scope?: Scope): Promise<Collection | null> {
@@ -1129,7 +1360,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const keys = spread(plan.properties.length)
     const place = placeAt(allCollections.value, [id], 'end')
     startEmpty(id)
-    const ok = mutate([{
+    const ok = await mutateAndWait([{
       ...collectionTarget(id),
       op: 'create',
       data: {
@@ -1155,8 +1386,12 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
 
   /* ---- living */
 
-  const unsubscribe = source.subscribe(docs => publish(take(docs)))
-  const unsubscribeStatus = source.onStatus((s) => { sourceStatus.value = s })
+  const unsubscribe = source.subscribe(docs => publish(take(docs)), () => { void resync() })
+  const unsubscribeStatus = source.onStatus((s) => {
+    const back = s.online && !sourceStatus.value.online
+    sourceStatus.value = s
+    if (back && unsaved.length) settleDeferred()
+  })
   const project = mango.workspace.onProjectChange((path) => { projectPath.value = path })
   const clock = setInterval(() => { now.value = Date.now() }, 60_000)
   const leave = () => settleDeferred()
@@ -1170,6 +1405,19 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
   async function flush() {
     settleDeferred()
     await chain
+  }
+
+  async function flushAll() {
+    if (hasWindow) window.dispatchEvent(new Event('planner:commit'))
+    let before: Promise<void>
+    do {
+      settleDeferred()
+      // A change that waits for items to load is made right after.
+      await Promise.allSettled(loadingItems.values())
+      await new Promise(resolve => setTimeout(resolve))
+      before = chain
+      await chain
+    } while (deferred || chain !== before)
   }
 
   function dispose() {
@@ -1225,7 +1473,8 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     lastView: id => ui().views?.[id] ?? null,
     rememberView: (id, viewId) => { mango.storage.set(uiKey(), { ...ui(), views: { ...ui().views, [id]: viewId } }) },
 
-    flush, dispose,
+    identifyProject: (next) => { identity.value = next },
+    flush, flushAll, dispose,
   }
 }
 

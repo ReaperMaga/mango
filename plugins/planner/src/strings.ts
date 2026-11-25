@@ -38,6 +38,11 @@ export const strings = {
   readonly: 'This can only be read right now',
   gone: 'It was deleted somewhere else, so the change was left out.',
   retry: 'Try again',
+  offline: 'You are offline. The change is kept and saved when you are back.',
+  textKept: 'It stays here until you leave, so copy it if you need it.',
+  copyText: 'Copy text',
+  undoKept: 'Some of it was changed since',
+  undoKeptBody: 'Those newer changes were kept.',
   valuesLost: (n: number) => `${n === 1 ? '1 value' : `${n} values`} could not be carried over`,
   importEmpty: 'There is nothing to import in that file.',
 

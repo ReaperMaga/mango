@@ -334,3 +334,23 @@ test('markdown: titles and values cannot become markup', () => {
   const md = itemToMarkdown(tasks(), item('i', { status: 'todo', note: '<b>*x*' }, { title: 'A # b\nc', body: '- [ ] do' }))
   assert.equal(md, '# A \\# b c\n\n- **Status:** To do\n- **OK:** No\n- **Note:** \\<b\\>\\*x\\*\n\n- [ ] do\n')
 })
+
+test('patch: an entry that is gone is never made again in part, at any depth', () => {
+  const doc: JsonObject = { properties: { p: { name: 'P' } } }
+  const option = ['properties', 'p', 'options', 'o']
+  assert.deepEqual(applyPatch(doc, [{ path: [...option, 'name'], value: 'x' }]), doc)
+  assert.deepEqual(applyPatch(doc, [{ path: option, value: { name: 'x' } }]), { properties: { p: { name: 'P', options: { o: { name: 'x' } } } } })
+  const gone = [{ path: ['properties', 'p'] }]
+  assert.deepEqual(applyPatch(applyPatch(doc, gone), invertPatch(doc, gone)), doc)
+})
+
+test('model: a scope matches by repository only where its folder is not here', () => {
+  const scope = normalizeCollection({ scope: { kind: 'project', path: '/mac/app', repo: 'github.com/a/B' } }, meta('c')).scope
+  assert.deepEqual(scope, { kind: 'project', path: '/mac/app', repo: 'github.com/a/B' })
+  const here = (repo: string | null, has: boolean) => ({ repo, hasPath: () => has })
+  assert.ok(isInScope(scope, '/pc/app', here('GitHub.com/a/b', false)))
+  assert.ok(!isInScope(scope, '/pc/app', here('github.com/a/b', true)))
+  assert.ok(!isInScope(scope, '/pc/app', here('github.com/a/c', false)))
+  assert.ok(!isInScope(scope, '/pc/app'))
+  assert.deepEqual(normalizeCollection({ scope: { kind: 'project', path: '/x', repo: 'nope' } }, meta('c')).scope, { kind: 'project', path: '/x' })
+})

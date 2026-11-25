@@ -7,6 +7,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { LocalSource } from '../plugins/planner/src/data/local.ts'
+import { SourceError, type PlannerSource, type SourceDoc, type SourceOp, type SourceStatus } from '../plugins/planner/src/data/source.ts'
 import type { PluginDataApi, PluginDataChange, PluginDataOp, PluginDoc } from '../plugins/planner/src/host.ts'
 import { createStore, type PlannerStore, type StoreHost } from '../plugins/planner/src/store.ts'
 import { itemWord } from '../plugins/planner/src/model.ts'
@@ -20,13 +21,14 @@ class Db {
   listeners = new Set<(c: PluginDataChange, from: PluginDataApi) => void>()
   writes = 0
   fail: string | null = null
+  failWhen: ((ops: PluginDataOp[]) => boolean) | null = null
   /** Runs once, just before the next write lands. */
   before: (() => void) | null = null
 
   apply(ops: PluginDataOp[], from: PluginDataApi): PluginDoc[] {
     this.writes++
-    if (this.fail) throw new Error(this.fail)
-    assert.ok(ops.length <= 2000)
+    if (this.fail && (!this.failWhen || this.failWhen(ops))) throw new Error(this.fail)
+    assert.ok(ops.length <= 20_000)
     const next = new Map(this.docs)
     const conflicts: PluginDoc[] = []
     const out: PluginDoc[] = []
@@ -74,7 +76,8 @@ class Db {
 interface Toast { title: string; body?: string; action?: { label: string; run(): void } }
 const stores: PlannerStore[] = []
 
-function open(db: Db, project: string | null = '/p') {
+function open(db: Db, project: string | null = '/p', source?: PlannerSource) {
+  const copied: string[] = []
   const toasts: Toast[] = []
   const kept = new Map<string, unknown>()
   let onProject: (p: string | null) => void = () => {}
@@ -88,9 +91,9 @@ function open(db: Db, project: string | null = '/p') {
     ui: { toast: (t) => { toasts.push(t) } },
     log: { error() {} },
   }
-  const store = createStore(host, { deferMs: 5 })
+  const store = createStore(host, { deferMs: 5, source, copyText: (t) => { copied.push(t) } })
   stores.push(store)
-  return { store, toasts, switchTo: (p: string | null) => onProject(p) }
+  return { store, toasts, copied, switchTo: (p: string | null) => onProject(p) }
 }
 const settle = () => new Promise(r => setTimeout(r, 2))
 async function ready(store: PlannerStore) {
@@ -169,11 +172,14 @@ test('the source retries a patch on what is there now, and keeps fields it does 
   source.dispose()
 })
 
-test('a large write is made in several', async () => {
+test('a large write is one write, or refused whole', async () => {
   const db = new Db()
   const source = new LocalSource(db.window())
   await source.write(Array.from({ length: 3200 }, (_, i) => ({ kind: 'item' as const, id: `i${i}`, collectionId: 'c', op: 'create' as const, data: {} })))
-  assert.equal(db.docs.size, 3200)
+  assert.deepEqual([db.docs.size, db.writes], [3200, 1])
+  const more = Array.from({ length: 20_001 }, (_, i) => ({ kind: 'item' as const, id: `m${i}`, collectionId: 'c', op: 'create' as const, data: {} }))
+  await assert.rejects(source.write(more), (e: SourceError) => e.kind === 'invalid' && /20001/.test(e.message))
+  assert.deepEqual([db.docs.size, db.writes], [3200, 1])
   source.dispose()
 })
 
@@ -535,4 +541,233 @@ test('a read that fails says so and can be tried again', async () => {
   await failing.load()
   assert.equal(failing.status.value, 'ready')
   assert.equal(failing.allCollections.value.length, 1)
+})
+
+/* ---------------------------------------------------------------- what goes wrong */
+
+const stored = (db: Db, c: string, id: string) => db.docs.get(`items_${c}/${id}`)!.data as Record<string, unknown>
+
+test('a failed text is not written over a newer one', async () => {
+  const { db, store, c, x } = await withTasks()
+  db.fail = 'locked'
+  let later = false
+  // Both are queued before the first fails.
+  store.updateItem(c.id, x.id, { title: 'old', body: 'kept' }, { defer: true })
+  store.updateItem(c.id, x.id, { title: 'new' })
+  db.failWhen = ops => ops.some(o => o.op === 'put' && (o.data as { title: string }).title === 'old') && !later
+  await store.flush()
+  later = true
+  await store.flush()
+  assert.deepEqual([stored(db, c.id, x.id).title, stored(db, c.id, x.id).body], ['new', 'kept'])
+  assert.equal(store.item(c.id, x.id)!.title, 'new')
+  // Nothing stale is left over what others write.
+  db.apply([{ op: 'put', collection: `items_${c.id}`, id: x.id, data: { ...stored(db, c.id, x.id), title: 'theirs', body: 'theirs' } }], db.window())
+  assert.deepEqual([store.item(c.id, x.id)!.title, store.item(c.id, x.id)!.body], ['theirs', 'theirs'])
+})
+
+test('text that can never be saved stays, is told once and not tried again', async () => {
+  const { db, store, toasts, c, x, y } = await withTasks()
+  db.fail = 'items/x was not saved: it is larger than 1 MB'
+  db.failWhen = ops => ops.some(o => o.id === x.id)
+  store.updateItem(c.id, x.id, { body: 'huge' }, { defer: true })
+  await store.flush()
+  store.updateItem(c.id, x.id, { body: 'huge!' }, { defer: true })
+  await store.flush()
+  const writes = db.writes
+  store.updateItem(c.id, y.id, { title: 'fine' })
+  await store.flush()
+  assert.equal(db.writes, writes + 1)
+  assert.equal(toasts.length, 1)
+  assert.equal(store.item(c.id, x.id)!.body, 'huge!')
+  db.fail = null
+  store.updateItem(c.id, x.id, { body: 'short' }, { defer: true })
+  await store.flush()
+  assert.equal(stored(db, c.id, x.id).body, 'short')
+  db.apply([{ op: 'put', collection: `items_${c.id}`, id: x.id, data: { ...stored(db, c.id, x.id), body: 'theirs' } }], db.window())
+  assert.equal(store.item(c.id, x.id)!.body, 'theirs')
+})
+
+test('importing resolves when it is written, with nothing when it was not', async () => {
+  const { db, store, c } = await withTasks()
+  assert.equal(await store.importCsv(c.id, 'Title\nN\n'), 1)
+  assert.equal([...db.docs.values()].filter(d => (d.data as { title?: string })?.title === 'N').length, 1)
+  db.fail = 'disk full'
+  assert.equal(await store.importCsv(c.id, 'Title\nM\n'), 0)
+  assert.equal(await store.importCsvAsCollection('Title\nM\n', 'New'), null)
+  assert.equal(store.items(c.id).items.length, 3)
+  assert.equal(store.undoLabel.value, 'import')
+})
+
+test('undo keeps what another window changed since, and says so once', async () => {
+  const { db, store, toasts, c, x } = await withTasks()
+  store.updateItem(c.id, x.id, { title: 'mine', icon: 'bug' })
+  await store.flush()
+  db.apply([{ op: 'put', collection: `items_${c.id}`, id: x.id, data: { ...stored(db, c.id, x.id), title: 'theirs' } }], db.window())
+  store.undo()
+  await store.flush()
+  assert.deepEqual([store.item(c.id, x.id)!.title, store.item(c.id, x.id)!.icon], ['theirs', null])
+  assert.equal(toasts.length, 1)
+  store.redo()
+  assert.deepEqual([store.item(c.id, x.id)!.title, store.item(c.id, x.id)!.icon], ['theirs', 'bug'])
+
+  const made = (await store.createItem(c.id, { title: 'Z' }))!
+  await store.flush()
+  db.apply([{ op: 'put', collection: `items_${c.id}`, id: made.id, data: { ...stored(db, c.id, made.id), body: 'their words' } }], db.window())
+  store.undo()
+  await store.flush()
+  assert.equal(store.item(c.id, made.id)!.body, 'their words')
+})
+
+test('a collection is still undone after its columns were resized', async () => {
+  const { store, c } = await withTasks()
+  const made = store.createCollection({ template: 'notes' })!
+  store.updateView(made.id, made.views[0]!.id, { widths: { title: 300 } })
+  await store.flush()
+  store.undo()
+  await store.flush()
+  assert.equal(store.collection(made.id), null)
+  assert.ok(store.collection(c.id))
+})
+
+test('text for an item whose making failed can be copied', async () => {
+  const db = new Db()
+  const kept = open(db)
+  await ready(kept.store)
+  const c = kept.store.createCollection({})!
+  await kept.store.flush()
+  db.fail = 'disk full'
+  db.failWhen = ops => ops.some(o => o.op === 'put' && o.expectedRev === 0)
+  const made = (await kept.store.createItem(c.id, {}))!
+  kept.store.updateItem(c.id, made.id, { title: 'T', body: 'my words' }, { defer: true })
+  await kept.store.flush()
+  assert.equal(kept.store.item(c.id, made.id), null)
+  const toast = kept.toasts.at(-1)!
+  assert.equal(toast.action!.label, 'Copy text')
+  toast.action!.run()
+  assert.equal(kept.copied.at(-1), 'T\n\nmy words')
+  assert.equal(kept.store.saving.value, false)
+})
+
+test('a patch to a document nobody knows comes back as a tombstone; a create made again is the same one', async () => {
+  const db = new Db()
+  const source = new LocalSource(db.window())
+  const at = { kind: 'item', id: 'i', collectionId: 'c' } as const
+  const [doc] = await source.write([{ ...at, op: 'patch', patch: [{ path: ['title'], value: 'x' }] }], 'm')
+  assert.deepEqual([doc!.id, doc!.seq, doc!.data], ['i', 0, null])
+  const create: SourceOp = { ...at, op: 'create', data: { title: 'a', createdAt: 7 } }
+  await source.write([create], 'n')
+  await source.write([{ ...at, op: 'patch', patch: [{ path: ['title'], value: 'b' }] }], 'o')
+  const [again] = await source.write([create], 'n')
+  assert.deepEqual(again!.data, { title: 'b', createdAt: 7 })
+  source.dispose()
+})
+
+test('many items are duplicated in one pass, each after its original', async () => {
+  const { store, c } = await withTasks()
+  const rows = Array.from({ length: 5000 }, (_, i) => `R${i}`)
+  await store.importCsv(c.id, `Title\n${rows.join('\n')}\n`)
+  const started = Date.now()
+  const copies = store.duplicateItems(c.id, store.items(c.id).items.map(i => i.id))
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started} ms`)
+  assert.equal(copies.length, 5002)
+  const titles = store.items(c.id).items.map(i => i.title)
+  for (let i = 0; i < titles.length; i += 2) assert.equal(titles[i + 1], `${titles[i]} (copy)`)
+  await store.flush()
+})
+
+/** A source somewhere else: goes offline, loses answers, refuses. */
+class Remote implements PlannerSource {
+  readonly label = 'Remote'
+  docs = new Map<string, SourceDoc>()
+  seq = 0
+  error: SourceError | null = null
+  ids: string[] = []
+  resync: () => void = () => {}
+  private on: (s: SourceStatus) => void = () => {}
+  async loadCollections() { return [...this.docs.values()].filter(d => d.kind === 'collection' && d.data) }
+  async loadItems(c: string) { return [...this.docs.values()].filter(d => d.kind === 'item' && d.collectionId === c && d.data) }
+  async write(ops: readonly SourceOp[], id: string) {
+    this.ids.push(id)
+    if (this.error) throw this.error
+    return ops.map((op) => {
+      const old = this.docs.get(op.id)
+      const data = op.op === 'create' ? op.data : op.op === 'delete' ? null : { ...old!.data!, ...Object.fromEntries(op.patch.map(p => [p.path[0]!, p.value!])) }
+      const doc: SourceDoc = { kind: op.kind, id: op.id, collectionId: op.collectionId, seq: ++this.seq, createdAt: 1, updatedAt: 1, data }
+      this.docs.set(op.id, doc)
+      return doc
+    })
+  }
+  subscribe(_: unknown, resync?: () => void) { this.resync = resync!; return () => {} }
+  status() { return { online: true, readonly: false } }
+  onStatus(h: (s: SourceStatus) => void) { this.on = h; return () => {} }
+  go(online: boolean) { this.on({ online, readonly: false }) }
+  dispose() {}
+}
+
+test('offline changes are kept in order and written once online, under the same id', async () => {
+  const remote = new Remote()
+  const { store, toasts } = open(new Db(), '/p', remote)
+  await ready(store)
+  const c = store.createCollection({})!
+  await store.flush()
+  remote.go(false)
+  remote.error = new SourceError('offline', 'no network')
+  const made = (await store.createItem(c.id, { title: 'A' }))!
+  store.updateItem(c.id, made.id, { title: 'B' })
+  await store.flush()
+  assert.equal(store.item(c.id, made.id)!.title, 'B')
+  assert.equal(toasts.length, 1)
+  const tried = remote.ids.at(-1)
+  const lost = remote.ids[1]
+  remote.error = null
+  remote.go(true)
+  await store.flush()
+  assert.equal(remote.docs.get(made.id)!.data!.title, 'B')
+  assert.ok(tried && remote.ids.lastIndexOf(lost!) > 1)
+  assert.equal(store.saving.value, false)
+
+  remote.error = new SourceError('refused', 'not yours')
+  store.updateItem(c.id, made.id, { title: 'C' })
+  await store.flush()
+  assert.equal(store.item(c.id, made.id)!.title, 'B')
+  assert.equal(toasts.at(-1)!.body, 'not yours')
+})
+
+test('a resync reads again what is loaded', async () => {
+  const remote = new Remote()
+  const { store } = open(new Db(), '/p', remote)
+  await ready(store)
+  const c = store.createCollection({})!
+  const [a, b] = [(await store.createItem(c.id, { title: 'A' }))!, (await store.createItem(c.id, { title: 'B' }))!]
+  await store.flush()
+  remote.docs.delete(a.id)
+  const old = remote.docs.get(b.id)!
+  remote.docs.set(b.id, { ...old, seq: ++remote.seq, data: { ...old.data!, title: 'B2' } })
+  remote.resync()
+  await settle()
+  assert.deepEqual(store.items(c.id).items.map(i => i.title), ['B2'])
+})
+
+test('flushAll lets editors commit and waits for changes that wait for items', async () => {
+  const { db, c } = await withTasks()
+  const { store } = open(db)
+  await ready(store)
+  const made = store.createItem(c.id, { title: 'late' })
+  await store.flushAll()
+  assert.equal(stored(db, c.id, (await made)!.id).title, 'late')
+
+  const target = new EventTarget()
+  ;(globalThis as { window?: unknown }).window = target
+  try {
+    const w = open(db)
+    await ready(w.store)
+    await w.store.loadItems(c.id)
+    const x = w.store.items(c.id).items[0]!
+    target.addEventListener('planner:commit', () => w.store.updateItem(c.id, x.id, { title: 'committed' }, { defer: true }))
+    await w.store.flushAll()
+    assert.equal(stored(db, c.id, x.id).title, 'committed')
+    w.store.dispose()
+  } finally {
+    delete (globalThis as { window?: unknown }).window
+  }
 })

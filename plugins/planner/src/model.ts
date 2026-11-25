@@ -110,7 +110,13 @@ export interface View {
   readonly cardPreview: 'none' | 'body'
 }
 
-export type Scope = { readonly kind: 'everywhere' } | { readonly kind: 'project'; readonly path: string }
+export type Scope = { readonly kind: 'everywhere' } | {
+  readonly kind: 'project'
+  /** The folder on this computer (or the one it was made on). */
+  readonly path: string
+  /** The portable form, when it is known: `host/owner/name` of its repository. */
+  readonly repo?: string
+}
 
 export interface ItemName { readonly one: string; readonly many: string }
 
@@ -370,9 +376,9 @@ function normalizeView(id: string, raw: JsonObject, properties: readonly Propert
 }
 
 function normalizeScope(raw: unknown): Scope {
-  return isObject(raw) && raw.kind === 'project' && typeof raw.path === 'string' && raw.path
-    ? { kind: 'project', path: raw.path }
-    : { kind: 'everywhere' }
+  if (!isObject(raw) || raw.kind !== 'project' || typeof raw.path !== 'string' || !raw.path) return { kind: 'everywhere' }
+  const repo = typeof raw.repo === 'string' && /^[^\s/]+(?:\/[^\s/]+){2,}$/.test(raw.repo) ? raw.repo : null
+  return { kind: 'project', path: raw.path, ...(repo ? { repo } : {}) }
 }
 
 function normalizeItemName(raw: unknown): ItemName | null {
@@ -507,9 +513,22 @@ export function projectKey(path: string): string {
   return /^[a-z]:/i.test(p) || (p.startsWith('//') && path.includes('\\')) ? p.toLowerCase() : p
 }
 
-/** Whether a collection shows while this project is open (null: no project). */
-export function isInScope(scope: Scope, projectPath: string | null): boolean {
-  return scope.kind === 'everywhere' || (projectPath !== null && projectKey(scope.path) === projectKey(projectPath))
+/** What this computer knows about the open project, to place collections made on another one. */
+export interface ProjectIdentity {
+  /** `host/owner/name` of its repository, or null. */
+  readonly repo: string | null
+  /** Whether a project folder is one of this computer's. */
+  hasPath(path: string): boolean
+}
+
+/**
+ * Whether a collection shows while this project is open (null: no project). By folder; by repository only when its
+ * folder is not on this computer.
+ */export function isInScope(scope: Scope, projectPath: string | null, here?: ProjectIdentity | null): boolean {
+  if (scope.kind === 'everywhere') return true
+  if (projectPath === null) return false
+  if (projectKey(scope.path) === projectKey(projectPath)) return true
+  return !!scope.repo && !!here?.repo && scope.repo.toLowerCase() === here.repo.toLowerCase() && !here.hasPath(scope.path)
 }
 
 export const propertyOf = (c: Collection, id: string): Property | null => c.properties.find(p => p.id === id) ?? null

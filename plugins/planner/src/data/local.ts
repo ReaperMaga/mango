@@ -8,13 +8,13 @@
 
 import type { Disposable, PluginDataApi, PluginDataOp, PluginDoc } from '../host.ts'
 import { applyPatch, isObject, type JsonObject } from '../patch.ts'
-import type { PlannerSource, SourceDoc, SourceOp, SourceStatus } from './source.ts'
+import { SourceError, type PlannerSource, type SourceDoc, type SourceErrorKind, type SourceOp, type SourceStatus } from './source.ts'
 
 const COLLECTIONS = 'collections'
 const ITEMS = 'items_'
 const ATTEMPTS = 10
-/** Documents in one write of the host's, which takes 2000. A larger write (a big import) is made in several. */
-const BATCH = 1500
+/** Documents in one write of the host's: all of them or none. */
+const MAX_DOCS = 20_000
 const STATUS: SourceStatus = { online: true, readonly: false }
 
 type Address = Pick<SourceOp, 'kind' | 'id' | 'collectionId'>
@@ -36,24 +36,18 @@ function toSourceDoc(doc: PluginDoc): SourceDoc | null {
   }
 }
 
-/** Split so that all changes to one document stay together. */
-function batches(ops: readonly SourceOp[]): SourceOp[][] {
-  if (ops.length <= BATCH) return [[...ops]]
-  const byDoc = new Map<string, SourceOp[]>()
-  for (const op of ops) {
-    const key = keyOf(nameOf(op), op.id)
-    byDoc.get(key)?.push(op) ?? byDoc.set(key, [op])
-  }
-  const docs = [...byDoc.values()]
-  return Array.from({ length: Math.ceil(docs.length / BATCH) }, (_, i) => docs.slice(i * BATCH, (i + 1) * BATCH).flat())
-}
-
 const isDoc = (d: SourceDoc | null): d is SourceDoc => d !== null
 
 /** The documents a refused write lists, however the error reached us. */
 function conflictsOf(error: unknown): PluginDoc[] | null {
   const list = (error as { conflicts?: unknown } | null)?.conflicts
   return Array.isArray(list) ? (list as PluginDoc[]) : null
+}
+
+/** By what the host says (src-tauri/src/plugin_data.rs). */
+function kindOf(message: string): SourceErrorKind {
+  if (/larger than|not valid JSON|too many|is not a (?:document id|collection name)/.test(message)) return 'invalid'
+  return /plugin was removed/.test(message) ? 'refused' : 'unknown'
 }
 
 export class LocalSource implements PlannerSource {
@@ -81,22 +75,27 @@ export class LocalSource implements PlannerSource {
     return this.list(ITEMS + collectionId)
   }
 
-  async write(ops: readonly SourceOp[]): Promise<SourceDoc[]> {
-    const out: SourceDoc[] = []
-    for (const batch of batches(ops)) out.push(...await this.writeBatch(batch))
-    return out
-  }
-
-  private async writeBatch(ops: readonly SourceOp[]): Promise<SourceDoc[]> {
+  /** The mutation id is not needed: ids are random, so a document that is there when it is created is the same one. */
+  async write(ops: readonly SourceOp[], _mutationId?: string): Promise<SourceDoc[]> {
     for (let attempt = 1; ; attempt++) {
-      const { writes, keys } = await this.prepare(ops)
+      const { writes, addresses } = await this.prepare(ops)
+      if (writes.length > MAX_DOCS) {
+        throw new SourceError('invalid', `That is ${writes.length} documents at once. The most is ${MAX_DOCS}, so nothing was changed.`)
+      }
       try {
         const written = writes.length ? await this.data.write(writes) : []
         written.forEach(d => this.see(d))
-        return keys.map(k => this.known.get(k)).map(d => (d ? toSourceDoc(d) : null)).filter(isDoc)
+        return [...addresses].map(([key, address]): SourceDoc => {
+          const doc = this.known.get(key)
+          return (doc && toSourceDoc(doc))
+            ?? { kind: address.kind, id: address.id, collectionId: address.collectionId, seq: 0, createdAt: 0, updatedAt: 0, data: null }
+        })
       } catch (e) {
         const conflicts = conflictsOf(e)
-        if (!conflicts || attempt >= ATTEMPTS) throw e
+        if (!conflicts || attempt >= ATTEMPTS) {
+          const message = e instanceof Error ? e.message : String(e)
+          throw e instanceof SourceError ? e : new SourceError(conflicts ? 'unknown' : kindOf(message), message)
+        }
         // As they are now, even where that is an older revision than we saw (data restored from a backup).
         for (const d of conflicts) this.known.set(keyOf(d.collection, d.id), d)
       }
@@ -134,7 +133,7 @@ export class LocalSource implements PlannerSource {
   }
 
   /** One host write per document, from the newest copy of it. */
-  private async prepare(ops: readonly SourceOp[]): Promise<{ writes: PluginDataOp[]; keys: string[] }> {
+  private async prepare(ops: readonly SourceOp[]): Promise<{ writes: PluginDataOp[]; addresses: Map<string, Address> }> {
     type Work = { address: Address; before: PluginDoc | null; data: JsonObject | null; touched: boolean; expect: boolean }
     const work = new Map<string, Work>()
     for (const op of ops) {
@@ -152,9 +151,13 @@ export class LocalSource implements PlannerSource {
         work.set(key, w)
       }
       if (op.op === 'create') {
-        if (w.data !== null) throw new Error(`A document with the id ${op.id} exists already.`)
-        w.data = op.data
-        w.touched = true
+        // Made before, by a write whose answer was lost: as it is now, with what was done to it since.
+        const again = w.data !== null && op.data.createdAt !== undefined && w.data.createdAt === op.data.createdAt
+        if (w.data !== null && !again) throw new SourceError('refused', `A document with the id ${op.id} exists already.`)
+        if (!again) {
+          w.data = op.data
+          w.touched = true
+        }
       } else if (op.op === 'delete') {
         // Whatever it is now: the user asked for it to go.
         w.expect = false
@@ -176,6 +179,6 @@ export class LocalSource implements PlannerSource {
         writes.push({ op: 'put', ...at, data, ...(expect ? { expectedRev: before && !before.deleted ? before.rev : 0 } : {}) })
       }
     }
-    return { writes, keys: [...work.keys()] }
+    return { writes, addresses: new Map([...work].map(([key, w]) => [key, w.address])) }
   }
 }

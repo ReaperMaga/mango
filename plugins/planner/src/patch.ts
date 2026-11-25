@@ -41,30 +41,45 @@ function childObject(parent: JsonObject, key: string): JsonObject | null {
 }
 
 /**
+ * Paths alternate: containers (`views`, `options`) and the entries in them by id. A container that is not there
+ * yet is made, an entry never is: that would bring back half of what someone else deleted.
+ */
+function setAt(doc: JsonObject, op: PatchOp, depth: number): JsonObject | null {
+  const key = op.path[depth]!
+  const out = { ...doc }
+  if (depth === op.path.length - 1) {
+    if (op.value === undefined) delete out[key]
+    else out[key] = op.value
+    return out
+  }
+  const isEntry = depth % 2 === 1
+  const child = childObject(doc, key)
+  if (!child && (isEntry || op.value === undefined)) return null
+  const next = setAt(child ?? {}, op, depth + 1)
+  if (!next) return null
+  out[key] = next
+  return out
+}
+
+/**
  * The document with the patch applied (a copy; untouched parts are shared). A path into an entry that is gone
- * (`['views', 'deleted', 'name']`) does nothing: an edit never brings back half of what someone else deleted.
+ * (`['views', 'deleted', 'name']`) does nothing.
  */
 export function applyPatch(doc: JsonObject, patch: Patch): JsonObject {
-  const out = { ...doc }
+  let out = { ...doc }
   for (const op of patch) {
-    if (!op.path.length || !op.path.every(isSafeKey)) continue
-    let at = out
-    let ok = true
-    for (let i = 0; i < op.path.length - 1; i++) {
-      const key = op.path[i]!
-      const next = childObject(at, key)
-      if (!next && (i === 1 || op.value === undefined)) {
-        ok = false
-        break
-      }
-      at = at[key] = next ?? {}
-    }
-    if (!ok) continue
-    const last = op.path[op.path.length - 1]!
-    if (op.value === undefined) delete at[last]
-    else at[last] = op.value
+    if (op.path.length && op.path.every(isSafeKey)) out = setAt(out, op, 0) ?? out
   }
   return out
+}
+
+/** The same whatever order the keys of objects are in (a database may sort them). */
+export function sameJson(a: Json | undefined, b: Json | undefined): boolean {
+  if (a === b) return true
+  if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameJson(v, b[i]))
+  if (!isObject(a) || !isObject(b)) return false
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every(k => Object.hasOwn(b, k) && sameJson(a[k], b[k]))
 }
 
 export function readPath(doc: JsonObject, path: readonly string[]): Json | undefined {

@@ -15,14 +15,15 @@ const TOKENS: Record<Exclude<NamedColor, 'neutral'>, string> = {
 
 /**
  * How far a colour may go, as OKLCH lightness: text dark enough for light grounds and light enough for dark ones,
- * marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take only the hue, at one
- * lightness, so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
+ * marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take the hue, at one
+ * lightness and with more of the colour (a faint mix of a dull one reads brown), so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
  * tests/plannerColors.test.ts measures the contrast these give.
  */
 export const LIMITS = {
   text: { light: 0.46, dark: 0.79, chroma: 0.15 },
   mark: { light: 0.63, dark: 0.56, chroma: 0.2 },
   fill: 0.65,
+  fillChroma: 0.27,
   tint: 8,
   strong: 18,
   line: 28,
@@ -60,7 +61,7 @@ export function colorVar(color: Color): ColorVars {
   if (!vars) {
     const source = isCustomColor(color) ? color : TOKENS[color]
     const dot = held(source, LIMITS.mark)
-    const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.mark.chroma}) h)`
+    const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.fillChroma}) h)`
     const mix = (percent: number, ground: string) => `color-mix(in oklab, ${fill} ${percent}%, var(${ground}))`
     vars = {
       dot,

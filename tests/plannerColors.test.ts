@@ -80,7 +80,9 @@ for (const theme of ['dark', 'light'] as const) {
     for (const hex of ALL) {
       const fg = held(hex, LIMITS.text, theme)
       const dot = held(hex, LIMITS.mark, theme)
-      const fill: Vec = [LIMITS.fill, dot[1], dot[2]]
+      const [, a, b] = hexToOklab(hex)
+      const k = Math.min(1, LIMITS.fillChroma / Math.max(Math.hypot(a, b), 1e-9))
+      const fill: Vec = [LIMITS.fill, a * k, b * k]
       const tint = mix(fill, panel, LIMITS.tint / 100)
       const strong = mix(fill, panel, LIMITS.strong / 100)
       const grounds = { panel, tint, canvas: token(theme, '--bg-canvas'), raised: token(theme, '--bg-raised'), tag: token(theme, '--bg-active') }

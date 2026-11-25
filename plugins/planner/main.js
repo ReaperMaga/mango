@@ -1,4 +1,4 @@
-/* Built from src/ by `pnpm plugins:build`. Do not edit. ed32a5542937a9803e3918f53e73db66 */
+/* Built from src/ by `pnpm plugins:build`. Do not edit. a7c3d3ce936ad37eb37dc7bb64910aa7 */
 
 let active = null
 
@@ -34,30 +34,41 @@ var __plugin = (function(exports, vue) {
 		return null;
 	}
 	/**
+	* Paths alternate: containers (`views`, `options`) and the entries in them by id. A container that is not there
+	* yet is made, an entry never is: that would bring back half of what someone else deleted.
+	*/
+	function setAt(doc, op, depth) {
+		const key = op.path[depth];
+		const out = { ...doc };
+		if (depth === op.path.length - 1) {
+			if (op.value === void 0) delete out[key];
+			else out[key] = op.value;
+			return out;
+		}
+		const isEntry = depth % 2 === 1;
+		const child = childObject(doc, key);
+		if (!child && (isEntry || op.value === void 0)) return null;
+		const next = setAt(child ?? {}, op, depth + 1);
+		if (!next) return null;
+		out[key] = next;
+		return out;
+	}
+	/**
 	* The document with the patch applied (a copy; untouched parts are shared). A path into an entry that is gone
-	* (`['views', 'deleted', 'name']`) does nothing: an edit never brings back half of what someone else deleted.
+	* (`['views', 'deleted', 'name']`) does nothing.
 	*/
 	function applyPatch(doc, patch) {
-		const out = { ...doc };
-		for (const op of patch) {
-			if (!op.path.length || !op.path.every(isSafeKey)) continue;
-			let at = out;
-			let ok = true;
-			for (let i = 0; i < op.path.length - 1; i++) {
-				const key = op.path[i];
-				const next = childObject(at, key);
-				if (!next && (i === 1 || op.value === void 0)) {
-					ok = false;
-					break;
-				}
-				at = at[key] = next ?? {};
-			}
-			if (!ok) continue;
-			const last = op.path[op.path.length - 1];
-			if (op.value === void 0) delete at[last];
-			else at[last] = op.value;
-		}
+		let out = { ...doc };
+		for (const op of patch) if (op.path.length && op.path.every(isSafeKey)) out = setAt(out, op, 0) ?? out;
 		return out;
+	}
+	/** The same whatever order the keys of objects are in (a database may sort them). */
+	function sameJson(a, b) {
+		if (a === b) return true;
+		if (Array.isArray(a)) return Array.isArray(b) && a.length === b.length && a.every((v, i) => sameJson(v, b[i]));
+		if (!isObject(a) || !isObject(b)) return false;
+		const keys = Object.keys(a);
+		return keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && sameJson(a[k], b[k]));
 	}
 	function readPath(doc, path) {
 		let at = doc;
@@ -252,6 +263,11 @@ var __plugin = (function(exports, vue) {
 		readonly: "This can only be read right now",
 		gone: "It was deleted somewhere else, so the change was left out.",
 		retry: "Try again",
+		offline: "You are offline. The change is kept and saved when you are back.",
+		textKept: "It stays here until you leave, so copy it if you need it.",
+		copyText: "Copy text",
+		undoKept: "Some of it was changed since",
+		undoKeptBody: "Those newer changes were kept.",
 		valuesLost: (n) => `${n === 1 ? "1 value" : `${n} values`} could not be carried over`,
 		importEmpty: "There is nothing to import in that file.",
 		/** What an undo entry is called ("Undo delete item"). */
@@ -668,10 +684,13 @@ var __plugin = (function(exports, vue) {
 		};
 	}
 	function normalizeScope(raw) {
-		return isObject(raw) && raw.kind === "project" && typeof raw.path === "string" && raw.path ? {
+		if (!isObject(raw) || raw.kind !== "project" || typeof raw.path !== "string" || !raw.path) return { kind: "everywhere" };
+		const repo = typeof raw.repo === "string" && /^[^\s/]+(?:\/[^\s/]+){2,}$/.test(raw.repo) ? raw.repo : null;
+		return {
 			kind: "project",
-			path: raw.path
-		} : { kind: "everywhere" };
+			path: raw.path,
+			...repo ? { repo } : {}
+		};
 	}
 	function normalizeItemName(raw) {
 		if (!isObject(raw)) return null;
@@ -789,9 +808,14 @@ var __plugin = (function(exports, vue) {
 		const p = path.replace(/\\/g, "/").replace(/(?<=.)\/+$/, "");
 		return /^[a-z]:/i.test(p) || p.startsWith("//") && path.includes("\\") ? p.toLowerCase() : p;
 	}
-	/** Whether a collection shows while this project is open (null: no project). */
-	function isInScope(scope, projectPath) {
-		return scope.kind === "everywhere" || projectPath !== null && projectKey(scope.path) === projectKey(projectPath);
+	/**
+	* Whether a collection shows while this project is open (null: no project). By folder; by repository only when its
+	* folder is not on this computer.
+	*/ function isInScope(scope, projectPath, here) {
+		if (scope.kind === "everywhere") return true;
+		if (projectPath === null) return false;
+		if (projectKey(scope.path) === projectKey(projectPath)) return true;
+		return !!scope.repo && !!here?.repo && scope.repo.toLowerCase() === here.repo.toLowerCase() && !here.hasPath(scope.path);
 	}
 	var propertyOf = (c, id) => c.properties.find((p) => p.id === id) ?? null;
 	var viewOf = (c, id) => c.views.find((v) => v.id === id) ?? null;
@@ -1925,8 +1949,8 @@ var __plugin = (function(exports, vue) {
 	};
 	/**
 	* How far a colour may go, as OKLCH lightness: text dark enough for light grounds and light enough for dark ones,
-	* marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take only the hue, at one
-	* lightness, so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
+	* marks a little less so. `chroma` keeps a glaring colour inside what screens show. Fills take the hue, at one
+	* lightness and with more of the colour (a faint mix of a dull one reads brown), so black and white do not make a hole or a glare: `tint`, `strong` and `line` are how much of it.
 	* tests/plannerColors.test.ts measures the contrast these give.
 	*/
 	var LIMITS = {
@@ -1941,6 +1965,7 @@ var __plugin = (function(exports, vue) {
 			chroma: .2
 		},
 		fill: .65,
+		fillChroma: .27,
 		tint: 8,
 		strong: 18,
 		line: 28
@@ -1961,7 +1986,7 @@ var __plugin = (function(exports, vue) {
 		if (!vars) {
 			const source = isCustomColor(color) ? color : TOKENS[color];
 			const dot = held(source, LIMITS.mark);
-			const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.mark.chroma}) h)`;
+			const fill = `oklch(from ${source} ${LIMITS.fill} min(c, ${LIMITS.fillChroma}) h)`;
 			const mix = (percent, ground) => `color-mix(in oklab, ${fill} ${percent}%, var(${ground}))`;
 			vars = {
 				dot,
@@ -12489,12 +12514,21 @@ var __plugin = (function(exports, vue) {
 			items
 		};
 	}
+	// plugins/planner/src/data/source.ts
+	var SourceError = class extends Error {
+		kind;
+		constructor(kind, message) {
+			super(message);
+			this.name = "SourceError";
+			this.kind = kind;
+		}
+	};
 	// plugins/planner/src/data/local.ts
 	var COLLECTIONS = "collections";
 	var ITEMS = "items_";
 	var ATTEMPTS = 10;
-	/** Documents in one write of the host's, which takes 2000. A larger write (a big import) is made in several. */
-	var BATCH = 1500;
+	/** Documents in one write of the host's: all of them or none. */
+	var MAX_DOCS = 2e4;
 	var STATUS = {
 		online: true,
 		readonly: false
@@ -12515,22 +12549,16 @@ var __plugin = (function(exports, vue) {
 			data
 		};
 	}
-	/** Split so that all changes to one document stay together. */
-	function batches(ops) {
-		if (ops.length <= BATCH) return [[...ops]];
-		const byDoc = /* @__PURE__ */ new Map();
-		for (const op of ops) {
-			const key = keyOf$1(nameOf(op), op.id);
-			byDoc.get(key)?.push(op) ?? byDoc.set(key, [op]);
-		}
-		const docs = [...byDoc.values()];
-		return Array.from({ length: Math.ceil(docs.length / BATCH) }, (_, i) => docs.slice(i * BATCH, (i + 1) * BATCH).flat());
-	}
 	var isDoc = (d) => d !== null;
 	/** The documents a refused write lists, however the error reached us. */
 	function conflictsOf(error) {
 		const list = error?.conflicts;
 		return Array.isArray(list) ? list : null;
+	}
+	/** By what the host says (src-tauri/src/plugin_data.rs). */
+	function kindOf$1(message) {
+		if (/larger than|not valid JSON|too many|is not a (?:document id|collection name)/.test(message)) return "invalid";
+		return /plugin was removed/.test(message) ? "refused" : "unknown";
 	}
 	var LocalSource = class {
 		label = "This computer";
@@ -12553,20 +12581,31 @@ var __plugin = (function(exports, vue) {
 		async loadItems(collectionId) {
 			return this.list(ITEMS + collectionId);
 		}
-		async write(ops) {
-			const out = [];
-			for (const batch of batches(ops)) out.push(...await this.writeBatch(batch));
-			return out;
-		}
-		async writeBatch(ops) {
+		/** The mutation id is not needed: ids are random, so a document that is there when it is created is the same one. */
+		async write(ops, _mutationId) {
 			for (let attempt = 1;; attempt++) {
-				const { writes, keys } = await this.prepare(ops);
+				const { writes, addresses } = await this.prepare(ops);
+				if (writes.length > MAX_DOCS) throw new SourceError("invalid", `That is ${writes.length} documents at once. The most is ${MAX_DOCS}, so nothing was changed.`);
 				try {
 					(writes.length ? await this.data.write(writes) : []).forEach((d) => this.see(d));
-					return keys.map((k) => this.known.get(k)).map((d) => d ? toSourceDoc(d) : null).filter(isDoc);
+					return [...addresses].map(([key, address]) => {
+						const doc = this.known.get(key);
+						return (doc && toSourceDoc(doc)) ?? {
+							kind: address.kind,
+							id: address.id,
+							collectionId: address.collectionId,
+							seq: 0,
+							createdAt: 0,
+							updatedAt: 0,
+							data: null
+						};
+					});
 				} catch (e) {
 					const conflicts = conflictsOf(e);
-					if (!conflicts || attempt >= ATTEMPTS) throw e;
+					if (!conflicts || attempt >= ATTEMPTS) {
+						const message = e instanceof Error ? e.message : String(e);
+						throw e instanceof SourceError ? e : new SourceError(conflicts ? "unknown" : kindOf$1(message), message);
+					}
 					for (const d of conflicts) this.known.set(keyOf$1(d.collection, d.id), d);
 				}
 			}
@@ -12621,9 +12660,12 @@ var __plugin = (function(exports, vue) {
 					work.set(key, w);
 				}
 				if (op.op === "create") {
-					if (w.data !== null) throw new Error(`A document with the id ${op.id} exists already.`);
-					w.data = op.data;
-					w.touched = true;
+					const again = w.data !== null && op.data.createdAt !== void 0 && w.data.createdAt === op.data.createdAt;
+					if (w.data !== null && !again) throw new SourceError("refused", `A document with the id ${op.id} exists already.`);
+					if (!again) {
+						w.data = op.data;
+						w.touched = true;
+					}
 				} else if (op.op === "delete") {
 					w.expect = false;
 					w.touched ||= w.data !== null;
@@ -12654,7 +12696,7 @@ var __plugin = (function(exports, vue) {
 			}
 			return {
 				writes,
-				keys: [...work.keys()]
+				addresses: new Map([...work].map(([key, w]) => [key, w.address]))
 			};
 		}
 	};
@@ -12675,6 +12717,8 @@ var __plugin = (function(exports, vue) {
 	var LAYOUT = /* @__PURE__ */ new Set(["collapsedGroups", "widths"]);
 	var keyOf = (o) => `${o.kind}/${o.collectionId}/${o.id}`;
 	var messageOf = (e) => e instanceof Error ? e.message : String(e);
+	var kindOf = (e) => e instanceof SourceError ? e.kind : "unknown";
+	var covers = (a, b) => a.length <= b.length && a.every((k, i) => k === b[i]);
 	var json = (v) => JSON.parse(JSON.stringify(v));
 	var samePath = (a, b) => a.length === b.length && a.every((k, i) => k === b[i]);
 	var collectionTarget = (id) => ({
@@ -12694,6 +12738,45 @@ var __plugin = (function(exports, vue) {
 		else if (out) out = applyPatch(out, op.patch);
 		return out;
 	}
+	/** Operations by document; found again for the same list, as a large import asks for every one of its documents. */
+	var grouped = /* @__PURE__ */ new WeakMap();
+	function opsOn(ops, key) {
+		let map = grouped.get(ops);
+		if (!map) {
+			map = /* @__PURE__ */ new Map();
+			for (const op of ops) {
+				const k = keyOf(op);
+				const list = map.get(k);
+				if (list) list.push(op);
+				else map.set(k, [op]);
+			}
+			grouped.set(ops, map);
+		}
+		return map.get(key) ?? [];
+	}
+	/** What a change left at a path: its last word there, with what it then did below. */
+	function writtenAt(ops, path) {
+		const patch = ops.flatMap((o) => o.op === "patch" ? o.patch : []);
+		const at = patch.findLastIndex((p) => samePath(p.path, path));
+		let value = patch[at]?.value;
+		for (const p of patch.slice(at + 1)) if (p.path.length > path.length && covers(path, p.path) && isObject(value)) value = setBelow(value, p.path.slice(path.length), p.value);
+		return value;
+	}
+	function setBelow(doc, path, value) {
+		const [key, ...rest] = path;
+		const next = { ...doc };
+		if (!rest.length && value === void 0) delete next[key];
+		else next[key] = rest.length ? setBelow(isObject(next[key]) ? next[key] : {}, rest, value) : value;
+		return next;
+	}
+	/** A document without what is only how it looks right now, which is no edit. */
+	function withoutLayout(data) {
+		if (!data.views) return data;
+		return {
+			...data,
+			views: Object.fromEntries(entriesById(data.views).map(([id, v]) => [id, Object.fromEntries(Object.entries(v).filter(([k]) => !LAYOUT.has(k)))]))
+		};
+	}
 	function createStore(mango, options = {}) {
 		const source = options.source ?? new LocalSource(mango.data);
 		const deferMs = options.deferMs ?? DEFER_MS;
@@ -12704,7 +12787,8 @@ var __plugin = (function(exports, vue) {
 		const now = (0, vue.ref)(Date.now());
 		const saving = (0, vue.ref)(false);
 		const allCollections = (0, vue.shallowRef)([]);
-		const collections = (0, vue.computed)(() => allCollections.value.filter((c) => isInScope(c.scope, projectPath.value)));
+		const identity = (0, vue.shallowRef)(null);
+		const collections = (0, vue.computed)(() => allCollections.value.filter((c) => isInScope(c.scope, projectPath.value, identity.value)));
 		const undoStack = (0, vue.shallowRef)([]);
 		const redoStack = (0, vue.shallowRef)([]);
 		const entries = /* @__PURE__ */ new Map();
@@ -12714,8 +12798,15 @@ var __plugin = (function(exports, vue) {
 		let disposed = false;
 		let deferred = null;
 		let timer;
-		/** Text that could not be written: still shown, and written again with the next change. */
+		/** Could not be written: still shown, and written again with the next change, or once online. */
 		let unsaved = [];
+		/** Of those, the ones that wait for a connection: what came after them on the same documents waits too. */
+		const waiting = /* @__PURE__ */ new Set();
+		/** Text that can never be written as it is: shown until the same text is changed and saved. */
+		let stuck = [];
+		/** Documents whose text the user was told cannot be saved. */
+		const told = /* @__PURE__ */ new Set();
+		let made = 0;
 		let chain = Promise.resolve();
 		let writing = 0;
 		const lastToasts = /* @__PURE__ */ new Map();
@@ -12734,7 +12825,8 @@ var __plugin = (function(exports, vue) {
 		/** The stored document as it will be once everything is written. */
 		function currentOf(e) {
 			if (!e) return null;
-			return e.pending.reduce((data, m) => applyOps(data, m.ops.filter((o) => o.kind === e.kind && o.id === e.id && o.collectionId === e.collectionId)), e.base?.data ?? null);
+			const key = keyOf(e);
+			return e.pending.reduce((data, m) => applyOps(data, opsOn(m.ops, key)), e.base?.data ?? null);
 		}
 		const rawCollection = (id) => currentOf(entries.get(keyOf(collectionTarget(id))));
 		const rawItem = (collectionId, id) => currentOf(entries.get(keyOf(itemTarget(collectionId, id))));
@@ -12796,6 +12888,30 @@ var __plugin = (function(exports, vue) {
 				error.value = messageOf(e);
 				mango.log.error("Loading collections:", e);
 			}
+		}
+		/** Reads everything loaded again: what is not listed any more is gone, unless it was heard of meanwhile. */
+		async function resync() {
+			const read = async (kind, collectionId, list) => {
+				const before = [...entries.values()].filter((e) => e.kind === kind && (collectionId === null || e.collectionId === collectionId) && e.base?.data).map((e) => ({
+					e,
+					base: e.base
+				}));
+				const docs = await list();
+				const listed = new Set(docs.map(keyOf));
+				const changed = take(docs);
+				for (const { e, base } of before) {
+					if (listed.has(keyOf(e)) || e.base !== base) continue;
+					e.base = {
+						...base,
+						data: null
+					};
+					changed.push(keyOf(e));
+				}
+				publish(changed);
+			};
+			const ready = [...itemStates].filter(([, s]) => s.status === "ready").map(([id]) => id);
+			const jobs = [...status.value === "ready" ? [read("collection", null, () => source.loadCollections())] : [], ...ready.map((id) => read("item", id, () => source.loadItems(id)))];
+			for (const r of await Promise.allSettled(jobs)) if (r.status === "rejected") mango.log.error("Reading again:", r.reason);
 		}
 		function stateOf(collectionId) {
 			let s = itemStates.get(collectionId);
@@ -12889,9 +13005,12 @@ var __plugin = (function(exports, vue) {
 			return inverse;
 		}
 		/** Makes a change. False when it may not be made. */
-		function mutate(ops, label, opts = {}) {
+		function mutate(ops, label, opts = {}, settle) {
 			ops = ops.filter((o) => o.op !== "patch" || o.patch.length);
-			if (!ops.length) return true;
+			if (!ops.length) {
+				settle?.(true);
+				return true;
+			}
 			if (sourceStatus.value.readonly) {
 				toast(strings$5.readonly, sourceStatus.value.message);
 				return false;
@@ -12902,9 +13021,16 @@ var __plugin = (function(exports, vue) {
 			}
 			settleDeferred();
 			const m = newMutation(ops, label, false);
+			m.settle = settle;
 			show(m);
 			enqueue(m);
 			return true;
+		}
+		/** The same, and whether it was written. */
+		function mutateAndWait(ops, label) {
+			return new Promise((resolve) => {
+				if (!mutate(ops, label, {}, resolve)) resolve(false);
+			});
 		}
 		function newMutation(ops, label, isDeferred) {
 			const undoEntry = label === null ? null : {
@@ -12914,6 +13040,8 @@ var __plugin = (function(exports, vue) {
 			};
 			if (undoEntry) record(undoEntry);
 			return {
+				id: newId(),
+				number: ++made,
 				ops,
 				at: Date.now(),
 				deferred: isDeferred,
@@ -12946,7 +13074,7 @@ var __plugin = (function(exports, vue) {
 				const m = deferred;
 				m.at = Date.now();
 				const fresh = [];
-				for (const op of ops) if (op.op !== "patch" || !replaceIn(m.ops, op)) fresh.push(op);
+				for (const op of ops) if (op.op !== "patch" || !replaceIn(m, op)) fresh.push(op);
 				if (m.undoEntry) {
 					if (fresh.length) m.undoEntry.undo = [...inverseOf(fresh), ...m.undoEntry.undo];
 					m.undoEntry.redo = [...m.ops, ...fresh];
@@ -12969,14 +13097,14 @@ var __plugin = (function(exports, vue) {
 			if (!hold) timer = setTimeout(settleDeferred, deferMs);
 		}
 		/** Replaces the values of a patch that is waiting already; false when one of its fields is not in it. */
-		function replaceIn(ops, op) {
-			const at = ops.findIndex((o) => o.op === "patch" && keyOf(o) === keyOf(op) && op.patch.every((p) => o.patch.some((q) => samePath(p.path, q.path))));
-			const old = ops[at];
+		function replaceIn(m, op) {
+			const at = m.ops.findIndex((o) => o.op === "patch" && keyOf(o) === keyOf(op) && op.patch.every((p) => o.patch.some((q) => samePath(p.path, q.path))));
+			const old = m.ops[at];
 			if (old?.op !== "patch") return false;
-			ops[at] = {
+			m.ops = m.ops.with(at, {
 				...old,
 				patch: old.patch.map((q) => op.patch.findLast((p) => samePath(p.path, q.path)) ?? q)
-			};
+			});
 			return true;
 		}
 		/** Hands what is waiting to the writer. */
@@ -12984,6 +13112,7 @@ var __plugin = (function(exports, vue) {
 			clearTimeout(timer);
 			const again = unsaved;
 			unsaved = [];
+			waiting.clear();
 			again.forEach(enqueue);
 			const m = deferred;
 			deferred = null;
@@ -12997,21 +13126,102 @@ var __plugin = (function(exports, vue) {
 				saving.value = writing > 0 || deferred !== null || unsaved.length > 0;
 			});
 		}
+		/** Older text waiting to be written loses the fields a newer change has taken over, so it cannot come back over them. */
+		function supersede(m) {
+			const trim = (list) => list.filter((old) => {
+				if (old === m || old.number > m.number) return true;
+				const ops = old.ops.flatMap((op) => {
+					const newer = opsOn(m.ops, keyOf(op));
+					if (!newer.length || op.op !== "patch") return [op];
+					if (newer.some((n) => n.op === "delete")) return [];
+					const taken = newer.flatMap((n) => n.op === "patch" ? n.patch : []);
+					const patch = op.patch.filter((p) => !taken.some((t) => covers(t.path, p.path)));
+					return patch.length ? [{
+						...op,
+						patch
+					}] : [];
+				});
+				if (ops.length === old.ops.length && ops.every((o, i) => o === old.ops[i] || o.op === "patch" && o.patch.length === old.ops[i].patch.length)) return true;
+				hide(old);
+				if (!ops.length) {
+					waiting.delete(old);
+					return false;
+				}
+				old.ops = ops;
+				old.id = newId();
+				for (const op of ops) {
+					const e = entryFor(op);
+					e.pending = [...e.pending, old].sort((a, b) => a.number - b.number);
+				}
+				publish(ops.map(keyOf));
+				return true;
+			});
+			unsaved = trim(unsaved);
+			stuck = trim(stuck);
+		}
+		/** The text of changes to documents that are gone. */
+		function textIn(m, keys) {
+			return m.ops.flatMap((o) => o.op === "patch" && keys.has(keyOf(o)) ? o.patch : []).filter((p) => p.path[0] === "title" || p.path[0] === "body" || m.deferred && p.path[0] === "values").map((p) => p.value).filter((v) => typeof v === "string" && v.trim() !== "").join("\n\n");
+		}
+		function copyText(text) {
+			if (options.copyText) options.copyText(text);
+			else navigator.clipboard?.writeText(text).catch((e) => mango.log.error("Copying:", e));
+		}
 		async function writeOut(m) {
 			try {
-				const docs = await source.write(m.ops);
+				const keys = new Set(m.ops.map(keyOf));
+				if ([...waiting].some((w) => w.number < m.number && w.ops.some((o) => keys.has(keyOf(o))))) return keepOffline(m);
+				const docs = await source.write(m.ops, m.id);
 				take(docs);
 				hide(m);
+				supersede(m);
+				for (const key of keys) told.delete(key);
+				m.settle?.(true);
 				const patched = new Set(m.ops.filter((o) => o.op === "patch").map(keyOf));
 				const removed = new Set(m.ops.filter((o) => o.op === "delete").map(keyOf));
-				if (docs.some((d) => d.data === null && patched.has(keyOf(d)) && !removed.has(keyOf(d)))) toast(strings$5.saveFailed, strings$5.gone);
+				const gone = new Set(docs.filter((d) => d.data === null && patched.has(keyOf(d)) && !removed.has(keyOf(d))).map(keyOf));
+				if (!gone.size) return;
+				const text = textIn(m, gone);
+				if (text) mango.ui.toast({
+					title: strings$5.saveFailed,
+					body: strings$5.gone,
+					kind: "error",
+					timeout: 0,
+					action: {
+						label: strings$5.copyText,
+						run: () => copyText(text)
+					}
+				});
+				else toast(strings$5.saveFailed, strings$5.gone);
 			} catch (e) {
 				mango.log.error("Saving:", e);
-				if (m.deferred && !disposed) {
-					unsaved.push(m);
-					return toast(strings$5.saveFailed, messageOf(e), {
+				const kind = kindOf(e);
+				if (kind === "offline" && !disposed) {
+					toast(strings$5.saveFailed, strings$5.offline, {
 						label: strings$5.retry,
 						run: settleDeferred
+					});
+					return keepOffline(m);
+				}
+				m.settle?.(false);
+				if (m.deferred && !disposed) {
+					if (kind === "unknown") {
+						unsaved.push(m);
+						supersede(m);
+						return toast(strings$5.saveFailed, messageOf(e), {
+							label: strings$5.retry,
+							run: settleDeferred
+						});
+					}
+					stuck.push(m);
+					supersede(m);
+					const keys = [...new Set(m.ops.map(keyOf))];
+					if (keys.every((k) => told.has(k))) return;
+					keys.forEach((k) => told.add(k));
+					return mango.ui.toast({
+						title: strings$5.saveFailed,
+						body: `${messageOf(e)} ${strings$5.textKept}`,
+						kind: "error"
 					});
 				}
 				hide(m);
@@ -13022,20 +13232,66 @@ var __plugin = (function(exports, vue) {
 				toast(strings$5.saveFailed, messageOf(e));
 			}
 		}
+		function keepOffline(m) {
+			unsaved.push(m);
+			waiting.add(m);
+			m.settle?.(true);
+		}
+		/**
+		* An entry's operations without those that would undo what came after it: fields that no longer hold what the
+		* change put there, and documents changed since.
+		*/
+		function stillApplies(entry, which) {
+			const done = entry[which === "undo" ? "redo" : "undo"];
+			let kept = false;
+			const keptItems = /* @__PURE__ */ new Set();
+			return {
+				ops: entry[which].flatMap((op) => {
+					const key = keyOf(op);
+					const current = currentOf(entries.get(key));
+					const wrote = opsOn(done, key);
+					const drop = () => {
+						kept = true;
+						if (op.kind === "item") keptItems.add(op.collectionId);
+						return [];
+					};
+					if (op.op === "create") return current ? drop() : [op];
+					if (!current) return op.op === "delete" ? [] : drop();
+					if (op.op === "delete") {
+						const created = applyOps(null, wrote);
+						return created && sameJson(withoutLayout(current), withoutLayout(created)) ? [op] : drop();
+					}
+					const patch = op.patch.filter((p) => sameJson(readPath(current, p.path), writtenAt(wrote, p.path)));
+					if (patch.length < op.patch.length) kept = true;
+					return patch.length ? [{
+						...op,
+						patch
+					}] : [];
+				}).filter((o) => !(o.op === "delete" && o.kind === "collection" && keptItems.has(o.id))),
+				kept
+			};
+		}
+		function tellKept(kept) {
+			if (kept) mango.ui.toast({
+				title: strings$5.undoKept,
+				body: strings$5.undoKeptBody,
+				kind: "info"
+			});
+		}
 		function step(from, to, which) {
 			settleDeferred();
 			const entry = from.value.at(-1);
 			if (!entry) return;
-			const m = {
-				ops: [...entry[which]],
-				at: Date.now(),
-				deferred: false,
-				undoEntry: entry
-			};
 			if (sourceStatus.value.readonly) return toast(strings$5.readonly, sourceStatus.value.message);
 			from.value = from.value.slice(0, -1);
+			const { ops, kept } = stillApplies(entry, which);
+			tellKept(kept);
+			if (!ops.length) return;
 			to.value = [...to.value, entry];
-			if (!m.ops.length) return;
+			const m = {
+				...newMutation(ops, null, false),
+				undoEntry: entry
+			};
 			show(m);
 			enqueue(m);
 		}
@@ -13054,7 +13310,9 @@ var __plugin = (function(exports, vue) {
 						if (undoStack.value.at(-1) === entry) return undo();
 						if (!undoStack.value.includes(entry)) return;
 						undoStack.value = undoStack.value.filter((u) => u !== entry);
-						mutate([...entry.undo], null);
+						const { ops, kept } = stillApplies(entry, "undo");
+						tellKept(kept);
+						mutate(ops, null);
 					}
 				}
 			});
@@ -13308,39 +13566,39 @@ var __plugin = (function(exports, vue) {
 			})), strings$5.did.moveItem);
 		}
 		function duplicateItems(collectionId, itemIds) {
-			let list = stateOf(collectionId).items;
+			const list = stateOf(collectionId).items;
 			const at = Date.now();
-			const ops = [];
-			const copies = [];
-			for (const original of list.filter((i) => itemIds.includes(i.id))) {
-				const raw = rawItem(collectionId, original.id);
-				if (!raw) continue;
-				const id = newId();
-				const place = placeAt(list, [id], { after: original.id });
+			const wanted = new Set(itemIds);
+			const copyOf = new Map(list.filter((i) => wanted.has(i.id) && rawItem(collectionId, i.id)).map((i) => [i.id, newId()]));
+			if (!copyOf.size) return [];
+			const place = /* @__PURE__ */ new Map();
+			if (!list.every((i, n) => {
+				const copy = copyOf.get(i.id);
+				const key = copy ? between(i.order, list[n + 1]?.order ?? null) : "";
+				if (copy && key) place.set(copy, key);
+				return key !== null;
+			})) {
+				const all = list.flatMap((i) => [i.id, ...copyOf.has(i.id) ? [copyOf.get(i.id)] : []]);
+				spread(all.length).forEach((key, n) => place.set(all[n], key));
+			}
+			const copies = new Set(copyOf.values());
+			if (!mutate([...list.flatMap((i) => {
+				const id = copyOf.get(i.id);
+				if (!id) return [];
 				const data = {
-					...raw,
-					title: strings$5.copyOf(original.title),
+					...rawItem(collectionId, i.id),
+					title: strings$5.copyOf(i.title),
 					order: place.get(id),
 					chats: {},
 					createdAt: at
 				};
-				ops.push({
+				return [{
 					...itemTarget(collectionId, id),
 					op: "create",
 					data
-				}, ...itemOrderOps(collectionId, place, /* @__PURE__ */ new Set([id])));
-				list = [...list.map((i) => place.has(i.id) ? {
-					...i,
-					order: place.get(i.id)
-				} : i), {
-					...original,
-					id,
-					order: place.get(id)
 				}];
-				copies.push(id);
-			}
-			if (!mutate(ops, strings$5.did.duplicate)) return [];
-			return copies.map((id) => item(collectionId, id)).filter((i) => i !== null);
+			}), ...itemOrderOps(collectionId, place, copies)], strings$5.did.duplicate)) return [];
+			return stateOf(collectionId).items.filter((i) => copies.has(i.id));
 		}
 		function deleteItems(collectionId, itemIds) {
 			const ids = [...new Set(itemIds)].filter((id) => rawItem(collectionId, id));
@@ -13789,7 +14047,7 @@ var __plugin = (function(exports, vue) {
 					}
 				}));
 			});
-			return mutate([{
+			return await mutateAndWait([{
 				...collectionTarget(collectionId),
 				op: "patch",
 				patch
@@ -13806,7 +14064,7 @@ var __plugin = (function(exports, vue) {
 			const keys = spread(plan.properties.length);
 			const place = placeAt(allCollections.value, [id], "end");
 			startEmpty(id);
-			return mutate([
+			return await mutateAndWait([
 				{
 					...collectionTarget(id),
 					op: "create",
@@ -13834,9 +14092,13 @@ var __plugin = (function(exports, vue) {
 			const v = mango.storage.get(uiKey());
 			return isObject(v) ? v : {};
 		}
-		const unsubscribe = source.subscribe((docs) => publish(take(docs)));
+		const unsubscribe = source.subscribe((docs) => publish(take(docs)), () => {
+			resync();
+		});
 		const unsubscribeStatus = source.onStatus((s) => {
+			const back = s.online && !sourceStatus.value.online;
 			sourceStatus.value = s;
+			if (back && unsaved.length) settleDeferred();
 		});
 		const project = mango.workspace.onProjectChange((path) => {
 			projectPath.value = path;
@@ -13854,6 +14116,17 @@ var __plugin = (function(exports, vue) {
 		async function flush() {
 			settleDeferred();
 			await chain;
+		}
+		async function flushAll() {
+			if (hasWindow) window.dispatchEvent(new Event("planner:commit"));
+			let before;
+			do {
+				settleDeferred();
+				await Promise.allSettled(loadingItems.values());
+				await new Promise((resolve) => setTimeout(resolve));
+				before = chain;
+				await chain;
+			} while (deferred || chain !== before);
 		}
 		function dispose() {
 			if (disposed) return;
@@ -13944,7 +14217,11 @@ var __plugin = (function(exports, vue) {
 					}
 				});
 			},
+			identifyProject: (next) => {
+				identity.value = next;
+			},
 			flush,
+			flushAll,
 			dispose
 		};
 	}
