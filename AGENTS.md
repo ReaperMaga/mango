@@ -88,6 +88,7 @@ app/
                      releaseRuns.ts (which runs build which release, job summaries, files by platform)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
+  agent_sessions.rs  `agent_transcript`: the end of a Claude Code session's transcript, read only
   auth.rs            agent sign-in status / sign-out
   setup.rs           "Get started": what is installed, per-OS installer recipes run in a PTY (`setup_install`)
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
@@ -155,7 +156,9 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - A local Claude Code chat keeps its process between turns (`agents/keeper.ts`): a new one that resumes re-sends every
   instruction file that changed since, in full. Whatever decides how a process is started belongs in its key (`processKey`
   in `claude.ts`), and whatever a kept process must not outlive (its folder going, a sign-out, its chat) calls
-  `releaseAgents`. Remote runs are never kept: another device may go on with the chat.
+  `releaseAgents`. Remote runs are never kept: another device may go on with the chat. Before a kept process is used
+  again, the last message in the session's transcript (`agent_transcript`) must be one it printed: the user may have gone on
+  with the session in a terminal. Transcripts are only ever read.
 - Prove adapter changes against the real CLI with `scripts/try-agent.ts` in a scratch folder (never in this
   repo). Keep prompts tiny: every run spends the user's quota.
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.

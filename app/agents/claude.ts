@@ -1,5 +1,5 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, KeptProcess, PermissionMode, SpawnFn, SpawnHandlers, SteerInput, TaskKind, ToolImage, TurnUsage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, KeptProcess, PermissionMode, SpawnFn, SpawnHandlers, SteerInput, TaskKind, ToolImage, TranscriptTail, TurnUsage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
 import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts'
@@ -309,16 +309,57 @@ function startsTurn(line: string): boolean {
   return ['assistant', 'user', 'stream_event', 'control_request', 'result'].includes(m?.type) || (m?.type === 'system' && m.subtype === 'init')
 }
 
-/** How long a kept process may take to answer before a new one is started instead. */
+/** What comes after a process's last message is short bookkeeping; the larger read is for a transcript that surprises. */
+const TAIL_BYTES = [256 * 1024, 16 * 1024 * 1024]
+
+/**
+ * The id of the transcript's last message, null when these lines hold none. Not a message: Claude Code's
+ * bookkeeping, what it adds around one (`isMeta`), sub-agents', and a command it ran without the model, which
+ * a process writes down but does not print.
+ */
+function lastMessage(lines: string[]): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let m: any
+    try { m = JSON.parse(lines[i]!) } catch { continue }
+    if ((m?.type !== 'user' && m?.type !== 'assistant') || typeof m.uuid !== 'string' || m.isMeta || m.isSidechain) continue
+    const content = m.message?.content
+    if (typeof content === 'string' && /^<(command-name|local-command-)/.test(content)) continue
+    return m.uuid
+  }
+  return null
+}
+
+/**
+ * Whether the session went on without a process kept for it (`claude --resume` in a terminal): the last
+ * message in its transcript is not one the process printed. A transcript without any message counts too,
+ * there is no telling what it holds. One that is missing or cannot be read does not: a new process would
+ * have to resume from that same file, while this one has the conversation.
+ */
+async function missedMessages(p: KeptProcess, read: (maxBytes: number) => Promise<TranscriptTail | null>): Promise<boolean> {
+  for (const maxBytes of TAIL_BYTES) {
+    const tail = await read(maxBytes).catch(() => null)
+    if (!tail) return false
+    const last = lastMessage(tail.lines)
+    if (last) return !p.seen.has(last)
+    if (tail.whole) break
+  }
+  return true
+}
+
+/** How long a kept process may take to be ready before a new one is started instead. */
 const WAKE_MS = 3000
 
 /**
  * Make a kept process ready for a turn. The session may have left the mode it was started in (a plan
- * that was approved, a plan mode the agent entered), so it is always put back. False: use another process.
+ * that was approved, a plan mode the agent entered), so it is always put back. False: use another process
+ * (also when `missed` says the session went on without this one).
  */
-function wake(p: KeptProcess, mode: string): Promise<boolean> {
+function wake(p: KeptProcess, mode: string, missed: () => Promise<boolean>): Promise<boolean> {
   return new Promise((resolve) => {
+    let over = false
     const done = (ok: boolean) => {
+      if (over) return
+      over = true
       clearTimeout(timer)
       p.handlers = { onLine: () => {} }
       resolve(ok)
@@ -330,7 +371,9 @@ function wake(p: KeptProcess, mode: string): Promise<boolean> {
         let m: any
         try { m = JSON.parse(line) } catch { return }
         if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-wake') return
-        done(m.response.subtype === 'success' && (m.response.response?.mode ?? mode) === mode)
+        if (m.response.subtype !== 'success' || (m.response.response?.mode ?? mode) !== mode) return done(false)
+        // Last, as close to the prompt as can be.
+        void missed().then(yes => done(!yes))
       },
       onExit: () => done(false),
     }
@@ -836,6 +879,7 @@ function run(options: AgentRunOptions): AgentRun {
       if (resolve) { requests.delete(id); resolve(m.response?.subtype === 'success' ? (m.response.response ?? {}) : null) }
       return
     }
+    if (proc && (m.type === 'user' || m.type === 'assistant') && typeof m.uuid === 'string') proc.seen.add(m.uuid)
     // Sub-agent internals: whole messages whose parent is the Agent call that started the sub-agent.
     if (m.parent_tool_use_id) {
       if (announced.has(m.parent_tool_use_id)) onSubagentMessage(m, m.parent_tool_use_id)
@@ -930,7 +974,7 @@ function run(options: AgentRunOptions): AgentRun {
 
   const start = () => {
     // Its output goes through `handlers`, which the keeper and then the next run put their own in.
-    const p = { handlers, readDirs, costUsd: 0, wakes: startsTurn }
+    const p = { handlers, readDirs, seen: new Set<string>(), costUsd: 0, wakes: startsTurn }
     options.spawn(startArgs, {
       onLine: line => p.handlers.onLine(line),
       onStderr: line => p.handlers.onStderr?.(line),
@@ -952,7 +996,9 @@ function run(options: AgentRunOptions): AgentRun {
   const kept = options.keeper?.take(processKey(options.sessionId), p => readDirs.every(d => p.readDirs.includes(d)))
   if (!kept) start()
   else {
-    void wake(kept, MODES[options.mode] ?? 'default').then((awake) => {
+    const { readTranscript, sessionId: session } = options
+    const missed = async () => !!readTranscript && !!session && missedMessages(kept, maxBytes => readTranscript(session, maxBytes))
+    void wake(kept, MODES[options.mode] ?? 'default', missed).then((awake) => {
       if (!awake || ended || interrupted) kept.transport.kill().catch(() => {})
       if (ended) return
       if (interrupted) return end('stopped')

@@ -36,6 +36,8 @@ export interface KeptProcess {
   handlers: SpawnHandlers
   /** Folders outside the project it was started with access to. */
   readDirs: string[]
+  /** The ids of the conversation's messages it has printed, as its transcript names them. */
+  seen: Set<string>
   /** What it has spent so far, over all its turns. */
   costUsd: number
   /** Whether an output line means it started working by itself. */
@@ -47,6 +49,12 @@ export interface ProcessKeeper {
   /** The chat's kept process, when it was kept under `key` and `fits`; any other one is closed. */
   take(key: string, fits: (p: KeptProcess) => boolean): KeptProcess | null
   keep(key: string, process: KeptProcess): void
+}
+
+/** The end of a session's transcript: complete lines, oldest first. `whole`: they are all of it. */
+export interface TranscriptTail {
+  lines: string[]
+  whole: boolean
 }
 
 export type PermissionMode =
@@ -227,6 +235,11 @@ export interface AgentRunOptions {
    * starts its own. Only for runs on this computer: in an environment another device may go on with the chat.
    */
   keeper?: ProcessKeeper
+  /**
+   * The last lines of a session's transcript, at most `maxBytes` of it: tells whether a kept process missed
+   * part of its session. Null when there is none. Absent: a kept process is taken as it is.
+   */
+  readTranscript?(sessionId: string, maxBytes: number): Promise<TranscriptTail | null>
   spawn: SpawnFn
   emit(event: AgentEvent): void
 }

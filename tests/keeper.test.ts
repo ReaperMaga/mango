@@ -19,6 +19,7 @@ function fakeProcess(stuck = false) {
     did,
     handlers: { onLine: () => {} },
     readDirs: [],
+    seen: new Set(),
     costUsd: 0,
     wakes: line => line === 'wake',
     transport: {
@@ -123,8 +124,8 @@ function fakeClaude() {
         } else if (m.type === 'user') {
           turns++
           out({ type: 'system', subtype: 'init', session_id: 's1' })
-          out({ type: 'user', isReplay: true, message: m.message })
-          out({ type: 'assistant', message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
+          out({ type: 'user', isReplay: true, uuid: `u${procs.length}-${turns}`, message: m.message })
+          out({ type: 'assistant', uuid: `r${procs.length}-${turns}`, message: { id: `a${procs.length}-${turns}`, content: [{ type: 'text', text: 'ok' }] } })
           out({ type: 'result', subtype: 'success', session_id: 's1', total_cost_usd: turns, usage: { input_tokens: 1, output_tokens: 1 } })
         }
       },
@@ -200,6 +201,101 @@ test('claude: a process that refuses the mode is replaced, and the turn still ru
   assert.equal(prompts(cli.procs[1]!), 1)
   assert.deepEqual(endings(events), ['done'])
   kept.killAll()
+})
+
+/** Transcript lines as Claude Code writes them, what a kept process does not print among them. */
+const said = (type: 'user' | 'assistant', uuid: string, content: unknown = [{ type: 'text', text: 'x' }], extra = {}) =>
+  JSON.stringify({ type, uuid, message: { role: type, content }, ...extra })
+const ownTurn = [said('user', 'u1-1'), said('assistant', 'r1-1')]
+const bookkeeping = [
+  JSON.stringify({ type: 'system', subtype: 'stop_hook_summary', uuid: 'h1' }),
+  JSON.stringify({ type: 'attachment', uuid: 'at1', attachment: { type: 'date' } }),
+  JSON.stringify({ type: 'last-prompt', leafUuid: 'h1' }),
+  JSON.stringify({ type: 'cost-state', totalCostUSD: 1 }),
+  said('user', 'cv1', '<local-command-caveat>…', { isMeta: true }),
+  said('user', 'cv2', '<command-name>/context</command-name>'),
+  said('user', 'cv3', '<local-command-stdout>(no content)</local-command-stdout>'),
+  said('assistant', 'sub1', [], { isSidechain: true }),
+  'not json',
+]
+
+test('claude: a session that went on elsewhere is resumed in a new process', async () => {
+  const missed: [string, string[]][] = [
+    ['an answer', [...ownTurn, said('user', 'x1', 'typed in a terminal'), said('assistant', 'x2'), ...bookkeeping]],
+    ['a prompt not answered yet', [...ownTurn, said('user', 'x1', 'typed in a terminal')]],
+    ['a compaction', [...ownTurn, said('user', 'x1', 'This session is being continued…', { isCompactSummary: true }), ...bookkeeping]],
+    ['nothing it knows', [said('user', 'old1'), said('assistant', 'old2')]],
+    ['no message at all', bookkeeping],
+  ]
+  for (const [what, lines] of missed) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    const events = await turn({ readTranscript: async () => ({ lines, whole: true }) })
+    assert.equal(cli.procs.length, 2, what)
+    assert.ok(cli.procs[0]!.killed, what)
+    assert.equal(prompts(cli.procs[0]!), 1, what)
+    assert.deepEqual(cli.procs[1]!.args.slice(-2), ['--resume', 's1'], what)
+    assert.equal(prompts(cli.procs[1]!), 1, what)
+    assert.deepEqual(endings(events), ['done'], what)
+    kept.killAll()
+  }
+})
+
+test('claude: bookkeeping, a late flush and a transcript that cannot be read keep the process', async () => {
+  const fine: [string, AgentRunOptions['readTranscript']][] = [
+    ['bookkeeping', async () => ({ lines: [...ownTurn, ...bookkeeping], whole: true })],
+    ['answer not written yet', async () => ({ lines: [said('assistant', 'old'), ownTurn[0]!], whole: false })],
+    ['missing', async () => null],
+    ['unreadable', async () => { throw new Error('denied') }],
+    ['none to read', undefined],
+  ]
+  for (const [what, readTranscript] of fine) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    assert.deepEqual(endings(await turn({ readTranscript })), ['done'], what)
+    assert.equal(cli.procs.length, 1, what)
+    assert.equal(prompts(cli.procs[0]!), 2, what)
+    kept.killAll()
+  }
+})
+
+test('claude: a tail without a message is read again, wider, and then no more', async () => {
+  for (const found of [true, false]) {
+    const cli = fakeClaude()
+    const { kept, turn } = chat(cli)
+    await turn({ sessionId: null })
+    const asked: number[] = []
+    await turn({
+      async readTranscript(session, maxBytes) {
+        assert.equal(session, 's1')
+        asked.push(maxBytes)
+        return { lines: found && asked.length === 2 ? [...ownTurn, ...bookkeeping] : bookkeeping, whole: false }
+      },
+    })
+    assert.equal(asked.length, 2)
+    assert.ok(asked[1]! > asked[0]!)
+    assert.equal(cli.procs.length, found ? 1 : 2)
+    kept.killAll()
+  }
+})
+
+test('claude: a turn stopped while the transcript is read never sends its prompt', async () => {
+  const cli = fakeClaude()
+  const { kept, turn } = chat(cli)
+  await turn({ sessionId: null })
+  const events: AgentEvent[] = []
+  const run = claudeAdapter.run({
+    cwd: '/p', prompt: 'two', model: 'default', mode: 'ask', sessionId: 's1', spawn: cli.spawn,
+    keeper: kept.keeperFor(owner('c'), '', () => ''), emit: e => events.push(e),
+    readTranscript: async () => { run.interrupt(); await wait(10); return { lines: ownTurn, whole: true } },
+  })
+  await wait(50)
+  assert.deepEqual(endings(events), ['stopped'])
+  assert.equal(prompts(cli.procs[0]!), 1)
+  assert.equal(cli.procs.length, 1)
+  assert.ok(cli.procs[0]!.killed)
 })
 
 test('claude: a turn stopped while the kept process wakes never sends its prompt', async () => {
