@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.4.1
+
+### Fixes
+
+- Keep Claude Code running through attachments, Stop and passing errors.
+
 ## 0.4.0
 
 - Choose from how many tokens large chats are compacted after a break, also per project.
