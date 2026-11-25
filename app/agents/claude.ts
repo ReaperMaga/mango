@@ -1,5 +1,5 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, TurnUsage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, KeptProcess, PermissionMode, SpawnFn, SpawnHandlers, SteerInput, TaskKind, ToolImage, TurnUsage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
 import { addClaudeUsage, claudeContext, claudeRequestTokens } from './context.ts'
@@ -9,8 +9,9 @@ import { movedFrom, resumedFolder } from './workdir.ts'
  * Claude Code adapter.
  *
  * Protocol: `claude -p` with stream-json on both stdin and stdout, the same
- * wire format the Agent SDK uses. One process per turn; the conversation is
- * carried across turns with `--resume <session id>`.
+ * wire format the Agent SDK uses. A process takes one turn after another while the
+ * run's `keeper` holds it in between; a new one (a chat's first turn, changed settings,
+ * no keeper) carries the conversation on with `--resume <session id>`.
  *
  *   stdin   {"type":"user","message":{…}}                        the prompt (image blocks, then text)
  *           {"type":"control_response",…}                        answers to permission requests
@@ -298,6 +299,46 @@ function userContent(options: SteerInput): unknown[] {
   return content
 }
 
+/** A command that changes the session's own settings: it must not reach further than its turn. */
+const changesSession = (prompt: string) => isSlash(prompt) && HIDDEN_COMMANDS.has(prompt.trim().slice(1).split(/\s/)[0]!)
+
+/** An output line that belongs to a turn: a process between turns that prints one started it by itself. */
+function startsTurn(line: string): boolean {
+  let m: any
+  try { m = JSON.parse(line) } catch { return false }
+  return ['assistant', 'user', 'stream_event', 'control_request', 'result'].includes(m?.type) || (m?.type === 'system' && m.subtype === 'init')
+}
+
+/** How long a kept process may take to answer before a new one is started instead. */
+const WAKE_MS = 3000
+
+/**
+ * Make a kept process ready for a turn. The session may have left the mode it was started in (a plan
+ * that was approved, a plan mode the agent entered), so it is always put back. False: use another process.
+ */
+function wake(p: KeptProcess, mode: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const done = (ok: boolean) => {
+      clearTimeout(timer)
+      p.handlers = { onLine: () => {} }
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), WAKE_MS)
+    p.handlers = {
+      onLine(line) {
+        if (startsTurn(line)) return done(false)
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-wake') return
+        done(m.response.subtype === 'success' && (m.response.response?.mode ?? mode) === mode)
+      },
+      onExit: () => done(false),
+    }
+    p.transport.write(JSON.stringify({ type: 'control_request', request_id: 'mango-wake', request: { subtype: 'set_permission_mode', mode } }))
+      .catch(() => done(false))
+  })
+}
+
 function run(options: AgentRunOptions): AgentRun {
   const { cwd, emit } = options
   /** The folder the session works in now: `cwd` until it enters (or leaves) a worktree. */
@@ -308,6 +349,11 @@ function run(options: AgentRunOptions): AgentRun {
     emit({ type: 'workdir', path, branch })
   }
   let transport: AgentTransport | null = null
+  /** The CLI process of this run, for the keeper once the turn is over. */
+  let proc: KeptProcess | null = null
+  /** What a kept process had spent before this run. */
+  let spentBefore = 0
+  let sessionId = options.sessionId
   let ended = false
   let interrupted = false
   /** What this run has used, summed over its results. */
@@ -358,6 +404,9 @@ function run(options: AgentRunOptions): AgentRun {
    * new goes in meanwhile (a message sent now becomes the next turn).
    */
   let closing = false
+  /** Claude Code started another turn while the run was closing: not a process to keep. */
+  let wentOn = false
+  let exited = false
 
   const end = (status: 'done' | 'error' | 'stopped', error?: string) => {
     if (ended) return
@@ -369,7 +418,11 @@ function run(options: AgentRunOptions): AgentRun {
     for (const resolve of requests.values()) resolve(null)
     requests.clear()
     emit({ type: 'turn-end', status, error })
-    transport?.closeStdin().catch(() => {})
+    // Only a turn that ended cleanly, in the folder it was started for, leaves a process worth keeping.
+    const worthKeeping = status === 'done' && closing && !exited && !wentOn && !runningTasks()
+      && !movedFrom(cwd, workdir) && !changesSession(options.prompt)
+    if (worthKeeping && options.keeper && proc && sessionId) options.keeper.keep(processKey(sessionId), proc)
+    else transport?.closeStdin().catch(() => {})
   }
 
   const send = (obj: unknown) => transport?.write(JSON.stringify(obj)).catch(() => {})
@@ -393,6 +446,7 @@ function run(options: AgentRunOptions): AgentRun {
   /** Claude Code started a turn: after `result`, that is it answering a finished background task. */
   const onTurnActivity = () => {
     requestStartedAt = Date.now()
+    if (closing) wentOn = true
     if (!idle) return
     idle = false
     clearTimeout(settleTimer)
@@ -606,7 +660,7 @@ function run(options: AgentRunOptions): AgentRun {
   function onSystem(m: any) {
     switch (m.subtype) {
       case 'init':
-        if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        if (m.session_id) { sessionId = m.session_id; emit({ type: 'session', sessionId: m.session_id }) }
         // A resumed session that had moved into a worktree goes on there, wherever it was started.
         // Its `cwd` also follows a `cd` of its shell: a plain folder inside the project is no worktree.
         if (options.sessionId && typeof m.cwd === 'string') {
@@ -800,8 +854,11 @@ function run(options: AgentRunOptions): AgentRun {
         break
       }
       case 'result': {
-        if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
-        const spent = addClaudeUsage(runUsage, m)
+        if (m.session_id) { sessionId = m.session_id; emit({ type: 'session', sessionId: m.session_id }) }
+        // The CLI's total covers every turn its process took: this run's part is what came on top.
+        const total = m.total_cost_usd
+        if (proc && typeof total === 'number') proc.costUsd = total
+        const spent = addClaudeUsage(runUsage, typeof total === 'number' ? { ...m, total_cost_usd: Math.max(0, total - spentBefore) } : m)
         if (spent && spent !== runUsage) { runUsage = spent; emit({ type: 'usage', usage: spent }) }
         if (interrupted) end('stopped')
         // A steering message came too late for this answer: the CLI answers it next, in the same process.
@@ -837,39 +894,77 @@ function run(options: AgentRunOptions): AgentRun {
   ]
   if (options.model && options.model !== 'default') args.push('--model', options.model)
   if (options.effort) args.push('--effort', options.effort)
-  if (options.sessionId) args.push('--resume', options.sessionId)
-  // Attachments live outside the project: let Claude Code read them without asking.
-  for (const dir of options.readDirs ?? []) args.push('--add-dir', dir)
   // Mango's browser for this chat (tools that only read the page run without asking) and the user's
   // MCP servers, for this session only. Their secrets travel in the environment, not in `args`.
   const mcp = claudeMcp(options.mcpServers ?? [], options.browserMcp)
   args.push(...mcp.args)
   if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
+  /** What a process was started with, and the conversation it holds: a later turn must share all of it. */
+  const processKey = (session: string | null) => JSON.stringify([cwd, args, mcp.env, session])
+  const readDirs = options.readDirs ?? []
+  const startArgs = [
+    ...args,
+    ...(options.sessionId ? ['--resume', options.sessionId] : []),
+    // Attachments live outside the project: let Claude Code read them without asking.
+    ...readDirs.flatMap(dir => ['--add-dir', dir]),
+  ]
 
-  options.spawn(args, {
+  const handlers: SpawnHandlers = {
     onLine,
     onStderr: (l) => { if (l.trim()) lastStderr = l },
     onExit: (code) => {
+      exited = true
       if (ended) return
       if (interrupted) end('stopped')
       else if (closing) end('done')
       else if (idle && code === 0) end('done')
       else end('error', friendlyError(lastStderr || `Claude Code exited with code ${code ?? 'unknown'} before finishing.`))
     },
-  }, Object.keys(mcp.env).length ? mcp.env : undefined).then((t) => {
-    transport = t
-    if (ended) { t.kill().catch(() => {}); return }
-    // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
-    // the option ignores it (and the answer is not waited for).
-    send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
+  }
+
+  const sendPrompt = () => {
     // A slash command is not echoed back when the CLI reads it: counting it would wait forever.
     if (!isSlash(options.prompt)) sentMessages++
     send({ type: 'user', message: { role: 'user', content: userContent(options) } })
-  }).catch((err) => {
-    end('error', err instanceof Error ? err.message : String(err))
-  })
+  }
 
-  const grantedDirs = new Set(options.readDirs ?? [])
+  const start = () => {
+    // Its output goes through `handlers`, which the keeper and then the next run put their own in.
+    const p = { handlers, readDirs, costUsd: 0, wakes: startsTurn }
+    options.spawn(startArgs, {
+      onLine: line => p.handlers.onLine(line),
+      onStderr: line => p.handlers.onStderr?.(line),
+      onExit: code => p.handlers.onExit?.(code),
+    }, Object.keys(mcp.env).length ? mcp.env : undefined).then((t) => {
+      transport = t
+      if (ended) { t.kill().catch(() => {}); return }
+      proc = Object.assign(p, { transport: t })
+      // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
+      // the option ignores it (and the answer is not waited for).
+      send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
+      sendPrompt()
+    }).catch((err) => {
+      end('error', err instanceof Error ? err.message : String(err))
+    })
+  }
+
+  let grantedDirs = new Set(readDirs)
+  const kept = options.keeper?.take(processKey(options.sessionId), p => readDirs.every(d => p.readDirs.includes(d)))
+  if (!kept) start()
+  else {
+    void wake(kept, MODES[options.mode] ?? 'default').then((awake) => {
+      if (!awake || ended || interrupted) kept.transport.kill().catch(() => {})
+      if (ended) return
+      if (interrupted) return end('stopped')
+      if (!awake) return start()
+      kept.handlers = handlers
+      proc = kept
+      transport = kept.transport
+      spentBefore = kept.costUsd
+      grantedDirs = new Set(kept.readDirs)
+      sendPrompt()
+    })
+  }
 
   return {
     async steer(input) {

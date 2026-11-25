@@ -6,6 +6,7 @@ import type { EnvRemote } from '~/types/ipc'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
 import { mergeContext } from '~/agents/context'
+import { KeptProcesses, type KeptFor } from '~/agents/keeper'
 import { forAgent, forRemoteAgent, makeThumb, type DroppedAttachment } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
@@ -30,6 +31,19 @@ interface LiveRun { run: AgentRun; steer(text: string, attachments: Attachment[]
 const runs = new Map<string, LiveRun>()
 /** Turns still getting ready to start their CLI, by thread id: stopping one, or a newer one, takes it out. */
 const starting = new Map<string, symbol>()
+
+/** CLI processes waiting for their chat's next message. */
+const kept = new KeptProcesses()
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => kept.killAll())
+
+/**
+ * End the CLI processes kept for chats between turns, before something they must not outlive (their
+ * folder going away, a sign-out, an update). A chat's next message starts a new one.
+ */
+export const releaseAgents = (which: (p: KeptFor) => boolean) => kept.release(which)
+
+/** What tells whether a chat went on without the process kept for it: its last reply. */
+const lastReply = (t: Thread) => t.messages.findLast(m => m.role === 'agent')?.id ?? ''
 
 export const isRunning = (threadId: string) => runs.has(threadId)
 
@@ -322,6 +336,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   }
   thread.simulated = false
 
+  const replied = lastReply(thread)
   const first = store._pushAgentMessage(threadId)
   if (!first) return false
   store._setStatus(threadId, 'running')
@@ -592,6 +607,14 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       ...(browserMcp ? { browserMcp } : {}),
       ...(mcpServers.length ? { mcpServers } : {}),
       ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
+      ...(place.remote
+        ? {}
+        : {
+            keeper: kept.keeperFor({ chat: threadId, agent: thread.agent, folder: workdir }, replied, () => {
+              const t = store.byId(threadId)
+              return t ? lastReply(t) : null
+            }),
+          }),
       // Through a drop the run goes on in its environment: the chat says it is reconnecting, and stays Working.
       spawn: spawnFor(thread.agent, workdir, (state) => { if (!over) store._setReconnecting(threadId, state === 'lost') }),
       emit,

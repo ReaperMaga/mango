@@ -29,6 +29,26 @@ export interface SpawnHandlers {
 /** Starts the agent's CLI with `args` in `cwd`. Handlers are attached before any output can arrive. */
 export type SpawnFn = (args: string[], handlers: SpawnHandlers, env?: Record<string, string>) => Promise<AgentTransport>
 
+/** A CLI process between two turns of a chat. */
+export interface KeptProcess {
+  transport: AgentTransport
+  /** Where its output goes: whoever holds the process sets this. */
+  handlers: SpawnHandlers
+  /** Folders outside the project it was started with access to. */
+  readDirs: string[]
+  /** What it has spent so far, over all its turns. */
+  costUsd: number
+  /** Whether an output line means it started working by itself. */
+  wakes(line: string): boolean
+}
+
+/** Holds a chat's CLI process from one turn to the next. */
+export interface ProcessKeeper {
+  /** The chat's kept process, when it was kept under `key` and `fits`; any other one is closed. */
+  take(key: string, fits: (p: KeptProcess) => boolean): KeptProcess | null
+  keep(key: string, process: KeptProcess): void
+}
+
 export type PermissionMode =
   | 'plan'   // read-only: explore and propose, change nothing
   | 'ask'    // ask before edits and commands
@@ -202,6 +222,11 @@ export interface AgentRunOptions {
    * Claude Code `--append-system-prompt`, Codex `developerInstructions`. Absent when there is none.
    */
   appendSystemPrompt?: string
+  /**
+   * Keeps the CLI process running for the chat's next turn (see `agents/keeper.ts`). Absent: every turn
+   * starts its own. Only for runs on this computer: in an environment another device may go on with the chat.
+   */
+  keeper?: ProcessKeeper
   spawn: SpawnFn
   emit(event: AgentEvent): void
 }

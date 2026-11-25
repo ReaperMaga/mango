@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
-import { answerQuestion, interruptRun, isRunning, readAgentContext, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
+import { answerQuestion, interruptRun, isRunning, readAgentContext, releaseAgents, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
@@ -288,6 +288,7 @@ export const useThreads = defineStore('threads', {
     release(ids: string[]) {
       const gone = new Set(ids)
       if (!gone.size) return
+      void releaseAgents(p => gone.has(p.chat))
       const projects = new Set(this.threads.filter(t => gone.has(t.id)).map(t => t.projectPath))
       this.threads = this.threads.filter(t => !gone.has(t.id))
       for (const p of projects) if (this.threads.some(t => t.projectPath === p)) projects.delete(p)
@@ -543,6 +544,8 @@ export const useThreads = defineStore('threads', {
       const users = this.threads.filter(x => x.worktree === folder)
       const { pathBranches } = vcsTerms(useWorkspace().openProjects.find(p => p.path === chat.projectPath)?.vcs)
       if (users.some(isBusy)) throw new Error(t('chat.errors.worktreeBusy', { term: t(pathBranches ? 'chat.terms.workspace' : 'chat.terms.worktree') }))
+      // A process in the folder would keep Windows from removing it.
+      await releaseAgents(p => p.folder === folder)
       await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: chat.projectPath, worktree: folder, force }))
       this.forgetWorktree(chat.projectPath, folder)
     },
@@ -813,7 +816,10 @@ export const useThreads = defineStore('threads', {
       t.status = status
       t.seen = true
       t.archived = false
-      if (status === 'done') this.closeTab(id)
+      if (status === 'done') {
+        this.closeTab(id)
+        void releaseAgents(p => p.chat === id)
+      }
       this.persist(id)
     },
 
@@ -824,6 +830,7 @@ export const useThreads = defineStore('threads', {
       t.archived = true
       t.seen = true
       this.closeTab(id)
+      void releaseAgents(p => p.chat === id)
       this.persist(id)
     },
 
@@ -846,6 +853,7 @@ export const useThreads = defineStore('threads', {
         grew = false
         for (const t of this.threads) if (t.parentId && doomed.has(t.parentId) && !doomed.has(t.id)) { doomed.add(t.id); grew = true }
       }
+      void releaseAgents(p => doomed.has(p.chat))
       for (const x of doomed) { this.closeTab(x); delete this.queue[x]; held.delete(x) }
       this.threads = this.threads.filter(t => !doomed.has(t.id))
       for (const p of this.panes) if (p.threadId && doomed.has(p.threadId)) p.threadId = null

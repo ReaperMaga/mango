@@ -56,7 +56,7 @@ The dev port is **1420** (`nuxt.config.ts` and `src-tauri/tauri.conf.json` must 
 
 ```
 app/
-  agents/            claude.ts, codex.ts: CLI protocol -> AgentEvents. index.ts: runs turns, bridges to Rust
+  agents/            claude.ts, codex.ts: CLI protocol -> AgentEvents. index.ts: runs turns, bridges to Rust. keeper.ts: keeps a chat's CLI process between turns
   assets/css/        tokens.css (the only source of colour/type/space/radius/motion), base.css
   components/        AppTitlebar, AppSidebar (threads) + AppSidebarFoot (account, usage, help, settings), AppToolStrip + AppToolPanel (right tool windows), AppWorkspace, ChatArea, CommandPalette
     chat/            ChatPane, ChatMessage, ChatTool, ChatApproval, ChatComposer, ChatWorking
@@ -152,6 +152,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - An adapter (`app/agents/*.ts`) turns one CLI's protocol into `AgentEvent`s (`app/agents/types.ts`) and ends
   every run with exactly one `turn-end`. It must stay runnable in plain Node: import **only types** from
   `~/…`, no Vue, Pinia or Tauri APIs, erasable TypeScript only.
+- A local Claude Code chat keeps its process between turns (`agents/keeper.ts`): a new one that resumes re-sends every
+  instruction file that changed since, in full. Whatever decides how a process is started belongs in its key (`processKey`
+  in `claude.ts`), and whatever a kept process must not outlive (its folder going, a sign-out, its chat) calls
+  `releaseAgents`. Remote runs are never kept: another device may go on with the chat.
 - Prove adapter changes against the real CLI with `scripts/try-agent.ts` in a scratch folder (never in this
   repo). Keep prompts tiny: every run spends the user's quota.
 - Mango never handles credentials. Sign-in is the CLI's own flow, run in an embedded terminal.

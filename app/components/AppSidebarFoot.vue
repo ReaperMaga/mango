@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Bug, CircleArrowUp, CircleHelp, CreditCard, Gauge, History, Info, Keyboard, LogIn, LogOut, Plus, RefreshCw, Rocket, Settings } from 'lucide-vue-next'
+import { releaseAgents } from '~/agents'
 import AgentIcon from '~/components/ui/AgentIcon.vue'
 import { call, openExternal } from '~/composables/useBackend'
 import { useWhatsNew } from '~/composables/useWhatsNew'
@@ -165,6 +166,7 @@ async function logout() {
   logoutError.value = ''
   const id = logoutAgent.value
   try {
+    await releaseAgents(p => p.agent === id)
     await call('agent_logout', { agent: id })
     logoutOpen.value = false
     refreshAuth()
