@@ -15,7 +15,14 @@ function load(): Store {
   const raw = localStorage.getItem(STORE)
   return raw ? JSON.parse(raw) : {}
 }
-const save = (s: Store) => localStorage.setItem(STORE, JSON.stringify(s))
+function save(s: Store) {
+  try { localStorage.setItem(STORE, JSON.stringify(s)) } catch {
+    throw new Error('Nothing was saved: the browser preview has no room for that much.')
+  }
+}
+/** As in the app: a larger change is announced without its documents. */
+const EVENT_DOCS = 500
+const EVENT_BYTES = 256 * 1024
 
 let channel: BroadcastChannel | null = null
 /** Hears the writes of the preview's other tabs. */
@@ -59,11 +66,13 @@ function write(pluginId: string, ops: PluginDataWriteOp[], origin: string, emit:
   if (conflicts.size) return { docs: [], conflicts: [...conflicts.values()], seq: mine.seq }
   if (changed.size) {
     save({ ...store, [pluginId]: { seq, docs: [...next.values()] } })
-    const event: Events['plugins://data'] = { pluginId, seq, docs: [...changed.values()].sort((a, b) => a.seq - b.seq), origin }
+    const list = [...changed.values()].sort((a, b) => a.seq - b.seq)
+    const large = list.length > EVENT_DOCS || list.reduce((n, d) => n + (d.data?.length ?? 0), 0) > EVENT_BYTES
+    const event: Events['plugins://data'] = { pluginId, since: mine.seq, seq, docs: large ? null : list, origin }
     emit(EVENT, event)
     channel?.postMessage(event)
   }
-  return { docs, conflicts: [], seq }
+  return { docs: docs.map(d => ({ ...d, data: null })), conflicts: [], seq }
 }
 
 export async function mockPluginData(cmd: string, args: any, emit: Emit): Promise<unknown> {

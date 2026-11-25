@@ -1213,7 +1213,7 @@ export type PluginDataWriteOp =
   | { op: 'delete'; collection: string; id: string; expectedRev?: number }
 
 export interface PluginDataWritten {
-  /** The document after each operation, in their order; empty when there are conflicts. */
+  /** The document after each operation, in their order, without its data (the operation has it); empty when there are conflicts. */
   docs: PluginDataRow[]
   /** Documents not at their `expectedRev`, as they are now (`rev` 0: there is none). Then nothing was written. */
   conflicts: PluginDataRow[]
@@ -1845,6 +1845,9 @@ export interface Events {
   'window://parked': Record<string, never>
   /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */
   'plugins://progress': PluginProgress
-  /** A plugin's documents were written, by any window (`origin`: the one `plugin_data_write` was given). */
-  'plugins://data': { pluginId: string; seq: number; docs: PluginDataRow[]; origin: string }
+  /**
+   * A plugin's documents were written, by any window (`origin`: the one `plugin_data_write` was given). `docs` is
+   * null when they are too many or too large to send around: they are the `plugin_data_changes` since `since`, up to `seq`.
+   */
+  'plugins://data': { pluginId: string; since: number; seq: number; docs: PluginDataRow[] | null; origin: string }
 }

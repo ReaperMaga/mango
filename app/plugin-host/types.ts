@@ -658,7 +658,7 @@ export interface PluginDataApi {
   list<T = unknown>(collection: string): Promise<PluginDoc<T>[]>
   get<T = unknown>(collection: string, id: string): Promise<PluginDoc<T> | null>
   /**
-   * All of these, or none. Rejects with an error whose `conflicts` (`PluginDoc[]`, as they are now) is set when
+   * All of these (up to 20 000, 64 MB of JSON), or none. Rejects with an error whose `conflicts` (`PluginDoc[]`, as they are now) is set when
    * an `expectedRev` no longer holds; nothing is written then.
    */
   write(ops: PluginDataOp[]): Promise<PluginDoc[]>
@@ -726,6 +726,11 @@ export interface MangoPluginApi {
   assets: { text(path: string): Promise<string>; url(path: string): Promise<string> }
   /** Lines shown in the plugin's log in Settings > Plugins (also mirrored to the console). */
   log: { info(...args: unknown[]): void; warn(...args: unknown[]): void; error(...args: unknown[]): void }
+  /**
+   * Since 0.4.2. Awaited before the window closes or hides, Mango quits, or restarts for an update: save what is not
+   * saved yet. About 2 s, for all plugins together. The window may stay after all, and ask again.
+   */
+  onBeforeClose(fn: () => Awaitable<void>): Disposable
   /** Undo `fn` when the plugin goes away. */
   onDispose(fn: () => void): void
 

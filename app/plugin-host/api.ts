@@ -694,6 +694,7 @@ export function createApi(host: ApiHost): MangoPluginApi {
       warn: (...a) => host.log('warn', a),
       error: (...a) => host.log('error', a),
     },
+    onBeforeClose: fn => hook(hooks.beforeClose, fn, 'onBeforeClose'),
     onDispose(fn) {
       needFn(fn, 'onDispose')
       scope.add(fn)

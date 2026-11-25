@@ -12,13 +12,36 @@ import {
   effectiveScheme, fullId, jsonState, normalizePluginTabs, savedPluginTabs, isPanelEditorTab, isPanelTabRef, isPluginRef, isPluginTab, normalizePanelOrder, normalizePanelPlaces,
   panelEditorTabId, panelStrip, parsePanelEditorTab, parsePluginTab, pluginRef, pluginTabId, schemeCss, tokenDeclarations,
 } from '../app/plugin-host/ids.ts'
-import { capped, emitAll, logText, parseSlash, runBeforeSend } from '../app/plugin-host/hooks.ts'
+import { capped, emitAll, logText, parseSlash, runBeforeClose, runBeforeSend } from '../app/plugin-host/hooks.ts'
 
 test('a dev build runs plugins written for the next release, no further', () => {
   assert.equal(devVersion('0.1.40'), '0.1.41')
   assert.equal(incompatibility(devVersion('0.1.40'), '0.1.41'), null)
   assert.ok(incompatibility(devVersion('0.1.40'), '0.2.0'))
   assert.ok(incompatibility('0.1.40', '0.1.41'))
+})
+
+/* ---------- closing */
+
+test('onBeforeClose: in parallel, errors and the late reported, never longer than its time', async () => {
+  const errors: string[] = []
+  const done: string[] = []
+  const onError = (id: string, e: unknown) => errors.push(`${id}: ${(e as Error).message}`)
+  const wait = (ms: number, id: string) => new Promise<void>(r => setTimeout(() => { done.push(id); r() }, ms))
+  await runBeforeClose([
+    { pluginId: 'sync', fn: () => { throw new Error('bad') } },
+    { pluginId: 'async', fn: async () => { throw new Error('worse') } },
+    { pluginId: 'slow', fn: () => wait(20, 'slow') },
+    { pluginId: 'slow2', fn: () => wait(10, 'slow2') },
+  ], 5000, onError)
+  assert.deepEqual(errors, ['sync: bad', 'async: worse'])
+  assert.deepEqual(done, ['slow2', 'slow'])
+  errors.length = 0
+  const from = Date.now()
+  await runBeforeClose([{ pluginId: 'never', fn: () => new Promise(() => {}) }, { pluginId: 'quick', fn: () => {} }], 30, onError)
+  assert.ok(Date.now() - from < 1000)
+  assert.equal(errors.length, 1)
+  assert.match(errors[0]!, /^never: Not done/)
 })
 
 /* ---------- disposal */

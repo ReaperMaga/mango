@@ -136,6 +136,17 @@ const timer = setInterval(tick, 1000)
 mango.onDispose(() => clearInterval(timer))
 ```
 
+Closing a window does not deactivate its plugins. What is not saved yet then goes into `mango.onBeforeClose(fn)` (since
+0.4.2). Mango waits for it before the window closes or hides, Mango quits, or restarts for an update: about two seconds,
+for all plugins together.
+
+```js
+mango.onBeforeClose(() => saveNow())
+```
+
+It runs in each window that closes, only for what that window holds. The window may stay after all (another file could
+not be saved, and the person chose to keep it), so save, but do not shut down. A crash does not call it: save as you go.
+
 A plugin that throws in `activate` is shown as failed in Settings > Plugins, with the error, and whatever it had
 registered so far is undone. A hook or handler that throws is skipped for that call, logged in the plugin's log, and
 the rest of Mango carries on. Still, catch what you can: a failed hook means the plugin silently did nothing.
@@ -629,7 +640,7 @@ either.
 
 - A collection is just a name (letters, digits, `_`, `-`, up to 64). An id is yours to choose, up to 128 characters.
   `data` is JSON (what `JSON.stringify` keeps of it), at most 1 MB per document.
-- One `write` takes up to 2000 operations and lands whole or not at all. It returns the document after each operation,
+- One `write` takes up to 20 000 operations (and 64 MB of JSON) and lands whole or not at all. It returns the document after each operation,
   in their order.
 - `rev` is 1 at first and one more on every write of that document. `seq` grows with every write of the plugin and is
   never used twice, so `changes(lastSeq)` is what you missed. A deleted document stays in it as a tombstone

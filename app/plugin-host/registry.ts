@@ -10,7 +10,7 @@ import type {
   PluginTabView, PluginToolWindow, Reactive,
 } from './types'
 import type { PluginTabEntry, SavedPluginTab } from './ids'
-import { emitAll, parseSlash, runBeforeSend, type HookEntry } from './hooks'
+import { emitAll, parseSlash, runBeforeClose, runBeforeSend, type HookEntry } from './hooks'
 
 /**
  * Everything the active plugins registered, in one place the app reads: the palette, the shortcuts,
@@ -70,6 +70,7 @@ export const hooks = {
   turnEnd: [] as HookEntry<(threadId: string, ok: boolean) => void>[],
   threadCreated: [] as HookEntry<(t: Thread) => void>[],
   statusChange: [] as HookEntry<(threadId: string, s: ThreadStatus) => void>[],
+  beforeClose: [] as HookEntry<() => unknown>[],
 }
 
 /* ---------- reporting a plugin's failures (the runtime puts them into its log) */
@@ -133,6 +134,11 @@ export function emitThreadCreated(t: Thread) {
 export function emitStatusChange(threadId: string, s: ThreadStatus) {
   if (hooks.statusChange.length) emitAll(hooks.statusChange, [threadId, s], onHookError('onStatusChange'))
 }
+
+/* ---------- closing (called from stores/windows.ts) */
+
+/** The plugins in this window save what they hold, as it closes or Mango restarts. Well inside what a close may take (src-tauri/src/windows.rs). */
+export const pluginsBeforeClose = () => runBeforeClose(hooks.beforeClose, 2000, onHookError('onBeforeClose'))
 
 /* ---------- slash commands */
 

@@ -8,11 +8,13 @@ import type { DisposableScope } from './scope'
  * the backend is handed in.
  */
 
+const encoder = new TextEncoder()
 const COLLECTION = /^[A-Za-z0-9_-]{1,64}$/
 /** Control characters, as the backend has them, and halves of a character, which it could not read. */
 const BAD_ID = /[\p{Cc}\p{Cs}]/u
 const MAX_DOC_BYTES = 1024 * 1024
-const MAX_OPS = 2000
+const MAX_WRITE_BYTES = 64 * MAX_DOC_BYTES
+const MAX_OPS = 20_000
 
 function checkCollection(v: unknown): string {
   if (typeof v !== 'string' || !COLLECTION.test(v)) throw new TypeError(`data: collection "${String(v)}" must be letters, digits, "_" or "-" (up to 64).`)
@@ -26,20 +28,22 @@ function checkDocId(v: unknown): string {
   return v
 }
 
-/** A document's data as JSON text. */
-export function docJson(data: unknown, name: string): string {
+/** A document's data as JSON text, and its size. */
+export function docJson(data: unknown, name: string): { text: string; bytes: number } {
   let text: string | undefined
   try { text = JSON.stringify(data) } catch (e) {
     throw new TypeError(`data: ${name} cannot be saved as JSON: ${e instanceof Error ? e.message : String(e)}`)
   }
   if (text === undefined) throw new TypeError(`data: ${name} needs data that is JSON (not undefined or a function).`)
-  if (new TextEncoder().encode(text).length > MAX_DOC_BYTES) throw new TypeError(`data: ${name} is larger than 1 MB.`)
-  return text
+  const bytes = encoder.encode(text).length
+  if (bytes > MAX_DOC_BYTES) throw new TypeError(`data: ${name} is larger than 1 MB.`)
+  return { text, bytes }
 }
 
 export function toWriteOps(ops: unknown): PluginDataWriteOp[] {
   if (!Array.isArray(ops)) throw new TypeError('data.write: a list of operations is needed.')
   if (ops.length > MAX_OPS) throw new TypeError(`data.write: at most ${MAX_OPS} operations at once.`)
+  let total = 0
   return ops.map((op: Partial<Extract<PluginDataOp, { op: 'put' }>> | null): PluginDataWriteOp => {
     const kind: unknown = op?.op
     if (!op || (kind !== 'put' && kind !== 'delete')) throw new TypeError('data.write: "op" must be "put" or "delete".')
@@ -48,7 +52,11 @@ export function toWriteOps(ops: unknown): PluginDataWriteOp[] {
     const rev = op.expectedRev
     if (rev !== undefined && (!Number.isSafeInteger(rev) || rev < 0)) throw new TypeError(`data.write: expectedRev of ${collection}/${id} must be a whole number, 0 or more.`)
     const at = { collection, id, ...(rev === undefined ? {} : { expectedRev: rev }) }
-    return kind === 'put' ? { op: kind, ...at, data: docJson(op.data, `${collection}/${id}`) } : { op: kind, ...at }
+    if (kind === 'delete') return { op: kind, ...at }
+    const { text, bytes } = docJson(op.data, `${collection}/${id}`)
+    total += bytes
+    if (total > MAX_WRITE_BYTES) throw new TypeError('data.write: more than 64 MB in one write.')
+    return { op: kind, ...at, data: text }
   })
 }
 
@@ -77,32 +85,61 @@ export function createPluginData(host: PluginDataHost): PluginDataApi {
   /** Following begins; reads and writes wait for it, so nothing falls between an `onChange` and a `list` after it. */
   let following: Promise<void> | null = null
 
-  function deliver(e: Events['plugins://data']) {
-    if (e.pluginId !== pluginId) return
+  /** A change whose documents have to be read first: later ones wait for it, so handlers see them in order. */
+  let reading: Promise<void> | null = null
+  /** Changes after this `seq` could not be read: they go out with the next one. */
+  let missed: number | null = null
+
+  function heard(e: Events['plugins://data']) {
+    if (e.pluginId !== pluginId || !handlers.size) return
+    const local = e.origin === ORIGIN
+    if (e.docs && !reading && missed === null) return deliver(e.seq, e.docs, local)
+    const next = (reading ?? Promise.resolve()).then(() => read(e, local)).finally(() => { if (reading === next) reading = null })
+    reading = next
+  }
+  async function read(e: Events['plugins://data'], local: boolean) {
+    if (e.docs && missed === null) return deliver(e.seq, e.docs, local)
+    const since = missed ?? e.since
+    try {
+      const { docs } = await call('plugin_data_changes', { pluginId, since })
+      // What was written later has an event of its own.
+      deliver(e.seq, docs.filter(d => d.seq <= e.seq), local && missed === null)
+      missed = null
+    } catch (err) {
+      missed = since
+      host.report(err, 'data.onChange')
+    }
+  }
+  function deliver(seq: number, docs: PluginDataRow[], local: boolean) {
     for (const h of [...handlers]) {
       // Each its own copy.
       try {
-        const out: unknown = h.fn({ seq: e.seq, docs: e.docs.map(d => toDoc(d)), local: e.origin === ORIGIN })
+        const out: unknown = h.fn({ seq, docs: docs.map(d => toDoc(d)), local })
         if (out instanceof Promise) out.catch(err => host.report(err, 'data.onChange'))
       } catch (err) { host.report(err, 'data.onChange') }
     }
   }
   function follow() {
-    following ??= host.on('plugins://data', deliver)
+    following ??= host.on('plugins://data', heard)
       .then((stop) => { scope.add(stop) })
       .catch((e) => { following = null; host.report(e, 'data.onChange') })
+  }
+  /** Before a read or write. Following that failed is tried again. */
+  async function ready() {
+    if (handlers.size) follow()
+    await following
   }
 
   return {
     async list<T>(collection: string) {
       checkCollection(collection)
-      await following
+      await ready()
       return (await call('plugin_data_list', { pluginId, collection })).map(r => toDoc<T>(r))
     },
     async get<T>(collection: string, id: string) {
       checkCollection(collection)
       checkDocId(id)
-      await following
+      await ready()
       const row = await call('plugin_data_get', { pluginId, collection, id })
       return row ? toDoc<T>(row) : null
     },
@@ -110,14 +147,15 @@ export function createPluginData(host: PluginDataHost): PluginDataApi {
       // Before any await: what is saved is what the plugin holds now.
       const list = toWriteOps(ops)
       if (!list.length) return []
-      await following
+      await ready()
       const r = await call('plugin_data_write', { pluginId, ops: list, origin: ORIGIN })
       if (r.conflicts.length) throw conflictError(r.conflicts.map(d => toDoc(d)))
-      return r.docs.map(d => toDoc(d))
+      // The backend does not send back what it was just given.
+      return r.docs.map((d, i) => { const op = list[i]!; return toDoc({ ...d, data: op.op === 'put' ? op.data : null }) })
     },
     async changes(since) {
       if (!Number.isSafeInteger(since) || since < 0) throw new TypeError('data.changes: a seq is needed (0: everything).')
-      await following
+      await ready()
       const r = await call('plugin_data_changes', { pluginId, since })
       return { seq: r.seq, docs: r.docs.map(d => toDoc(d)) }
     },

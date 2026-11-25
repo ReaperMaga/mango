@@ -18,7 +18,12 @@ use crate::plugins::valid_id;
 const FILE: &str = "plugin-data.sqlite3";
 const CHANGED: &str = "plugins://data";
 const MAX_DOC: usize = 1024 * 1024;
-const MAX_OPS: usize = 2000;
+const MAX_OPS: usize = 20_000;
+/// All the data of one write.
+const MAX_WRITE: usize = 64 * 1024 * 1024;
+/// A larger change is announced without its documents: every window would be sent all of them.
+const EVENT_DOCS: usize = 500;
+const EVENT_BYTES: usize = 256 * 1024;
 
 #[derive(Default)]
 pub struct PluginDataState {
@@ -65,10 +70,14 @@ impl PluginDataOp {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginDataWritten {
-    /// The document after each operation, in the operations' order. Empty when there are conflicts.
+    /// The document after each operation, in the operations' order, without its data: that is the operation's.
+    /// Empty when there are conflicts.
     pub docs: Vec<PluginDocRow>,
     /// The documents not at their `expectedRev`, as they are now (`rev` 0: there is none). Then nothing was written.
     pub conflicts: Vec<PluginDocRow>,
+    /// The plugin's last `seq` before the write, and after it.
+    #[serde(skip)]
+    since: i64,
     pub seq: i64,
 }
 
@@ -83,8 +92,11 @@ pub struct PluginDataChanges {
 #[serde(rename_all = "camelCase")]
 struct PluginDataChanged {
     plugin_id: String,
+    /// The last `seq` before this write.
+    since: i64,
     seq: i64,
-    docs: Vec<PluginDocRow>,
+    /// None: too many, or too large, to send around. They are the `changes` between `since` and `seq`.
+    docs: Option<Vec<PluginDocRow>>,
     origin: String,
 }
 
@@ -110,6 +122,7 @@ fn check_ops(ops: &[PluginDataOp]) -> Result<(), String> {
     if ops.len() > MAX_OPS {
         return Err(format!("{} changes in one write are too many: the most is {MAX_OPS}", ops.len()));
     }
+    let mut total = 0;
     for op in ops {
         let (collection, id) = op.key();
         check_collection(collection)?;
@@ -120,6 +133,10 @@ fn check_ops(ops: &[PluginDataOp]) -> Result<(), String> {
         if let PluginDataOp::Put { data, .. } = op {
             if data.len() > MAX_DOC {
                 return Err(format!("{collection}/{id} was not saved: it is larger than 1 MB"));
+            }
+            total += data.len();
+            if total > MAX_WRITE {
+                return Err("Nothing was saved: more than 64 MB in one write".into());
             }
             if serde_json::from_str::<serde::de::IgnoredAny>(data).is_err() {
                 return Err(format!("{collection}/{id} was not saved: its data is not valid JSON"));
@@ -197,6 +214,16 @@ fn find(conn: &Connection, plugin: &str, collection: &str, id: &str) -> rusqlite
         .optional()
 }
 
+/// The same without its data.
+fn find_head(conn: &Connection, plugin: &str, collection: &str, id: &str) -> rusqlite::Result<Option<PluginDocRow>> {
+    conn.prepare_cached(
+        "SELECT collection, id, rev, seq, created_at, updated_at, deleted, NULL FROM docs
+         WHERE plugin_id = ?1 AND collection = ?2 AND id = ?3",
+    )?
+    .query_row([plugin, collection, id], doc)
+    .optional()
+}
+
 fn last_seq(conn: &Connection, plugin: &str) -> rusqlite::Result<i64> {
     Ok(conn.query_row("SELECT last FROM seqs WHERE plugin_id = ?1", [plugin], |r| r.get(0)).optional()?.unwrap_or(0))
 }
@@ -224,33 +251,34 @@ fn changes(conn: &mut Connection, plugin: &str, since: i64) -> rusqlite::Result<
     Ok(PluginDataChanges { seq, docs })
 }
 
-/// The result, and the documents that really changed (each once, oldest first).
+/// The result, and which operations left their mark (the last one of each document that changed, oldest first).
 fn write(
     conn: &mut Connection,
     plugin: &str,
     ops: &[PluginDataOp],
     now: i64,
-) -> rusqlite::Result<(PluginDataWritten, Vec<PluginDocRow>)> {
+) -> rusqlite::Result<(PluginDataWritten, Vec<usize>)> {
     // IMMEDIATE: the revisions read here are still the ones when it writes.
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let before = last_seq(&tx, plugin)?;
     let mut seq = before;
     let mut docs = Vec::with_capacity(ops.len());
     let mut conflicts: Vec<(&str, &str)> = Vec::new();
-    let mut changed: HashMap<(&str, &str), PluginDocRow> = HashMap::new();
-    for op in ops {
+    let mut conflicting: HashSet<(&str, &str)> = HashSet::new();
+    let mut changed: HashMap<(&str, &str), usize> = HashMap::new();
+    for (i, op) in ops.iter().enumerate() {
         let key @ (collection, id) = op.key();
-        let current = find(&tx, plugin, collection, id)?;
+        let current = find_head(&tx, plugin, collection, id)?;
         let rev = current.as_ref().map_or(0, |d| d.rev);
         let gone = current.as_ref().is_none_or(|d| d.deleted);
         if op.expected_rev().is_some_and(|want| want != rev && !(want == 0 && gone)) {
-            if !conflicts.contains(&key) {
+            if conflicting.insert(key) {
                 conflicts.push(key);
             }
             continue;
         }
         let data = match op {
-            PluginDataOp::Put { data, .. } => Some(data.clone()),
+            PluginDataOp::Put { data, .. } => Some(data),
             PluginDataOp::Delete { .. } if gone => {
                 // Nothing to delete.
                 docs.push(current.unwrap_or_else(|| absent(collection, id)));
@@ -268,7 +296,7 @@ fn write(
             created_at: current.filter(|d| !d.deleted).map_or(now, |d| d.created_at),
             updated_at: now,
             deleted: data.is_none(),
-            data,
+            data: None,
         };
         tx.prepare_cached(
             "INSERT INTO docs (plugin_id, collection, id, rev, seq, created_at, updated_at, deleted, data)
@@ -278,9 +306,9 @@ fn write(
                  deleted = excluded.deleted, data = excluded.data",
         )?
         .execute(params![
-            plugin, next.collection, next.id, next.rev, next.seq, next.created_at, next.updated_at, next.deleted, next.data
+            plugin, next.collection, next.id, next.rev, next.seq, next.created_at, next.updated_at, next.deleted, data
         ])?;
-        changed.insert(key, next.clone());
+        changed.insert(key, i);
         docs.push(next);
     }
     if !conflicts.is_empty() {
@@ -289,7 +317,7 @@ fn write(
             .into_iter()
             .map(|(c, id)| Ok(find(conn, plugin, c, id)?.unwrap_or_else(|| absent(c, id))))
             .collect::<rusqlite::Result<_>>()?;
-        return Ok((PluginDataWritten { docs: Vec::new(), conflicts, seq: before }, Vec::new()));
+        return Ok((PluginDataWritten { docs: Vec::new(), conflicts, since: before, seq: before }, Vec::new()));
     }
     if seq != before {
         tx.execute(
@@ -299,8 +327,20 @@ fn write(
     }
     tx.commit()?;
     let mut changed: Vec<_> = changed.into_values().collect();
-    changed.sort_by_key(|d| d.seq);
-    Ok((PluginDataWritten { docs, conflicts: Vec::new(), seq }, changed))
+    changed.sort_unstable();
+    Ok((PluginDataWritten { docs, conflicts: Vec::new(), since: before, seq }, changed))
+}
+
+/// The documents that changed, with their data, when they are few and small enough to send to every window.
+fn event_docs(ops: &[PluginDataOp], docs: &[PluginDocRow], changed: &[usize]) -> Option<Vec<PluginDocRow>> {
+    let data = |i: usize| match &ops[i] {
+        PluginDataOp::Put { data, .. } => Some(data),
+        PluginDataOp::Delete { .. } => None,
+    };
+    if changed.len() > EVENT_DOCS || changed.iter().map(|&i| data(i).map_or(0, String::len)).sum::<usize>() > EVENT_BYTES {
+        return None;
+    }
+    Some(changed.iter().map(|&i| PluginDocRow { data: data(i).cloned(), ..docs[i].clone() }).collect())
 }
 
 /// Deletes the plugin's documents for good, tombstones too. Its `seq` stays, so it goes on from there.
@@ -400,7 +440,8 @@ pub async fn plugin_data_write(
             write(c, &plugin_id, &ops, now_ms()).map_err(|e| format!("Could not save the plugin's documents: {e}"))?;
         // Still holding the database, so events go out in the order of their `seq`.
         if !changed.is_empty() {
-            let _ = events.emit(CHANGED, PluginDataChanged { plugin_id, seq: written.seq, docs: changed, origin });
+            let docs = event_docs(&ops, &written.docs, &changed);
+            let _ = events.emit(CHANGED, PluginDataChanged { plugin_id, since: written.since, seq: written.seq, docs, origin });
         }
         Ok(written)
     })
@@ -504,7 +545,53 @@ mod tests {
         let mut c = mem();
         let (w, changed) = write(&mut c, "p", &[put("a", "1", Some(0)), put("b", "1", None), put("a", "2", Some(1))], 1).unwrap();
         assert_eq!(w.docs.iter().map(|d| d.rev).collect::<Vec<_>>(), [1, 1, 2]);
-        assert_eq!(changed.iter().map(|d| (d.id.as_str(), d.seq)).collect::<Vec<_>>(), [("b", 2), ("a", 3)]);
+        assert_eq!(changed, [1, 2]);
+        let docs = event_docs(&[put("a", "1", Some(0)), put("b", "1", None), put("a", "2", Some(1))], &w.docs, &changed).unwrap();
+        assert_eq!(
+            docs.iter().map(|d| (d.id.as_str(), d.seq, d.data.as_deref())).collect::<Vec<_>>(),
+            [("b", 2, Some("1")), ("a", 3, Some("2"))]
+        );
+    }
+
+    #[test]
+    fn a_large_write_is_one_quick_transaction() {
+        let dir = std::env::temp_dir().join(format!("mango-plugin-data-{}", uuid::Uuid::new_v4()));
+        let mut c = open(&dir.join(FILE)).unwrap();
+        let body = format!("\"{}\"", "x".repeat(500));
+        let mut ops: Vec<_> = (0..MAX_OPS).map(|i| put(&format!("d{i}"), &body, Some(0))).collect();
+        check_ops(&ops).unwrap();
+        // The last one fails: so do all the others.
+        ops[MAX_OPS - 1] = put("d0", &body, Some(9));
+        let w = run(&mut c, &ops, 1);
+        assert_eq!((w.conflicts.len(), count(&c, "p").unwrap(), last_seq(&c, "p").unwrap()), (1, 0, 0));
+        ops[MAX_OPS - 1] = put("last", &body, Some(0));
+        let from = std::time::Instant::now();
+        let (w, changed) = write(&mut c, "p", &ops, 1).unwrap();
+        let took = from.elapsed();
+        eprintln!("{MAX_OPS} documents: {took:?}");
+        assert_eq!((w.docs.len(), w.seq, count(&c, "p").unwrap()), (MAX_OPS, MAX_OPS as i64, MAX_OPS as i64));
+        assert!(took < std::time::Duration::from_secs(10), "{took:?}");
+        // Announced without its documents.
+        assert!(event_docs(&ops, &w.docs, &changed).is_none());
+        // All of them in conflict is not slow either.
+        let from = std::time::Instant::now();
+        assert_eq!(run(&mut c, &ops, 2).conflicts.len(), MAX_OPS);
+        assert!(from.elapsed() < std::time::Duration::from_secs(10));
+        drop(c);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn caps_one_write_and_one_event() {
+        let body = format!("\"{}\"", "x".repeat(MAX_DOC - 2));
+        let ops: Vec<_> = (0..64).map(|i| put(&format!("d{i}"), &body, None)).collect();
+        assert!(check_ops(&ops).is_ok());
+        assert!(check_ops(&[ops, vec![put("more", "1", None)]].concat()).unwrap_err().contains("64 MB"));
+        let mut c = mem();
+        let one = [put("big", &body, None)];
+        let (w, changed) = write(&mut c, "p", &one, 1).unwrap();
+        assert!(w.docs[0].data.is_none() && !w.docs[0].deleted);
+        assert!(event_docs(&one, &w.docs, &changed).is_none());
     }
 
     #[test]
