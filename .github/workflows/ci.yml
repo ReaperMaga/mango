@@ -1,6 +1,7 @@
-# Checks every pull request: the version agrees everywhere, the frontend typechecks and
-# builds, the backend's tests pass with no warnings, Windows and macOS keep compiling, and
-# the iOS app in mobile/ typechecks and passes its tests.
+# Checks every pull request: the version agrees everywhere, the frontend typechecks, builds
+# and passes its tests, the backend's tests pass with no warnings, Windows and macOS keep
+# compiling, the iOS app in mobile/ typechecks and passes its tests, and the planner server
+# in planner-server/ is vetted, tested and builds for every platform it ships for.
 #
 # Only the parts a pull request touches run: a frontend-only change skips the Rust jobs
 # and the other way round, and the mobile job runs only for mobile/ and the desktop code
@@ -48,6 +49,7 @@ jobs:
       frontend: ${{ steps.filter.outputs.frontend == 'true' || steps.filter.outputs.ci == 'true' || github.event_name != 'pull_request' }}
       backend: ${{ steps.filter.outputs.backend == 'true' || github.event_name != 'pull_request' }}
       mobile: ${{ steps.filter.outputs.mobile == 'true' || github.event_name != 'pull_request' }}
+      server: ${{ steps.filter.outputs.server == 'true' || github.event_name != 'pull_request' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -63,6 +65,7 @@ jobs:
               - '**'
               - '!src-tauri/**'
               - '!mobile/**'
+              - '!planner-server/**'
               - '!docs/**'
               - '!**/*.md'
               - '!.github/**'
@@ -71,6 +74,8 @@ jobs:
             # mobile/ imports the desktop's agent adapters and chat types directly.
             mobile:
               - '{mobile/**,app/agents/**,app/types/**,.github/workflows/ci.yml}'
+            server:
+              - '{planner-server/**,.github/workflows/ci.yml}'
             ci:
               - '.github/workflows/ci.yml'
 
@@ -108,6 +113,46 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Unit tests
+        run: pnpm test
+
+      # The planner plugin is built from its src/: it typechecks on its own.
+      - name: Typecheck the planner plugin
+        run: pnpm plugins:check
+
+  planner-server:
+    name: Planner server
+    needs: changes
+    if: needs.changes.outputs.server == 'true' && !inputs.warm-cache
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: planner-server
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: planner-server/go.mod
+          cache-dependency-path: planner-server/go.sum
+
+      - name: Formatted
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
+
+      - name: Builds for every platform
+        env:
+          CGO_ENABLED: 0
+        run: |
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+            GOOS=${target%/*} GOARCH=${target#*/} go build -o /dev/null . || exit 1
+          done
 
   # The iOS app: its own package and lockfile. mobile.yml builds it with EAS; this only
   # typechecks and tests, which needs no Mac.
@@ -252,7 +297,7 @@ jobs:
 
   result:
     name: CI result
-    needs: [changes, frontend, mobile, backend-linux, backend-windows, backend-macos]
+    needs: [changes, frontend, mobile, planner-server, backend-linux, backend-windows, backend-macos]
     if: always()
     runs-on: ubuntu-latest
     steps:
