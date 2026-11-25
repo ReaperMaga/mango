@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.5.0
+
+### New
+
+- Add the Planner plugin: boards and tables for tasks and notes.
+- Sync Planner collections through a self-hosted planner server.
+
 ## 0.4.1
 
 ### Fixes
