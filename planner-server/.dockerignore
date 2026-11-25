@@ -1,0 +1,4 @@
+*.db
+*.db-*
+planner-server
+planner-server.exe
