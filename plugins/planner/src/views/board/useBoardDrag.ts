@@ -198,7 +198,7 @@ export function useBoardDrag(o: BoardDragOptions): BoardDrag {
     if (at.y < box.top - NEAR || at.y > box.bottom + NEAR) return null
     const rects = rest.map(c => c.getBoundingClientRect())
     const index = rects.filter(r => at.x > r.left + r.width / 2).length
-    const edge = index < rects.length ? rects[index]!.left - 5 : rects.at(-1)!.right + 3
+    const edge = index < rects.length ? rects[index]!.left - 4 : rects.at(-1)!.right + 4
     return { index, x: edge - box.left + board.scrollLeft }
   }
 

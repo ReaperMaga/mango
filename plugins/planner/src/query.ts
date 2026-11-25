@@ -237,11 +237,21 @@ export function runQuery(collection: Collection, items: readonly Item[], view: V
 }
 
 /**
- * Values that make a new item show up in a view: those of the group it is added to, and what the filter plainly
- * asks for (conditions that all must hold and name one value).
+ * What a new item starts with: the properties' defaults, and in a view what makes it show up there: the group it
+ * is added to, and what the filter plainly asks for (conditions that all must hold and name one value). A default
+ * the filter would hide is left out.
  */
-export function defaultValues(collection: Collection, view: View, group?: string | null, now = Date.now()): Record<string, Value> {
+export function defaultValues(collection: Collection, view: View | null, group?: string | null, now = Date.now()): Record<string, Value> {
   const out: Record<string, Value> = {}
+  for (const p of collection.properties) {
+    if (p.type !== 'select' || !p.defaultOption) continue
+    const conditions = view?.filter.match === 'and' ? view.filter.conditions.filter(c => c.propertyId === p.id) : []
+    const probe: Item = {
+      id: '', collectionId: collection.id, title: '', icon: null, values: { [p.id]: p.defaultOption }, body: '', order: '', chats: [], createdAt: now, updatedAt: now,
+    }
+    if (conditions.every(c => matchesCondition(collection, probe, c, now))) out[p.id] = p.defaultOption
+  }
+  if (!view) return out
   if (view.filter.match === 'and' || view.filter.conditions.filter(isActive).length === 1) {
     for (const c of view.filter.conditions) {
       const p = propertyOf(collection, c.propertyId)

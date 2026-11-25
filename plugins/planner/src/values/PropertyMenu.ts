@@ -1,8 +1,10 @@
 import type { Planner } from '../context.ts'
 import type { PluginMenuRow } from '../host.ts'
-import { PROPERTY_TYPES, type Collection, type Property, type View } from '../model.ts'
+import { hasOptions, PROPERTY_TYPES, type Collection, type Property, type View } from '../model.ts'
 import { strings as shared } from '../strings.ts'
 import { PROPERTY_ICONS } from '../ui/propertyIcons.ts'
+import { editProperty } from './editProperty.ts'
+import { optionWords } from './optionWords.ts'
 import { strings } from './strings.ts'
 
 /**
@@ -27,6 +29,7 @@ export async function propertyMenu(
     ...(property.type === 'unsupported' ? [] : [{
       label: strings.changeType, icon: PROPERTY_ICONS[property.type], aside: shared.propertyTypes[property.type], onSelect: () => { next = changeType },
     }]),
+    ...(hasOptions(property) ? [{ label: strings.editOptions(optionWords(property).many), icon: 'list', onSelect: () => { next = () => editProperty(planner, collection.id, property.id) } }] : []),
     ...(view ? [{ label: strings.hideInView, icon: 'eye-off', onSelect: hide }] : []),
     // In a view the columns have an order of their own.
     ...(view ? [] : [

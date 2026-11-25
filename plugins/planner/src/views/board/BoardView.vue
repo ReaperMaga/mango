@@ -3,15 +3,18 @@ import { computed, nextTick, onBeforeUpdate, onUpdated, ref, shallowRef, useId, 
 import { usePlanner } from '../../context.ts'
 import type { PluginMenuRow } from '../../host.ts'
 import { itemMenu } from '../../item/itemMenu.ts'
-import { COLORS, hasOptions, isGroupable, type Collection, type Color, type Item, type View } from '../../model.ts'
+import { hasOptions, isGroupable, itemWord, type Collection, type Color, type Item, type View } from '../../model.ts'
 import type { Position } from '../../order.ts'
 import { NO_GROUP, type Group, type QueryResult } from '../../query.ts'
 import { strings as shared } from '../../strings.ts'
-import { colorVar } from '../../ui/colors.ts'
+import ColorPicker from '../../ui/ColorPicker.vue'
 import Icon from '../../ui/Icon.vue'
 import OptionTag from '../../ui/OptionTag.vue'
 import Popover from '../../ui/Popover.vue'
 import PropertyIcon from '../../ui/PropertyIcon.vue'
+import DeleteOption from '../../values/DeleteOption.vue'
+import { editProperty } from '../../values/editProperty.ts'
+import { optionWords } from '../../values/optionWords.ts'
 import BoardCard from './BoardCard.vue'
 import BoardColumn from './BoardColumn.vue'
 import { cardKey, isSamePlace, positionAt, stepIndex, type CardRef } from './cards.ts'
@@ -36,7 +39,12 @@ const { Button, IconButton } = mango.ui.components
 /* ---------------------------------------------------------------- columns */
 
 const property = computed(() => props.result.groupBy)
-const shownGroups = computed(() => props.result.groups.filter(g => !g.hidden))
+/** "No status" only while something is in it, or there is nowhere else. */
+const shownGroups = computed(() => {
+  const shown = props.result.groups.filter(g => !g.hidden)
+  const rest = shown.filter(g => g.key !== NO_GROUP || g.items.length)
+  return rest.length ? rest : shown
+})
 const hiddenGroups = computed(() => props.result.groups.filter(g => g.hidden))
 const groupByKey = computed(() => new Map(props.result.groups.map(g => [g.key, g])))
 const isOption = (g: Group) => g.key !== NO_GROUP && !!property.value && hasOptions(property.value)
@@ -53,7 +61,8 @@ const groupName = (key: string) => {
   return g ? nameOf(g) : ''
 }
 const titleOf = (id: string) => store.item(props.collection.id, id)?.title || shared.untitled
-const whatOf = (ids: readonly string[]) => (ids.length === 1 ? titleOf(ids[0]!) : strings.items(ids.length))
+const wordOf = (n: number) => itemWord(props.collection, n)
+const whatOf = (ids: readonly string[]) => (ids.length === 1 ? titleOf(ids[0]!) : `${ids.length} ${wordOf(ids.length)}`)
 
 const without = (list: readonly string[], key: string) => list.filter(k => k !== key)
 function setCollapsed(key: string, on: boolean) {
@@ -110,6 +119,12 @@ function columnMenu(g: Group, anchor: HTMLElement) {
       { label: strings.rename, icon: 'pencil', onSelect: () => { renaming.value = g.key } },
       // Once the menu has given the focus back.
       { label: strings.colour, icon: 'palette', onSelect: () => void setTimeout(() => { colouring.value = { key: g.key, anchor } }) },
+      ...(p.type === 'select' ? [{
+        label: strings.setDefault(wordOf(2)),
+        icon: 'circle-dot',
+        checked: p.defaultOption === g.key,
+        onSelect: () => store.updateProperty(props.collection.id, p.id, { defaultOption: p.defaultOption === g.key ? null : g.key }),
+      }] : []),
       { label: strings.moveLeft, icon: 'arrow-left', disabled: at <= 0, divider: true, onSelect: () => moveColumn(g.key, at - 1) },
       { label: strings.moveRight, icon: 'arrow-right', disabled: at < 0 || at === sortable.value.length - 1, onSelect: () => moveColumn(g.key, at + 1) },
     )
@@ -119,19 +134,35 @@ function columnMenu(g: Group, anchor: HTMLElement) {
     { label: strings.collapse, icon: 'chevrons-right-left', divider: rows.length > 0, disabled: props.readonly, onSelect: () => collapse(g.key) },
     { label: strings.hide, icon: 'eye-off', disabled: props.readonly, onSelect: () => hide(g.key) },
   )
+  if (!props.readonly && hasOptions(p)) {
+    rows.push({ label: strings.editGroups(optionWords(p).many), icon: 'list', divider: true, onSelect: () => void setTimeout(() => editProperty(planner, props.collection.id, p.id)) })
+  }
   if (isOption(g) && !props.readonly) {
-    rows.push({ label: strings.deleteOption, icon: 'trash-2', danger: true, divider: true, onSelect: () => void store.deleteOption(props.collection.id, p.id, g.key) })
+    rows.push({ label: strings.deleteGroup, icon: 'trash-2', danger: true, onSelect: () => void setTimeout(() => { deleting.value = { key: g.key, anchor } }) })
   }
   void mango.ui.contextMenu(anchor, rows)
 }
 
+/** Asks where its items go when it has some. */
+const deleting = shallowRef<{ key: string; anchor: HTMLElement } | null>(null)
+let goes: string | null = null
+function closeDelete() {
+  goes = deleting.value?.key ?? null
+  deleting.value = null
+}
+watch(() => props.result.groups, (groups) => {
+  if (goes === null || groups.some(g => g.key === goes)) return
+  goes = null
+  if (document.activeElement === document.body) focus()
+}, { flush: 'post' })
+
 function renameGroup(key: string, name: string) {
   if (property.value && name !== groupName(key)) store.updateOption(props.collection.id, property.value.id, key, { name })
 }
+/** While a colour is picked it shows; it is written once that is settled. */
 function setColour(color: Color) {
   const key = colouring.value?.key
-  if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color })
-  closeColours()
+  if (key && property.value) store.updateOption(props.collection.id, property.value.id, key, { color }, { defer: true })
 }
 function closeColours() {
   const at = colouring.value?.anchor
@@ -141,33 +172,31 @@ function closeColours() {
     if (document.activeElement === document.body) at?.focus()
   })
 }
-function onSwatchKey(e: KeyboardEvent) {
-  const step = e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowUp' || e.key === 'ArrowLeft' ? -1 : 0
-  if (!step) return
-  e.preventDefault()
-  const all = [...(e.currentTarget as HTMLElement).querySelectorAll('button')]
-  const at = all.indexOf(document.activeElement as HTMLButtonElement)
-  all[(at + step + all.length) % all.length]?.focus()
-}
 async function addGroup(name: string) {
   if (!property.value) return
   const option = store.addOption(props.collection.id, property.value.id, name)
   if (option && props.view.hiddenGroups.includes(option.id)) setHidden(option.id, false)
   await nextTick()
   if (board.value) board.value.scrollLeft = board.value.scrollWidth
+  // Its colour next; the one it got stays when that is closed.
+  const anchor = option && columnEl(option.id)?.querySelector<HTMLElement>('[data-menu]')
+  if (anchor) {
+    anchor.focus({ preventScroll: true })
+    colouring.value = { key: option.id, anchor }
+  }
 }
 
 /** Closing an inline field by key gives the focus back to what it stands in for. */
 async function stopAddGroup(byKey: boolean) {
   addingGroup.value = false
   await nextTick()
-  if (byKey) board.value?.querySelector<HTMLElement>('[data-add-group]')?.focus()
+  if (byKey && !colouring.value) board.value?.querySelector<HTMLElement>('[data-add-group]')?.focus()
 }
 async function stopRename(byKey: boolean) {
   const key = renaming.value
   renaming.value = null
   await nextTick()
-  if (byKey && key) columnEl(key)?.querySelector<HTMLElement>('[data-head] button')?.focus()
+  if (byKey && key) columnEl(key)?.querySelector<HTMLElement>('[data-menu]')?.focus()
 }
 
 /* ---- without a property to group by */
@@ -297,7 +326,7 @@ function toggle(c: CardRef) {
   anchor = c
   const key = cardKey(c)
   select(selectedKeys.value.has(key) ? selectedCards.value.filter(s => cardKey(s) !== key) : [...selectedCards.value, c])
-  announce(strings.selected(selection.value.size))
+  announce(strings.selected(selection.value.size, wordOf(selection.value.size)))
 }
 /** From the anchor to this card; just adds it when they are in different columns. */
 function extend(c: CardRef) {
@@ -313,7 +342,7 @@ function extend(c: CardRef) {
       ...items.slice(Math.min(from, to), Math.max(from, to) + 1).map(i => ({ id: i.id, group: c.group })),
     ])
   }
-  announce(strings.selected(selection.value.size))
+  announce(strings.selected(selection.value.size, wordOf(selection.value.size)))
 }
 /** What an action on a card is about: the selection when it is part of it. */
 const cardsFor = (c: CardRef): readonly CardRef[] => (selectedKeys.value.has(cardKey(c)) ? selectedCards.value : [c])
@@ -327,6 +356,7 @@ watch([() => props.collection.id, () => props.view.id], () => {
   renaming.value = null
   addingGroup.value = false
   colouring.value = null
+  deleting.value = null
 })
 
 /* ---------------------------------------------------------------- moving */
@@ -496,7 +526,7 @@ function onContextMenu(e: MouseEvent) {
     const g = groupByKey.value.get(head.closest<HTMLElement>('[data-col]')?.dataset.col ?? '')
     if (!g || g.collapsed) return
     e.preventDefault()
-    columnMenu(g, head.querySelector('button') ?? head)
+    columnMenu(g, head.querySelector<HTMLElement>('[data-menu]') ?? head)
   }
 }
 
@@ -526,7 +556,7 @@ function onCardKey(e: KeyboardEvent, c: CardRef): boolean {
   if (mod) {
     if (e.key.toLowerCase() !== 'a' || e.shiftKey) return false
     select(openGroups.value.flatMap(g => g.items.map(i => ({ id: i.id, group: g.key }))))
-    announce(strings.selected(selectedCards.value.length))
+    announce(strings.selected(selectedCards.value.length, wordOf(selectedCards.value.length)))
     return true
   }
   switch (e.key) {
@@ -534,7 +564,7 @@ function onCardKey(e: KeyboardEvent, c: CardRef): boolean {
     case 'ArrowDown': {
       const next = items[index + (e.key === 'ArrowUp' ? -1 : 1)]
       if (!next) {
-        if (e.key === 'ArrowDown' && !e.shiftKey) columnEl(c.group)?.querySelector<HTMLElement>('[data-new]')?.focus()
+        if (e.key === 'ArrowDown' && !e.shiftKey) columnEl(c.group)?.querySelector<HTMLElement>('[data-foot]')?.focus()
         return true
       }
       const to = { id: next.id, group: c.group }
@@ -583,12 +613,15 @@ function onEdgeKey(e: KeyboardEvent, group: string): boolean {
   switch (e.key) {
     case 'ArrowUp':
       if (itemsIn(group).length) focusInColumn(group, Infinity)
+      else columnEl(group)?.querySelector<HTMLElement>('[data-new]')?.focus()
       return true
-    case 'ArrowDown': return true
+    case 'ArrowDown':
+      columnEl(group)?.querySelector<HTMLElement>('[data-foot]')?.focus()
+      return true
     case 'ArrowLeft':
     case 'ArrowRight': {
       const key = neighbourColumn(group, e.key === 'ArrowLeft' ? -1 : 1)
-      if (key !== null) focusInColumn(key, (e.target as HTMLElement).hasAttribute('data-new') ? Infinity : 0)
+      if (key !== null) focusInColumn(key, (e.target as HTMLElement).hasAttribute('data-foot') ? Infinity : 0)
       return true
     }
     case 'n':
@@ -620,12 +653,12 @@ const pickId = useId()
 </script>
 
 <template>
-  <div v-if="!property" class="pl-pick">
-    <div class="pl-pick__box">
-      <h3 :id="pickId" class="pl-pick__title">{{ strings.groupTitle }}</h3>
-      <p class="pl-pick__body">{{ strings.groupBody }}</p>
-      <div v-if="!readonly" class="pl-pick__list" role="group" :aria-labelledby="pickId">
-        <button v-for="p in groupable" :key="p.id" type="button" class="pl-pick__row" @click="groupBy(p.id)"><PropertyIcon :type="p.type" /><span>{{ p.name }}</span></button>
+  <div v-if="!property" class="pl-setup">
+    <div class="pl-setup__box">
+      <h3 :id="pickId" class="pl-setup__title">{{ strings.groupTitle }}</h3>
+      <p class="pl-setup__body">{{ strings.groupBody }}</p>
+      <div v-if="!readonly" class="pl-setup__list" role="group" :aria-labelledby="pickId">
+        <button v-for="p in groupable" :key="p.id" type="button" class="pl-setup__row" @click="groupBy(p.id)"><PropertyIcon :type="p.type" /><span>{{ p.name }}</span></button>
       </div>
       <component :is="Button" v-if="!readonly" :variant="groupable.length ? 'secondary' : 'primary'" @click="createStatus">
         <Icon name="plus" />{{ strings.createStatus }}
@@ -655,7 +688,6 @@ const pickId = useId()
         :view="view"
         :group="g"
         :name="nameOf(g)"
-        :is-option="isOption(g)"
         :sortable="isOption(g) && !readonly"
         :readonly="readonly"
         :open-item-id="openItemId"
@@ -677,8 +709,8 @@ const pickId = useId()
 
       <div v-if="hiddenGroups.length || canAddGroup" class="pl-board__end">
         <div v-if="canAddGroup" class="pl-board__add">
-          <InlineInput v-if="addingGroup" :label="strings.groupName" :placeholder="strings.groupName" @add="addGroup" @close="stopAddGroup" />
-          <button v-else type="button" class="pl-board__addbtn" data-add-group @click="addingGroup = true"><Icon name="plus" />{{ strings.addGroup }}</button>
+          <InlineInput v-if="addingGroup" single :label="strings.groupName" :placeholder="strings.groupName" @add="addGroup" @close="stopAddGroup" />
+          <button v-else type="button" class="pl-board__addbtn" data-add-group @click="addingGroup = true"><Icon name="plus" />{{ strings.addGroup(optionWords(property).one) }}</button>
         </div>
         <template v-if="hiddenGroups.length">
           <h3 class="pl-board__hidden">{{ strings.hidden }}</h3>
@@ -698,24 +730,15 @@ const pickId = useId()
 
     <div class="sr-only" role="status" aria-live="polite">{{ message }}</div>
 
-    <Popover v-if="colouring" :anchor="colouring.anchor" :width="180" :label="strings.colourOf(groupName(colouring.key))" @close="closeColours">
-      <div class="pl-swatches" role="radiogroup" :aria-label="strings.colourOf(groupName(colouring.key))" @keydown="onSwatchKey">
-        <button
-          v-for="c in COLORS"
-          :key="c"
-          type="button"
-          role="radio"
-          class="pl-swatches__row"
-          :aria-checked="groupByKey.get(colouring.key)?.color === c"
-          :data-autofocus="groupByKey.get(colouring.key)?.color === c || undefined"
-          :tabindex="groupByKey.get(colouring.key)?.color === c ? 0 : -1"
-          @click="setColour(c)"
-        >
-          <span class="pl-swatches__dot" :style="{ background: colorVar(c).dot }" />{{ strings.colours[c] }}
-          <Icon v-if="groupByKey.get(colouring.key)?.color === c" name="check" class="pl-swatches__check" />
-        </button>
-      </div>
+    <Popover v-if="colouring" :anchor="colouring.anchor" :width="240" :label="strings.colourOf(groupName(colouring.key))" placement="bottom-end" @close="closeColours">
+      <ColorPicker
+        :model-value="groupByKey.get(colouring.key)?.color ?? 'neutral'"
+        :label="strings.colourOf(groupName(colouring.key))"
+        @update:model-value="setColour"
+        @change="store.flush()"
+      />
     </Popover>
+    <DeleteOption v-if="deleting" :collection-id="collection.id" :property-id="property.id" :option-id="deleting.key" :anchor="deleting.anchor" @close="closeDelete" />
 
     <Teleport to="body">
       <div v-if="drag" ref="ghost" class="pl-ghost" :style="{ width: `${drag.width}px` }" aria-hidden="true">
@@ -739,13 +762,13 @@ const pickId = useId()
   align-items: flex-start;
   gap: 8px;
   height: 100%;
-  padding: 0 var(--space-3) var(--space-2);
+  padding: var(--space-2);
   overflow: auto hidden;
 }
 .pl-board__scroll > .is-dragged { opacity: 0.45; }
 .pl-board__line {
   position: absolute;
-  top: 4px;
+  top: 8px;
   bottom: 8px;
   left: -1px;
   width: 2px;
@@ -753,23 +776,25 @@ const pickId = useId()
   background: var(--accent);
   pointer-events: none;
 }
-.pl-board__end { flex: none; width: min(220px, calc(100cqw - 40px)); max-height: 100%; overflow: hidden auto; padding: 4px 2px; }
+.pl-board__end { flex: none; width: min(290px, calc(100cqw - 32px)); max-height: 100%; overflow: hidden auto; }
 .pl-board__addbtn {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
-  border-radius: var(--radius-sm);
+  height: 40px;
+  padding: 0 14px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
   font-size: var(--text-sm);
   color: var(--fg-subtle);
   white-space: nowrap;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  transition: border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
+.pl-board__add > .pl-inline { height: 40px; border-radius: 10px; }
 .pl-board__addbtn :deep(svg) { width: 14px; height: 14px; }
-.pl-board__addbtn:hover { background: var(--bg-hover); color: var(--fg); }
-.pl-board__addbtn:focus-visible { outline-offset: -2px; }
+.pl-board__addbtn:hover { border-color: var(--line-strong); color: var(--fg); }
+.pl-board__addbtn:focus-visible { outline-offset: -2px; border-radius: 10px; }
 .pl-board__hidden { margin: var(--space-3) 0 2px; padding: 0 8px; font-size: var(--text-xs); font-weight: 600; color: var(--fg-subtle); }
 .pl-board__hidden:first-child { margin-top: 5px; }
 .pl-board__row { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 4px 0 8px; border-radius: var(--radius-sm); }
@@ -777,13 +802,13 @@ const pickId = useId()
 .pl-board__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
 .pl-board__count { flex: 1; font-size: var(--text-xs); color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 
-.pl-pick { height: 100%; overflow: auto; padding: 12vh var(--space-4) var(--space-4); }
-.pl-pick__box { max-width: 320px; margin: 0 auto; display: flex; flex-direction: column; align-items: flex-start; }
-.pl-pick__title { margin: 0; font-size: var(--text-lg); font-weight: 620; letter-spacing: -0.01em; }
-.pl-pick__body { margin: 4px 0 var(--space-4); font-size: var(--text-sm); color: var(--fg-subtle); }
-.pl-pick__list { width: 100%; margin-bottom: var(--space-3); }
-.pl-pick__list:empty { display: none; }
-.pl-pick__row {
+.pl-setup { height: 100%; overflow: auto; padding: 12vh var(--space-4) var(--space-4); }
+.pl-setup__box { max-width: 320px; margin: 0 auto; display: flex; flex-direction: column; align-items: flex-start; }
+.pl-setup__title { margin: 0; font-size: var(--text-lg); font-weight: 620; letter-spacing: -0.01em; }
+.pl-setup__body { margin: 4px 0 var(--space-4); font-size: var(--text-sm); color: var(--fg-subtle); }
+.pl-setup__list { width: 100%; margin-bottom: var(--space-3); }
+.pl-setup__list:empty { display: none; }
+.pl-setup__row {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -796,26 +821,19 @@ const pickId = useId()
   text-align: left;
   color: var(--fg-muted);
 }
-.pl-pick__row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pl-pick__row:hover { background: var(--bg-hover); color: var(--fg); }
-
-.pl-swatches { padding: 4px; }
-.pl-swatches__row { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 28px; padding: 0 8px; border-radius: var(--radius-sm); font-size: var(--text-sm); text-align: left; }
-.pl-swatches__row:hover { background: var(--bg-hover); }
-.pl-swatches__row:focus-visible { outline-offset: -2px; }
-.pl-swatches__dot { width: 8px; height: 8px; border-radius: 50%; }
-.pl-swatches__check { margin-left: auto; width: 14px; height: 14px; color: var(--accent-ink); }
+.pl-setup__row > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pl-setup__row:hover { background: var(--bg-hover); color: var(--fg); }
 
 /* Lies over the whole window while something is dragged. */
 .pl-ghost { position: fixed; left: 0; top: 0; z-index: 60; pointer-events: none; opacity: 0.92; will-change: transform; }
-.pl-ghost__card { position: relative; border-radius: var(--radius-sm); box-shadow: var(--shadow-pop); }
-.pl-ghost__card :deep(.pl-card) { position: relative; background: var(--bg-raised); box-shadow: inset 0 0 0 1px var(--line-strong); max-height: 160px; overflow: hidden; }
+.pl-ghost__card { position: relative; border-radius: var(--radius-md); box-shadow: var(--shadow-pop); }
+.pl-ghost__card :deep(.pl-card) { position: relative; background: var(--bg-raised); border-color: var(--line-strong); max-height: 160px; overflow: hidden; }
 .pl-ghost__card.is-stack::before {
   content: '';
   position: absolute;
   inset: 5px -5px -5px 5px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--bg-panel);
 }
 .pl-ghost__count {

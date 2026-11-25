@@ -8,13 +8,29 @@
  */
 
 import { compareOrder, isKey, spread, type Ordered } from './order.ts'
+import { strings as words } from './strings.ts'
 import { entriesById, isObject, isSafeKey, type Json, type JsonObject } from './patch.ts'
 
 /* ---------------------------------------------------------------- types */
 
-/** Named, so the UI maps them to design tokens and both themes work. */
-export const COLORS = ['neutral', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'] as const
-export type Color = typeof COLORS[number]
+/** Named, so the UI maps them to design tokens. */
+export const NAMED_COLORS = ['neutral', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink'] as const
+/** The same; its name before there were custom ones. */
+export const COLORS = NAMED_COLORS
+export type NamedColor = typeof NAMED_COLORS[number]
+/** A named one, or the user's own as `#rrggbb` in lower case. `ui/colors.ts` makes both work in both themes. */
+export type Color = NamedColor | `#${string}`
+export const isCustomColor = (c: Color): c is `#${string}` => c.startsWith('#')
+
+/** A colour as it may be typed (`#RGB`, `rrggbb`) or stored, or null when it is none. */
+export function readColor(v: unknown): Color | null {
+  if (typeof v !== 'string') return null
+  if (NAMED_COLORS.includes(v as NamedColor)) return v as NamedColor
+  const m = /^#?([0-9a-f]{6}|[0-9a-f]{3})$/i.exec(v.trim())
+  if (!m) return null
+  const hex = m[1]!.toLowerCase()
+  return `#${hex.length === 3 ? hex.replace(/./g, '$&$&') : hex}`
+}
 
 export const PROPERTY_TYPES = [
   'text', 'number', 'select', 'multiSelect', 'date', 'checkbox', 'url', 'createdTime', 'updatedTime',
@@ -36,6 +52,8 @@ export interface Property {
   readonly order: string
   /** Of `select` and `multiSelect`, in order; kept (and empty for the others) when the type changes. */
   readonly options: readonly Option[]
+  /** The option a new item gets (`select`), or null. */
+  readonly defaultOption?: string | null
 }
 
 /** An ISO date (`2026-03-01`) or a local date and time (`2026-03-01T09:30`); `end` makes it a range. */
@@ -94,12 +112,17 @@ export interface View {
 
 export type Scope = { readonly kind: 'everywhere' } | { readonly kind: 'project'; readonly path: string }
 
+export interface ItemName { readonly one: string; readonly many: string }
+
 export interface Collection {
   readonly id: string
   readonly name: string
   /** A lucide icon name. */
   readonly icon: string
   readonly color: Color
+  readonly description: string
+  /** What its items are called; null: just items. */
+  readonly itemName: ItemName | null
   readonly scope: Scope
   readonly order: string
   /** In order. */
@@ -155,7 +178,7 @@ export function ordered<T extends Ordered>(list: readonly T[]): T[] {
 }
 
 /** Colours in turn, for new options. */
-export const colorAt = (i: number): Color => COLORS[1 + (i % (COLORS.length - 1))]!
+export const colorAt = (i: number): Color => NAMED_COLORS[1 + (i % (NAMED_COLORS.length - 1))]!
 
 /* ---------------------------------------------------------------- dates */
 
@@ -209,17 +232,22 @@ export const formatDate = (d: DateValue): string => (d.end ? `${d.start} to ${d.
 
 /* ---------------------------------------------------------------- normalising stored documents */
 
+const storedColor = (v: unknown): Color => (typeof v === 'string' && (v.length === 7 || !v.startsWith('#')) ? readColor(v) : null) ?? 'neutral'
+
 function normalizeOption(id: string, raw: JsonObject): Option {
-  return { id, name: str(raw.name), color: oneOf(COLORS, raw.color, 'neutral'), order: str(raw.order) }
+  return { id, name: str(raw.name), color: storedColor(raw.color), order: str(raw.order) }
 }
 
 function normalizeProperty(id: string, raw: JsonObject): Property {
+  const type = oneOf<PropertyType>(PROPERTY_TYPES, raw.type, 'unsupported')
+  const options = ordered(entriesById(raw.options).map(([k, v]) => normalizeOption(k, v)))
   return {
     id,
     name: str(raw.name),
-    type: oneOf<PropertyType>(PROPERTY_TYPES, raw.type, 'unsupported'),
+    type,
     order: str(raw.order),
-    options: ordered(entriesById(raw.options).map(([k, v]) => normalizeOption(k, v))),
+    options,
+    defaultOption: type === 'select' ? options.find(o => o.id === raw.defaultOption)?.id ?? null : null,
   }
 }
 
@@ -347,6 +375,19 @@ function normalizeScope(raw: unknown): Scope {
     : { kind: 'everywhere' }
 }
 
+function normalizeItemName(raw: unknown): ItemName | null {
+  if (!isObject(raw)) return null
+  const one = str(raw.one).trim()
+  const many = str(raw.many).trim()
+  return one || many ? { one: one || many, many: many || one } : null
+}
+
+/** What this many of a collection's items are called: `note`, `notes`. */
+export function itemWord(c: Pick<Collection, 'itemName'> | null | undefined, n: number): string {
+  const name = c?.itemName
+  return n === 1 ? name?.one ?? words.item : name?.many ?? words.items
+}
+
 /** The id of the table a collection without any view is shown with. */
 export const FALLBACK_VIEW = 'default'
 
@@ -359,7 +400,9 @@ export function normalizeCollection(raw: unknown, meta: DocMeta): Collection {
     id: meta.id,
     name: str(r.name),
     icon: iconName(r.icon) ?? 'square-kanban',
-    color: oneOf(COLORS, r.color, 'neutral'),
+    color: storedColor(r.color),
+    description: str(r.description),
+    itemName: normalizeItemName(r.itemName),
     scope: normalizeScope(r.scope),
     order: str(r.order),
     properties,

@@ -46,3 +46,14 @@ export function previewText(body: string, max = 180): string {
     .trim()
   return text.length > max ? `${text.slice(0, max).trimEnd()}…` : text
 }
+
+/** How many of a body's tasks are done; null when it has none. */
+export function taskCount(body: string): { done: number; all: number } | null {
+  let done = 0
+  let all = 0
+  for (const m of body.matchAll(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[([ xX])\][ \t]/gm)) {
+    all++
+    if (m[1] !== ' ') done++
+  }
+  return all ? { done, all } : null
+}

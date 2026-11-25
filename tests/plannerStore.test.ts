@@ -9,6 +9,7 @@ import assert from 'node:assert/strict'
 import { LocalSource } from '../plugins/planner/src/data/local.ts'
 import type { PluginDataApi, PluginDataChange, PluginDataOp, PluginDoc } from '../plugins/planner/src/host.ts'
 import { createStore, type PlannerStore, type StoreHost } from '../plugins/planner/src/store.ts'
+import { itemWord } from '../plugins/planner/src/model.ts'
 import { runQuery } from '../plugins/planner/src/query.ts'
 
 /** The database several windows share. */
@@ -229,7 +230,7 @@ test('moving sets the group and the place as one change', async () => {
   await store.flush()
   assert.equal(db.writes, writes + 1)
   store.undo()
-  assert.deepEqual(store.items(c.id).items.map(i => [i.title, i.values]), [['X', {}], ['Y', {}]])
+  assert.deepEqual(store.items(c.id).items.map(i => [i.title, i.values]), [['X', { [status.id]: option('To do') }], ['Y', { [status.id]: option('To do') }]])
   await store.flush()
 })
 
@@ -240,6 +241,106 @@ test('new items fit the view and group they are made in', async () => {
   assert.equal(made.values[status.id], option('In progress'))
   const result = runQuery(store.collection(c.id)!, store.items(c.id).items, board)
   assert.deepEqual(result.groups.find(g => g.name === 'In progress')!.items.map(i => i.id), [made.id])
+})
+
+test('new items get the default option, unless the view or the caller says otherwise', async () => {
+  const { store, c, x, status, option } = await withTasks()
+  assert.equal(x.values[status.id], option('To do'))
+  const valueIn = async (input: Parameters<typeof store.createItem>[1]) => (await store.createItem(c.id, input))!.values[status.id]
+  const board = c.views[0]!
+  assert.equal(await valueIn({ viewId: board.id }), option('To do'))
+  assert.equal(await valueIn({ viewId: board.id, group: '' }), undefined)
+  assert.equal(await valueIn({ values: { [status.id]: null } }), undefined)
+  assert.equal(await valueIn({ values: { [status.id]: option('Done') } }), option('Done'))
+  const filtered = async (operator: 'is' | 'isNot' | 'isEmpty', names: string[]) => {
+    store.updateView(c.id, board.id, { filter: { match: 'and', conditions: [{ id: '1', propertyId: status.id, operator, value: names.length ? names.map(option) : null }] } })
+    return valueIn({ viewId: board.id })
+  }
+  assert.equal(await filtered('is', ['Done', 'To do']), option('To do'))
+  assert.equal(await filtered('is', ['Done']), option('Done'))
+  assert.equal(await filtered('isNot', ['To do']), undefined)
+  assert.equal(await filtered('isEmpty', []), undefined)
+
+  store.updateProperty(c.id, status.id, { defaultOption: option('Done') })
+  assert.equal(await valueIn({}), option('Done'))
+  store.undo()
+  store.undo()
+  assert.equal(store.collection(c.id)!.properties[0]!.defaultOption, option('To do'))
+  store.updateProperty(c.id, status.id, { defaultOption: null })
+  assert.equal(await valueIn({}), undefined)
+  store.updateProperty(c.id, status.id, { defaultOption: 'nope' })
+  assert.equal(store.collection(c.id)!.properties[0]!.defaultOption, null)
+  store.updateProperty(c.id, 'gone', { name: 'x' })
+  assert.equal(store.collection(c.id)!.properties.length, 3)
+})
+
+test('options: renamed, recoloured, reordered, in one step of undo each', async () => {
+  const { db, store, c, status, option } = await withTasks()
+  const now = () => store.collection(c.id)!.properties[0]!.options
+  const writes = db.writes
+  // A colour being dragged.
+  for (const hex of ['#111111', '#222222', '#ab54c0'] as const) store.updateOption(c.id, status.id, option('Done'), { color: hex }, { defer: true })
+  assert.equal(now()[2]!.color, '#ab54c0')
+  await store.flush()
+  assert.equal(db.writes, writes + 1)
+  store.undo()
+  assert.equal(now()[2]!.color, 'green')
+  store.updateOption(c.id, status.id, option('Done'), { name: 'Shipped' })
+  assert.equal(now()[2]!.name, 'Shipped')
+  store.moveOption(c.id, status.id, option('Done'), { before: option('To do') })
+  assert.deepEqual(now().map(o => o.name), ['Shipped', 'To do', 'In progress'])
+  store.moveOption(c.id, status.id, option('Done'), { after: option('To do') })
+  assert.deepEqual(now().map(o => o.name), ['To do', 'Shipped', 'In progress'])
+  store.undo()
+  store.undo()
+  store.undo()
+  assert.deepEqual(now().map(o => o.name), ['To do', 'In progress', 'Done'])
+  assert.equal(store.addOption(c.id, status.id, ' done ')!.id, option('Done'))
+})
+
+test('deleting an option moves its items to another, in one step', async () => {
+  const { store, toasts, c, x, y, status, option } = await withTasks()
+  const tags = store.addProperty(c.id, { name: 'Tags', type: 'multiSelect', options: [{ name: 'a' }, { name: 'b' }] })!
+  const [a, b] = tags.options.map(o => o.id) as [string, string]
+  store.updateItem(c.id, x.id, { values: { [tags.id]: [a, b] } })
+  store.updateItem(c.id, y.id, { values: { [tags.id]: [a] } })
+  const table = c.views[1]!
+  store.updateView(c.id, table.id, { filter: { match: 'and', conditions: [{ id: '1', propertyId: status.id, operator: 'is', value: [option('To do')] }] } })
+
+  assert.ok(await store.deleteOption(c.id, status.id, option('To do'), { moveTo: option('Done') }))
+  const now = () => store.collection(c.id)!.properties[0]!
+  assert.deepEqual([x, y].map(i => store.item(c.id, i.id)!.values[status.id]), [option('Done'), option('Done')])
+  assert.equal(now().defaultOption, option('Done'))
+  assert.deepEqual(store.collection(c.id)!.views[1]!.filter.conditions[0]!.value, [option('Done')])
+  toasts.at(-1)!.action!.run()
+  assert.deepEqual([x, y].map(i => store.item(c.id, i.id)!.values[status.id]), [option('To do'), option('To do')])
+  assert.equal(now().defaultOption, option('To do'))
+
+  assert.ok(await store.deleteOption(c.id, tags.id, a, { moveTo: b }))
+  assert.deepEqual([x, y].map(i => store.item(c.id, i.id)!.values[tags.id]), [[b], [b]])
+  assert.ok(await store.deleteOption(c.id, tags.id, b, { moveTo: b }))
+  assert.deepEqual([x, y].map(i => store.item(c.id, i.id)!.values[tags.id]), [[], []])
+
+  // None, and one that does not exist.
+  assert.ok(await store.deleteOption(c.id, status.id, option('To do'), { moveTo: 'nope' }))
+  assert.equal(status.id in store.item(c.id, x.id)!.values, false)
+  assert.equal(now().defaultOption, null)
+  assert.equal(await store.deleteOption(c.id, status.id, 'nope'), false)
+})
+
+test('collections: what they say and what their items are called', async () => {
+  const { db, store, c } = await withTasks()
+  assert.deepEqual([itemWord(c, 1), itemWord(c, 2), itemWord(null, 0)], ['task', 'tasks', 'items'])
+  store.updateCollection(c.id, { description: 'All of it', itemName: { one: 'ticket', many: 'tickets' }, color: '#123abc' })
+  await store.flush()
+  const other = open(db)
+  await ready(other.store)
+  const read = other.store.collection(c.id)!
+  assert.deepEqual([read.description, read.itemName, read.color], ['All of it', { one: 'ticket', many: 'tickets' }, '#123abc'])
+  store.undo()
+  assert.equal(itemWord(store.collection(c.id), 0), 'tasks')
+  store.updateCollection(c.id, { itemName: null })
+  assert.equal(itemWord(store.collection(c.id), 1), 'item')
 })
 
 test('deleting is undone by its toast, after other changes too', async () => {

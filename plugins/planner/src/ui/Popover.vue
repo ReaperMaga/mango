@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePlanner } from '../context.ts'
-import { hostLayerOpen, inHostLayer, inOrAbove, isTopLayer, pushLayer } from './layers.ts'
+import { hostDialogs, hostLayerOpen, inHostLayer, inOrAbove, isTopLayer, pushLayer } from './layers.ts'
 
 /**
  * A floating panel, shown while mounted. `cover`: lies over the anchor instead of hanging from it (an editor in
@@ -27,6 +27,8 @@ const pop = ref<HTMLElement | null>(null)
 const inner = ref<HTMLElement | null>(null)
 const style = ref<Record<string, string>>({ visibility: 'hidden', left: '0', top: '0', width: `${props.width}px` })
 const opener = document.activeElement as HTMLElement | null
+/** The dialog it was opened from, if it was. */
+const under = hostDialogs()
 const layer = { contains: (el: Node) => !!pop.value?.contains(el) }
 let rect: { left: number; right: number; top: number; bottom: number } | null = null
 
@@ -64,7 +66,7 @@ function focusables(): HTMLElement[] {
 }
 
 function onWindowKey(e: KeyboardEvent) {
-  if (e.key !== 'Escape' || e.isComposing || !isTopLayer(layer) || hostLayerOpen()) return
+  if (e.key !== 'Escape' || e.isComposing || !isTopLayer(layer) || hostLayerOpen(under)) return
   e.preventDefault()
   e.stopImmediatePropagation()
   emit('close', 'escape')
@@ -85,7 +87,7 @@ function onKey(e: KeyboardEvent) {
 
 function onPointerDown(e: PointerEvent) {
   const el = e.target as Node
-  if (inOrAbove(layer, el) || inHostLayer(el)) return
+  if (inOrAbove(layer, el) || inHostLayer(el, under)) return
   // A click on what opened it only closes it.
   const a = props.anchor
   if (!isPoint(a) && a.contains(el)) {
@@ -136,7 +138,7 @@ defineExpose({ place })
 
 <template>
   <Teleport to="body">
-    <div ref="pop" class="pl-pop" :style="style" role="dialog" :aria-label="label" tabindex="-1" @keydown="onKey">
+    <div ref="pop" class="pl-pop" :style="style" role="dialog" :aria-label="label" data-own-escape tabindex="-1" @keydown="onKey">
       <div ref="inner"><slot /></div>
     </div>
   </Teleport>

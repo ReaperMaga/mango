@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { usePlanner } from '../context.ts'
-import { COLORS, colorAt, valueOf, type Item, type Option, type Property, type Value } from '../model.ts'
-import { colorVar } from '../ui/colors.ts'
+import { colorAt, valueOf, type Color, type Item, type Option, type Property, type Value } from '../model.ts'
+import ColorPicker from '../ui/ColorPicker.vue'
 import Icon from '../ui/Icon.vue'
 import OptionTag from '../ui/OptionTag.vue'
+import DeleteOption from './DeleteOption.vue'
 import { strings } from './strings.ts'
 
 /** Picks options by typing, makes new ones, and edits them (F2 or the dots). */
@@ -16,6 +17,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ done: [] }>()
 const { store } = usePlanner()
+const deleting = ref<HTMLElement | null>(null)
 
 const multi = computed(() => props.property.type === 'multiSelect')
 const query = ref('')
@@ -125,6 +127,7 @@ async function startEdit(o: Option) {
 }
 async function stopEdit() {
   const id = editing.value
+  tidyName()
   editing.value = null
   await nextTick()
   const at = rows.value.findIndex(r => r.option?.id === id)
@@ -132,22 +135,26 @@ async function stopEdit() {
   input.value?.focus()
 }
 watch(edited, (o) => { if (!o && editing.value) void stopEdit() })
+/** Spaces are kept while typing. */
+function tidyName() {
+  const o = edited.value
+  if (o && o.name !== o.name.trim()) store.updateOption(props.collectionId, props.property.id, o.id, { name: o.name.trim() }, { defer: true })
+}
+onBeforeUnmount(() => {
+  tidyName()
+  void store.flush()
+})
 function rename(e: Event) {
   const name = (e.target as HTMLInputElement).value
-  if (edited.value && name.trim()) store.updateOption(props.collectionId, props.property.id, edited.value.id, { name: name.trim() }, { defer: true })
+  if (edited.value && name.trim()) store.updateOption(props.collectionId, props.property.id, edited.value.id, { name }, { defer: true })
 }
 function moveOption(by: number) {
   const o = edited.value
   const other = props.property.options[editIndex.value + by]
   if (o && other) store.moveOption(props.collectionId, props.property.id, o.id, by < 0 ? { before: other.id } : { after: other.id })
 }
-function onColorKey(e: KeyboardEvent, i: number) {
-  const by = e.key === 'ArrowRight' || e.key === 'ArrowDown' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowUp' ? -1 : 0
-  if (!by || !edited.value) return
-  e.preventDefault()
-  const next = (i + by + COLORS.length) % COLORS.length
-  store.updateOption(props.collectionId, props.property.id, edited.value.id, { color: COLORS[next]! })
-  ;(e.currentTarget as HTMLElement).parentElement?.querySelectorAll('button')[next]?.focus()
+function recolor(color: Color) {
+  if (edited.value) store.updateOption(props.collectionId, props.property.id, edited.value.id, { color }, { defer: true })
 }
 </script>
 
@@ -166,28 +173,22 @@ function onColorKey(e: KeyboardEvent, i: number) {
         @keydown.enter.prevent="stopEdit"
       >
     </div>
-    <div class="pl-oe__colors" role="radiogroup" :aria-label="strings.color">
-      <button
-        v-for="(c, i) in COLORS"
-        :key="c"
-        type="button"
-        role="radio"
-        class="pl-oe__color"
-        :aria-checked="edited.color === c"
-        :aria-label="strings.colors[c]"
-        :title="strings.colors[c]"
-        :tabindex="edited.color === c ? 0 : -1"
-        @click="store.updateOption(collectionId, property.id, edited.id, { color: c })"
-        @keydown="onColorKey($event, i)"
-      >
-        <span :style="{ background: colorVar(c).dot }" />
-      </button>
+    <div class="pl-oe__colors">
+      <ColorPicker :model-value="edited.color" :label="strings.color" @update:model-value="recolor" @change="store.flush()" />
     </div>
     <div class="pl-oe__rows is-plain">
       <button type="button" class="pl-oe__row" :disabled="editIndex <= 0" @click="moveOption(-1)"><Icon name="arrow-up" />{{ strings.moveUp }}</button>
       <button type="button" class="pl-oe__row" :disabled="editIndex >= property.options.length - 1" @click="moveOption(1)"><Icon name="arrow-down" />{{ strings.moveDown }}</button>
-      <button type="button" class="pl-oe__row is-danger" @click="store.deleteOption(collectionId, property.id, edited.id)"><Icon name="trash-2" />{{ strings.deleteOption }}</button>
+      <button type="button" class="pl-oe__row is-danger" @click="deleting = $event.currentTarget as HTMLElement"><Icon name="trash-2" />{{ strings.deleteOption }}</button>
     </div>
+    <DeleteOption
+      v-if="deleting"
+      :collection-id="collectionId"
+      :property-id="property.id"
+      :option-id="edited.id"
+      :anchor="deleting"
+      @close="deleting = null"
+    />
   </div>
 
   <div v-else class="pl-oe">
@@ -281,9 +282,5 @@ button.pl-oe__row:disabled { color: var(--fg-faint); }
 .pl-oe__new { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pl-oe__note { margin: 0; padding: var(--space-2); color: var(--fg-subtle); font-size: var(--text-xs); }
 .pl-oe__foot { padding: var(--space-1); border-top: 1px solid var(--line-soft); }
-.pl-oe__colors { display: flex; gap: 2px; padding: var(--space-2); border-bottom: 1px solid var(--line-soft); }
-.pl-oe__color { display: grid; place-items: center; width: 26px; height: 26px; border-radius: var(--radius-sm); border: 1px solid transparent; }
-.pl-oe__color:hover { background: var(--bg-hover); }
-.pl-oe__color[aria-checked='true'] { border-color: var(--line-strong); background: var(--bg-active); }
-.pl-oe__color span { width: 12px; height: 12px; border-radius: 50%; }
+.pl-oe__colors { border-bottom: 1px solid var(--line-soft); }
 </style>

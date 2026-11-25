@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from 'vue'
 import { usePlanner } from '../../context.ts'
-import type { Collection, View } from '../../model.ts'
+import { itemWord, type Collection, type View } from '../../model.ts'
 import type { Group } from '../../query.ts'
+import { colorVar } from '../../ui/colors.ts'
 import Icon from '../../ui/Icon.vue'
-import OptionTag from '../../ui/OptionTag.vue'
 import BoardCard from './BoardCard.vue'
 import { cardKey } from './cards.ts'
 import InlineInput from './InlineInput.vue'
@@ -16,8 +16,6 @@ const props = defineProps<{
   group: Group
   /** What the column is called. */
   name: string
-  /** The group is an option, with a name and a colour of its own. */
-  isOption: boolean
   /** Its header can be dragged. */
   sortable: boolean
   readonly: boolean
@@ -43,6 +41,14 @@ const emit = defineEmits<{
   expand: []
 }>()
 const { IconButton } = usePlanner().mango.ui.components
+
+const one = computed(() => itemWord(props.collection, 1))
+const many = computed(() => itemWord(props.collection, 2))
+const heading = computed(() => strings.column(props.name, props.group.items.length, itemWord(props.collection, props.group.items.length)))
+const colours = computed(() => {
+  const c = colorVar(props.group.color)
+  return { '--pl-dot': c.dot, '--pl-fg': c.fg, '--pl-tint': c.tint, '--pl-line': c.line, '--pl-strong': c.strong }
+})
 
 /** Long columns show more as they are scrolled. */
 const STEP = 60
@@ -83,7 +89,8 @@ defineExpose({
   <section
     v-if="group.collapsed"
     class="pl-col is-collapsed"
-    :class="{ 'is-over': over }"
+    :class="{ 'is-lit': over }"
+    :style="colours"
     :data-col="group.key"
     :data-sortable="sortable || undefined"
   >
@@ -93,37 +100,63 @@ defineExpose({
       data-strip
       data-head
       :data-group="group.key"
-      :aria-label="strings.expand(strings.column(name, group.items.length))"
+      :aria-label="strings.expand(heading)"
       aria-expanded="false"
       :title="strings.expand(name)"
       @click="emit('expand')"
     >
-      <Icon name="chevron-right" class="pl-col__chevron" />
+      <span class="pl-col__dot" />
       <span class="pl-col__count">{{ group.items.length }}</span>
       <span class="pl-col__vertical">{{ name }}</span>
     </button>
   </section>
 
-  <section v-else class="pl-col" :class="{ 'is-sorted': over && dropY === null }" :data-col="group.key" :data-sortable="sortable || undefined" :aria-label="strings.column(name, group.items.length)">
+  <section
+    v-else
+    class="pl-col"
+    :class="{ 'is-lit': over && dropY === null && group.items.length > 0 }"
+    :style="colours"
+    :data-col="group.key"
+    :data-sortable="sortable || undefined"
+    :aria-label="heading"
+  >
     <header class="pl-col__head" :class="{ 'is-sortable': sortable }" data-head>
+      <span class="pl-col__dot" aria-hidden="true" />
       <InlineInput v-if="renaming" single :label="strings.groupName" :placeholder="strings.groupName" :value="group.name" @add="emit('rename', $event)" @close="emit('stopRename', $event)" />
       <template v-else>
-        <span class="pl-col__name" :title="name">
-          <OptionTag v-if="isOption" :option="group" />
-          <template v-else>{{ name }}</template>
-        </span>
+        <span class="pl-col__name" :title="name">{{ name }}</span>
         <span class="pl-col__count">{{ group.items.length }}</span>
         <span class="pl-col__spring" />
-        <component :is="IconButton" class="pl-col__btn" size="sm" :label="strings.columnMenu(name)" aria-haspopup="menu" @click="emit('menu', $event.currentTarget)"><Icon name="ellipsis" /></component>
-        <component :is="IconButton" v-if="!readonly" class="pl-col__btn" size="sm" :label="strings.newItemIn(name)" @click="emit('startAdd', 'top')"><Icon name="plus" /></component>
+        <component :is="IconButton" v-if="!readonly" size="sm" :label="strings.newItemIn(one, name)" @click="emit('startAdd', 'top')"><Icon name="plus" /></component>
+        <component :is="IconButton" size="sm" :label="strings.columnMenu(name)" aria-haspopup="menu" data-menu @click="emit('menu', $event.currentTarget)"><Icon name="ellipsis" /></component>
       </template>
     </header>
 
     <div ref="body" class="pl-col__body" data-body tabindex="-1" @scroll.passive="onScroll">
       <div v-if="adding === 'top'" class="pl-col__top">
-        <InlineInput :label="strings.newItemIn(name)" :placeholder="strings.itemTitle" :hint="strings.addHint" @add="onAdd($event, 'top')" @close="emit('stopAdd', $event)" />
+        <InlineInput :label="strings.newItemIn(one, name)" :placeholder="strings.itemTitle" :hint="strings.addHint" @add="onAdd($event, 'top')" @close="emit('stopAdd', $event)" />
       </div>
-      <div class="pl-col__list" :class="{ 'is-long': group.items.length > STEP }" data-list :role="cards.length ? 'listbox' : undefined" :aria-multiselectable="cards.length ? true : undefined" :aria-label="cards.length ? name : undefined">
+      <button
+        v-if="!cards.length && !readonly && adding === null"
+        type="button"
+        class="pl-col__zone"
+        :class="{ 'is-lit': over }"
+        data-new
+        data-zone
+        :data-group="group.key"
+        :aria-label="strings.newItemIn(one, name)"
+        @click="emit('startAdd', 'top')"
+      >
+        <Icon name="plus" /><span>{{ strings.dropHere(many) }}</span>
+      </button>
+      <div
+        class="pl-col__list"
+        :class="{ 'is-long': group.items.length > STEP }"
+        data-list
+        :role="cards.length ? 'listbox' : undefined"
+        :aria-multiselectable="cards.length ? true : undefined"
+        :aria-label="cards.length ? name : undefined"
+      >
         <div
           v-for="({ item, key }, i) in cards"
           :key="item.id"
@@ -139,15 +172,16 @@ defineExpose({
         >
           <BoardCard :collection="collection" :view="view" :item="item" />
         </div>
-        <div v-if="over && dropY !== null" class="pl-col__drop" :style="{ transform: `translateY(${dropY}px)` }" />
-      </div>
-      <div v-if="!readonly" class="pl-col__foot">
-        <InlineInput v-if="adding === 'end'" :label="strings.newItemIn(name)" :placeholder="strings.itemTitle" :hint="strings.addHint" @add="onAdd($event, 'end')" @close="emit('stopAdd', $event)" />
-        <button v-else type="button" class="pl-col__new" data-new :data-group="group.key" :aria-label="strings.newItemIn(name)" @click="emit('startAdd', 'end')">
-          <Icon name="plus" />{{ strings.newItem }}
-        </button>
+        <div v-if="over && dropY !== null && cards.length" class="pl-col__drop" :style="{ transform: `translateY(${dropY}px)` }" />
       </div>
     </div>
+
+    <footer v-if="!readonly" class="pl-col__foot">
+      <InlineInput v-if="adding === 'end'" :label="strings.newItemIn(one, name)" :placeholder="strings.itemTitle" :hint="strings.addHint" @add="onAdd($event, 'end')" @close="emit('stopAdd', $event)" />
+      <button v-else type="button" class="pl-col__new" data-new data-foot :data-group="group.key" :aria-label="strings.newItemIn(one, name)" @click="emit('startAdd', 'end')">
+        <Icon name="plus" />{{ strings.newItem(one) }}
+      </button>
+    </footer>
   </section>
 </template>
 
@@ -155,71 +189,98 @@ defineExpose({
 .pl-col {
   position: relative;
   flex: none;
-  width: min(272px, calc(100cqw - 40px));
+  width: min(290px, calc(100cqw - 32px));
   min-height: 0;
   max-height: 100%;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-md);
+  border-radius: 10px;
+  background: var(--pl-tint);
+  --pl-card-bg: var(--bg-canvas);
+  --pl-card-line: var(--line-soft);
+}
+/* On light grounds a card is what is brighter. */
+:root[data-theme='light'] .pl-col {
+  background: color-mix(in oklab, var(--pl-tint) 62%, var(--line-soft));
+  --pl-card-bg: var(--bg-panel);
+  --pl-card-line: var(--line);
 }
 /* Without a line to show where: the sort decides. */
-.pl-col.is-sorted::after, .pl-col.is-collapsed.is-over::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border: 1px solid var(--accent-line);
-  border-radius: inherit;
-  pointer-events: none;
-}
-.pl-col__head { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px 0 8px; }
+.pl-col.is-lit { box-shadow: inset 0 0 0 1px var(--pl-dot); }
+.pl-col__head { flex: none; display: flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 8px 0 14px; }
 .pl-col__head.is-sortable { cursor: grab; }
+.pl-col__dot { flex: none; width: 8px; height: 8px; margin-right: 8px; border-radius: 50%; background: var(--pl-dot); }
 .pl-col__name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-xs);
-  font-weight: 560;
-  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--pl-fg);
 }
-.pl-col__count { flex: none; font-size: var(--text-xs); color: var(--fg-faint); font-variant-numeric: tabular-nums; }
+.pl-col__count { flex: none; margin-left: 4px; font-size: var(--text-xs); color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
 .pl-col__spring { flex: 1; }
-.pl-col__btn { opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
-.pl-col:hover .pl-col__btn, .pl-col:focus-within .pl-col__btn { opacity: 1; }
-@media (hover: none) { .pl-col__btn { opacity: 1; } }
 
-.pl-col__body { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 2px 0 0 8px; scrollbar-gutter: stable; }
-.pl-col__top { padding: 1px 2px 8px 0; }
-.pl-col__list { position: relative; display: flex; flex-direction: column; gap: 6px; padding-right: 2px; min-height: 2px; }
-.pl-col__card { flex: none; border-radius: var(--radius-sm); }
+.pl-col__body { flex: 1 1 auto; min-height: 0; overflow: hidden auto; padding: 1px 0 0 8px; scrollbar-gutter: stable; }
+.pl-col__top { padding: 2px 2px 8px 0; }
+.pl-col__list { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.pl-col__card { flex: none; border-radius: var(--radius-md); }
 /* Only there: a column as tall as its cards would be sized by the guess. */
-.pl-col__list.is-long > .pl-col__card { content-visibility: auto; contain-intrinsic-size: auto 52px; }
-.pl-col__card:hover > :deep(.pl-card) { background: var(--bg-raised); }
-.pl-col__card.is-open > :deep(.pl-card) { box-shadow: inset 0 0 0 1px var(--line-strong); background: var(--bg-raised); }
+.pl-col__list.is-long > .pl-col__card { content-visibility: auto; contain-intrinsic-size: auto 68px; }
+.pl-col__card:hover > :deep(.pl-card) { --pl-card-line: var(--line-strong); }
+.pl-col__card.is-open > :deep(.pl-card) { --pl-card-line: var(--line-strong); background: var(--bg-raised); }
 .pl-col__card.is-selected > :deep(.pl-card) {
-  background: color-mix(in oklab, var(--accent) 12%, var(--bg-panel));
-  box-shadow: inset 0 0 0 1px var(--accent-line);
+  --pl-card-line: var(--accent-line);
+  background: color-mix(in oklab, var(--accent) 12%, var(--pl-card-bg));
 }
 .pl-col__card.is-moving { opacity: 0.45; }
-.pl-col__card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
+.pl-col__card:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-md); }
 .pl-col__drop {
   position: absolute;
   left: 0;
-  right: 2px;
+  right: 0;
   top: -1px;
   height: 2px;
   border-radius: 2px;
   background: var(--accent);
   pointer-events: none;
 }
-.pl-col__foot { position: sticky; bottom: 0; padding: 6px 2px 6px 0; background: var(--bg-canvas); }
+
+.pl-col__zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 100px;
+  padding: 12px;
+  border: 1px dashed var(--pl-line);
+  border-radius: var(--radius-md);
+  color: var(--fg-subtle);
+  font-size: var(--text-sm);
+  text-align: center;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.pl-col__zone > * { pointer-events: none; }
+.pl-col__zone :deep(svg) { width: 14px; height: 14px; }
+.pl-col__zone:hover { border-color: color-mix(in oklab, var(--pl-dot) 60%, transparent); color: var(--fg-muted); }
+.pl-col__zone:focus-visible { outline-offset: -2px; border-radius: var(--radius-md); }
+.pl-col__zone.is-lit {
+  border-color: var(--pl-dot);
+  background: var(--pl-strong);
+  color: var(--pl-fg);
+}
+
+.pl-col__foot { flex: none; padding: 6px 8px 8px; }
 .pl-col__new {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
+  height: 30px;
+  padding: 0 10px;
   border-radius: var(--radius-sm);
   font-size: var(--text-sm);
   color: var(--fg-subtle);
@@ -227,9 +288,9 @@ defineExpose({
 }
 .pl-col__new :deep(svg) { width: 14px; height: 14px; }
 .pl-col__new:hover { background: var(--bg-hover); color: var(--fg); }
-.pl-col__new:focus-visible { outline-offset: -2px; }
+.pl-col__new:focus-visible { outline-offset: -2px; border-radius: var(--radius-sm); }
 
-.pl-col.is-collapsed { width: 36px; }
+.pl-col.is-collapsed { width: 40px; }
 .pl-col__strip {
   display: flex;
   flex-direction: column;
@@ -238,17 +299,14 @@ defineExpose({
   width: 100%;
   min-height: 0;
   max-height: 100%;
-  padding: 11px 0;
-  border-radius: var(--radius-md);
-  color: var(--fg-subtle);
-  font-size: var(--text-xs);
-  font-weight: 560;
+  padding: 16px 0 14px;
+  border-radius: 10px;
   overflow: hidden;
   transition: background var(--dur-fast) var(--ease-out);
 }
-.pl-col__strip:hover { background: var(--bg-hover); color: var(--fg); }
-.pl-col__strip:focus-visible { outline-offset: -2px; }
-.pl-col__chevron { flex: none; width: 14px; height: 14px; }
-.pl-col__vertical { writing-mode: vertical-rl; min-height: 0; max-height: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (prefers-reduced-motion: reduce) { .pl-col__btn, .pl-col__strip, .pl-col__new { transition: none; } }
+.pl-col__strip:hover { background: var(--bg-hover); }
+.pl-col__strip:focus-visible { outline-offset: -2px; border-radius: 10px; }
+.pl-col__strip .pl-col__dot, .pl-col__strip .pl-col__count { margin: 0; }
+.pl-col__vertical { writing-mode: vertical-rl; min-height: 0; max-height: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; color: var(--pl-fg); }
+@media (prefers-reduced-motion: reduce) { .pl-col__zone, .pl-col__strip, .pl-col__new { transition: none; } }
 </style>

@@ -67,7 +67,7 @@ export function onTab(text: string, start: number, end: number, back: boolean): 
   // A selection up to a line's start does not include that line.
   const to = lineEnd(text, end > start && text[end - 1] === '\n' ? end - 1 : end)
   const lines = text.slice(from, to).split('\n')
-  if (!back && lines.length === 1 && !ITEM.test(lines[0]!)) {
+  if (!back && start === end && !ITEM.test(lines[0]!)) {
     return { from: start, to: end, insert: '  ', start: start + 2, end: start + 2 }
   }
   let first = 0

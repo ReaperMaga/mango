@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { isSamePlace, positionAt, previewText, stepIndex } from '../plugins/planner/src/views/board/cards.ts'
+import { isSamePlace, positionAt, previewText, stepIndex, taskCount } from '../plugins/planner/src/views/board/cards.ts'
 
 const list = (s: string) => [...s].map(id => ({ id }))
 
@@ -28,4 +28,9 @@ test('a block moves one step and stops at the ends', () => {
 test('a preview is the plain words of a body', () => {
   assert.equal(previewText('# Head\n- [ ] do **this** and [that](http://x.y)\n> some_snake_case `code`'), 'Head do this and that some_snake_case code')
   assert.equal(previewText('word '.repeat(100), 10), 'word word…')
+})
+
+test('the tasks of a body are counted', () => {
+  assert.deepEqual(taskCount('- [x] a\n  * [ ] b\n1. [X] c\n[ ] not one\n- plain'), { done: 2, all: 3 })
+  assert.equal(taskCount('text'), null)
 })

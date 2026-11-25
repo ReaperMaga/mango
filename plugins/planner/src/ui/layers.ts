@@ -19,12 +19,17 @@ export function inOrAbove(layer: Layer, el: Node): boolean {
   return layers.slice(layers.indexOf(layer)).some(l => l.contains(el))
 }
 
-/** Mango's own menus, dialogs and toasts float over everything of the planner's. */
-export function inHostLayer(el: EventTarget | null): boolean {
-  return el instanceof Element && el.closest('.menu__pop, .dlg__panel, .toast') !== null
+/** Mango's dialogs that are open. A popover may be in one: those open before it are under it, not over it. */
+export const hostDialogs = (): Element[] => [...document.querySelectorAll('.dlg__panel')]
+
+/** In one of Mango's own menus, dialogs or toasts over the planner's layer. */
+export function inHostLayer(el: EventTarget | null, under: readonly Element[] = []): boolean {
+  const host = el instanceof Element ? el.closest('.menu__pop, .dlg__panel, .toast') : null
+  return host !== null && !under.includes(host)
 }
 
-export const hostLayerOpen = () => document.querySelector('.menu__pop, .dlg__panel') !== null
+export const hostLayerOpen = (under: readonly Element[] = []) =>
+  document.querySelector('.menu__pop') !== null || hostDialogs().some(d => !under.includes(d))
 
 /** Something floats that owns Escape: a popover of the planner, or a menu or dialog of Mango's. */
 export const anyLayerOpen = () => layers.length > 0 || hostLayerOpen()

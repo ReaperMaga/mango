@@ -26,6 +26,8 @@ export const strings = {
   noCollectionsForItem: 'There is no collection to add to yet. Make one in the planner first.',
   itemAdded: (name: string) => `Added to ${name}`,
   show: 'Show',
+  item: 'item',
+  items: 'items',
   itemCount: (n: number) => (n === 1 ? '1 item' : `${n} items`),
   noGroup: (property: string) => `No ${property.toLowerCase()}`,
   checked: 'Checked',
@@ -104,15 +106,22 @@ export const strings = {
     isNotEmpty: 'is not empty',
   } satisfies Record<Operator, string>,
 
+  itemNames: {
+    tasks: { one: 'task', many: 'tasks' },
+    bugs: { one: 'bug', many: 'bugs' },
+    notes: { one: 'note', many: 'notes' },
+    empty: { one: 'item', many: 'items' },
+  },
   templates: {
     tasks: { name: 'Tasks', description: 'Work on a board, with a status, a priority and a due date.' },
     bugs: { name: 'Bugs', description: 'Reports with a severity and a status, from new to fixed.' },
-    notes: { name: 'Notes', description: 'Pages with tags, in a plain list.' },
+    notes: { name: 'Notes', description: 'Pages with a status and tags, on a board.' },
     empty: { name: 'Empty', description: 'A table with nothing in it yet.' },
   },
   template: {
     board: 'Board', table: 'Table',
     status: 'Status', priority: 'Priority', due: 'Due', severity: 'Severity', tags: 'Tags', link: 'Link',
+    backlog: 'Backlog', review: 'Review',
     toDo: 'To do', inProgress: 'In progress', done: 'Done',
     high: 'High', medium: 'Medium', low: 'Low', critical: 'Critical', major: 'Major', minor: 'Minor',
     new: 'New', confirmed: 'Confirmed', fixing: 'Fixing', fixed: 'Fixed', edited: 'Edited',

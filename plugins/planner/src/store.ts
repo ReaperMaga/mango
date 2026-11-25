@@ -45,7 +45,8 @@ export interface NewCollection {
   icon?: string
   color?: Color
 }
-export type CollectionChange = Partial<Pick<Collection, 'name' | 'icon' | 'color' | 'scope'>>
+export type CollectionChange = Partial<Pick<Collection, 'name' | 'icon' | 'color' | 'scope' | 'description' | 'itemName'>>
+export type PropertyChange = Partial<Pick<Property, 'name' | 'defaultOption'>>
 
 export interface NewItem {
   title?: string
@@ -134,6 +135,7 @@ export interface PlannerStore {
   /* ---- properties and options */
   addProperty(collectionId: string, property: NewProperty, position?: Position): Property | null
   renameProperty(collectionId: string, propertyId: string, name: string, options?: ChangeOptions): void
+  updateProperty(collectionId: string, propertyId: string, change: PropertyChange, options?: ChangeOptions): void
   moveProperty(collectionId: string, propertyId: string, position: Position): void
   /** Converts every item's value. */
   setPropertyType(collectionId: string, propertyId: string, type: PropertyType): Promise<boolean>
@@ -142,7 +144,8 @@ export interface PlannerStore {
   addOption(collectionId: string, propertyId: string, name: string, color?: Color): Option | null
   updateOption(collectionId: string, propertyId: string, optionId: string, change: Partial<Pick<Option, 'name' | 'color'>>, options?: ChangeOptions): void
   moveOption(collectionId: string, propertyId: string, optionId: string, position: Position): void
-  deleteOption(collectionId: string, propertyId: string, optionId: string): Promise<boolean>
+  /** Its items get option `moveTo`, or none. One step to undo. */
+  deleteOption(collectionId: string, propertyId: string, optionId: string, options?: { moveTo?: string | null }): Promise<boolean>
 
   /* ---- views */
   addView(collectionId: string, view: NewView, position?: Position): View | null
@@ -690,7 +693,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     const id = newId()
     const at = Date.now()
     const view = viewOf(c, input.viewId)
-    const values = { ...(view ? defaultValues(c, view, input.group, at) : {}), ...input.values }
+    const values = { ...defaultValues(c, view, input.group, at), ...input.values }
     const place = placeAt(stateOf(collectionId).items, [id], input.position ?? 'end')
     const ok = mutate([
       {
@@ -835,6 +838,13 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     patchCollection(collectionId, [{ path: ['properties', propertyId, 'name'], value: name }], strings.did.editProperty, opts)
   }
 
+  function updateProperty(collectionId: string, propertyId: string, change: PropertyChange, opts?: ChangeOptions) {
+    const c = collection(collectionId)
+    if (!c || !propertyOf(c, propertyId)) return
+    const patch = fields(change).map(p => ({ ...p, path: ['properties', propertyId, ...p.path] }))
+    patchCollection(collectionId, effective(rawCollection(collectionId), patch), strings.did.editProperty, opts)
+  }
+
   function moveProperty(collectionId: string, propertyId: string, position: Position) {
     const c = collection(collectionId)
     if (c && propertyOf(c, propertyId)) patchCollection(collectionId, orderPatch(['properties'], placeAt(c.properties, [propertyId], position)), strings.did.editProperty)
@@ -936,19 +946,24 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     patchCollection(collectionId, orderPatch(['properties', propertyId, 'options'], placeAt(property.options, [optionId], position)), strings.did.editOption)
   }
 
-  async function deleteOption(collectionId: string, propertyId: string, optionId: string): Promise<boolean> {
+  async function deleteOption(collectionId: string, propertyId: string, optionId: string, opts: { moveTo?: string | null } = {}): Promise<boolean> {
     const list = await withItems(collectionId)
     const c = collection(collectionId)
-    const option = c && propertyOf(c, propertyId)?.options.find(o => o.id === optionId)
-    if (!list || !option) return false
+    const property = c && propertyOf(c, propertyId)
+    const option = property?.options.find(o => o.id === optionId)
+    if (!list || !property || !option) return false
+    const moveTo = property.options.find(o => o.id === opts.moveTo && o.id !== optionId)?.id ?? null
     const drop = (v: Json | undefined) => listOf(v).filter(e => e !== optionId)
+    /** Without it, or with the one that takes its place. */
+    const swap = (v: Json | undefined) => (moveTo ? [...new Set(listOf(v).map(e => (e === optionId ? moveTo : e)))] : drop(v))
     const patch: PatchOp[] = [
       { path: ['properties', propertyId, 'options', optionId] },
+      ...(property.defaultOption === optionId ? [{ path: ['properties', propertyId, 'defaultOption'], value: moveTo }] : []),
       ...viewPatches(collectionId, (v): JsonObject => {
         const f = isObject(v.filter) ? v.filter : {}
         const conditions = listOf(f.conditions).flatMap((e): Json[] => {
           if (!isObject(e) || e.propertyId !== propertyId || !Array.isArray(e.value) || !e.value.includes(optionId)) return [e]
-          const value = drop(e.value)
+          const value = swap(e.value)
           return value.length ? [{ ...e, value }] : []
         })
         return {
@@ -961,9 +976,9 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
       { ...collectionTarget(collectionId), op: 'patch', patch },
       ...list.flatMap((i): SourceOp[] => {
         const v = i.values[propertyId]
-        if (v === optionId) return [{ ...itemTarget(collectionId, i.id), op: 'patch', patch: [{ path: ['values', propertyId] }] }]
+        if (v === optionId) return [{ ...itemTarget(collectionId, i.id), op: 'patch', patch: [moveTo ? { path: ['values', propertyId], value: moveTo } : { path: ['values', propertyId] }] }]
         if (!Array.isArray(v) || !v.includes(optionId)) return []
-        return [{ ...itemTarget(collectionId, i.id), op: 'patch', patch: [{ path: ['values', propertyId], value: drop(v) }] }]
+        return [{ ...itemTarget(collectionId, i.id), op: 'patch', patch: [{ path: ['values', propertyId], value: swap(v) }] }]
       }),
     ], strings.did.deleteOption)
     if (ok) undoToast(strings.deletedOption(option.name))
@@ -1171,7 +1186,7 @@ export function createStore(mango: StoreHost, options: StoreOptions = {}): Plann
     linkChat: (c, id, threadId) => setChat(c, id, threadId, true),
     unlinkChat: (c, id, threadId) => setChat(c, id, threadId, false),
 
-    addProperty, renameProperty, moveProperty, setPropertyType, deleteProperty,
+    addProperty, renameProperty, updateProperty, moveProperty, setPropertyType, deleteProperty,
     addOption, updateOption, moveOption, deleteOption,
     addView, updateView, duplicateView, moveView, deleteView,
 

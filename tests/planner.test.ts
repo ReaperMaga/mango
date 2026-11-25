@@ -176,6 +176,28 @@ test('templates make collections that normalise to what they say', () => {
   assert.deepEqual(c.properties[0]!.options.map(o => o.name), ['To do', 'In progress', 'Done'])
 })
 
+test('model: documents from before custom colours, defaults and item names load as they were', () => {
+  const c = normalizeCollection({
+    name: 'Old', color: 'blue',
+    properties: { s: { name: 'Status', type: 'select', order: 'V', options: { a: { name: 'A', color: 'green', order: 'V' } } }, t: { name: 'T', type: 'text', order: 'W', defaultOption: 'a' } },
+  }, meta('c'))
+  assert.deepEqual([c.color, c.description, c.itemName], ['blue', '', null])
+  assert.deepEqual(c.properties.map(p => p.defaultOption), [null, null])
+  const names = (v: unknown) => normalizeCollection({ itemName: v }, meta('c')).itemName
+  assert.deepEqual(names({ one: ' note ' }), { one: 'note', many: 'note' })
+  assert.deepEqual(names({ one: 3, many: 'notes' }), { one: 'notes', many: 'notes' })
+  for (const bad of [null, 'note', {}, { one: ' ' }, []]) assert.equal(names(bad), null)
+})
+
+test('templates: notes are a board of statuses with a default', () => {
+  const c = normalizeCollection(templateData('notes'), meta('c'))
+  const status = c.properties[0]!
+  assert.deepEqual(status.options.map(o => [o.name, o.color]), [['Backlog', 'neutral'], ['In progress', 'blue'], ['Review', 'purple'], ['Done', 'green']])
+  assert.equal(status.defaultOption, status.options[0]!.id)
+  assert.deepEqual([c.views[0]!.type, c.views[0]!.groupBy, c.views[0]!.cardPreview], ['board', status.id, 'body'])
+  assert.deepEqual(c.itemName, { one: 'note', many: 'notes' })
+})
+
 /* ---------------------------------------------------------------- query */
 
 test('query: filters by type', () => {
