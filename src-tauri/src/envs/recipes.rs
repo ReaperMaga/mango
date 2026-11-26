@@ -43,6 +43,19 @@
 //! The GitLab CLI (`glab`) has no apt repository: it is one pinned release's .deb (amd64 or
 //! arm64), checked against the SHA-256 that release's checksums.txt lists, hard-coded in `GLAB`.
 //! To move to a newer glab, change `glab_v` and both sums together.
+//!
+//! Lore (Epic Games' version control) is the same idea: one pinned release from GitHub, whose
+//! tarballs come without published checksums, so the SHA-256 of each (x86_64 and aarch64, `lore`
+//! and `loreserver`) is hard-coded in `LORE_COMMON` from the downloads themselves. To move to a
+//! newer Lore, change `LORE_V` and all four sums together. `lore` is the CLI in /usr/local/bin.
+//! `lore-server` runs `loreserver` as the `lore` system user under systemd (`lore.service`), with
+//! its store in /var/lib/lore. Its settings are `/etc/lore/config/mango.toml` (`LORE_ENV=mango`),
+//! which Mango rewrites on every update; `local.toml` next to it loads after that and is the
+//! owner's, written once and never touched again (sign-in through an identity provider goes there).
+//! The server has no sign-in of its own: whoever reaches port 41337 (QUIC over UDP for the CLI,
+//! gRPC over TCP) can read and write. Out of the box only this server's instances reach it; the
+//! `lore` module publishes it outside on request. Without a certificate it makes a self-signed one
+//! at every start; clients do not pin it, so a restart does not lock them out.
 
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -55,7 +68,7 @@ use super::{hosts, ssh, valid_instance, valid_java_version, valid_master_path, v
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvComponent {
-    /// "base" | "claude" | "codex" | "gh" | "glab" | "node" | "java" | "chromium" | "desktop" | "docker" | "tailscale"
+    /// "base" | "claude" | "codex" | "gh" | "glab" | "lore" | "lore-server" | "node" | "java" | "chromium" | "desktop" | "docker" | "tailscale"
     pub id: String,
     pub name: String,
     pub description: String,
@@ -65,6 +78,8 @@ pub struct EnvComponent {
     pub requires: Vec<String>,
     /// A version can be picked for it (`env_versions` lists them).
     pub versioned: bool,
+    /// For a component that is a service (the Lore server): whether it runs. `None` for the others.
+    pub running: Option<bool>,
 }
 
 pub(crate) struct Recipe {
@@ -117,6 +132,22 @@ pub(crate) const RECIPES: &[Recipe] = &[
         description: "glab, GitLab's own release package (checked against its SHA-256): merge requests, issues and git sign-in on gitlab.com and your own GitLab servers.",
         requires: &["base"],
         script: GLAB,
+        version_var: None,
+    },
+    Recipe {
+        id: "lore",
+        name: "Lore CLI",
+        description: "lore, Epic Games' version control (a pinned release, checked against its SHA-256): for Lore projects in this environment.",
+        requires: &["base"],
+        script: LORE,
+        version_var: None,
+    },
+    Recipe {
+        id: "lore-server",
+        name: "Lore server",
+        description: "A Lore server (loreserver) running as a service, its data in /var/lib/lore. It has no sign-in: anyone who can reach it can read and write, so only this server's environments reach it unless you publish it.",
+        requires: &["base"],
+        script: LORE_SERVER,
         version_var: None,
     },
     Recipe {
@@ -400,6 +431,153 @@ else
   rm -rf "$glab_tmp"
 fi
 glab --version | head -n 1
+"##;
+
+/// What both Lore recipes share: the pinned release and `lore_get`, which downloads one of its
+/// tarballs for this machine, checks it against the sum pinned here and unpacks it into `$lore_tmp`.
+/// Added once, before the Lore scripts (`install_plan`).
+const LORE_COMMON: &str = r##"LORE_V=0.14.0
+lore_get() {
+  local arch sum file
+  case "$(uname -m)" in
+    x86_64|amd64) arch=x86_64 ;;
+    aarch64|arm64) arch=aarch64 ;;
+    *) fail "Lore has Linux builds for x86_64 and aarch64 only, not $(uname -m)." ;;
+  esac
+  case "$1-$arch" in
+    lore-x86_64) sum=c2fe93b416a99fd7375ff9e94426c380bf3239fd4f9af9c9673000002fad52c3 ;;
+    lore-aarch64) sum=fd50f322fa5aec3678606736d4953529a9047ac8a6ea658c35cc14f99d25c78d ;;
+    loreserver-x86_64) sum=900c0b508d2bb8856d9de1824c457b10bd3b33c1e0927fdecd9ed8511446cf81 ;;
+    loreserver-aarch64) sum=1e05734bc99af913bf3643cce64dec97258adb6f892aae97b0f85df1ec15719a ;;
+    *) fail "Mango has no checksum for $1 on $arch." ;;
+  esac
+  file="$1-v$LORE_V-$arch-unknown-linux-gnu.tar.gz"
+  lore_tmp=$(mktemp -d)
+  echo "Downloading $file"
+  curl -fsSL "https://github.com/EpicGames/lore/releases/download/v$LORE_V/$file" -o "$lore_tmp/$file" \
+    || { rm -rf "$lore_tmp"; fail "could not download $file from GitHub."; }
+  echo "$sum  $lore_tmp/$file" | sha256sum -c --quiet \
+    || { rm -rf "$lore_tmp"; fail "$file does not match the checksum Mango pins for it. Nothing was changed."; }
+  tar -xzf "$lore_tmp/$file" -C "$lore_tmp" --no-same-owner \
+    || { rm -rf "$lore_tmp"; fail "could not unpack $file."; }
+  [ -f "$lore_tmp/$1" ] || { rm -rf "$lore_tmp"; fail "$file has no $1 in it."; }
+}
+# The version a Lore binary reports (lore 0.14.0+2389 -> 0.14.0), or nothing.
+lore_version() { "$1" --version 2>/dev/null | head -n 1 | awk '{ print $2 }' | sed 's/+.*//' || true; }
+"##;
+
+const LORE: &str = r##"say "Lore CLI (lore, a pinned release from GitHub)"
+if [ -x /usr/local/bin/lore ] && [ "$(lore_version /usr/local/bin/lore)" = "$LORE_V" ]; then
+  echo "lore $LORE_V is up to date."
+else
+  lore_get lore
+  install -m 0755 "$lore_tmp/lore" /usr/local/bin/lore
+  rm -rf "$lore_tmp"
+fi
+/usr/local/bin/lore --version | head -n 1
+"##;
+
+/// The Lore server as a service. Mango's settings (`mango.toml`) are rewritten on every update;
+/// the owner's `local.toml` and the data in /var/lib/lore are kept.
+const LORE_SERVER: &str = r##"say "Lore server (loreserver, a pinned release from GitHub, as a service)"
+need_systemd "The Lore server"
+changed=0
+if [ -x /usr/local/bin/loreserver ] && [ "$(lore_version /usr/local/bin/loreserver)" = "$LORE_V" ]; then
+  echo "loreserver $LORE_V is up to date."
+else
+  lore_get loreserver
+  # install writes a new file, so a running server goes on with the old one until the restart below.
+  install -m 0755 "$lore_tmp/loreserver" /usr/local/bin/loreserver
+  rm -rf "$lore_tmp"
+  changed=1
+fi
+if ! id -u lore >/dev/null 2>&1; then
+  useradd --system --user-group --home-dir /var/lib/lore --no-create-home --shell /usr/sbin/nologin lore
+  echo "Created the system user lore."
+fi
+install -d -o lore -g lore -m 0750 /var/lib/lore /var/lib/lore/store
+install -d -m 0755 /etc/lore /etc/lore/config
+put /etc/lore/config/mango.toml 0644 <<'EOF' && changed=1
+# Written by Mango, and rewritten when Mango updates the Lore server: put your own settings
+# in local.toml next to this file, which loads after it and which Mango never changes.
+# One server on its own: everything is stored on this machine, in /var/lib/lore/store.
+# There is no sign-in ([server.auth] needs an OpenID Connect identity provider): anyone who
+# reaches port 41337 can read and write.
+
+[immutable_store]
+mode = "local"
+
+[mutable_store]
+mode = "local"
+
+[lock_store]
+mode = "local"
+
+[immutable_store.local]
+path = "/var/lib/lore/store"
+flush_delay_seconds = 10
+
+[mutable_store.local]
+path = "/var/lib/lore/store"
+flush_delay_seconds = 10
+
+[topology]
+provider = "none"
+
+[notification]
+mode = "local"
+
+[telemetry.logger]
+format = "ansi"
+EOF
+if [ ! -e /etc/lore/config/local.toml ]; then
+  cat > /etc/lore/config/local.toml <<'EOF'
+# Your own settings for this Lore server: they load after mango.toml and win over it.
+# Mango writes this file once and never changes it. Restart after a change:
+#   systemctl restart lore
+EOF
+  chmod 0644 /etc/lore/config/local.toml
+fi
+put /etc/systemd/system/lore.service 0644 <<'EOF' && changed=1
+[Unit]
+Description=Lore server (set up by Mango)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=lore
+Group=lore
+WorkingDirectory=/var/lib/lore
+Environment=RUST_LOG=info
+Environment=LORE_ENV=mango
+Environment=LORE_CONFIG_PATH=/etc/lore/config
+ExecStart=/usr/local/bin/loreserver
+LimitNOFILE=1048576
+NoNewPrivileges=true
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable lore.service >/dev/null 2>&1
+if [ "$changed" = 1 ]; then
+  systemctl restart lore.service
+else
+  systemctl start lore.service
+fi
+up=
+for _ in $(seq 60); do
+  if (exec 3<>/dev/tcp/127.0.0.1/41337) 2>/dev/null; then up=1; break; fi
+  sleep 0.5
+done
+if [ -z "$up" ]; then
+  systemctl --no-pager status lore.service || true
+  journalctl --no-pager -u lore.service -n 20 || true
+  fail "the Lore server did not start (see above)."
+fi
+echo "loreserver $LORE_V is running on port 41337 (UDP and TCP). It has no sign-in: only this server's environments reach it, unless you publish it from its page in Mango."
 "##;
 
 const CLAUDE: &str = r##"say "Claude Code (install or update)"
@@ -708,6 +886,9 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String], versi
         }
     }
     s.push_str(HEADER);
+    if recipes.iter().any(|r| r.id == "lore" || r.id == "lore-server") {
+        s.push_str(LORE_COMMON);
+    }
     for r in &recipes {
         s.push_str(r.script);
     }
@@ -759,6 +940,11 @@ if [ -d /home/agent/.sdkman/candidates/java/current ]; then
   [ -n "$j" ] || row java installed
 fi
 command -v gh >/dev/null 2>&1 && row gh "$(gh --version 2>/dev/null | first)"
+[ -x /usr/local/bin/lore ] && row lore "$(/usr/local/bin/lore --version 2>/dev/null | first)"
+if [ -x /usr/local/bin/loreserver ] && [ -f /etc/systemd/system/lore.service ]; then
+  row lore-server "$(/usr/local/bin/loreserver --version 2>/dev/null | first)"
+  row lore-server.state "$(systemctl is-active lore.service 2>/dev/null | first)"
+fi
 command -v glab >/dev/null 2>&1 && row glab "$(GLAB_CHECK_UPDATE=false glab --version 2>/dev/null | first)"
 if [ -x /usr/local/bin/mango-chromium-mcp ]; then
   v=$(/usr/local/lib/mango/chromium --version 2>/dev/null | first)
@@ -797,8 +983,13 @@ pub(crate) fn parse_probe(out: &str) -> Vec<EnvComponent> {
             let version = raw.and_then(|v| match r.id {
                 "base" | "java" => Some(v.to_string()).filter(|v| v != "installed"),
                 "desktop" => Some(upstream_version(v)).filter(|v| v != "installed"),
+                // `lore 0.14.0+2389`: the release, without its build number.
+                "lore" | "lore-server" => version_token(v).map(|t| t.split('+').next().unwrap_or_default().to_string()),
                 _ => version_token(v),
             });
+            let state_key = format!("{}.state", r.id);
+            let running = (r.id == "lore-server" && raw.is_some())
+                .then(|| found.iter().any(|(k, v)| *k == state_key && *v == "active"));
             EnvComponent {
                 id: r.id.into(),
                 name: r.name.into(),
@@ -807,6 +998,7 @@ pub(crate) fn parse_probe(out: &str) -> Vec<EnvComponent> {
                 version,
                 requires: r.requires.iter().map(|s| s.to_string()).collect(),
                 versioned: r.version_var.is_some(),
+                running,
             }
         })
         .collect()
@@ -1116,6 +1308,169 @@ mod tests {
         assert!(p.script.find("sha256sum -c --quiet").unwrap() < p.script.find("apt_install \"$glab_tmp/$glab_file\"").unwrap());
         assert!(p.script.find("useradd").unwrap() < p.script.find("glab_v=").unwrap());
         assert!(!p.nesting && !p.tailscale);
+    }
+
+    #[test]
+    fn lore_installs_pinned_checked_releases() {
+        assert_eq!(order(&["lore-server"]), ["base", "lore-server"]);
+        assert_eq!(order(&["lore-server", "lore", "claude"]), ["base", "lore", "lore-server", "claude"]);
+        let p = install_plan(&host(None), "lore", &ids(&["lore", "lore-server"]), &Versions::new()).unwrap();
+        // The shared part comes once, after the header and before both scripts.
+        assert_eq!(p.script.matches("lore_get() {").count(), 1);
+        assert!(p.script.find("need_systemd() {").unwrap() < p.script.find("lore_get() {").unwrap());
+        assert!(p.script.find("lore_get() {").unwrap() < p.script.find("lore_get lore\n").unwrap());
+        assert!(p.script.contains("LORE_V=0.14.0\n"));
+        assert!(p.script.contains("https://github.com/EpicGames/lore/releases/download/v$LORE_V/$file"));
+        assert!(p.script.contains("file=\"$1-v$LORE_V-$arch-unknown-linux-gnu.tar.gz\""));
+        // A full SHA-256 per binary and architecture, checked before anything is unpacked.
+        for name in ["lore", "loreserver"] {
+            for arch in ["x86_64", "aarch64"] {
+                let key = format!("{name}-{arch}) sum=");
+                let line = p.script.lines().find(|l| l.trim_start().starts_with(&key)).expect(&key);
+                let sum = line.split('=').nth(1).unwrap().trim_end_matches(" ;;");
+                assert!(sum.len() == 64 && sum.bytes().all(|b| b.is_ascii_hexdigit()), "{line}");
+            }
+        }
+        assert!(p.script.find("sha256sum -c --quiet").unwrap() < p.script.find("tar -xzf \"$lore_tmp").unwrap());
+        // The server: its own user, data and settings Mango keeps apart from the owner's, a service that restarts.
+        for want in [
+            "useradd --system --user-group --home-dir /var/lib/lore",
+            "put /etc/lore/config/mango.toml 0644",
+            "path = \"/var/lib/lore/store\"",
+            "if [ ! -e /etc/lore/config/local.toml ]; then",
+            "Environment=LORE_ENV=mango",
+            "Environment=LORE_CONFIG_PATH=/etc/lore/config",
+            "Restart=always",
+            "User=lore",
+            "systemctl enable lore.service",
+        ] {
+            assert!(p.script.contains(want), "{want}");
+        }
+        assert!(!p.script.contains("/tmp/lore-server"), "the store must not be in /tmp");
+        // Neither Lore script is in a plan without them.
+        let p = install_plan(&host(None), "dev", &ids(&["claude"]), &Versions::new()).unwrap();
+        assert!(!p.script.contains("lore_get") && !p.script.contains("LORE_V"));
+    }
+
+    #[test]
+    fn lore_probe() {
+        let c = parse_probe("lore\tlore 0.14.0+2389\nlore-server\tloreserver 0.14.0\nlore-server.state\tactive\n");
+        let get = |id: &str| c.iter().find(|x| x.id == id).unwrap().clone();
+        assert_eq!(get("lore").version.as_deref(), Some("0.14.0"));
+        assert_eq!(get("lore").running, None);
+        assert_eq!(get("lore-server").version.as_deref(), Some("0.14.0"));
+        assert_eq!(get("lore-server").running, Some(true));
+        assert_eq!(get("lore-server").requires, ["base"]);
+        let c = parse_probe("lore-server\tloreserver 0.14.0\nlore-server.state\tfailed\n");
+        assert_eq!(c.iter().find(|x| x.id == "lore-server").unwrap().running, Some(false));
+        let c = parse_probe("");
+        let s = c.iter().find(|x| x.id == "lore-server").unwrap();
+        assert!(!s.installed && s.running.is_none());
+        // The state row is not a component of its own.
+        assert!(!c.iter().any(|x| x.id.ends_with(".state")));
+    }
+
+    /// Every component's script, and the probe, parse as the shell that runs them (`bash -n`,
+    /// `sh -n`). Skipped where there is no such shell (Windows).
+    #[test]
+    fn scripts_parse() {
+        let check = |shell: &str, script: &str| {
+            if let Ok(out) = std::process::Command::new(shell).args(["-n", "-c", script]).output() {
+                assert!(out.status.success(), "{shell}: {}", String::from_utf8_lossy(&out.stderr));
+            }
+        };
+        let all: Vec<String> = RECIPES.iter().map(|r| r.id.to_string()).collect();
+        let ts = EnvTailscale { tags: vec!["tag:mango".into()], auth_key_file: None };
+        let p = install_plan(&host(Some(ts)), "dev", &all, &Versions::new()).unwrap();
+        check("bash", &p.script);
+        check("sh", PROBE);
+        check("sh", &format!("{MASTER_PRELUDE}{MASTER_INSTALL}"));
+    }
+
+    /// The Lore scripts for real, outside an instance (network, Linux, ports 41437 and 41439 free):
+    /// `cargo test real_lore_scripts -- --ignored --nocapture`. Downloads both releases for both
+    /// architectures through `lore_get` (so the pinned sums are the published files'), then runs
+    /// `LORE` and `LORE_SERVER` as they are with their system paths moved into a scratch folder,
+    /// root-only commands stubbed and `systemctl` starting `loreserver` on the written config
+    /// (moved to port 41437 by the owner's `local.toml`, written first, which must survive), runs
+    /// both again (an update), and checks that a repository can be created and pushed to it over
+    /// this computer's first non-loopback address (as a published port is reached).
+    #[test]
+    #[ignore]
+    fn real_lore_scripts() {
+        let free = |p: u16| std::net::TcpListener::bind(("0.0.0.0", p)).is_ok() && std::net::UdpSocket::bind(("0.0.0.0", p)).is_ok();
+        assert!(free(41437) && free(41439), "ports 41437 and 41439 must be free for this test");
+        let dir = std::env::temp_dir().join(format!("mango-lore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("etc/lore/config")).unwrap();
+        let d = dir.to_string_lossy().to_string();
+        let mine = "# mine\n[server.quic]\nport = 41437\n[server.grpc]\nport = 41437\n[server.http]\nport = 41439\n";
+        std::fs::write(dir.join("etc/lore/config/local.toml"), mine).unwrap();
+        let header = HEADER
+            .replace("[ \"$(id -u)\" = 0 ] ||", "true ||")
+            .replace("command -v apt-get >/dev/null 2>&1 ||", "true ||")
+            .replace("trap 'rm -f /run/mango-tailscale-authkey' EXIT\n", "");
+        let sandbox = |s: &str| {
+            s.replace("/usr/local/bin/", &format!("{d}/bin/"))
+                .replace("/etc/lore", &format!("{d}/etc/lore"))
+                .replace("/etc/systemd/system/", &format!("{d}/systemd/"))
+                .replace("/var/lib/lore", &format!("{d}/var/lib/lore"))
+                .replace("-o lore -g lore ", "")
+                .replace("/dev/tcp/127.0.0.1/41337", "/dev/tcp/127.0.0.1/41437")
+        };
+        let stubs = format!(
+            r#"need_systemd() {{ :; }}
+useradd() {{ echo "(stub) useradd $*"; }}
+journalctl() {{ cat {d}/server.log; }}
+systemctl() {{
+  case "$1" in
+    restart|start)
+      [ ! -s {d}/pid ] || kill "$(cat {d}/pid)" 2>/dev/null || true
+      sleep 1
+      # Detached from this script's output, which the test reads to its end.
+      (cd {d}/var/lib/lore && LORE_ENV=mango LORE_CONFIG_PATH={d}/etc/lore/config exec {d}/bin/loreserver) > {d}/server.log 2>&1 < /dev/null &
+      echo $! > {d}/pid ;;
+    *) echo "(stub) systemctl $*" ;;
+  esac
+}}
+mkdir -p {d}/bin {d}/systemd {d}/var/lib
+"#
+        );
+        let run = |body: &str| {
+            let script = format!("set -Eeuo pipefail\n{header}{stubs}{}{}", sandbox(LORE_COMMON), sandbox(body));
+            let out = std::process::Command::new("bash").args(["-c", &script]).output().unwrap();
+            let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+            println!("{text}");
+            assert!(out.status.success(), "{text}");
+            text
+        };
+        // Every pinned sum matches what GitHub serves.
+        run("for a in x86_64 aarch64; do uname() { echo \"$a\"; }; for n in lore loreserver; do lore_get $n; echo \"ok $n $a\"; rm -rf \"$lore_tmp\"; done; done; unset -f uname\n");
+        let first = run(&format!("{LORE}{LORE_SERVER}"));
+        assert!(first.contains("Created the system user lore") || first.contains("useradd"));
+        assert!(first.contains("is running on port 41337"));
+        let conf = std::fs::read_to_string(dir.join("etc/lore/config/mango.toml")).unwrap();
+        assert!(conf.contains(&format!("{d}/var/lib/lore/store")));
+        // The owner's file is kept, on the first install and on an update.
+        let again = run(&format!("{LORE}{LORE_SERVER}"));
+        assert!(again.contains("lore 0.14.0 is up to date.") && again.contains("loreserver 0.14.0 is up to date."), "{again}");
+        assert_eq!(std::fs::read_to_string(dir.join("etc/lore/config/local.toml")).unwrap(), mine);
+        // A client reaches the server the script started over a non-loopback address, and its data lands in the store.
+        let client = format!(
+            "export HOME={d}/home; ip=$(hostname -I | awk '{{ print $1 }}'); echo \"via $ip\"; \
+             mkdir -p $HOME {d}/work/r && cd {d}/work/r && {d}/bin/lore -P repository create lore://$ip:41437/sandbox \
+             && echo hi > a.txt && {d}/bin/lore -P stage a.txt && {d}/bin/lore -P commit one && {d}/bin/lore -P push \
+             && {d}/bin/lore -P clone lore://$ip:41437/sandbox {d}/work/c && test -f {d}/work/c/a.txt"
+        );
+        let out = std::process::Command::new("bash").args(["-c", &client]).output().unwrap();
+        let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        println!("{text}");
+        if let Ok(pid) = std::fs::read_to_string(dir.join("pid")) {
+            let _ = std::process::Command::new("kill").arg(pid.trim()).status();
+        }
+        assert!(out.status.success() && text.contains("Pushed revision 1"), "{text}");
+        assert!(std::fs::read_dir(dir.join("var/lib/lore/store")).unwrap().next().is_some());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn picked(v: &[(&str, &str)]) -> Versions {
