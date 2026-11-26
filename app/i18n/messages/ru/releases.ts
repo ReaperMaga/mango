@@ -94,6 +94,7 @@ export const releases: Messages['releases'] = {
   readAgain: 'Обновить',
   onSite: 'Релизы на {site}',
   plastic: 'У проектов Unity VCS нет релизов GitHub или GitLab.',
+  lore: 'У проектов Lore нет релизов GitHub или GitLab.',
   noProject: 'Откройте проект, чтобы увидеть его релизы.',
   stopAgain: {
     github: 'Нажмите ещё раз, чтобы остановить запуск на {site}',

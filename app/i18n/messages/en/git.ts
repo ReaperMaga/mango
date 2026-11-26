@@ -238,6 +238,7 @@ export const git = {
     deleteLocalHint: 'Only the local branch is removed. The remote branch, if any, stays.',
     deleteTreeHint: 'Its worktree {folder} is removed too, unless it has uncommitted changes.',
     deleteUnityHint: 'Removed from the repository for everyone. Unity VCS only deletes a branch that has no changesets or child branches.',
+    deleteLoreHint: 'Lore archives the branch on the server, for everyone: it leaves every branch list, and its revisions are kept.',
     deleteAnyway: 'Delete anyway',
     mergeAsk: 'Merge {from} into {into}?',
     mergeReading: 'Reading what the merge brings…',

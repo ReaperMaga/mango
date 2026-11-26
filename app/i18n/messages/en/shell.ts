@@ -471,6 +471,17 @@ export const shell = {
       pull: 'Update',
       worktree: 'workspace',
     },
+    lore: {
+      commit: 'Commit',
+      commitAll: 'Commit all',
+      committed: 'Committed',
+      message: 'Commit message',
+      unit: 'revision',
+      units: 'revisions',
+      count: '{n} revision | {n} revisions',
+      pull: 'Sync',
+      worktree: 'working copy',
+    },
   },
   locks: {
     kept: 'Lock kept for {who} until {branch} is merged',

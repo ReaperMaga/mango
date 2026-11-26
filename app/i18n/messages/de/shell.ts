@@ -473,6 +473,17 @@ export const shell: Messages['shell'] = {
       pull: 'Aktualisieren',
       worktree: 'Workspace',
     },
+    lore: {
+      commit: 'Committen',
+      commitAll: 'Alles committen',
+      committed: 'Committet:',
+      message: 'Commit-Nachricht',
+      unit: 'Revision',
+      units: 'Revisionen',
+      count: '{n} Revision | {n} Revisionen',
+      pull: 'Synchronisieren',
+      worktree: 'Arbeitskopie',
+    },
   },
   locks: {
     kept: 'Sperre bleibt, bis {branch} gemergt ist: {who}',

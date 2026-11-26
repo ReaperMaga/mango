@@ -2,7 +2,7 @@ import { t } from '../i18n/index.ts'
 import type { VcsKind, VcsLock } from '~/types/ipc'
 
 /**
- * What differs between git and Unity Version Control in the shared source
+ * What differs between git, Unity Version Control and Lore in the shared source
  * control UI: the words for things, and which actions exist at all. Actions
  * a system doesn't have are left out, never imitated.
  */
@@ -38,6 +38,12 @@ export interface VcsTerms {
   mergePreview: boolean
   /** Rebase the current branch onto another from the branch popup. */
   rebase: boolean
+  /** Rename a branch from the branch popup. */
+  rename: boolean
+  /** Clear local branches in one go (only where deleting one is local: git). */
+  clearBranches: boolean
+  /** Hint under the delete confirmation: what deleting a branch does here. */
+  deleteHint: string
   /** Branch names are paths from the root (`/main/task`), and a new one is a child of its base. */
   pathBranches: boolean
   /** Files can be locked (exclusive checkout), and other people's locks are shown. */
@@ -46,6 +52,10 @@ export interface VcsTerms {
   shelves: boolean
   /** A chat can run in its own working copy: a linked worktree, or an extra Unity VCS workspace. */
   worktrees: boolean
+  /** The project lives on GitHub or GitLab: pull requests, issues and releases. */
+  forge: boolean
+  /** The commit graph (Git log tab) reads its history. */
+  log: boolean
   /** What that working copy is called: "worktree" / "workspace". */
   worktree: string
   /** Periodic refresh. Unity VCS scans the whole workspace, which can take seconds on a big project. */
@@ -57,15 +67,27 @@ const TERMS: Record<VcsKind, VcsTerms> = {
     name: 'git',
     get commit() { return t('shell.vcs.git.commit') }, get commitAll() { return t('shell.vcs.git.commitAll') }, get committed() { return t('shell.vcs.git.committed') }, get message() { return t('shell.vcs.git.message') },
     get unit() { return t('shell.vcs.git.unit') }, get units() { return t('shell.vcs.git.units') }, get pull() { return t('shell.vcs.git.pull') }, get worktree() { return t('shell.vcs.git.worktree') },
-    count: n => t('shell.vcs.git.count', n),
-    remotes: true, amend: true, merge: true, mergePreview: false, rebase: true, pathBranches: false, locks: false, shelves: false, worktrees: true, pollMs: 4000,
+    count: n => t('shell.vcs.git.count', n), get deleteHint() { return t('git.branches.deleteLocalHint') },
+    remotes: true, amend: true, merge: true, mergePreview: false, rebase: true, rename: true, clearBranches: true, pathBranches: false, locks: false, shelves: false, worktrees: true, forge: true, log: true, pollMs: 4000,
   },
   plastic: {
     name: 'Unity VCS',
     get commit() { return t('shell.vcs.plastic.commit') }, get commitAll() { return t('shell.vcs.plastic.commitAll') }, get committed() { return t('shell.vcs.plastic.committed') }, get message() { return t('shell.vcs.plastic.message') },
     get unit() { return t('shell.vcs.plastic.unit') }, get units() { return t('shell.vcs.plastic.units') }, get pull() { return t('shell.vcs.plastic.pull') }, get worktree() { return t('shell.vcs.plastic.worktree') },
-    count: n => t('shell.vcs.plastic.count', n),
-    remotes: false, amend: false, merge: true, mergePreview: true, rebase: false, pathBranches: true, locks: true, shelves: true, worktrees: true, pollMs: 15000,
+    count: n => t('shell.vcs.plastic.count', n), get deleteHint() { return t('git.branches.deleteUnityHint') },
+    remotes: false, amend: false, merge: true, mergePreview: true, rebase: false, rename: true, clearBranches: false, pathBranches: true, locks: true, shelves: true, worktrees: true, forge: false, log: false, pollMs: 15000,
+  },
+  /**
+   * Lore: one server, shown as the remote (`remote/main`); amend changes only an unpushed revision's
+   * message; a branch can't be renamed, and deleting one archives it on the server for everyone.
+   * Its status walks the whole working tree, so it is read as seldom as Unity VCS's.
+   */
+  lore: {
+    name: 'Lore',
+    get commit() { return t('shell.vcs.lore.commit') }, get commitAll() { return t('shell.vcs.lore.commitAll') }, get committed() { return t('shell.vcs.lore.committed') }, get message() { return t('shell.vcs.lore.message') },
+    get unit() { return t('shell.vcs.lore.unit') }, get units() { return t('shell.vcs.lore.units') }, get pull() { return t('shell.vcs.lore.pull') }, get worktree() { return t('shell.vcs.lore.worktree') },
+    count: n => t('shell.vcs.lore.count', n), get deleteHint() { return t('git.branches.deleteLoreHint') },
+    remotes: true, amend: true, merge: true, mergePreview: false, rebase: false, rename: false, clearBranches: false, pathBranches: false, locks: true, shelves: false, worktrees: false, forge: false, log: true, pollMs: 15000,
   },
 }
 

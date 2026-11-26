@@ -11,15 +11,15 @@ import type { Attachment } from '~/types/chat'
 /** A stored attachment as the backend reports it (the preview is made in the webview). */
 export type AttachmentInfo = Omit<Attachment, 'thumb'>
 
-/** Version control a project is under: git, or Unity Version Control (formerly Plastic SCM, CLI `cm`). */
-export type VcsKind = 'git' | 'plastic'
+/** Version control a project is under: git, Unity Version Control (formerly Plastic SCM, CLI `cm`), or Epic Games' Lore (CLI `lore`). */
+export type VcsKind = 'git' | 'plastic' | 'lore'
 
 export interface ProjectInfo {
   /** Absolute path of the project folder. */
   path: string
   /** Folder name. */
   name: string
-  /** Under version control: a git repository or a Unity VCS workspace (see `vcs`). */
+  /** Under version control: a git repository, a Unity VCS workspace or a Lore repository (see `vcs`). */
   isGit: boolean
   /** Which version control; null (or missing, from older builds) when there is none. */
   vcs?: VcsKind | null
@@ -186,9 +186,9 @@ export interface GitStatus {
   mainRoot: string | null
   /** Current branch, null when detached or not a repo. */
   branch: string | null
-  /** Short hash of HEAD (Unity VCS: the loaded changeset number), null on an unborn branch. */
+  /** Short hash of HEAD (Unity VCS: the loaded changeset number; Lore: `r<revision>`), null on an unborn branch. */
   head: string | null
-  /** Upstream ref such as "origin/main", null when none is set. */
+  /** Upstream ref such as "origin/main" (Lore: "remote/main", the server's side), null when none is set. */
   upstream: string | null
   ahead: number
   /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */

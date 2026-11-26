@@ -21,6 +21,7 @@ import { openPlugins } from '~/composables/pluginsView'
 import { parseTerminalTab } from '~/utils/terminalTabs'
 import { pluginNames, reg, setBuiltinCommands, shown } from '~/plugin-host/registry'
 import { iconComponent } from '~/plugin-host/icons'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -163,8 +164,8 @@ const actions = computed<Item[]>(() => {
       { id: 'toggle-git', group: 'Actions', label: ws.toolPanel === 'changes' ? t('shell.palette.hideChanges') : t('shell.palette.showChanges'), icon: GitBranch, keys: ws.keyParts('changes'), keywords: 'git source control changes diff commit push pull', run: () => ws.toggleGit() },
       { id: 'git-log.show', group: 'Actions', label: t('shell.palette.showGitLog'), icon: GitGraph, keys: ws.keyParts('git-log'), keywords: 'git log history commits graph branches', run: () => useGitLog().open() },
       { id: 'git-log.go-to-commit', group: 'Actions', label: t('shell.palette.goToCommit'), detail: t('shell.tools.gitLog'), icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
-      { id: 'toggle-links', group: 'Actions', label: forge.providerOf(ws.activeProjectPath) === 'gitlab' ? (ws.toolPanel === 'links' ? t('shell.palette.hideMerges') : t('shell.palette.showMerges')) : (ws.toolPanel === 'links' ? t('shell.palette.hidePulls') : t('shell.palette.showPulls')), icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() },
-      ...(ws.activeProject?.vcs === 'plastic' ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? t('shell.palette.hideReleases') : t('shell.palette.showReleases'), icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
+      ...(!vcsTerms(ws.activeProject?.vcs).forge ? [] : [{ id: 'toggle-links', group: 'Actions' as const, label: forge.providerOf(ws.activeProjectPath) === 'gitlab' ? (ws.toolPanel === 'links' ? t('shell.palette.hideMerges') : t('shell.palette.showMerges')) : (ws.toolPanel === 'links' ? t('shell.palette.hidePulls') : t('shell.palette.showPulls')), icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() }]),
+      ...(!vcsTerms(ws.activeProject?.vcs).forge ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? t('shell.palette.hideReleases') : t('shell.palette.showReleases'), icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? t('shell.sidebar.hide') : t('shell.sidebar.show'), icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: t('shell.palette.closeSplit'), icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }

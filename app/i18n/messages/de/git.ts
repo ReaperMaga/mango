@@ -240,6 +240,7 @@ export const git: Messages['git'] = {
     deleteLocalHint: 'Nur der lokale Branch wird entfernt. Ein Remote-Branch bleibt bestehen.',
     deleteTreeHint: 'Sein Worktree {folder} wird auch entfernt, sofern er keine uncommitteten Änderungen hat.',
     deleteUnityHint: 'Wird für alle aus dem Repository entfernt. Unity VCS löscht nur Branches ohne Changesets und untergeordnete Branches.',
+    deleteLoreHint: 'Lore archiviert den Branch auf dem Server, für alle: Er verschwindet aus allen Branch-Listen, seine Revisionen bleiben erhalten.',
     deleteAnyway: 'Trotzdem löschen',
     mergeAsk: '{from} in {into} mergen?',
     mergeReading: 'Inhalt des Merges wird gelesen …',

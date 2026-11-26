@@ -42,7 +42,7 @@ const allowed = computed(() => !!folder.value && store.consentOf(folder.value) =
 const consentHint = computed(() => {
   if (remote.value) return t('agents.languageServers.remoteHint')
   let what = alone.value ? t('agents.languageServers.folderHint') : t('agents.languageServers.projectHint')
-  if (answers.value && !alone.value && project.value?.isGit && project.value.vcs !== 'plastic') what += ` ${t('agents.languageServers.worktreesHint')}`
+  if (answers.value && !alone.value && project.value?.isGit && (project.value.vcs ?? 'git') === 'git') what += ` ${t('agents.languageServers.worktreesHint')}`
   return ws.editorLanguageServers ? what : `${what} ${t('agents.languageServers.offHint')}`
 })
 function allow(on: boolean) {

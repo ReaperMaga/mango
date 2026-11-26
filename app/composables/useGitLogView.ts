@@ -5,6 +5,7 @@ import { call } from '~/composables/useBackend'
 import { gitLogError, useGitLog } from '~/stores/gitLog'
 import { useGit } from '~/stores/git'
 import { createLaneLayout, looksLikeHash, parseLogQuery, type GraphRow } from '~/utils/gitLog'
+import { vcsTerms } from '~/utils/vcs'
 
 /*
  * The Git log view's state: what is loaded (a page at a time), the filters, search and jumps, the selection,
@@ -151,7 +152,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     try {
       const status = await call('git_status', { path: folder })
       if (mine !== token) return
-      if (!status.isRepo || status.vcs !== 'git') {
+      if (!status.isRepo || !vcsTerms(status.vcs).log) {
         phase.value = status.isRepo ? 'unity' : 'notRepo'
         setCommits([], false)
         return

@@ -10,6 +10,7 @@ import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
 import { SHORTCUTS, eventCombo, ownsKey } from '~/utils/shortcuts'
 import { reg as pluginReg, report as reportPlugin } from '~/plugin-host/registry'
+import { vcsTerms } from '~/utils/vcs'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
 export const isMod = (e: KeyboardEvent | MouseEvent) =>
@@ -78,8 +79,8 @@ export function useShortcuts() {
     split: () => { threads.isSplit ? threads.closePane(threads.activePaneId) : threads.split() },
     changes: () => { if (ws.hasProject) ws.toggleGit() },
     files: () => { if (ws.hasProject) ws.toggleFiles() },
-    links: () => { if (ws.hasProject) ws.toggleLinks() },
-    releases: () => { if (ws.hasProject && ws.activeProject?.vcs !== 'plastic') ws.toggleReleases() },
+    links: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleLinks() },
+    releases: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleReleases() },
     'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.
