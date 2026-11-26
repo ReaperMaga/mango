@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.8.0
+
+### New
+
+- Transcribe voice input live while recording.
+
 ## 0.7.0
 
 ### New
