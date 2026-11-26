@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.10.0
+
+### New
+
+- Add /handoff to go on in a new chat from a short handoff.
+- Require sign-in for Lore servers Mango sets up.
+
 ## 0.9.0
 
 ### New
