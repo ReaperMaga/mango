@@ -4,7 +4,7 @@ package live
 import (
 	"sync"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/store"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/store"
 )
 
 // Event is one committed write: the documents it changed. Or, with People, word that the space's people

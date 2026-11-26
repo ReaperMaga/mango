@@ -17,9 +17,9 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/api"
-	"github.com/ReaperMaga/mango/planner-server/internal/live"
-	"github.com/ReaperMaga/mango/planner-server/internal/store"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/api"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/live"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/store"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".

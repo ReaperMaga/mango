@@ -82,7 +82,7 @@ project's details, a `.meta` check and a reference search.
 
 The official [Planner plugin](plugins/planner/) keeps tasks, bugs and notes beside your chats: boards and tables with
 properties of your own, and pages linked to chats, with notes that turn Markdown into rich text as you type. With a
-[planner server](planner-server/) you host yourself, collections are shared between computers and people as they
+[planner server](plugins/planner/server/) you host yourself, collections are shared between computers and people as they
 change, and items can be assigned to the people of the space, Notion-style.
 
 ## Run it

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/patch"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/patch"
 )
 
 const (

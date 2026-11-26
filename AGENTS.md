@@ -125,7 +125,8 @@ src-tauri/src/
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
 scripts/try-agent.ts run an adapter against the real CLI
-plugins/             the official plugins (one folder each) and catalog.json, the catalog Settings > Plugins > Browse shows (also compiled in as the offline copy); planner/ is built from its src/
+plugins/             the official plugins (one folder each) and catalog.json, the catalog Settings > Plugins > Browse shows (also compiled in as the offline copy); planner/ is built from its src/,
+                     and planner/server/ is the planner server people host themselves (Go, its own module: `go vet ./... && go test ./...` there)
 mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its own package, see mobile/AGENTS.md
 ```
 

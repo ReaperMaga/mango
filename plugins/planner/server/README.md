@@ -13,8 +13,8 @@ Go 1.26 or newer. There is no C compiler involved (the SQLite driver is pure Go)
 from any platform:
 
 ```bash
-go build                                         # ./planner-server
-CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build   # for a Raspberry Pi or an ARM server
+go build -o planner-server .                                         # ./planner-server
+CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o planner-server .   # for a Raspberry Pi or an ARM server
 go test ./...
 ```
 

@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/live"
-	"github.com/ReaperMaga/mango/planner-server/internal/patch"
-	"github.com/ReaperMaga/mango/planner-server/internal/store"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/live"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/patch"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/store"
 )
 
 const (
