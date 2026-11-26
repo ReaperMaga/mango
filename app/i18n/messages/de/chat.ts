@@ -50,6 +50,8 @@ export const chat: Messages['chat'] = {
     createPrArgs: '[Hinweise, z. B. draft]',
     createRelease: 'Version setzen, taggen, pushen und aus dem Standard-Branch ein GitHub- oder GitLab-Release veröffentlichen',
     createReleaseArgs: '[Hinweise, z. B. minor]',
+    handoff: 'Den Agenten eine Übergabe schreiben lassen und in einem neuen Chat weitermachen, der damit statt mit dem ganzen Verlauf beginnt',
+    handoffArgs: '[Hinweise, z. B. was als Nächstes kommt]',
   },
   context: {
     title: 'Kontextfenster',

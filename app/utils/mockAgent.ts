@@ -3,6 +3,7 @@ import { approvalWaiters, stopFlags, type useThreads } from '~/stores/threads'
 import { simulatedTasks } from '~/agents'
 import { formatTokens } from '~/agents/context'
 import { baseName } from '~/utils/paths'
+import { HANDOFF_LEAD } from '~/utils/handoff'
 
 /**
  * Stand-in for a real Claude Code / Codex run. Streams a plausible sequence of
@@ -35,6 +36,34 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
     t.context = { ...mockContext(t.agent), used: 38_000, max: t.context?.max ?? 200_000, parts: undefined }
     delete t.cache
     store._pushPart(threadId, msg, { type: 'notice', level: 'info', text: before > 38_000 ? `Compacted: ${formatTokens(before)} to ${formatTokens(38_000)} tokens.` : 'Compacted.' })
+    store._clearLive(threadId)
+    store._setStatus(threadId, 'working', 'done')
+    return
+  }
+
+  if (prompt.includes(HANDOFF_LEAD)) {
+    // `/handoff`: the reply is the handoff, written without tools; the store starts the new chat from it.
+    const reply = store._pushPart(threadId, msg, { type: 'text', text: '' }) as Extract<Part, { type: 'text' }>
+    const handoff = [
+      '## Goal',
+      'Closing a tab should hand its pane to the neighbouring tab instead of leaving the pane blank.',
+      '## State',
+      'Done in `closeTab` on branch `fix/pane-fallback`, uncommitted. `pnpm test` passes; not yet looked at in the app.',
+      '## Decisions',
+      'The pane takes the next tab of its own strip, or the previous one at the end. Split panes with an empty strip close.',
+      '## Next',
+      '1. Check it in `pnpm dev` with two panes.',
+      '2. Commit as `fix(tabs): …` and open a pull request.',
+      '## Files',
+      '- `app/stores/threads.ts`: `closeTab`, `_refill`',
+      '',
+      'This is a **mock handoff** from Mango’s preview agent: nothing ran.',
+    ].join('\n')
+    for (const chunk of handoff.match(/\S+\s*/g) ?? []) {
+      if (stopped()) return
+      reply.text += chunk
+      await sleep(12)
+    }
     store._clearLive(threadId)
     store._setStatus(threadId, 'working', 'done')
     return

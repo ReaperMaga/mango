@@ -19,6 +19,7 @@ import { createdBy, linkFromRef } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
 import { createReleasePrompt } from '~/utils/createRelease'
+import { continuedTitle, handoffHistory, handoffPrompt, handoffReply, isHandoff } from '~/utils/handoff'
 import { useForge } from '~/stores/forge'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
@@ -961,7 +962,8 @@ export const useThreads = defineStore('threads', {
         // keep the run open there is nothing to disturb, so it goes straight in unless queueing was asked for.
         const ws = useWorkspace()
         const steer = (ws.followUp === 'steer') !== opposite
-        if ((steer || (this.live[id]?.idle && !opposite)) && !isCommand(queued.text)) await this.sendNow(id, queued.id)
+        // Not into a handoff: what is written then is for the chat that follows it.
+        if ((steer || (this.live[id]?.idle && !opposite)) && !isCommand(queued.text) && !handingOff.has(id)) await this.sendNow(id, queued.id)
         return
       }
       held.delete(id)
@@ -1136,7 +1138,7 @@ export const useThreads = defineStore('threads', {
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? (useForge().providerOf(t.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text) && !isHandoff(text)) t.title = createPrPrompt(text) ? (useForge().providerOf(t.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist(t.id)
     },
@@ -1208,6 +1210,14 @@ export const useThreads = defineStore('threads', {
         this.persist(id)
         return
       }
+      const handoff = isHandoff(text) && !idle
+      // Nothing said in this chat yet (the `/handoff` itself aside): nothing to hand on.
+      if (handoff && !t.sessionId && !t.history && t.messages.filter(m => m.role === 'user').length < 2) {
+        const m = this._pushAgentMessage(id)
+        if (m) this._pushPart(id, m, { type: 'notice', level: 'info', text: 'Nothing to hand off yet: /handoff starts a new chat from a conversation that has gone on for a while.' })
+        this.persist(id)
+        return
+      }
       t.status = 'queued'
       const turn = ++lastTurn
       turns.set(id, turn)
@@ -1242,17 +1252,77 @@ export const useThreads = defineStore('threads', {
       }
       if (useWorkspace().editorAutoSave && !idle) await this._saveFilesOf(id)
       if (!current()) return this._standDown(id)
-      // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
+      // Mango's own `/create-pr`, `/create-release` and `/handoff`: the chat keeps the command, the agent gets the instructions.
       // GitHub's `gh` or GitLab's `glab`, by where the project's repository lives (read with the titlebar's button).
       const forge = useForge().providerOf(t.projectPath)
-      const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
+      const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? handoffPrompt(text) ?? text
       // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
       const handOver = t.history && !t.sessionId
+      if (handoff) handingOff.add(id)
       const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments, idle)
+        .finally(() => { if (handoff) handingOff.delete(id) })
       // Never started: the history still has to go along next time, and no turn finished.
       if (!started) return this._standDown(id)
       if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
       emitTurnEnd(id, this.byId(id)?.status !== 'error')
+      if (handoff) this._continueIn(id)
+    },
+
+    /**
+     * `/handoff` answered: a new chat in the same folder, with the same agent and settings, that holds the
+     * handoff and gives it to its agent with the first message written there. It takes the old chat's place
+     * in a pane showing it; messages written while the handoff ran go out there. The old chat stays as it is.
+     */
+    _continueIn(id: string): Thread | null {
+      const src = this.byId(id)
+      const handoff = src && !src.parentId ? handoffReply(src.messages) : null
+      if (!src || !handoff) return null
+      const now = Date.now()
+      const t: Thread = {
+        id: uid('t'),
+        projectPath: src.projectPath,
+        title: continuedTitle(src.title),
+        agent: src.agent,
+        model: src.model,
+        mode: src.mode,
+        effort: src.effort ?? null,
+        status: 'working',
+        messages: [{
+          id: uid('m'),
+          role: 'agent',
+          parts: [
+            { type: 'notice', level: 'info', text: `Continues “${src.title}”. ${AGENTS[src.agent].name} gets this handoff with your first message, not the conversation before it.` },
+            { type: 'text', text: handoff },
+          ],
+          createdAt: now,
+          outcome: 'done',
+        }],
+        createdAt: now,
+        updatedAt: now,
+        seen: true,
+        branch: src.branch ?? null,
+        continues: src.id,
+        history: handoffHistory(src.title, handoff),
+        ...(src.worktree ? { worktree: src.worktree } : {}),
+      }
+      this.threads.push(t)
+      useWindows().claimNew(t.id, src.projectPath)
+      // In the old chat's place where it is shown; beside its tab otherwise, without taking the focus.
+      if (this.panes.some(p => p.threadId === src.id)) this.replaceTab(src.id, t.id)
+      else this.addTab(t.id, src.id)
+      this.persistLayout()
+      const last = src.messages.findLast(m => m.role === 'agent')
+      if (last) this._pushPart(src.id, last, { type: 'notice', level: 'info', text: `Continued in a new chat: “${t.title}”.` })
+      this.persist([src.id, t.id])
+      emitThreadCreated(this.byId(t.id) ?? t)
+      // Written while the handoff ran: meant for what comes next.
+      const waiting = this.queue[src.id]
+      if (waiting?.length) {
+        delete this.queue[src.id]
+        this.queue[t.id] = waiting.map(q => ({ ...q, shown: false }))
+        void this._sendFollowUps(t.id)
+      }
+      return this.byId(t.id) ?? t
     },
 
     /** The agent reads the saved text: save what is open in the folders it works in. */
@@ -1523,6 +1593,8 @@ export const approvalWaiters = new Map<string, (allow: boolean) => void>()
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
 export const stopFlags = new Set<string>()
+/** Chats whose `/handoff` runs: messages written meanwhile wait for the chat that follows. */
+const handingOff = new Set<string>()
 /** Each chat's latest turn, until it is stopped: one that waited (files saving, a worktree) starts only as that. */
 const turns = new Map<string, number>()
 let lastTurn = 0

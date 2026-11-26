@@ -48,6 +48,8 @@ export const chat = {
     createPrArgs: '[notes, e.g. draft]',
     createRelease: 'Version, tag, push and publish a GitHub or GitLab release from the default branch',
     createReleaseArgs: '[notes, e.g. minor]',
+    handoff: 'Have the agent write a handoff, then go on in a new chat that starts from it instead of the whole conversation',
+    handoffArgs: '[notes, e.g. what comes next]',
   },
   context: {
     title: 'Context window',

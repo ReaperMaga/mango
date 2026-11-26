@@ -23,6 +23,7 @@ export const MANGO_COMMANDS: AgentCommand[] = [
   { name: 'clear', mango: true },
   { name: 'create-pr', mango: true },
   { name: 'create-release', mango: true },
+  { name: 'handoff', mango: true },
 ]
 
 /** Mango's commands as the list shows them. */
@@ -31,6 +32,7 @@ const mangoCommands = (): AgentCommand[] => {
     'clear': { description: t('chat.commands.clear') },
     'create-pr': { description: t('chat.commands.createPr'), argumentHint: t('chat.commands.createPrArgs') },
     'create-release': { description: t('chat.commands.createRelease'), argumentHint: t('chat.commands.createReleaseArgs') },
+    'handoff': { description: t('chat.commands.handoff'), argumentHint: t('chat.commands.handoffArgs') },
   }
   return MANGO_COMMANDS.map(c => ({ ...c, ...shown[c.name] }))
 }

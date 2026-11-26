@@ -197,6 +197,11 @@ export interface Thread {
    * writable chat; it is only listed under the original in the sidebar.
    */
   forkOf?: string
+  /**
+   * Set on a chat started by `/handoff`: the chat it continues. A normal chat listed on its own; its agent gets
+   * the handoff (`history`) with the first message, not the earlier conversation.
+   */
+  continues?: string
   /** Sub-agent chats: the tool call in the parent that started it. */
   toolId?: string
   /** Sub-agent chats: the kind of agent ("Explore", "general-purpose"). */
@@ -205,7 +210,8 @@ export interface Thread {
   links?: LinkedItem[]
   /**
    * The earlier messages as text, for the agent's next turn: set when the conversation was cut back
-   * (edit, regenerate) or branched, since the CLI's own session cannot be rewound. Sent once, ahead of the next message.
+   * (edit, regenerate) or branched, since the CLI's own session cannot be rewound, or the handoff of the chat this one continues.
+   * Sent once, ahead of the next message.
    */
   history?: string
   /** How full the conversation's context window was at its last reading; unset before the first reply or after `/clear`. */
@@ -229,7 +235,7 @@ export interface AgentModel {
 /**
  * A slash command the composer offers. Most come from the agent's CLI (built-ins, the user's
  * own commands and skills) and are sent as the message text, `/name args`; the adapter or the
- * CLI acts on them. `mango` ones are handled by the app itself (`/clear`, `/create-pr`, `/create-release`).
+ * CLI acts on them. `mango` ones are handled by the app itself (`/clear`, `/create-pr`, `/create-release`, `/handoff`).
  */
 export interface AgentCommand {
   /** Without the slash: "compact", "gsap-skills:gsap-core" */
