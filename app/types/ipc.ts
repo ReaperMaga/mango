@@ -1514,7 +1514,7 @@ export interface Commands {
    * A GitHub Actions job by its link (a check's `url`, `…/actions/runs/<run>/job/<job>`): its steps,
    * and once it finished, its log split into them. Other links are refused.
    */
-  gh_job: [{ url: string }, GhJob]
+  gh_job: [{ url: string; path?: string }, GhJob]
   /**
    * The GitHub releases of the project at `path` (which may be a remote project), newest first, up to
    * `count` (at most 100), with the repository's 50 most recent workflow runs.

@@ -11,7 +11,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::git::{blocking, run_process, At, Output};
-use crate::gitlab::{self, Forge, Provider};
+use crate::gitlab::{self, Forge, GlabAt, Provider};
 use crate::gitlab_items::{self, Route};
 
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(45);
@@ -624,7 +624,7 @@ pub async fn gh_merge(
     head_sha: String,
 ) -> Result<(), String> {
     blocking(move || match routed(&app, &path, &reference)? {
-        (Route::GitLab(target), _) => gitlab_items::merge(&target, &method, &head_sha),
+        (Route::GitLab(target), _) => gitlab_items::merge(&GlabAt::of(&app, &path)?, &target, &method, &head_sha),
         (Route::GitHub, forge) => merge(&reference, &method, &head_sha, || repo_of(&app, &path, forge.as_ref())),
     })
     .await
@@ -636,7 +636,7 @@ pub async fn gh_merge(
 #[tauri::command]
 pub async fn gh_item(app: AppHandle, path: String, reference: String) -> Result<GhItem, String> {
     blocking(move || match routed(&app, &path, &reference)? {
-        (Route::GitLab(target), _) => gitlab_items::fetch(&target),
+        (Route::GitLab(target), _) => gitlab_items::fetch(&GlabAt::of(&app, &path)?, &target),
         (Route::GitHub, forge) => item(&reference, || repo_of(&app, &path, forge.as_ref())),
     })
     .await
@@ -778,7 +778,7 @@ fn open_items((host, owner, repo): (String, String, String)) -> Result<GhOpenIte
 #[tauri::command]
 pub async fn gh_open_items(app: AppHandle, path: String) -> Result<GhOpenItems, String> {
     blocking(move || match forge_of(&app, &path) {
-        Some(f) if f.provider == Provider::GitLab => gitlab_items::open_items(&f),
+        Some(f) if f.provider == Provider::GitLab => gitlab_items::open_items(&GlabAt::of(&app, &path)?, &f),
         forge => open_items(repo_of(&app, &path, forge.as_ref())?),
     })
     .await
@@ -1164,12 +1164,14 @@ fn job(url: &str) -> Result<GhJob, String> {
 
 /// A GitHub Actions job by its link (a check's details link): its steps, and once it finished,
 /// its log split into them. A GitLab CI job link (`…/-/jobs/<id>`) on a GitLab server Mango knows
-/// comes back the same way, its log split by its sections.
+/// comes back the same way, its log split by its sections, read by the glab of the project at
+/// `path` (inside its environment when it is a remote project).
 #[tauri::command]
-pub async fn gh_job(app: AppHandle, url: String) -> Result<GhJob, String> {
+pub async fn gh_job(app: AppHandle, url: String, path: Option<String>) -> Result<GhJob, String> {
     blocking(move || {
         if gitlab_items::is_job_url(&url) {
-            gitlab_items::job(&url, |h| gitlab::is_gitlab_host(&app, h))
+            let at = GlabAt::of(&app, path.as_deref().unwrap_or_default())?;
+            gitlab_items::job(&at, &url, |h| gitlab::is_gitlab_host(&app, h))
         } else {
             job(&url)
         }

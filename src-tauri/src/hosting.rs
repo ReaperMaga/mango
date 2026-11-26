@@ -62,7 +62,7 @@ impl Tool {
     fn command(self) -> Command {
         let mut cmd = match self {
             Tool::Gh => crate::github::gh(None),
-            Tool::Glab => crate::gitlab::glab(None),
+            Tool::Glab => crate::gitlab::command_here(),
         };
         if let Some(home) = dirs::home_dir() {
             cmd.current_dir(home);

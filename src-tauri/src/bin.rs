@@ -38,6 +38,10 @@ fn extra_dirs() -> Vec<PathBuf> {
         dirs.push(program_files.join(r"Git\cmd"));
         dirs.push(program_files.join("nodejs"));
         dirs.push(program_files.join("GitHub CLI"));
+        dirs.push(program_files.join("glab"));
+        if let Some(x86) = std::env::var_os("ProgramFiles(x86)") {
+            dirs.push(PathBuf::from(x86).join("glab"));
+        }
     }
     #[cfg(unix)]
     for abs in ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin"] {
@@ -46,12 +50,74 @@ fn extra_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// The PATH Windows gives a program started now: the system's entries, then the
+/// user's, read from the registry. An installer run from the setup dialog adds
+/// its folder there, which the PATH this process started with never sees.
+#[cfg(windows)]
+fn registry_path() -> Vec<PathBuf> {
+    use windows::core::{w, PCWSTR};
+    use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
+    use windows::Win32::System::Registry::{
+        RegGetValueW, HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, RRF_NOEXPAND, RRF_RT_REG_EXPAND_SZ, RRF_RT_REG_SZ,
+    };
+
+    fn read(root: HKEY, key: PCWSTR) -> Option<Vec<u16>> {
+        let flags = RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND;
+        let mut bytes = 0u32;
+        // SAFETY: a size query, then a read into a buffer of the size it gave.
+        unsafe {
+            if RegGetValueW(root, key, w!("Path"), flags, None, None, Some(&mut bytes)).is_err() || bytes == 0 {
+                return None;
+            }
+            let mut buf = vec![0u16; (bytes as usize).div_ceil(2) + 1];
+            bytes = (buf.len() * 2) as u32;
+            if RegGetValueW(root, key, w!("Path"), flags, None, Some(buf.as_mut_ptr().cast()), Some(&mut bytes)).is_err() {
+                return None;
+            }
+            buf.truncate(buf.iter().position(|&c| c == 0).unwrap_or(buf.len()));
+            buf.push(0);
+            Some(buf)
+        }
+    }
+
+    fn expand(raw: &[u16]) -> Option<OsString> {
+        use std::os::windows::ffi::OsStringExt;
+        let src = PCWSTR(raw.as_ptr());
+        // SAFETY: `raw` ends in a NUL; the second call gets a buffer of the size the first asked for.
+        unsafe {
+            let needed = ExpandEnvironmentStringsW(src, None);
+            if needed == 0 {
+                return None;
+            }
+            let mut out = vec![0u16; needed as usize];
+            let written = ExpandEnvironmentStringsW(src, Some(&mut out));
+            if written == 0 || written > needed {
+                return None;
+            }
+            out.truncate(out.iter().position(|&c| c == 0).unwrap_or(out.len()));
+            Some(OsString::from_wide(&out))
+        }
+    }
+
+    [
+        (HKEY_LOCAL_MACHINE, w!(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment")),
+        (HKEY_CURRENT_USER, w!("Environment")),
+    ]
+    .into_iter()
+    .filter_map(|(root, key)| read(root, key))
+    .filter_map(|raw| expand(&raw))
+    .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+    .collect()
+}
+
 /// `$PATH` entries followed by the extra dirs, de-duplicated, in order.
 pub fn search_dirs() -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     let from_env = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect::<Vec<_>>())
         .unwrap_or_default();
+    #[cfg(windows)]
+    let from_env = from_env.into_iter().chain(registry_path()).collect::<Vec<_>>();
     for dir in from_env.into_iter().chain(extra_dirs()) {
         if !dir.as_os_str().is_empty() && !out.contains(&dir) {
             out.push(dir);

@@ -11,7 +11,7 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::git::blocking;
-use crate::gitlab::{Forge, Provider};
+use crate::gitlab::{Forge, GlabAt, Provider};
 use crate::gitlab_releases;
 use crate::github::{gh, project_repo, run_json, run_ok, run_state, some_text, text, GhAuthor, NO_REPO};
 
@@ -310,7 +310,7 @@ fn check_id(id: u64) -> Result<u64, String> {
 #[tauri::command]
 pub async fn gh_releases(app: AppHandle, path: String, count: u32) -> Result<GhReleases, String> {
     blocking(move || match gitlab_of(&app, &path) {
-        Some(f) => gitlab_releases::releases(f, count),
+        Some(f) => gitlab_releases::releases(&GlabAt::of(&app, &path)?, f, count),
         None => releases(repo_of(&app, &path)?, count),
     })
     .await
@@ -320,7 +320,7 @@ pub async fn gh_releases(app: AppHandle, path: String, count: u32) -> Result<GhR
 #[tauri::command]
 pub async fn gh_tag_run(app: AppHandle, path: String, tag: String) -> Result<Option<GhRunDetail>, String> {
     blocking(move || match gitlab_of(&app, &path) {
-        Some(f) => gitlab_releases::tag_run(f, &tag),
+        Some(f) => gitlab_releases::tag_run(&GlabAt::of(&app, &path)?, f, &tag),
         None => tag_run(repo_of(&app, &path)?, &tag),
     })
     .await
@@ -332,7 +332,7 @@ pub async fn gh_run(app: AppHandle, path: String, id: u64) -> Result<GhRunDetail
     blocking(move || {
         let id = check_id(id)?;
         match gitlab_of(&app, &path) {
-            Some(f) => gitlab_releases::run_detail(f, id),
+            Some(f) => gitlab_releases::run_detail(&GlabAt::of(&app, &path)?, f, id),
             None => run_detail(repo_of(&app, &path)?, id),
         }
     })
@@ -345,7 +345,7 @@ pub async fn gh_run_action(app: AppHandle, path: String, id: u64, action: String
     blocking(move || {
         let id = check_id(id)?;
         match gitlab_of(&app, &path) {
-            Some(f) => gitlab_releases::run_action(f, id, &action),
+            Some(f) => gitlab_releases::run_action(&GlabAt::of(&app, &path)?, f, id, &action),
             None => run_action(repo_of(&app, &path)?, id, &action),
         }
     })

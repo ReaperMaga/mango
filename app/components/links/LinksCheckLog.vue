@@ -14,7 +14,7 @@ import { formatDuration, useNow } from '~/utils/time'
  * first error scrolls into view. While the job runs, its steps update every few seconds; the forge
  * hands out the log once the job has finished.
  */
-const props = defineProps<{ check: OpenCheck }>()
+const props = defineProps<{ check: OpenCheck; projectPath?: string | null }>()
 
 const { t } = useI18n()
 const links = useLinks()
@@ -46,12 +46,12 @@ function schedule() {
   if (!d || d.loading || !wantsMore()) return
   poller = setTimeout(() => {
     if (document.hidden) { schedule(); return }
-    void links.loadJob(props.check.url)
+    void links.loadJob(props.check.url, props.projectPath)
   }, d.error ? POLL_MS * 3 : POLL_MS)
 }
 onMounted(() => {
   // A finished job's log never changes (a re-run is another job), so what was read stays good.
-  if (!(job.value?.logReady && finished.value)) void links.loadJob(props.check.url)
+  if (!(job.value?.logReady && finished.value)) void links.loadJob(props.check.url, props.projectPath)
 })
 watch(() => [detail.value?.loading, detail.value?.fetchedAt], schedule, { immediate: true })
 onBeforeUnmount(() => clearTimeout(poller))

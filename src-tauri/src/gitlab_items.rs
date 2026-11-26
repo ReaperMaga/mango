@@ -8,16 +8,15 @@
 //! (never `-F`, which reads `@file`).
 
 use std::path::PathBuf;
-use std::process::Command;
 
 use serde_json::Value;
 
-use crate::git::{run_process, At, Output};
+use crate::git::{At, Output};
 use crate::github::{
     is_sha, some_text, text, GhAuthor, GhCheck, GhItem, GhJob, GhJobStep, GhLabel, GhListItem, GhOpenItems, LOG_CAP,
-    STDOUT_CAP, STEP_LINES, TIMEOUT,
+    STDOUT_CAP, STEP_LINES,
 };
-use crate::gitlab::{self, absolute_url, is_namespace, is_segment, Forge, Provider};
+use crate::gitlab::{self, absolute_url, GlabAt, is_namespace, is_segment, Forge, Provider};
 
 const BAD_REFERENCE: &str = "Paste a merge request or issue link (https://gitlab.com/group/project/-/merge_requests/12), \
      or its reference (!12 for a merge request, #12 for an issue).";
@@ -231,13 +230,13 @@ fn schema_lacks_field(v: &Value) -> bool {
 
 /// `glab api graphql`: the JSON answer even when GraphQL reported errors (`glab` then exits non-zero
 /// but still prints the body), so the caller can see which.
-fn graphql(host: &str, query: &str, vars: &[(&str, &str)]) -> Result<Value, String> {
-    let mut cmd = gitlab::api(host, "graphql");
+fn graphql(at: &GlabAt, host: &str, query: &str, vars: &[(&str, &str)]) -> Result<Value, String> {
+    let mut cmd = gitlab::api(at, host, "graphql");
     for (name, value) in vars {
         cmd.arg("-f").arg(format!("{name}={value}"));
     }
     cmd.arg("-f").arg(format!("query={query}"));
-    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", gitlab::MISSING)?;
+    let out = cmd.run(STDOUT_CAP)?;
     if let Ok(v) = serde_json::from_slice::<Value>(&out.stdout) {
         if out.ok() || v.get("errors").is_some() || v.get("data").is_some() {
             return Ok(v);
@@ -249,18 +248,18 @@ fn graphql(host: &str, query: &str, vars: &[(&str, &str)]) -> Result<Value, Stri
     Err("The GitLab CLI answered with something unexpected.".into())
 }
 
-fn fetch_json(target: &Target) -> Result<Value, String> {
+fn fetch_json(at: &GlabAt, target: &Target) -> Result<Value, String> {
     let vars = [("fullPath", target.forge.full_path()), ("iid", target.iid.to_string())];
     let vars: Vec<(&str, &str)> = vars.iter().map(|(k, v)| (*k, v.as_str())).collect();
-    let v = graphql(&target.forge.host, &query(target.kind, true), &vars)?;
+    let v = graphql(at, &target.forge.host, &query(target.kind, true), &vars)?;
     if schema_lacks_field(&v) {
-        return graphql(&target.forge.host, &query(target.kind, false), &vars);
+        return graphql(at, &target.forge.host, &query(target.kind, false), &vars);
     }
     Ok(v)
 }
 
-pub(crate) fn fetch(target: &Target) -> Result<GhItem, String> {
-    item_from_json(&fetch_json(target)?, target)
+pub(crate) fn fetch(at: &GlabAt, target: &Target) -> Result<GhItem, String> {
+    item_from_json(&fetch_json(at, target)?, target)
 }
 
 fn iid_of(v: &Value) -> Option<u64> {
@@ -538,13 +537,13 @@ pub(crate) fn open_items_from_json(mrs: &Value, issues: &Value, f: &Forge) -> Gh
 /// Up to this many of each kind, as on GitHub.
 const OPEN_LIMIT: u32 = 30;
 
-pub(crate) fn open_items(f: &Forge) -> Result<GhOpenItems, String> {
+pub(crate) fn open_items(at: &GlabAt, f: &Forge) -> Result<GhOpenItems, String> {
     let get = |what: &str| {
         let endpoint = format!(
             "{}/{what}?state=opened&per_page={OPEN_LIMIT}&order_by=updated_at&sort=desc",
             f.api_project()
         );
-        gitlab::run_json(gitlab::api(&f.host, &endpoint), Some(&f.host))
+        gitlab::run_json(gitlab::api(at, &f.host, &endpoint), Some(&f.host))
     };
     let mrs = get("merge_requests")?;
     // A project with issues turned off answers 403/404 for them: its merge requests still list.
@@ -613,7 +612,7 @@ fn merge_error(out: &Output, target: &Target) -> String {
 }
 
 /// Merge a merge request with "merge" or "squash", only while its branch still points at `head_sha`.
-pub(crate) fn merge(target: &Target, method: &str, head_sha: &str) -> Result<(), String> {
+pub(crate) fn merge(at: &GlabAt, target: &Target, method: &str, head_sha: &str) -> Result<(), String> {
     match method {
         "merge" | "squash" => {}
         "rebase" => return Err("GitLab merges with a merge commit or squashes; rebasing is set per project on GitLab.".into()),
@@ -626,7 +625,7 @@ pub(crate) fn merge(target: &Target, method: &str, head_sha: &str) -> Result<(),
         return Err("Only merge requests can be merged; that is an issue.".into());
     }
     let f = &target.forge;
-    let mut cmd = gitlab::glab(None);
+    let mut cmd = gitlab::glab(at, None);
     cmd.args(["api", "--hostname", &f.host, "--method", "PUT"])
         .arg(format!("{}/merge_requests/{}/merge", f.api_project(), target.iid))
         // `sha`: GitLab refuses (409) when the branch moved since the user looked at it.
@@ -635,7 +634,7 @@ pub(crate) fn merge(target: &Target, method: &str, head_sha: &str) -> Result<(),
     if method == "squash" {
         cmd.arg("-f").arg("squash=true");
     }
-    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", gitlab::MISSING)?;
+    let out = cmd.run(STDOUT_CAP)?;
     if !out.ok() {
         return Err(merge_error(&out, target));
     }
@@ -675,10 +674,11 @@ fn created_target(text: &str, f: &Forge, is_gitlab: impl Fn(&str) -> bool) -> Op
 pub(crate) fn mr_create(app: &tauri::AppHandle, path: &str, base: &str, f: &Forge) -> Result<GhItem, String> {
     let base = crate::git::safe_ref(base)?.to_string();
     let is_gitlab = |h: &str| gitlab::is_gitlab_host(app, h);
-    let out = if let Some(env) = crate::vcs::env_at(app, path) {
-        let at = At::Env(Box::new(env?));
-        let mr = crate::git::pr_details(&at, &base, true)?;
-        let mut cmd = gitlab::glab(None);
+    let (out, glab_at) = if let Some(env) = crate::vcs::env_at(app, path) {
+        let env = env?;
+        let mr = crate::git::pr_details(&At::Env(Box::new(env.clone())), &base, true)?;
+        let glab_at = GlabAt::Env(Box::new(env));
+        let mut cmd = gitlab::glab(&glab_at, None);
         cmd.args(["api", "--hostname", &f.host, "--method", "POST"])
             .arg(format!("{}/merge_requests", f.api_project()))
             .arg("-f")
@@ -689,25 +689,25 @@ pub(crate) fn mr_create(app: &tauri::AppHandle, path: &str, base: &str, f: &Forg
             .arg(format!("title={}", mr.title))
             .arg("-f")
             .arg(format!("description={}", mr.body));
-        let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", gitlab::MISSING)?;
+        let out = cmd.run(STDOUT_CAP)?;
         if out.ok() {
             let v: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
             if let Some(iid) = iid_of(&v["iid"]) {
-                return read_created(&Target { forge: f.clone(), iid, kind: Kind::MergeRequest });
+                return read_created(&glab_at, &Target { forge: f.clone(), iid, kind: Kind::MergeRequest });
             }
         }
-        out
+        (out, glab_at)
     } else {
         let dir = PathBuf::from(path.trim());
         if path.trim().is_empty() || !dir.is_dir() {
             return Err(format!("{path} is not a folder"));
         }
         let mr = crate::git::pr_details(&At::local(&dir), &base, false)?;
-        let mut cmd: Command = gitlab::glab(Some(&dir));
+        let mut cmd = gitlab::glab(&GlabAt::Here, Some(&dir));
         cmd.args(["mr", "create", "--fill", "--yes"])
             .arg(format!("--source-branch={}", mr.branch))
             .arg(format!("--target-branch={base}"));
-        run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", gitlab::MISSING)?
+        (cmd.run(STDOUT_CAP)?, GlabAt::Here)
     };
     let all = format!("{}\n{}", out.text(), out.combined());
     let target = if out.ok() || all.to_lowercase().contains("already exists") {
@@ -716,11 +716,11 @@ pub(crate) fn mr_create(app: &tauri::AppHandle, path: &str, base: &str, f: &Forg
         return Err(gitlab::glab_error(&out, Some(&f.host)));
     };
     let target = target.ok_or_else(|| format!("The GitLab CLI did not say where the merge request is.\n{}", out.combined()))?;
-    read_created(&target)
+    read_created(&glab_at, &target)
 }
 
-fn read_created(target: &Target) -> Result<GhItem, String> {
-    fetch(target).map_err(|e| {
+fn read_created(at: &GlabAt, target: &Target) -> Result<GhItem, String> {
+    fetch(at, target).map_err(|e| {
         format!(
             "Opened https://{}/{}/-/merge_requests/{}, but could not read it back: {e}",
             target.forge.host,
@@ -1066,19 +1066,19 @@ fn job_from_json(v: &Value, url: &str) -> GhJob {
 
 /// A GitLab CI job by its link: its details and, once it started, its log split into steps by the
 /// sections in it. Unlike GitHub, GitLab has the log while the job runs.
-pub(crate) fn job(url: &str, is_gitlab: impl Fn(&str) -> bool) -> Result<GhJob, String> {
+pub(crate) fn job(at: &GlabAt, url: &str, is_gitlab: impl Fn(&str) -> bool) -> Result<GhJob, String> {
     let (f, id) = parse_job_url(url)?;
     if !is_gitlab(&f.host) {
         return Err(unknown_server(&f.host));
     }
     let endpoint = format!("{}/jobs/{id}", f.api_project());
-    let v = gitlab::run_json(gitlab::api(&f.host, &endpoint), Some(&f.host))?;
+    let v = gitlab::run_json(gitlab::api(at, &f.host, &endpoint), Some(&f.host))?;
     let mut job = job_from_json(&v, url);
     // Not started (queued, or a manual job nobody ran): there is no log yet.
     if job.started_at.is_none() {
         return Ok(job);
     }
-    let cmd = gitlab::api(&f.host, &format!("{endpoint}/trace"));
+    let cmd = gitlab::api(at, &f.host, &format!("{endpoint}/trace"));
     match gitlab::run_raw(cmd, Some(&f.host), LOG_CAP) {
         Ok(out) => {
             job.steps = split_trace(&String::from_utf8_lossy(&out.stdout), job.state);
@@ -1387,10 +1387,10 @@ mod tests {
     #[test]
     fn refuses_bad_merges_before_asking_gitlab() {
         let sha = "d013dd471daf6f6672ea035294ab4f01282f9c38";
-        assert!(merge(&target(Kind::MergeRequest), "rebase", sha).unwrap_err().contains("rebasing"));
-        assert!(merge(&target(Kind::MergeRequest), "ff", sha).unwrap_err().contains("not a merge method"));
-        assert!(merge(&target(Kind::MergeRequest), "merge", "HEAD").unwrap_err().contains("again"));
-        assert!(merge(&target(Kind::Issue), "merge", sha).unwrap_err().contains("issue"));
+        assert!(merge(&GlabAt::Here, &target(Kind::MergeRequest), "rebase", sha).unwrap_err().contains("rebasing"));
+        assert!(merge(&GlabAt::Here, &target(Kind::MergeRequest), "ff", sha).unwrap_err().contains("not a merge method"));
+        assert!(merge(&GlabAt::Here, &target(Kind::MergeRequest), "merge", "HEAD").unwrap_err().contains("again"));
+        assert!(merge(&GlabAt::Here, &target(Kind::Issue), "merge", sha).unwrap_err().contains("issue"));
     }
 
     #[test]
@@ -1423,7 +1423,7 @@ mod tests {
         ] {
             assert!(parse_job_url(bad).is_err(), "{bad:?} should be refused");
         }
-        assert!(job("https://evil.example.com/g/p/-/jobs/1", known).unwrap_err().contains("Settings > Git hosting"));
+        assert!(job(&GlabAt::Here, "https://evil.example.com/g/p/-/jobs/1", known).unwrap_err().contains("Settings > Git hosting"));
     }
 
     #[test]

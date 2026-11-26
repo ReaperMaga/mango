@@ -127,7 +127,7 @@ function closeCheck() { links.closeCheck() }
 // Another item or another chat: the log does not follow.
 watch(() => current.value?.key, (key) => { if (links.check && links.check.linkKey !== key) links.closeCheck() })
 const jobRefreshing = computed(() => !!(job.value?.loading && job.value.job))
-function refreshJob() { if (check.value) void links.loadJob(check.value.url) }
+function refreshJob() { if (check.value) void links.loadJob(check.value.url, projectPath.value) }
 function refresh() { if (current.value && projectPath.value) void links.load(current.value, projectPath.value, true) }
 function unlink(l: LinkedItem) {
   if (!chat.value) return
@@ -201,7 +201,7 @@ const linkedKeys = computed(() => list.value.map(l => l.key))
 
     <template v-else-if="current && check">
       <div class="lp__scroll">
-        <LinksCheckLog :key="check.url" :check="check" />
+        <LinksCheckLog :key="check.url" :check="check" :project-path="projectPath" />
       </div>
       <footer class="lp__foot">
         <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site: site(current) }) }}</UiButton>

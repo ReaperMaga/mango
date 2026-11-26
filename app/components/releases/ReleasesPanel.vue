@@ -112,7 +112,7 @@ async function openJob(j: GhRunJob) {
 function closeJob() { releases.closeJob() }
 const jobDetail = computed(() => (releases.job ? links.jobs[releases.job.url] : undefined))
 const jobRefreshing = computed(() => !!(jobDetail.value?.loading && jobDetail.value.job))
-function refreshJob() { if (releases.job) void links.loadJob(releases.job.url) }
+function refreshJob() { if (releases.job) void links.loadJob(releases.job.url, path.value) }
 
 /* ---------- actions ---------- */
 const refreshing = computed(() => !!(list.value?.loading && !list.value.quiet && data.value))
@@ -239,7 +239,7 @@ const backLabel = computed(() => {
     <!-- A job's log -->
     <template v-else-if="releases.job && entry">
       <div class="rp__scroll">
-        <LinksCheckLog :key="releases.job.url" :check="releases.job" />
+        <LinksCheckLog :key="releases.job.url" :check="releases.job" :project-path="path" />
       </div>
       <footer class="rp__foot">
         <UiButton size="sm" @click="openExternal(jobDetail?.job?.url || releases.job.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site }) }}</UiButton>
