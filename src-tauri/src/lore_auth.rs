@@ -303,7 +303,8 @@ auth_valid_id() { case $1 in *[!A-Za-z0-9._-]*) return 1 ;; esac; return 0; }
 auth_valid_port() { case $1 in ''|*[!0-9]*) return 1 ;; esac; [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
 
 # One setting: auth_setting KEY (empty when unset).
-auth_setting() { sed -n "s/^$1=//p" "$AUTH_ETC/settings" 2>/dev/null | head -n 1; }
+# (No settings file yet is no setting: sed's exit 2 on a missing file would end the script silently.)
+auth_setting() { [ -f "$AUTH_ETC/settings" ] || return 0; sed -n "s/^$1=//p" "$AUTH_ETC/settings" | head -n 1; }
 auth_users() { [ -f "$AUTH_ETC/users" ] && cut -f1 "$AUTH_ETC/users" || true; }
 auth_has_user() { auth_users | grep -Fqx -- "$1"; }
 # The users file without EMAIL's line.
@@ -882,6 +883,16 @@ mod tests {
         // It runs on its own: the validators answer before anything is touched.
         let out = bash(&tool, &["user-add", "not an email"]).unwrap();
         assert!(!out.status.success() && String::from_utf8_lossy(&out.stderr).contains("is not an email address"));
+    }
+
+    /// A first setup has no settings file yet: reading one is empty, not the end of the script
+    /// (`sed` exits 2 on a missing file, which errexit and pipefail turned into a silent exit 2).
+    #[test]
+    fn missing_settings_read_as_empty() {
+        let script = format!("{}AUTH_ETC=$(mktemp -d)/none; x=$(auth_setting GH_ID); echo \"reached [$x]\"\n", root());
+        let Some(out) = bash(&script, &[]) else { return eprintln!("no bash found; skipping") };
+        assert!(out.status.success(), "exit {:?}: {}", out.status.code(), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "reached []");
     }
 
     /// The validators in the script agree with the ones here.
