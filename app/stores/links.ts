@@ -75,6 +75,8 @@ const reads = new Map<string, number>()
 const sources = new Map<string, { url: string; projectPath: string }>()
 /** The same for job reads, by job link. */
 const jobReads = new Map<string, number>()
+/** The project each job was read for, so a read again (`retryFailed`) goes to the same glab. */
+const jobSources = new Map<string, string>()
 
 const message = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e))
 
@@ -197,14 +199,19 @@ export const useLinks = defineStore('links', {
       this.check = null
     },
 
-    /** Read a job (its steps, and its log once it finished). The newest read wins. */
-    async loadJob(url: string) {
+    /**
+     * Read a job (its steps, and its log once it finished). The newest read wins. `projectPath` is
+     * the project it belongs to: a remote project's GitLab jobs are read by the glab in its environment.
+     */
+    async loadJob(url: string, projectPath?: string | null) {
+      if (projectPath) jobSources.set(url, projectPath)
+      const path = jobSources.get(url)
       const had = this.jobs[url]
       const mine = (jobReads.get(url) ?? 0) + 1
       jobReads.set(url, mine)
       this.jobs[url] = { job: had?.job ?? null, fetchedAt: had?.fetchedAt ?? 0, loading: true, error: null }
       try {
-        const job = await call('gh_job', { url })
+        const job = await call('gh_job', path ? { url, path } : { url })
         if (jobReads.get(url) !== mine) return
         this.jobs[url] = { job, loading: false, error: null, fetchedAt: Date.now() }
       } catch (e) {

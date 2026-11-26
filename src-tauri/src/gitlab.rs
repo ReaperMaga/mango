@@ -22,8 +22,8 @@ const MAX_HOSTS: usize = 50;
 
 pub(crate) const MISSING: &str = "The GitLab CLI (glab) is not installed. Install it from Settings > Git hosting \
      (or https://gitlab.com/gitlab-org/cli), then sign in there.";
-pub(crate) const SIGNED_OUT: &str =
-    "The GitLab CLI is not signed in to this server. Sign in from Settings > Git hosting, then try again.";
+pub(crate) const SIGNED_OUT: &str = "The GitLab CLI is not signed in to this server. Sign in from Settings > Git hosting \
+     (for a remote project, on its environment's page in Settings > Environments), then try again.";
 pub(crate) const NO_PROJECT: &str =
     "Could not tell which GitLab project this project belongs to; paste the full link instead.";
 
@@ -322,31 +322,115 @@ fn glab_bin() -> PathBuf {
     crate::bin::find("glab").unwrap_or_else(|| PathBuf::from("glab"))
 }
 
-/// A `glab` invocation that never prompts and never prints colour, update notices or telemetry.
-pub(crate) fn glab(dir: Option<&Path>) -> Command {
+/// What every `glab` gets: never a prompt, colour, update notice or telemetry.
+const QUIET: [(&str, &str); 8] = [
+    ("NO_PROMPT", "1"),
+    ("GLAB_NO_PROMPT", "1"),
+    ("GLAB_CHECK_UPDATE", "false"),
+    ("GLAB_SEND_TELEMETRY", "false"),
+    ("NO_COLOR", "1"),
+    ("CLICOLOR", "0"),
+    ("FORCE_HYPERLINKS", "0"),
+    ("GIT_TERMINAL_PROMPT", "0"),
+];
+
+pub(crate) const MISSING_ENV: &str = "The GitLab CLI (glab) is not installed in this project's environment, nor on this \
+     computer. Install it on the environment's page in Settings > Environments, then sign in there.";
+
+/// Where `glab` runs. A remote project's GitLab calls run inside its environment, with the glab
+/// installed and signed in there (the phone does the same); only the list of servers stays here.
+#[derive(Debug, Clone)]
+pub(crate) enum GlabAt {
+    Here,
+    Env(Box<crate::git::EnvAt>),
+}
+
+impl GlabAt {
+    /// For the project at `path`: its environment when it is a remote project, else this computer.
+    pub(crate) fn of(app: &AppHandle, path: &str) -> Result<GlabAt, String> {
+        Ok(match crate::vcs::env_at(app, path.trim()) {
+            Some(env) => GlabAt::Env(Box::new(env?)),
+            None => GlabAt::Here,
+        })
+    }
+}
+
+/// One `glab` call: its arguments and where it runs (in `dir` when here).
+#[derive(Debug, Clone)]
+pub(crate) struct Glab {
+    at: GlabAt,
+    dir: Option<PathBuf>,
+    args: Vec<String>,
+}
+
+impl Glab {
+    pub(crate) fn arg(&mut self, arg: impl Into<String>) -> &mut Glab {
+        self.args.push(arg.into());
+        self
+    }
+
+    pub(crate) fn args<I: IntoIterator<Item = S>, S: Into<String>>(&mut self, args: I) -> &mut Glab {
+        self.args.extend(args.into_iter().map(Into::into));
+        self
+    }
+
+    /// Run it with stdout kept up to `cap` bytes. Inside an environment without glab, this
+    /// computer's glab answers if there is one (set up before glab ran in environments).
+    pub(crate) fn run(&self, cap: usize) -> Result<Output, String> {
+        let GlabAt::Env(env) = &self.at else {
+            return self.run_here(cap);
+        };
+        let vars: Vec<(String, String)> = QUIET.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let argv: Vec<String> = std::iter::once("glab".to_string()).chain(self.args.iter().cloned()).collect();
+        let out = env.run_plain(&vars, &argv, None, cap, TIMEOUT)?;
+        if !missing_in_env(&out) {
+            return Ok(out);
+        }
+        if crate::bin::find("glab").is_some() {
+            return self.run_here(cap);
+        }
+        Err(MISSING_ENV.into())
+    }
+
+    fn run_here(&self, cap: usize) -> Result<Output, String> {
+        let mut cmd = command_here();
+        cmd.args(&self.args);
+        if let Some(dir) = &self.dir {
+            cmd.current_dir(dir);
+        }
+        run_process(cmd, None, cap, TIMEOUT, "glab", MISSING)
+    }
+}
+
+/// This computer's `glab`, quiet, for Settings > Git hosting and [`Glab::run`].
+pub(crate) fn command_here() -> Command {
     let bin = glab_bin();
     let mut cmd = Command::new(&bin);
     crate::bin::hide_console(&mut cmd);
-    cmd.env("NO_PROMPT", "1")
-        .env("GLAB_NO_PROMPT", "1")
-        .env("GLAB_CHECK_UPDATE", "false")
-        .env("GLAB_SEND_TELEMETRY", "false")
-        .env("NO_COLOR", "1")
-        .env("CLICOLOR", "0")
-        .env("FORCE_HYPERLINKS", "0")
-        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd.envs(QUIET);
     if let Some(path) = crate::bin::augmented_path(bin.parent().filter(|p| !p.as_os_str().is_empty())) {
         cmd.env("PATH", path);
-    }
-    if let Some(dir) = dir {
-        cmd.current_dir(dir);
     }
     cmd
 }
 
+/// The environment's shell could not find `glab`.
+fn missing_in_env(out: &Output) -> bool {
+    if out.ok() {
+        return false;
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    out.code == Some(127) || stderr.lines().any(|l| l.contains("glab") && (l.ends_with("command not found") || l.ends_with(": not found")))
+}
+
+/// A `glab` call at `at`; `dir` is the folder it runs in on this computer (an environment's is its project's).
+pub(crate) fn glab(at: &GlabAt, dir: Option<&Path>) -> Glab {
+    Glab { at: at.clone(), dir: dir.map(Path::to_path_buf), args: Vec::new() }
+}
+
 /// `glab api --hostname {host} {endpoint}`: the start of every API call (the caller adds fields).
-pub(crate) fn api(host: &str, endpoint: &str) -> Command {
-    let mut cmd = glab(None);
+pub(crate) fn api(at: &GlabAt, host: &str, endpoint: &str) -> Glab {
+    let mut cmd = glab(at, None);
     cmd.args(["api", "--hostname", host, endpoint]);
     cmd
 }
@@ -362,7 +446,10 @@ pub(crate) fn glab_error(out: &Output, host: Option<&str>) -> String {
         || lower.contains("has not been authenticated")
     {
         return match host {
-            Some(h) if h != GITLAB_COM => format!("The GitLab CLI is not signed in to {h}. Sign in from Settings > Git hosting, then try again."),
+            Some(h) if h != GITLAB_COM => format!(
+                "The GitLab CLI is not signed in to {h}. Sign in from Settings > Git hosting (for a remote project, on \
+                 its environment's page in Settings > Environments), then try again."
+            ),
             _ => SIGNED_OUT.into(),
         };
     }
@@ -376,8 +463,8 @@ pub(crate) fn glab_error(out: &Output, host: Option<&str>) -> String {
 }
 
 /// Run `glab` and read its JSON answer.
-pub(crate) fn run_json(cmd: Command, host: Option<&str>) -> Result<Value, String> {
-    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", MISSING)?;
+pub(crate) fn run_json(cmd: Glab, host: Option<&str>) -> Result<Value, String> {
+    let out = cmd.run(STDOUT_CAP)?;
     if !out.ok() {
         return Err(glab_error(&out, host));
     }
@@ -385,14 +472,14 @@ pub(crate) fn run_json(cmd: Command, host: Option<&str>) -> Result<Value, String
 }
 
 /// Run `glab` for its effect only.
-pub(crate) fn run_ok(cmd: Command, host: Option<&str>) -> Result<(), String> {
-    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "glab", MISSING)?;
+pub(crate) fn run_ok(cmd: Glab, host: Option<&str>) -> Result<(), String> {
+    let out = cmd.run(STDOUT_CAP)?;
     if out.ok() { Ok(()) } else { Err(glab_error(&out, host)) }
 }
 
 /// Run `glab` and keep its whole output (a job log), up to `cap` bytes.
-pub(crate) fn run_raw(cmd: Command, host: Option<&str>, cap: usize) -> Result<Output, String> {
-    let out = run_process(cmd, None, cap, TIMEOUT, "glab", MISSING)?;
+pub(crate) fn run_raw(cmd: Glab, host: Option<&str>, cap: usize) -> Result<Output, String> {
+    let out = cmd.run(cap)?;
     if out.ok() { Ok(out) } else { Err(glab_error(&out, host)) }
 }
 
@@ -438,6 +525,16 @@ pub async fn gitlab_hosts_save(app: AppHandle, hosts: Vec<String>) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tells_glab_missing_in_an_environment() {
+        let out = |code: i32, stderr: &str| Output { code: Some(code), stdout: Vec::new(), stderr: stderr.into(), truncated: false };
+        assert!(missing_in_env(&out(127, "")));
+        assert!(missing_in_env(&out(1, "bash: line 1: glab: command not found")));
+        assert!(missing_in_env(&out(1, "sh: 1: glab: not found")));
+        assert!(!missing_in_env(&out(0, "")));
+        assert!(!missing_in_env(&out(1, "glab: 404 Project Not Found")));
+    }
 
     #[test]
     fn hosts() {

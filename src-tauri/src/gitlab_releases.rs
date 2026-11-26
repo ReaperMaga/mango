@@ -13,12 +13,11 @@
 //!   instead: every tag pipeline shares one id, other pipelines one per source.
 //! - Jobs carry their page (`…/-/jobs/<id>`) as `url`, which is where `gh_job` reads a log from.
 
-use std::process::Command;
 
 use serde_json::Value;
 
 use crate::github::{some_text, text, GhAuthor};
-use crate::gitlab::{self, Forge};
+use crate::gitlab::{self, Forge, Glab, GlabAt};
 use crate::releases::{GhAsset, GhRelease, GhReleases, GhRun, GhRunDetail, GhRunJob};
 
 /// How many releases the window lists at most (the same limit as GitHub's).
@@ -44,11 +43,11 @@ fn workflow_id(tag: bool, source: &str) -> u64 {
 }
 
 /// `glab api` on the project; `tail` is the path after `projects/<id>/`.
-fn api(f: &Forge, tail: &str) -> Command {
-    gitlab::api(&f.host, &format!("{}/{tail}", f.api_project()))
+fn api(at: &GlabAt, f: &Forge, tail: &str) -> Glab {
+    gitlab::api(at, &f.host, &format!("{}/{tail}", f.api_project()))
 }
 
-fn run_json(f: &Forge, cmd: Command) -> Result<Value, String> {
+fn run_json(f: &Forge, cmd: Glab) -> Result<Value, String> {
     gitlab::run_json(cmd, Some(&f.host))
 }
 
@@ -209,11 +208,11 @@ fn title_from_jobs(v: &Value) -> Option<String> {
 // What the commands do
 // ---------------------------------------------------------------------------
 
-pub(crate) fn releases(f: Forge, count: u32) -> Result<GhReleases, String> {
+pub(crate) fn releases(at: &GlabAt, f: Forge, count: u32) -> Result<GhReleases, String> {
     let count = count.clamp(1, MAX_RELEASES);
-    let list = api(&f, &format!("releases?per_page={count}&include_html_description=true"));
-    let recent = api(&f, &format!("pipelines?per_page={RECENT_RUNS}"));
-    let tags = api(&f, &format!("pipelines?scope=tags&per_page={RECENT_RUNS}"));
+    let list = api(at, &f, &format!("releases?per_page={count}&include_html_description=true"));
+    let recent = api(at, &f, &format!("pipelines?per_page={RECENT_RUNS}"));
+    let tags = api(at, &f, &format!("pipelines?scope=tags&per_page={RECENT_RUNS}"));
     // Three reads at once: each is a round trip to the server.
     let (list, recent, tags) = std::thread::scope(|s| {
         let recent = s.spawn(|| run_json(&f, recent));
@@ -231,9 +230,9 @@ pub(crate) fn releases(f: Forge, count: u32) -> Result<GhReleases, String> {
 }
 
 /// A pipeline by id, with its jobs (the ones that count: no retried ones).
-pub(crate) fn run_detail(f: Forge, id: u64) -> Result<GhRunDetail, String> {
-    let one = api(&f, &format!("pipelines/{id}"));
-    let jobs = api(&f, &format!("pipelines/{id}/jobs?per_page=100&include_retried=false"));
+pub(crate) fn run_detail(at: &GlabAt, f: Forge, id: u64) -> Result<GhRunDetail, String> {
+    let one = api(at, &f, &format!("pipelines/{id}"));
+    let jobs = api(at, &f, &format!("pipelines/{id}/jobs?per_page=100&include_retried=false"));
     let (one, jobs) = std::thread::scope(|s| {
         let jobs = s.spawn(|| run_json(&f, jobs));
         (run_json(&f, one), jobs.join().unwrap_or_else(|_| Err("Reading the pipeline's jobs failed.".into())))
@@ -247,11 +246,11 @@ pub(crate) fn run_detail(f: Forge, id: u64) -> Result<GhRunDetail, String> {
 }
 
 /// The newest pipeline that ran for a tag, with its jobs; None when none did.
-pub(crate) fn tag_run(f: Forge, tag: &str) -> Result<Option<GhRunDetail>, String> {
+pub(crate) fn tag_run(at: &GlabAt, f: Forge, tag: &str) -> Result<Option<GhRunDetail>, String> {
     let tag = crate::git::safe_ref(tag)?;
-    let v = run_json(&f, api(&f, &format!("pipelines?scope=tags&ref={}&per_page=1", gitlab::encode_path(tag))))?;
+    let v = run_json(&f, api(at, &f, &format!("pipelines?scope=tags&ref={}&per_page=1", gitlab::encode_path(tag))))?;
     let newest = runs_from_json(&f, &v, true).into_iter().filter(|r| r.head_branch.as_deref() == Some(tag)).max_by_key(|r| r.id);
-    newest.map(|run| run_detail(f, run.id)).transpose()
+    newest.map(|run| run_detail(at, f, run.id)).transpose()
 }
 
 /// A ref a new pipeline may run for: a branch or tag name, never a merge request's ref.
@@ -267,15 +266,15 @@ fn pipeline_ref(r: &str) -> Result<&str, String> {
 /// pipeline for the same branch or tag (GitLab cannot run a whole pipeline again in place; its
 /// own "Run pipeline" button does the same), without the variables the old one was started with.
 /// `cancel` cancels its jobs that have not finished.
-pub(crate) fn run_action(f: Forge, id: u64, action: &str) -> Result<(), String> {
+pub(crate) fn run_action(at: &GlabAt, f: Forge, id: u64, action: &str) -> Result<(), String> {
     let mut cmd = match action {
-        "rerun-failed" => api(&f, &format!("pipelines/{id}/retry")),
-        "cancel" => api(&f, &format!("pipelines/{id}/cancel")),
+        "rerun-failed" => api(at, &f, &format!("pipelines/{id}/retry")),
+        "cancel" => api(at, &f, &format!("pipelines/{id}/cancel")),
         "rerun" => {
-            let one = run_json(&f, api(&f, &format!("pipelines/{id}")))?;
+            let one = run_json(&f, api(at, &f, &format!("pipelines/{id}")))?;
             let r = one["ref"].as_str().unwrap_or_default();
             let r = pipeline_ref(r)?;
-            let mut cmd = api(&f, "pipeline");
+            let mut cmd = api(at, &f, "pipeline");
             // `-f` sends the value as a plain string, never a file.
             cmd.arg("-f").arg(format!("ref={r}"));
             cmd
@@ -491,9 +490,9 @@ mod tests {
 
     #[test]
     fn refuses_unknown_actions_unsafe_tags_and_merge_request_refs() {
-        assert!(run_action(forge(), 1, "delete").unwrap_err().contains("Unknown action"));
-        assert!(tag_run(forge(), "--upload-pack=x").is_err());
-        assert!(tag_run(forge(), "v1 x").is_err());
+        assert!(run_action(&GlabAt::Here, forge(), 1, "delete").unwrap_err().contains("Unknown action"));
+        assert!(tag_run(&GlabAt::Here, forge(), "--upload-pack=x").is_err());
+        assert!(tag_run(&GlabAt::Here, forge(), "v1 x").is_err());
         assert!(pipeline_ref("refs/merge-requests/3/head").is_err());
         assert!(pipeline_ref("-x").is_err());
         assert_eq!(pipeline_ref("v1.2.3"), Ok("v1.2.3"));

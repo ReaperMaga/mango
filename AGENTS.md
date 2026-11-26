@@ -208,7 +208,8 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   `envs/mod.rs` and reaches the remote shell only through `ssh::quote`; install scripts are constants in `recipes.rs`.
   Remote projects are keyed `env://<hostId>/<instance>/<dir>` (`utils/envPath.ts`). The `git_*`, `fs_*` and `gh_*`
   commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
-  repository is read from the remotes there); anything else that touches the local disk must skip them (`isEnvPath`).
+  repository is read from the remotes there; `glab` runs inside the instance, signed in there, through `gitlab::GlabAt`,
+  and falls back to this computer's only when the instance has none); anything else that touches the local disk must skip them (`isEnvPath`).
 - Remote round trips are the cost to watch (a fresh SSH connection is ~1 s on a distant server). Short captured commands
   share one background connection per host (`ssh::batch_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
   terminals, agents and tunnels keep their own. Git reads that would run one after another go in one call (`git::run_all`),
