@@ -185,6 +185,8 @@ fn git_info(dir: &Path) -> (bool, Option<String>) {
 fn inspect(path: &Path, last_opened: u64) -> ProjectInfo {
     let (is_git, branch, vcs) = match crate::vcs::detect_on_disk(path) {
         Some((crate::git::Vcs::Plastic, root)) => (true, crate::plastic::selector_branch(&root), Some(crate::git::Vcs::Plastic)),
+        // Lore keeps its branch in its own store; the Changes view's first status read fills it in.
+        Some((crate::git::Vcs::Lore, _)) => (true, None, Some(crate::git::Vcs::Lore)),
         _ => {
             let (is_git, branch) = git_info(path);
             (is_git, branch, is_git.then_some(crate::git::Vcs::Git))

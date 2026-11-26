@@ -20,8 +20,6 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
-use serde::Serialize;
-
 use super::{cm, key, parse_date, path_arg, rel_path, workspace_info};
 use crate::git::clean_rel;
 
@@ -31,28 +29,7 @@ const RECORD: char = '\u{1e}';
 /// Lock reads ask the server; don't let a slow one hold the Changes view for long.
 const LOCK_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// One lock in the workspace's repository.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VcsLock {
-    /// Relative to the workspace root, forward slashes.
-    pub path: String,
-    /// The user who holds it, as the server names them (often an email address).
-    pub owner: String,
-    /// The workspace it was taken from.
-    pub workspace: String,
-    /// The branch it was taken on.
-    pub branch: String,
-    /// "locked": checked out right now. "retained": checked in on a task branch,
-    /// held until that change reaches the destination branch.
-    pub status: &'static str,
-    /// When it was taken, unix ms.
-    pub time: Option<i64>,
-    /// Held by the signed-in user (in any workspace).
-    pub mine: bool,
-    #[serde(skip)]
-    pub item_id: u64,
-}
+pub use crate::vcs::VcsLock;
 
 /// The arguments that make `cm lock list` print one record per lock in the
 /// smart-lock layout (`parse_locks`).

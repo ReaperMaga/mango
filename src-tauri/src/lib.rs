@@ -20,6 +20,7 @@ mod gitlab_items;
 mod hosting;
 mod gitlab_releases;
 mod images;
+mod lore;
 mod lsp;
 mod mcp;
 mod notify;

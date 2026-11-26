@@ -26,6 +26,7 @@ use crate::git::blocking;
 use crate::vcs::{detect, Backend};
 
 const NO_GIT_SHELVES: &str = "Shelves are a Unity Version Control feature. In a git repository, use git stash in a terminal.";
+const NO_LORE_SHELVES: &str = "Shelves are a Unity Version Control feature; they aren't available for Lore projects.";
 /// The newest shelves shown; older ones are still on the server.
 const LIST_LIMIT: usize = 100;
 
@@ -196,6 +197,7 @@ where
     blocking(move || match detect(&app, &path)? {
         Backend::Plastic(root) => work(&root),
         Backend::Git(_) => Err(NO_GIT_SHELVES.into()),
+        Backend::Lore(_) => Err(NO_LORE_SHELVES.into()),
     })
     .await
 }
