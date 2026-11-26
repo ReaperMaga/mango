@@ -391,7 +391,7 @@ const consent = computed(() => {
   // A chat's folder that is no git worktree of the project answers for itself alone.
   const alone = path === root && threads.ownerOf(root) !== root
   const scope = alone ? 'folder' : 'project'
-  const worktrees = !alone && project?.isGit && project.vcs !== 'plastic'
+  const worktrees = !alone && project?.isGit && (project.vcs ?? 'git') === 'git'
   return {
     scope,
     name: project?.name ?? baseName(path),

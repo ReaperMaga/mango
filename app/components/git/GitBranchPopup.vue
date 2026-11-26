@@ -672,7 +672,7 @@ defineExpose({ show, close })
                     <span v-if="n.kind === 'section'" class="bp__count tabular">{{ n.count }}</span>
                   </button>
                   <UiIconButton
-                    v-if="n.key === 'local' && terms.remotes && clearable.length"
+                    v-if="n.key === 'local' && terms.clearBranches && clearable.length"
                     size="sm"
                     class="bp__row-btn"
                     :label="t('git.branches.clearItem')"
@@ -741,13 +741,12 @@ defineExpose({ show, close })
 
           <div v-else-if="view === 'delete' && target" class="bp__form">
             <p class="bp__form-title"><i18n-t keypath="git.branches.deleteAsk" scope="global"><template #branch><span class="bp__mono">{{ target.b.name }}</span></template></i18n-t></p>
-            <p v-if="terms.remotes" class="bp__hint">
-              {{ t('git.branches.deleteLocalHint') }}
+            <p class="bp__hint">
+              {{ terms.deleteHint }}
               <i18n-t v-if="trees.byBranch[target.b.name]" keypath="git.branches.deleteTreeHint" scope="global">
                 <template #folder><span class="bp__mono">{{ trees.byBranch[target.b.name] }}</span></template>
               </i18n-t>
             </p>
-            <p v-else class="bp__hint">{{ t('git.branches.deleteUnityHint') }}</p>
             <div class="bp__form-actions">
               <UiButton size="sm" variant="danger" :loading="busy === 'delete'" data-autofocus @click="remove(unmerged)">{{ unmerged ? t('git.branches.deleteAnyway') : t('common.actions.delete') }}</UiButton>
               <UiButton size="sm" variant="ghost" @click="backToList">{{ t('common.actions.cancel') }}</UiButton>
@@ -878,7 +877,7 @@ defineExpose({ show, close })
           </template>
           <template v-if="subRow.kind === 'local'">
             <div class="bp__sep" role="separator" />
-            <button type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="startName('rename', subRow)">
+            <button v-if="terms.rename" type="button" role="menuitem" class="bp__item" :disabled="!!busy" @click="startName('rename', subRow)">
               <span class="bp__icon"><Pencil /></span>
               <span class="bp__label">{{ t('git.branches.renameItem') }}</span>
             </button>

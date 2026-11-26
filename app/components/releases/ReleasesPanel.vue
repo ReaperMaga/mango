@@ -13,6 +13,7 @@ import { formatDuration, shortAgo, useNow } from '~/utils/time'
 import {
   entryState, groupAssets, isActive, isBad, latestRelease, totalDownloads, type ReleaseEntry,
 } from '~/utils/releaseRuns'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * The Releases tool window: the project's GitHub or GitLab releases, newest first, with the builds
@@ -28,8 +29,13 @@ const releases = useReleases()
 const links = useLinks()
 const now = useNow(1000)
 
-const plastic = computed(() => ws.activeProject?.vcs === 'plastic')
-const path = computed(() => (plastic.value ? null : ws.activeProjectPath))
+/** A project with no GitHub or GitLab behind it (Unity VCS, Lore): what to say instead of a list. */
+const noForge = computed(() => {
+  const vcs = ws.activeProject?.vcs
+  if (vcsTerms(vcs).forge) return null
+  return vcs === 'lore' ? t('releases.lore') : t('releases.plastic')
+})
+const path = computed(() => (noForge.value ? null : ws.activeProjectPath))
 const list = computed(() => (path.value ? releases.lists[path.value] : undefined))
 const data = computed(() => list.value?.data ?? null)
 const sorted = computed(() => releases.sorted(path.value))
@@ -233,7 +239,7 @@ const backLabel = computed(() => {
       </template>
     </header>
 
-    <div v-if="plastic" class="rp__quiet"><p>{{ t('releases.plastic') }}</p></div>
+    <div v-if="noForge" class="rp__quiet"><p>{{ noForge }}</p></div>
     <div v-else-if="!path" class="rp__quiet"><p>{{ t('releases.noProject') }}</p></div>
 
     <!-- A job's log -->

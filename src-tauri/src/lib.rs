@@ -20,6 +20,9 @@ mod gitlab_items;
 mod hosting;
 mod gitlab_releases;
 mod images;
+mod lore;
+mod lore_machines;
+mod lore_servers;
 mod lsp;
 mod mcp;
 mod notify;
@@ -205,6 +208,15 @@ pub fn run() {
             hosting::hosting_status,
             hosting::hosting_login,
             hosting::hosting_logout,
+            lore_servers::lore_cli,
+            lore_servers::lore_servers,
+            lore_servers::lore_server_upsert,
+            lore_servers::lore_server_remove,
+            lore_servers::lore_server_check,
+            lore_servers::lore_login,
+            lore_servers::lore_logout,
+            lore_machines::lore_machine_probe,
+            lore_machines::lore_machine_run,
             releases::gh_releases,
             releases::gh_tag_run,
             releases::gh_run,
@@ -244,6 +256,10 @@ pub fn run() {
             envs::recipes::env_components,
             envs::recipes::env_install,
             envs::recipes::env_versions,
+            envs::lore::env_lore_server,
+            envs::lore::env_lore_publish,
+            envs::lore::env_lore_unpublish,
+            envs::lore::env_host_addresses,
             envs::remote::env_shell,
             envs::remote::env_login,
             envs::remote::env_prepare_dir,

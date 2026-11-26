@@ -156,8 +156,13 @@ pub async fn env_login(
 
 /* ---------- project folders ---------- */
 
-/// A repository URL Mango will hand to `git clone`: https://, ssh://, or scp-like `user@host:path`.
+/// A repository URL Mango will hand to `git clone`: https://, ssh://, or scp-like `user@host:path`; or
+/// a Lore repository (`lore://host[:port]/name`) for `lore clone`.
 pub fn valid_clone_url(s: &str) -> Result<(), String> {
+    if crate::projects::is_lore_url(s) {
+        // `lore clone`: a Lore repository address, by its own rules.
+        return crate::lore_servers::parse_repo_url(s).map(|_| ());
+    }
     let bad = || Err(format!("\"{s}\" doesn't look like a git URL. Use https://…, ssh://… or git@host:owner/repo.git."));
     if s.is_empty() || s.len() > 2000 || s.starts_with('-') || s.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return bad();
@@ -193,29 +198,54 @@ pub fn valid_clone_url(s: &str) -> Result<(), String> {
     }
 }
 
-/// `bash -c` script, `$1` = folder, `$2` = URL or empty, `$3` = `1` to `git init` the folder
-/// (without a URL, and only when it has no `.git` yet, files or not, like `git init` itself).
+/// `bash -c` script, `$1` = folder, `$2` = URL or empty (a `lore://` one is cloned with `lore`), `$3` =
+/// `1` to `git init` the folder (without a URL, and only when it has no `.git` yet, files or not, like
+/// `git init` itself) or `lore` to `lore repository create` there: on `$4` (`lore://host/name`) or, when
+/// that is empty, only in the folder (`--offline`, named `$5`). A failed Lore create removes what it made.
 /// Always exits 0 and reports on stdout with a `MANGO-DIR:` or `MANGO-ERR:` line, so a failure inside the instance is
 /// never mistaken for an SSH problem (git's own "Permission denied (publickey)" included).
-const PREPARE_SCRIPT: &str = r#"dir=$1; url=$2; init=$3
+const PREPARE_SCRIPT: &str = r#"dir=$1; url=$2; init=$3; lore_url=$4; lore_name=$5
+need_lore() { command -v lore >/dev/null 2>&1 || { echo MANGO-ERR:nolore; exit 0; }; }
 if [ -z "$url" ]; then
+  [ "$init" = lore ] && [ ! -e "$dir/.lore" ] && need_lore
   out=$(mkdir -p -- "$dir" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
   if [ "$init" = 1 ] && [ ! -e "$dir/.git" ]; then
     command -v git >/dev/null 2>&1 || { echo MANGO-ERR:nogit; exit 0; }
     out=$(cd -- "$dir" && git init --quiet 2>&1) || { printf 'MANGO-ERR:init\n%s\n' "$out"; exit 0; }
+  elif [ "$init" = lore ] && [ ! -e "$dir/.lore" ]; then
+    if [ -n "$lore_url" ]; then
+      out=$(cd -- "$dir" && NO_COLOR=1 timeout 120 lore -P --non-interactive repository create "$lore_url" 2>&1); code=$?
+    else
+      out=$(cd -- "$dir" && NO_COLOR=1 timeout 120 lore -P --non-interactive repository create --offline "$lore_name" 2>&1); code=$?
+    fi
+    [ $code -eq 0 ] || { rm -rf -- "$dir/.lore"; rmdir -- "$dir" 2>/dev/null; printf 'MANGO-ERR:lore %s\n%s\n' "$code" "$out"; exit 0; }
   fi
 else
   if [ -e "$dir" ] && { [ ! -d "$dir" ] || [ -n "$(ls -A -- "$dir" 2>/dev/null)" ]; }; then
     echo MANGO-ERR:notempty; exit 0
   fi
-  command -v git >/dev/null 2>&1 || { echo MANGO-ERR:nogit; exit 0; }
-  out=$(mkdir -p -- "$(dirname -- "$dir")" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
-  export GIT_TERMINAL_PROMPT=0
-  export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new}"
-  out=$(timeout 570 git clone --quiet -- "$url" "$dir" 2>&1); code=$?
-  [ $code -eq 0 ] || { printf 'MANGO-ERR:clone %s\n%s\n' "$code" "$out"; exit 0; }
+  case "$url" in
+  lore://*)
+    need_lore
+    out=$(mkdir -p -- "$(dirname -- "$dir")" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
+    out=$(NO_COLOR=1 timeout 570 lore -P --non-interactive clone -- "$url" "$dir" 2>&1); code=$?
+    [ $code -eq 0 ] || { printf 'MANGO-ERR:loreclone %s\n%s\n' "$code" "$out"; exit 0; }
+    ;;
+  *)
+    command -v git >/dev/null 2>&1 || { echo MANGO-ERR:nogit; exit 0; }
+    out=$(mkdir -p -- "$(dirname -- "$dir")" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new}"
+    out=$(timeout 570 git clone --quiet -- "$url" "$dir" 2>&1); code=$?
+    [ $code -eq 0 ] || { printf 'MANGO-ERR:clone %s\n%s\n' "$code" "$out"; exit 0; }
+    ;;
+  esac
 fi
 cd -- "$dir" 2>/dev/null && printf 'MANGO-DIR:%s\n' "$(pwd)""#;
+
+/// A new folder's Lore repository, validated: `(Some(lore://host/name), name)` on a server, or
+/// `(None, name)` only in the folder.
+type LoreInit = (Option<String>, String);
 
 fn prepare_line(
     host: &EnvHost,
@@ -223,16 +253,21 @@ fn prepare_line(
     dir: &str,
     url: Option<&str>,
     git_init: bool,
+    lore: Option<&LoreInit>,
 ) -> Result<Vec<String>, String> {
-    let argv: Vec<String> = vec![
+    let mut argv: Vec<String> = vec![
         "bash".into(),
         "-c".into(),
         PREPARE_SCRIPT.into(),
         "mango-prepare".into(),
         dir.into(),
         url.unwrap_or("").into(),
-        if git_init { "1" } else { "" }.into(),
+        if lore.is_some() { "lore" } else if git_init { "1" } else { "" }.into(),
     ];
+    if let Some((lore_url, name)) = lore {
+        argv.push(lore_url.clone().unwrap_or_default());
+        argv.push(name.clone());
+    }
     let inner = ssh::as_agent(None, &[], &argv);
     ssh::in_instance(host, instance, Mode::Batch, &inner)
 }
@@ -250,6 +285,18 @@ fn parse_prepare(out: &str, dir: &str, url: Option<&str>) -> Result<String, Stri
         return Err(match kind.split_whitespace().next().unwrap_or("") {
             "notempty" => format!("{dir} already exists and is not empty, so Mango won't clone into it. Pick a new or empty folder."),
             "nogit" => "git is not installed in this environment. Install the base component first.".into(),
+            "nolore" => "The Lore CLI isn't installed in this environment. Add the Lore component to it (Settings > Environments, the environment's components), then try again.".into(),
+            "lore" | "loreclone" => {
+                let code = kind.split_whitespace().nth(1).and_then(|c| c.parse::<i32>().ok());
+                let said = detail.join("\n");
+                let server = Some(url)
+                    .filter(|u| !u.is_empty())
+                    .and_then(|u| crate::lore_servers::parse_repo_url(u).ok())
+                    .map(|(s, _)| s.to_string())
+                    .unwrap_or_else(|| "the Lore server".into());
+                let what = if kind.starts_with("loreclone") { format!("clone {url}") } else { "create the Lore repository".into() };
+                format!("{} (in the environment).", crate::lore_servers::explain(code, &said, &server, &what).trim_end_matches('.'))
+            }
             "init" => with_tail(format!("Could not start a git repository in {dir}.")),
             "mkdir" => with_tail(format!(
                 "Could not create {dir} in the environment. The agent user can only write inside its home ({}) and folders it owns.",
@@ -306,6 +353,7 @@ pub async fn env_prepare_dir(
     dir: String,
     clone_url: Option<String>,
     git_init: Option<bool>,
+    lore: Option<crate::projects::LoreNew>,
 ) -> Result<String, String> {
     valid_instance(&instance)?;
     let dir = clean_dir(Some(dir))?.ok_or("Pick a folder inside the environment.")?;
@@ -313,14 +361,21 @@ pub async fn env_prepare_dir(
     if let Some(u) = &url {
         valid_clone_url(u)?;
     }
-    // A clone is already a repository: `gitInit` only applies to a plain folder.
+    // A clone is already a repository: `gitInit` and `lore` only apply to a plain folder.
     let git_init = url.is_none() && git_init.unwrap_or(false);
+    let lore: Option<LoreInit> = match lore.filter(|_| url.is_none()) {
+        Some(l) => {
+            let (server, name) = crate::projects::lore_target(&l)?;
+            Some((server.map(|s| s.repo(&name)), name))
+        }
+        None => None,
+    };
     blocking(move || {
         let host = hosts::get(&app, &host_id)?;
-        let line = prepare_line(&host, &instance, &dir, url.as_deref(), git_init)?;
-        let timeout = Duration::from_secs(if url.is_some() { 600 } else { 30 });
+        let line = prepare_line(&host, &instance, &dir, url.as_deref(), git_init, lore.as_ref())?;
+        let timeout = Duration::from_secs(if url.is_some() { 600 } else if lore.is_some() { 150 } else { 30 });
         let out = ssh::run(&host, &line, timeout)?;
-        parse_prepare(&out, &dir, url.as_deref())
+        parse_prepare(&out, &dir, url.as_deref().or(lore.as_ref().and_then(|l| l.0.as_deref())))
     })
     .await
 }
@@ -935,13 +990,19 @@ mod tests {
     #[test]
     fn prepare_line_passes_dir_and_url_as_arguments() {
         let l =
-            ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git"), false).unwrap());
+            ssh::line(&prepare_line(&host(), "dev", "/home/agent/work/a b", Some("git@github.com:o/r.git"), false, None).unwrap());
         assert!(l.starts_with("incus exec dev -T -- runuser -u agent"), "{l}");
         assert!(l.ends_with("mango-prepare '/home/agent/work/a b' git@github.com:o/r.git ''"), "{l}");
-        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, false).unwrap());
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, false, None).unwrap());
         assert!(l.ends_with("mango-prepare /w '' ''"), "{l}");
-        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, true).unwrap());
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, true, None).unwrap());
         assert!(l.ends_with("mango-prepare /w '' 1"), "{l}");
+        let lore = (Some("lore://lore-srv.incus/game".to_string()), "game".to_string());
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, true, Some(&lore)).unwrap());
+        assert!(l.ends_with("mango-prepare /w '' lore lore://lore-srv.incus/game game"), "{l}");
+        let offline = (None, "game_2".to_string());
+        let l = ssh::line(&prepare_line(&host(), "dev", "/w", None, false, Some(&offline)).unwrap());
+        assert!(l.ends_with("mango-prepare /w '' lore '' game_2"), "{l}");
     }
 
     #[test]
@@ -967,6 +1028,13 @@ mod tests {
             .unwrap_err();
         assert!(e.starts_with("Could not create /srv/x") && e.contains("Permission denied"), "{e}");
         assert!(parse_prepare("", d, None).is_err());
+        let e = parse_prepare("MANGO-ERR:nolore\n", d, None).unwrap_err();
+        assert!(e.contains("Lore component"), "{e}");
+        let lu = Some("lore://lore-srv.incus/game");
+        let e = parse_prepare("MANGO-ERR:lore 28\n[Error] Disconnected from server\n  at x\n", d, lu).unwrap_err();
+        assert!(e.contains("lore://lore-srv.incus did not answer") && e.ends_with("(in the environment)."), "{e}");
+        let e = parse_prepare("MANGO-ERR:loreclone 79\n[Error] Not found\n", d, lu).unwrap_err();
+        assert!(e.contains("no such repository"), "{e}");
         let e = parse_prepare("MANGO-ERR:nogit\n", d, None).unwrap_err();
         assert!(e.contains("base component"), "{e}");
         let e = parse_prepare("MANGO-ERR:init\nfatal: cannot mkdir .git: Permission denied\n", d, None).unwrap_err();

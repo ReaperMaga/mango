@@ -9,6 +9,7 @@ import { files } from './files.ts'
 import { general } from './general.ts'
 import { git } from './git.ts'
 import { links } from './links.ts'
+import { lore } from './lore.ts'
 import { notifications } from './notifications.ts'
 import { plugins } from './plugins.ts'
 import { project } from './project.ts'
@@ -29,6 +30,7 @@ export const ru: Messages = {
   general,
   git,
   links,
+  lore,
   notifications,
   plugins,
   project,

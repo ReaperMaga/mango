@@ -25,6 +25,10 @@ fn extra_dirs() -> Vec<PathBuf> {
     // Mango restarts.
     #[cfg(windows)]
     {
+        // Lore's installer (install.ps1) puts lore.exe in %USERPROFILE%\bin.
+        if let Some(home) = dirs::home_dir() {
+            dirs.push(home.join("bin"));
+        }
         if let Some(local) = dirs::data_local_dir() {
             dirs.push(local.join(r"Programs\OpenAI\Codex\bin"));
             dirs.push(local.join(r"Microsoft\WinGet\Links"));

@@ -1,5 +1,6 @@
 import { useWorkspace } from '~/stores/workspace'
 import { useReleases } from '~/stores/releases'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * Keeps the active project's releases current for the Releases button on the tool stripe and the
@@ -12,7 +13,7 @@ export function useReleaseWatch() {
   const ws = useWorkspace()
   const releases = useReleases()
 
-  const path = computed(() => (ws.activeProjectPath && ws.activeProject?.vcs !== 'plastic' ? ws.activeProjectPath : null))
+  const path = computed(() => (ws.activeProjectPath && vcsTerms(ws.activeProject?.vcs).forge ? ws.activeProjectPath : null))
   const open = computed(() => ws.toolPanel === 'releases')
   const mark = computed(() => releases.mark(path.value))
 

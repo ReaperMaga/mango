@@ -6,6 +6,8 @@ import type { MenuItem } from '~/types/ui'
 import SettingsSegmented from '~/components/settings/SettingsSegmented.vue'
 import EnvTerminal from './EnvTerminal.vue'
 import EnvVersionPicker from './EnvVersionPicker.vue'
+import EnvLorePublishFields from './EnvLorePublishFields.vue'
+import { LORE_PORT, defaultLoreAddress, validListenAddress, validPublishPort } from '~/utils/lorePublish'
 
 /**
  * New environment: name, image, container or VM, size, and the components to
@@ -44,10 +46,15 @@ const kinds = computed(() => [
   { value: 'vm' as const, label: t('envs.common.vm'), icon: Monitor },
 ])
 
-watch(open, (isOpen) => {
-  if (!isOpen) return
+watch(open, (isOpen) => { if (isOpen) init() })
+// Asked for before this page mounted (Settings > Lore sends a machine with Incus here): start from it too.
+onMounted(() => { if (open.value) init() })
+
+/** Fill the form from `envs.dialog` (its server, and a preset). */
+function init() {
   hostId.value = envs.dialog?.kind === 'create' ? envs.dialog.hostId : ''
-  name.value = suggestName()
+  preset.value = envs.dialog?.kind === 'create' ? envs.dialog.preset ?? null : null
+  name.value = suggestName(preset.value ? 'lore' : 'dev')
   image.value = ENV_IMAGES[0].id
   customImage.value = ''
   useCustom.value = false
@@ -55,23 +62,27 @@ watch(open, (isOpen) => {
   cpus.value = ''
   memory.value = ''
   disk.value = ''
-  const defaults: EnvComponentId[] = ['base', 'claude', 'gh']
-  if (host.value?.tailscale) defaults.push('tailscale')
+  const defaults: EnvComponentId[] = preset.value ? ['base', 'lore-server'] : ['base', 'claude', 'gh']
+  if (host.value?.tailscale && !preset.value) defaults.push('tailscale')
   picked.value = new Set(defaults)
   versions.value = {}
+  // A Lore server made in one go is meant to be reached from this computer too.
+  publish.value = !!preset.value
+  loreAddress.value = ''
+  lorePort.value = String(LORE_PORT)
   phase.value = 'form'
   touched.value = false
   notice.value = null
   running.value = null
-})
+}
 
-/** "dev", or "dev-2" when that is taken. */
-function suggestName() {
+/** "dev" (or `base`), or "dev-2" when that is taken. */
+function suggestName(base = 'dev') {
   const taken = new Set((envs.instances[hostId.value] ?? []).map(i => i.name))
-  if (!taken.has('dev')) return 'dev'
+  if (!taken.has(base)) return base
   let n = 2
-  while (taken.has(`dev-${n}`)) n++
-  return `dev-${n}`
+  while (taken.has(`${base}-${n}`)) n++
+  return `${base}-${n}`
 }
 
 /* ---------- image ---------- */
@@ -137,6 +148,33 @@ function toggle(id: EnvComponentId) {
   picked.value = next
 }
 
+/* ---------- a Lore server: publishing it outside the server ---------- */
+
+/** Opened as "New Lore server": the same dialog, set up for one. */
+const preset = ref<'lore-server' | null>(null)
+const publish = ref(false)
+const loreAddress = ref('')
+const lorePort = ref(String(LORE_PORT))
+const addresses = computed(() => envs.hostAddresses[hostId.value] ?? null)
+const addressesNote = ref<string | null>(null)
+const hasLoreServer = computed(() => effective.value.has('lore-server'))
+
+/** Read the host's addresses once the Lore server is to be published, and offer the safest. */
+watch([open, hasLoreServer, publish], async ([isOpen, lore, pub]) => {
+  if (!isOpen || !lore || !pub || !hostId.value) return
+  const id = hostId.value
+  try {
+    const a = await envs.loadHostAddresses(id)
+    addressesNote.value = a.note
+    if (hostId.value === id && !loreAddress.value) loreAddress.value = defaultLoreAddress(a.addresses)
+  } catch {
+    addressesNote.value = t('envs.lore.addressesFailed')
+  }
+})
+
+const publishing = computed(() => hasLoreServer.value && publish.value)
+const publishInvalid = computed(() => publishing.value && !(validListenAddress(loreAddress.value) && validPublishPort(lorePort.value)))
+
 /* ---------- validation ---------- */
 
 const nameError = computed(() => {
@@ -161,7 +199,7 @@ function sizeError(v: string, max: number) {
 const cpusError = computed(() => sizeError(cpus.value, 512))
 const memoryError = computed(() => sizeError(memory.value, 4096))
 const diskError = computed(() => sizeError(disk.value, 65536))
-const invalid = computed(() => !!(nameError.value || imageError.value || cpusError.value || memoryError.value || diskError.value))
+const invalid = computed(() => !!(nameError.value || imageError.value || cpusError.value || memoryError.value || diskError.value || publishInvalid.value))
 
 const num = (v: string) => (v.trim() ? Number(v) : null)
 
@@ -183,6 +221,7 @@ function submit() {
     components: ENV_COMPONENTS.map(c => c.id).filter(id => effective.value.has(id)),
     // Only for what gets installed.
     versions: Object.fromEntries(Object.entries(versions.value).filter(([id]) => effective.value.has(id as EnvComponentId))),
+    lorePublish: publishing.value ? { address: loreAddress.value.trim(), port: Number(lorePort.value.trim()) } : null,
   }
   phase.value = 'running'
 }
@@ -220,12 +259,16 @@ function finish(intent: 'login-claude' | 'open-project' | null) {
   envs.select(input.hostId, input.name)
 }
 
-const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host.value.name }) : t('envs.common.newEnvironment')))
+const title = computed(() => {
+  if (!host.value) return t('envs.common.newEnvironment')
+  return preset.value ? t('envs.create.loreTitleOn', { host: host.value.name }) : t('envs.create.titleOn', { host: host.value.name })
+})
 </script>
 
 <template>
   <UiDialog :open="open" :title="title" :width="580" :dismissible="phase !== 'running'" @close="close">
     <form v-if="phase === 'form'" id="env-create-form" class="ec" novalidate @submit.prevent="submit">
+      <p v-if="preset" class="ec__lede">{{ t('envs.create.loreLede', { host: host?.name ?? '' }) }}</p>
       <UiField :label="t('envs.common.name')" for="ec-name" :error="touched ? nameError : null">
         <input
           id="ec-name"
@@ -346,6 +389,29 @@ const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host
         </ul>
       </fieldset>
 
+      <fieldset v-if="hasLoreServer" class="ec__comps ec__publish">
+        <legend class="ec__label">{{ envComponentName('lore-server') }}</legend>
+        <label class="ec__comp">
+          <input v-model="publish" type="checkbox" class="ec__check">
+          <span class="ec__comp-text">
+            <span class="ec__comp-name">{{ t('envs.create.publish') }}</span>
+            <span class="ec__comp-desc">
+              {{ t('envs.create.publishHint', { host: host?.name ?? '' }) }} {{ t('envs.lore.cloud', { port: lorePort || 41337 }) }}
+            </span>
+          </span>
+        </label>
+        <EnvLorePublishFields
+          v-if="publish"
+          v-model:address="loreAddress"
+          v-model:port="lorePort"
+          class="ec__publish-fields"
+          id-prefix="ec-lore"
+          :addresses="addresses?.addresses ?? []"
+          :note="addressesNote"
+          :touched="touched"
+        />
+      </fieldset>
+
       <p v-if="notice" class="ec__notice" role="status">
         <CircleAlert aria-hidden="true" />
         <span>{{ notice }}</span>
@@ -370,7 +436,7 @@ const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host
         </template>
       </EnvTerminal>
 
-      <div v-if="phase === 'done'" class="ec__next">
+      <div v-if="phase === 'done' && !preset" class="ec__next">
         <p class="ec__next-lede">{{ t('envs.create.next') }}</p>
         <div class="ec__next-actions">
           <UiButton v-if="running?.components.includes('claude')" @click="finish('login-claude')">
@@ -384,14 +450,14 @@ const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host
     <template #footer>
       <template v-if="phase === 'form'">
         <UiButton variant="ghost" @click="close">{{ t('common.actions.cancel') }}</UiButton>
-        <UiButton variant="primary" type="submit" form="env-create-form" :disabled="!host">{{ t('envs.create.submit') }}</UiButton>
+        <UiButton variant="primary" type="submit" form="env-create-form" :disabled="!host">{{ preset ? t('envs.create.loreSubmit') : t('envs.create.submit') }}</UiButton>
       </template>
       <UiButton v-else-if="phase === 'running'" variant="ghost" @click="stop">{{ t('envs.common.stop') }}</UiButton>
       <template v-else-if="phase === 'failed'">
         <UiButton variant="ghost" @click="close">{{ t('common.actions.close') }}</UiButton>
         <UiButton @click="back">{{ t('envs.create.backToSettings') }}</UiButton>
       </template>
-      <UiButton v-else variant="primary" data-autofocus @click="finish(null)">{{ t('common.actions.done') }}</UiButton>
+      <UiButton v-else variant="primary" data-autofocus @click="finish(null)">{{ preset ? t('envs.create.openServer') : t('common.actions.done') }}</UiButton>
     </template>
   </UiDialog>
 </template>
@@ -399,6 +465,9 @@ const title = computed(() => (host.value ? t('envs.create.titleOn', { host: host
 <style scoped>
 .ec { display: grid; border: 0; }
 .ec__mono { font-family: var(--font-mono); }
+.ec__lede { margin: 0 0 var(--space-4); max-width: 62ch; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
+.ec__publish .ec__comp { clear: both; }
+.ec__publish-fields { margin: var(--space-2) 0 0 calc(14px + var(--space-2)); }
 .ec .input.ec__mono { font-size: var(--text-xs); }
 .ec__label { font-size: var(--text-xs); font-weight: 560; color: var(--fg-muted); padding: 0; }
 .ec__hint {

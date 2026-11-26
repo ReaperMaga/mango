@@ -9,6 +9,7 @@ import { guarded, read, reg, shown } from '~/plugin-host/registry'
 import { allPanelTabs, panelTabBadge, panelTabOffered } from '~/composables/panelTabs'
 import { iconComponent } from '~/plugin-host/icons'
 import { parsePanelEditorTab, pluginRef } from '~/plugin-host/ids'
+import { vcsTerms } from '~/utils/vcs'
 
 /**
  * The tool window stripe on the right edge of the workspace, the way an IDE
@@ -83,7 +84,10 @@ const requestsLabel = computed(() => (forge.providerOf(ws.activeProjectPath) ===
 const tools = computed(() => [
   { id: 'files' as ToolView, label: t('shell.tools.files'), icon: Files, keys: ws.keyLabel('files'), count: 0, counts: null },
   { id: 'changes' as ToolView, label: t('shell.tools.changes'), icon: GitBranch, keys: ws.keyLabel('changes'), count: changeCount.value, counts: 'changedFiles' },
-  { id: 'links' as ToolView, label: requestsLabel.value, icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linkedItems' },
+  // Pull requests and issues live on GitHub or GitLab, which a Lore project has none of.
+  ...(vcsTerms(ws.activeProject?.vcs).forge || ws.toolPanel === 'links'
+    ? [{ id: 'links' as ToolView, label: requestsLabel.value, icon: GitPullRequest, keys: ws.keyLabel('links'), count: linkCount.value, counts: 'linkedItems' }]
+    : []),
   ...(releaseWatch.path.value
     ? [{ id: 'releases' as ToolView, label: t('shell.tools.releases'), icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: null, mark: releaseMark.value }]
     : []),

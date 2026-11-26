@@ -52,6 +52,8 @@ pub enum Vcs {
     Git,
     /// Unity Version Control (formerly Plastic SCM), driven through `cm`.
     Plastic,
+    /// Epic Games' Lore, driven through `lore` (`lore/`).
+    Lore,
 }
 
 #[derive(Debug, Clone, Serialize, Default)]
@@ -834,7 +836,7 @@ impl At {
     }
 
     /// The folder, for messages.
-    fn shown(&self) -> String {
+    pub(crate) fn shown(&self) -> String {
         match self {
             At::Local(p) => p.display().to_string(),
             At::Env(e) => format!("{} in {}", e.dir, e.instance),
@@ -843,7 +845,7 @@ impl At {
 
     /// Refuse a folder that isn't there. Inside an environment the command itself
     /// checks (it starts with `cd`), which saves a connection.
-    fn check(&self) -> Result<(), String> {
+    pub(crate) fn check(&self) -> Result<(), String> {
         match self {
             At::Local(p) => existing_dir(&p.to_string_lossy()).map(|_| ()),
             At::Env(_) => Ok(()),
@@ -851,7 +853,7 @@ impl At {
     }
 
     /// Key for the work tree root cache (remote folders only).
-    fn env_key(&self) -> Option<String> {
+    pub(crate) fn env_key(&self) -> Option<String> {
         match self {
             At::Local(_) => None,
             At::Env(e) => Some(format!("{}\u{0}{}\u{0}{}", e.host.id, e.instance, e.dir)),
@@ -979,7 +981,7 @@ impl EnvAt {
     }
 
     /// Run a fixed `sh` script in this folder; `args` are its `$1`, `$2`, ….
-    fn sh(&self, script: &str, args: &[&str]) -> Result<Output, String> {
+    pub(crate) fn sh(&self, script: &str, args: &[&str]) -> Result<Output, String> {
         let mut argv: Vec<String> = ["sh", "-c", script, "sh"].map(String::from).to_vec();
         argv.extend(args.iter().map(|a| a.to_string()));
         self.run_plain(&[], &argv, None, usize::MAX, LOCAL_TIMEOUT)
@@ -1133,36 +1135,57 @@ fn run_all(cmds: Vec<Git<'_>>) -> Result<Vec<Output>, String> {
     let Some(At::Env(e)) = cmds.first().map(|c| c.at) else {
         return cmds.into_iter().map(Git::run).collect();
     };
+    let outs = run_env_words(e, &cmds, &[])?;
+    if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
+        return Err(missing);
+    }
+    Ok(outs)
+}
+
+/// The git commands `cmds` and then the plain commands `extra` (words, program first, with the
+/// most stdout to keep) in one [`env_batch`], without the check for a missing git.
+fn run_env_words(e: &EnvAt, cmds: &[Git<'_>], extra: &[(Vec<String>, usize)]) -> Result<Vec<Output>, String> {
     let login = cmds.iter().any(|c| c.login);
     let timeout = cmds.iter().map(|c| c.timeout).max().unwrap_or(LOCAL_TIMEOUT);
+    let mut words: Vec<(Vec<String>, usize)> = cmds
+        .iter()
+        .map(|c| {
+            debug_assert!(c.stdin.is_none() && matches!(c.at, At::Env(o) if o.dir == e.dir));
+            let mut one: Vec<String> = vec!["env".into()];
+            one.extend(c.env.iter().map(|(k, v)| format!("{k}={v}")));
+            one.push("git".into());
+            one.extend(c.args.iter().cloned());
+            (one, c.cap)
+        })
+        .collect();
+    words.extend(extra.iter().cloned());
+    env_batch(e, login, &words, timeout)
+}
+
+/// Run each of `cmds` (its words, program first, and the most stdout to keep) in the folder of
+/// `e`, one after another in a single SSH call ([`BATCH`]), and return each one's output. A tool
+/// found only on the login shell's PATH runs them all again there ([`EnvAt::run_plain`]).
+pub(crate) fn env_batch(e: &EnvAt, login: bool, cmds: &[(Vec<String>, usize)], timeout: Duration) -> Result<Vec<Output>, String> {
     let mut argv: Vec<String> = ["bash", "-c", BATCH, "mango"].map(String::from).to_vec();
     let mut caps = Vec::new();
-    for c in &cmds {
-        debug_assert!(c.stdin.is_none() && matches!(c.at, At::Env(o) if o.dir == e.dir));
-        let mut one: Vec<String> = vec!["env".into()];
-        one.extend(c.env.iter().map(|(k, v)| format!("{k}={v}")));
-        one.push("git".into());
-        one.extend(c.args.iter().cloned());
-        let cap = c.cap.min(1 << 40);
+    for (one, cap) in cmds {
+        let cap = (*cap).min(1 << 40);
         argv.extend([one.len().to_string(), cap.to_string()]);
-        argv.extend(one);
+        argv.extend(one.iter().cloned());
         caps.push(cap);
     }
     let batch = |login: bool| -> Result<Vec<Output>, String> {
         let out = e.exec(login, &[], &argv, None, usize::MAX, timeout)?;
         parse_batch(&out.stdout, &caps).ok_or_else(|| {
             let detail = tidy_output(&lossy(&out.stderr));
-            format!("Could not read git's answer from {}.{}", e.instance, if detail.is_empty() { String::new() } else { format!("\n{detail}") })
+            format!("Could not read the answer from {}.{}", e.instance, if detail.is_empty() { String::new() } else { format!("\n{detail}") })
         })
     };
     let mut outs = batch(login || e.needs_profile())?;
-    // git (or a tool it runs, like git-lfs) only on the login shell's PATH.
+    // A tool (git, git-lfs, lore) only on the login shell's PATH.
     if !login && !e.needs_profile() && outs.iter().any(profile_needed) {
         e.remember_needs_profile();
         outs = batch(true)?;
-    }
-    if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
-        return Err(missing);
     }
     Ok(outs)
 }
@@ -1422,36 +1445,67 @@ pub(crate) fn ignored_paths_known(dir: &Path, paths: &[String]) -> Option<Vec<St
 }
 
 pub(crate) fn status_of(at: &At) -> Result<GitStatus, String> {
+    status_probing(at, None).map(|(status, _)| status)
+}
+
+/// A plain command run in the same SSH call as a status read in an environment (its words,
+/// program first), and what in its output makes the status beside the point.
+pub(crate) type Probe<'a> = (&'a [String], &'a dyn Fn(&Output) -> bool);
+
+/// [`status_of`], and in an environment the `probe` run in the same SSH call: its output comes
+/// back with the status. When the probe's output wins, the status is empty, and a git that isn't
+/// installed there is no error.
+pub(crate) fn status_probing(at: &At, probe: Option<Probe<'_>>) -> Result<(GitStatus, Option<Output>), String> {
     at.check()?;
     // Both at once: one round trip to an environment. Outside a work tree status just fails.
-    let [where_, status]: [Output; 2] =
-        run_all(vec![locate_cmd(at), status_cmd(at, true)])?.try_into().map_err(|_| "git gave no answer")?;
+    let cmds = vec![locate_cmd(at), status_cmd(at, true)];
+    let (where_, status, probed) = match (at, probe) {
+        (At::Env(e), Some((words, wins))) => {
+            let mut outs = run_env_words(e, &cmds, &[(words.to_vec(), 64 * 1024)])?;
+            let probed = outs.pop().ok_or("git gave no answer")?;
+            if wins(&probed) {
+                return Ok((GitStatus::default(), Some(probed)));
+            }
+            if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
+                return Err(missing);
+            }
+            let [w, s]: [Output; 2] = outs.try_into().map_err(|_| "git gave no answer")?;
+            (w, s, Some(probed))
+        }
+        _ => {
+            let [w, s]: [Output; 2] = run_all(cmds)?.try_into().map_err(|_| "git gave no answer")?;
+            (w, s, None)
+        }
+    };
     let found = located(at, &where_)?;
     remember_root(at, found.as_ref().map(|f| f.root.as_str()));
     let Some(Located { root, head, main_root }) = found else {
-        return Ok(GitStatus::default());
+        return Ok((GitStatus::default(), probed));
     };
     if !status.ok() {
         return Err(status.error("git status"));
     }
     let parsed = parse_status(&status.stdout);
-    Ok(GitStatus {
-        vcs: Vcs::Git,
-        repository: None,
-        is_repo: true,
-        root: Some(root),
-        main_root,
-        branch: parsed.branch,
-        head: match (&parsed.oid, head) {
-            (None, _) => None,
-            (Some(oid), Some(short)) if oid.starts_with(&short) => Some(short),
-            (Some(oid), _) => Some(oid.chars().take(7).collect()),
+    Ok((
+        GitStatus {
+            vcs: Vcs::Git,
+            repository: None,
+            is_repo: true,
+            root: Some(root),
+            main_root,
+            branch: parsed.branch,
+            head: match (&parsed.oid, head) {
+                (None, _) => None,
+                (Some(oid), Some(short)) if oid.starts_with(&short) => Some(short),
+                (Some(oid), _) => Some(oid.chars().take(7).collect()),
+            },
+            upstream: parsed.upstream,
+            ahead: parsed.ahead,
+            behind: parsed.behind,
+            files: parsed.files,
         },
-        upstream: parsed.upstream,
-        ahead: parsed.ahead,
-        behind: parsed.behind,
-        files: parsed.files,
-    })
+        probed,
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -1624,13 +1678,13 @@ exit 0"#;
 
 /// What is at a path in the work tree, not following a symlink.
 #[derive(Debug, PartialEq, Eq)]
-enum Entry {
+pub(crate) enum Entry {
     Missing,
     Dir,
     File,
 }
 
-fn entry(root: &At, rel: &str) -> Result<Entry, String> {
+pub(crate) fn entry(root: &At, rel: &str) -> Result<Entry, String> {
     let rel = clean_rel(rel)?;
     match root {
         At::Local(root) => match fs::symlink_metadata(root.join(rel)) {
@@ -1652,7 +1706,7 @@ fn entry(root: &At, rel: &str) -> Result<Entry, String> {
 }
 
 /// [`remove_untracked`] for a work tree here or in an environment.
-fn remove_untracked_at(root: &At, rel: &str) -> Result<(), String> {
+pub(crate) fn remove_untracked_at(root: &At, rel: &str) -> Result<(), String> {
     let e = match root {
         At::Local(root) => return remove_untracked(root, rel),
         At::Env(e) => e,

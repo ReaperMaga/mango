@@ -11,15 +11,15 @@ import type { Attachment } from '~/types/chat'
 /** A stored attachment as the backend reports it (the preview is made in the webview). */
 export type AttachmentInfo = Omit<Attachment, 'thumb'>
 
-/** Version control a project is under: git, or Unity Version Control (formerly Plastic SCM, CLI `cm`). */
-export type VcsKind = 'git' | 'plastic'
+/** Version control a project is under: git, Unity Version Control (formerly Plastic SCM, CLI `cm`), or Epic Games' Lore (CLI `lore`). */
+export type VcsKind = 'git' | 'plastic' | 'lore'
 
 export interface ProjectInfo {
   /** Absolute path of the project folder. */
   path: string
   /** Folder name. */
   name: string
-  /** Under version control: a git repository or a Unity VCS workspace (see `vcs`). */
+  /** Under version control: a git repository, a Unity VCS workspace or a Lore repository (see `vcs`). */
   isGit: boolean
   /** Which version control; null (or missing, from older builds) when there is none. */
   vcs?: VcsKind | null
@@ -153,6 +153,115 @@ export interface HostingCli {
   helpUrl: string
 }
 
+/* ---------- Lore: Epic Games' version control (Settings > Lore, New project, Clone) ---------- */
+
+/** The `lore` CLI on this computer. */
+export interface LoreCli {
+  installed: boolean
+  /** e.g. "0.14.0" */
+  version: string | null
+  path: string | null
+  /** How Mango would install it here (`setup_install` with `lore`); null when it can't (send the user to `helpUrl`). */
+  install: { command: string; via: string } | null
+  helpUrl: string
+}
+
+/** Where a Lore server runs when Mango set it up: an Incus instance on a saved environment server. */
+export interface LoreOrigin { hostId: string; instance: string }
+
+/** A saved Lore server (`lore-servers.json` in the app data folder; no secrets). */
+export interface LoreServer {
+  id: string
+  name: string
+  /** How this computer reaches it: `lore://host[:port]` (the default port 41337 left out). */
+  url: string
+  /** How projects in environments on the origin's server reach it (`lore://<instance>.incus`). */
+  insideUrl: string | null
+  /** null for a server Mango did not set up. */
+  origin: LoreOrigin | null
+  /** The machine it runs on, when Mango set it up there over SSH (Docker or a service, no Incus). */
+  machine?: LoreMachine | null
+}
+
+/** A server to add (no `id`; one with the same `origin` or `machine` is updated instead) or change (`id`). */
+export interface LoreServerInput {
+  id?: string | null
+  name: string
+  url: string
+  insideUrl?: string | null
+  origin?: LoreOrigin | null
+  machine?: LoreMachine | null
+}
+
+/** How Mango runs a Lore server on a machine: Docker when it can (x86_64, Docker running), else a service. */
+export type LoreMachineRuntime = 'auto' | 'docker' | 'service'
+
+/**
+ * A machine Mango set a Lore server up on over SSH (`lore_machine_run`). No secrets: with `password`,
+ * ssh asks for it in a terminal each time; Mango never sees or keeps it.
+ */
+export interface LoreMachine {
+  /** `user@host`, or an alias from ~/.ssh/config. */
+  ssh: string
+  port: number | null
+  /** A private key on this computer; null uses the SSH defaults (or the password). */
+  identityFile: string | null
+  password: boolean
+  runtime: LoreMachineRuntime
+  /** Where it listens there: an IP, or 0.0.0.0 / [::] for all of them. */
+  address: string
+  listenPort: number
+}
+
+/** How to reach a machine for a look at it (`lore_machine_probe`, keys only). */
+export interface LoreMachineAccess { ssh: string; port: number | null; identityFile: string | null }
+
+/** What a machine has (`lore_machine_probe`). */
+export interface LoreMachineProbe {
+  os: string | null
+  arch: string
+  /** root: signed in as root; nopass: sudo without a password; password: sudo will ask; none: no sudo. */
+  sudo: 'root' | 'nopass' | 'password' | 'none'
+  systemd: boolean
+  /** It has Incus: it can be an Environments server instead. */
+  incus: boolean
+  docker: boolean
+  /** Docker answered without a password. */
+  dockerReady: boolean
+  /** Epic's image runs here (x86_64). */
+  dockerImage: boolean
+  /** How Mango's Lore server already runs there. */
+  installed: 'docker' | 'service' | null
+  addresses: EnvHostAddress[]
+}
+
+/** What `lore_machine_run` does: set up (also update or move), restart, or remove (the data stays). */
+export type LoreMachineAction = 'setup' | 'restart' | 'remove'
+
+/**
+ * How a server answered this computer. Lore talks gRPC over TCP (listing, creating) and QUIC over UDP
+ * (file data) on the same port: `udp` is TCP fine, UDP blocked.
+ */
+export type LoreReach = 'ok' | 'noCli' | 'dns' | 'refused' | 'timeout' | 'udp' | 'notLore' | 'error'
+export type LoreAuth = 'notRequired' | 'signedIn' | 'signedOut' | 'unknown'
+
+export interface LoreServerCheck {
+  url: string
+  reach: LoreReach
+  auth: LoreAuth
+  /** Who the CLI is signed in as. */
+  user: string | null
+  /** The server's repositories, when it listed them. */
+  repositories: string[] | null
+  /** The UDP (data) port was proved too; false when there was no repository to read. */
+  dataChecked: boolean
+  /** What is wrong and what to do, in plain words. */
+  message: string | null
+}
+
+/** A new project's Lore repository: on `server` (`lore://host[:port]`), or only in the folder (`server` null). */
+export interface LoreNew { server: string | null; repository: string }
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -186,9 +295,9 @@ export interface GitStatus {
   mainRoot: string | null
   /** Current branch, null when detached or not a repo. */
   branch: string | null
-  /** Short hash of HEAD (Unity VCS: the loaded changeset number), null on an unborn branch. */
+  /** Short hash of HEAD (Unity VCS: the loaded changeset number; Lore: `r<revision>`), null on an unborn branch. */
   head: string | null
-  /** Upstream ref such as "origin/main", null when none is set. */
+  /** Upstream ref such as "origin/main" (Lore: "remote/main", the server's side), null when none is set. */
   upstream: string | null
   ahead: number
   /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */
@@ -1010,7 +1119,8 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
+export type EnvComponentId =
+  | 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'lore' | 'lore-server' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId
@@ -1022,6 +1132,8 @@ export interface EnvComponent {
   requires: EnvComponentId[]
   /** A version can be picked for it (`env_versions` lists them): Node.js and Java. */
   versioned: boolean
+  /** For a component that is a service (the Lore server): whether it runs; null for the others. */
+  running?: boolean | null
 }
 
 /** Versions picked for components that take one, by component id; a missing one takes the default. */
@@ -1055,6 +1167,54 @@ export interface EnvCreateInput {
   components: EnvComponentId[]
   /** Versions picked for some of them. */
   versions?: EnvVersions
+  /** Publish its Lore server outside the server once installed (needs 'lore-server' in `components`). */
+  lorePublish?: EnvLorePublishInput | null
+}
+
+/** Where to publish a Lore server on the Incus host: one of its addresses (or 0.0.0.0 / :: for all) and a port (1024 and up). */
+export interface EnvLorePublishInput { address: string; port: number }
+
+/** An address of a server's Incus host something can be published at. */
+export interface EnvHostAddress {
+  address: string
+  kind: 'tailscale' | 'private' | 'public'
+  interface: string
+}
+
+/** `env_host_addresses`: what to offer, or why there is nothing (an Incus remote: type one). */
+export interface EnvHostAddresses { addresses: EnvHostAddress[]; note: string | null }
+
+/** A Lore server in an instance (`env_lore_server`), and where to reach it. */
+export interface EnvLoreServer {
+  /** The 'lore-server' component is installed. */
+  installed: boolean
+  version: string | null
+  running: boolean
+  /** For the other environments on the same server: `lore://<instance>.incus` (when its network has DNS). */
+  insideUrl: string | null
+  /** The same by the instance's IPv4 address. */
+  insideIpUrl: string | null
+  /** Where it is published outside the server (UDP and TCP), when it is. */
+  published: EnvLorePublished | null
+  /** A host firewall that may block the published port, with the commands that open it (empty: say what to accept). */
+  firewall: { kind: 'ufw' | 'firewalld' | 'nftables'; commands: string[] } | null
+  /** Addresses of the Incus host it can be published at. */
+  addresses: EnvHostAddress[]
+  /** Why it can't be published from here (a joined environment). */
+  publishNote: string | null
+}
+
+export interface EnvLorePublished {
+  /** The listen address on the Incus host (`0.0.0.0` / `[::]`: all of them). */
+  address: string
+  port: number
+  /** `lore://<host>[:port]`: what this computer and anyone outside uses. */
+  url: string | null
+  urlNote: string | null
+  /** This computer could open a TCP connection to the port just now (a hint; UDP can't be checked that way). */
+  reachable: boolean | null
+  /** Both proxy devices (UDP and TCP) are there. */
+  complete: boolean
 }
 
 /** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
@@ -1276,7 +1436,8 @@ export interface Commands {
   open_project: [{ path: string }, ProjectInfo]
   forget_project: [{ path: string }, void]
   /** mkdir parent/name, optionally `git init`, record as recent. Errors if it exists and is non-empty. */
-  create_project: [{ parent: string; name: string; gitInit: boolean }, ProjectInfo]
+  /** `lore`: create a Lore repository in the new folder instead (then `gitInit` is ignored). */
+  create_project: [{ parent: string; name: string; gitInit: boolean; lore?: LoreNew | null }, ProjectInfo]
   /** `git clone --progress url parent/<name>`; streams `clone://progress` events. */
   git_clone: [{ url: string; parent: string; name: string | null; jobId: string }, ProjectInfo]
   /** Default folder for new projects (~/Projects, created lazily) */
@@ -1321,7 +1482,7 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId | 'lore'; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
@@ -1333,6 +1494,21 @@ export interface Commands {
   hosting_login: [{ tool: HostingToolId; host: string; cols: number; rows: number }, string]
   /** Sign `tool` out of `host`; for gh, of `user` there (it can hold several accounts per host). */
   hosting_logout: [{ tool: HostingToolId; host: string; user: string | null }, void]
+  /** Settings > Lore: the CLI on this computer. */
+  lore_cli: [Record<string, never>, LoreCli]
+  lore_servers: [Record<string, never>, LoreServer[]]
+  /** Add or change a saved server (validated); answers the whole list. */
+  lore_server_upsert: [{ server: LoreServerInput }, LoreServer[]]
+  lore_server_remove: [{ id: string }, LoreServer[]]
+  /** Is the CLI here, does the server answer (TCP, then UDP), and does it want a sign-in. Up to ~20 s. */
+  lore_server_check: [{ url: string }, LoreServerCheck]
+  /** `lore login <url>` in a terminal; answers the pty id. */
+  lore_login: [{ url: string; cols: number; rows: number }, string]
+  lore_logout: [{ url: string }, void]
+  /** A look at a machine over SSH (keys only, never prompts): Docker, Incus, systemd, sudo, addresses. */
+  lore_machine_probe: [{ machine: LoreMachineAccess }, LoreMachineProbe]
+  /** Set up, restart or remove the Lore server on a machine, in a terminal (ssh and sudo ask there); answers the pty id. */
+  lore_machine_run: [{ machine: LoreMachine; action: LoreMachineAction; cols: number; rows: number }, string]
   /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
   gitlab_hosts: [Record<string, never>, string[]]
   /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */
@@ -1745,6 +1921,14 @@ export interface Commands {
   env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; versions?: EnvVersions; cols: number; rows: number }, string]
   /** The versions a component can install, newest first (read from nodejs.org or SDKMAN, not from an environment). */
   env_versions: [{ component: EnvComponentId }, EnvVersion[]]
+  /** The Lore server in an instance: running or not, its URLs inside and outside the server, where it can be published. */
+  env_lore_server: [{ hostId: string; instance: string }, EnvLoreServer]
+  /** Publish it outside the server (Incus proxy devices, UDP and TCP), replacing an earlier publish. Owner only. */
+  env_lore_publish: [{ hostId: string; instance: string; address: string; port: number }, EnvLoreServer]
+  /** Stop publishing it. Owner only. */
+  env_lore_unpublish: [{ hostId: string; instance: string }, EnvLoreServer]
+  /** The addresses of a server's Incus host to publish at (for the create dialog). */
+  env_host_addresses: [{ hostId: string }, EnvHostAddresses]
   /** A login shell as the agent user inside the instance; returns the pty id. */
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
@@ -1754,7 +1938,8 @@ export interface Commands {
    * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
    * `git init` in a new or empty folder when `gitInit`); returns its absolute path.
    */
-  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean }, string]
+  /** `cloneUrl` may be a `lore://` repository (cloned with `lore`); `lore` creates a Lore repository in the new folder. */
+  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean; lore?: LoreNew | null }, string]
   /** The sub-folders of `dir` inside the environment (as the agent user); `dir` may be '~'. */
   env_list_dir: [{ hostId: string; instance: string; dir: string }, EnvDirListing]
   /** Open (or reuse) a tunnel to the instance's desktop. */

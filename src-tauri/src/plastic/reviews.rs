@@ -335,7 +335,7 @@ pub(crate) fn create(root: &Path, title: &str, reviewers: Option<&str>) -> Resul
 pub async fn plastic_reviews(app: AppHandle, path: String) -> Result<PlasticReviews, String> {
     blocking(move || match vcs::detect(&app, &path)? {
         Backend::Plastic(root) => list(&root),
-        Backend::Git(_) => Err(NOT_PLASTIC.into()),
+        Backend::Git(_) | Backend::Lore(_) => Err(NOT_PLASTIC.into()),
     })
     .await
 }
@@ -345,7 +345,7 @@ pub async fn plastic_reviews(app: AppHandle, path: String) -> Result<PlasticRevi
 pub async fn plastic_review_create(app: AppHandle, path: String, title: String, reviewers: Option<String>) -> Result<u64, String> {
     blocking(move || match vcs::detect(&app, &path)? {
         Backend::Plastic(root) => create(&root, &title, reviewers.as_deref()),
-        Backend::Git(_) => Err(NOT_PLASTIC.into()),
+        Backend::Git(_) | Backend::Lore(_) => Err(NOT_PLASTIC.into()),
     })
     .await
 }

@@ -473,6 +473,17 @@ export const shell: Messages['shell'] = {
       pull: 'Обновить',
       worktree: 'workspace',
     },
+    lore: {
+      commit: 'Закоммитить',
+      commitAll: 'Закоммитить всё',
+      committed: 'Закоммичено:',
+      message: 'Сообщение коммита',
+      unit: 'ревизия',
+      units: 'ревизии',
+      count: '{n} ревизия | {n} ревизии | {n} ревизий',
+      pull: 'Синхронизировать',
+      worktree: 'рабочая копия',
+    },
   },
   locks: {
     kept: 'Блокировка сохраняется, пока ветка {branch} не слита: {who}',

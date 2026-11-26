@@ -67,7 +67,7 @@ app/
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
     plugins/         Settings > Plugins: PluginsBrowse (the official catalog: search, filters), PluginsInstalled, PluginDetail (+ PluginSettingsForm), PluginAddDialog (from a git link or a local folder), PluginViewHost (renders any plugin-provided view)
-    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
+    settings/        SettingsView and its sections (General, Agents, Environments, Lore (SettingsLore + SettingsLoreServer, SettingsLoreForm, SettingsLoreMachine: setting a server up on a machine over SSH), Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
@@ -78,7 +78,7 @@ app/
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
-                     plugins.ts (installed plugins, the catalog, each plugin's settings values)
+                     plugins.ts (installed plugins, the catalog, each plugin's settings values), lore.ts (the Lore CLI, saved servers, their last checks)
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
                      registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts, data.ts (`mango.data`, saved documents) (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
@@ -86,7 +86,9 @@ app/
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), idleCompaction.ts (when a large chat after a break is asked about or compacted; plain-Node testable), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
-                     releaseRuns.ts (which runs build which release, job summaries, files by platform)
+                     releaseRuns.ts (which runs build which release, job summaries, files by platform), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable),
+                     lorePublish.ts (publishing a Lore server: the address offered first, typed values checked as the backend does),
+                     loreMachine.ts (a Lore server on a machine over SSH: the destination as the backend checks it, the client address; plain-Node testable)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   agent_sessions.rs  `agent_transcript`: the end of a Claude Code session's transcript, read only
@@ -95,6 +97,8 @@ src-tauri/src/
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
+  lore/              the same for Epic Games' Lore (shells out to `lore`, local or in an environment): mod.rs, parse.rs (its text
+                     output, no JSON), locks.rs
   lsp/               language servers (`lsp_*`): servers.rs (the only command lines and installers), resolve.rs (which program runs), session.rs + framing.rs (pipes), tree.rs (the whole process tree ends with it), folder.rs (which folder the user's consent is bound to, and whether a worktree follows its project's)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   file_ops.rs        the Files view's new folder, rename, duplicate, delete and show in file manager: the entry itself (never a link's target), never replacing
@@ -117,10 +121,17 @@ src-tauri/src/
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   notify.rs          `notify`: one system notification (the frontend decides when, `composables/notify.ts`)
   pty.rs, shells.rs  terminals; discovery of installed shells
-  projects.rs        open / create / clone, recent projects
+  projects.rs        open / create / clone, recent projects (git or Lore: `lore repository create`, `lore clone`)
+  lore_servers.rs    Lore (`lore` CLI): saved servers (lore-servers.json, `upsert` is what an Incus recipe registers its server with), checking
+                     one (`lore_server_check`: name lookup, TCP, then UDP through a data read, then sign-in), `lore login` in a PTY, logout;
+                     the URL/name validators and argv builders `projects.rs` and `envs/remote.rs` use
+  lore_machines.rs   a Lore server on a machine over SSH without Incus (`lore_machine_probe`, `lore_machine_run`): Epic's image in Docker
+                     (pinned by digest, `recipes::LORE_IMAGE`) or the `lore-server` recipe's script as a systemd service; every change in a
+                     terminal where ssh and sudo ask for their passwords; health is `lore_server_check` from this computer
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
   envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
                      incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel),
+                     lore.rs (a Lore server in an instance: its URLs, publishing it outside the server with Incus proxy devices),
                      server.rs (install, set up and update Incus on the server)
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
@@ -184,6 +195,18 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - GitLab (`gitlab*.rs`): `glab` owns the sign-in, like `gh`. A GitLab-shaped link on a host Mango does not know as GitLab is
   refused before `glab` sees it, so a token never goes to a server the user did not name. Values reach `glab api` as `-f` raw
   fields only (never `-F`, which reads `@file`). The phone ports these files in `mobile/src/remote/gitlab*.ts`: keep them in step.
+- Lore (`lore_servers.rs`, `utils/lore.ts`, `stores/lore.ts`): `lore` owns its sign-in (`lore login`, in a PTY); never pass `--token`,
+  `--access-token` or `--identity-token` (they show in the process table). Every server address and repository name passes
+  `parse_server_url` / `parse_repo_url` / `valid_repo_name` before it reaches an argv (or, in an environment, `ssh::quote`), and
+  `utils/lore.ts` mirrors them for messages while typing. Automated calls get `-P --non-interactive` and a timeout.
+- Lore servers on machines over SSH (`lore_machines.rs`, `SettingsLoreMachine.vue`, `utils/loreMachine.ts`): Mango never sees a
+  password. Anything that changes the machine runs in a terminal (`lore_machine_run`), where ssh asks for a password (password
+  machines never try keys) and sudo for its own; only the look before it (`lore_machine_probe`) is captured, keys only, and it changes
+  nothing. Saved entries keep `password: true`, never a password. Values reach the root script as positional arguments only, after
+  `lore_machines::clean`. A setup never touches a `lore.service` Mango did not write, never switches Docker and service under a
+  running server, and a removal keeps the data (the `mango-lore-data` volume, or /var/lib/lore). Docker's proxy accepts on the host
+  port before the server is up, so readiness waits for the server's own answer (`answers`). A machine with Incus belongs in
+  Environments instead (the dialog offers it, with keys).
 - The browser (`browser.rs`, `browser_mcp.rs`, `stores/browser.ts`): pages in it are untrusted. Its webviews load only http(s)
   (and about:blank) and never get Mango's IPC. The MCP server that hands agents the browser tools binds 127.0.0.1 only, and
   each chat's URL carries its own secret token. Each webview is a native view drawn over all HTML: every floating layer
@@ -210,6 +233,14 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
   repository is read from the remotes there; `glab` runs inside the instance, signed in there, through `gitlab::GlabAt`,
   and falls back to this computer's only when the instance has none); anything else that touches the local disk must skip them (`isEnvPath`).
+- Lore in environments (`recipes.rs` `lore` / `lore-server`, `envs/lore.rs`): pinned releases with SHA-256 sums hard-coded in
+  `LORE_COMMON` (change the version, all four sums and the Docker image digest `LORE_IMAGE` together; prove it with the ignored
+  `recipes::tests::real_lore_scripts`,
+  which runs the scripts for real in a scratch folder on ports 41437/41439). The server has no sign-in, so it is reachable only
+  from its server's instances until the user publishes it: two proxy devices (`lore-quic` UDP, `lore-grpc` TCP) on an address
+  and port they pick, checked by `valid_listen_address` / `valid_publish_port`. Firewalls are looked at, never changed. Mango's
+  settings are `/etc/lore/config/mango.toml` (rewritten on updates); `local.toml` is the owner's and never touched.
+  "Use as Lore server" goes through `useAsLoreServer` in `stores/environments.ts`.
 - Remote round trips are the cost to watch (a fresh SSH connection is ~1 s on a distant server). Short captured commands
   share one background connection per host (`ssh::batch_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
   terminals, agents and tunnels keep their own. Git reads that would run one after another go in one call (`git::run_all`),
@@ -276,6 +307,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   `PLASTICEDITOR` removed). Read structured output with `--xml --encoding=utf-8`: plain `cm` output is in the
   console code page and mangles non-ASCII names. Prove changes with the ignored `plastic::tests::real_cm` test
   against a throwaway workspace (`MANGO_CM_WORKSPACE`), never a real one.
+- Lore (`lore/`): branch names go through `lore::safe_branch`, paths through `clean_rel`, and every argument
+  after `--`. Every call gets `-P --non-interactive`. Lore prints text only and is pre-1.0: `parse.rs` ignores
+  lines it does not know and never panics; record the version its fixtures came from. Prove changes with the
+  ignored `lore::tests::real_lore` test (`MANGO_LORE_SERVER`, `MANGO_LORE_BIN`) against a scratch server and HOME.
 
 ## Design: use the impeccable skill
 

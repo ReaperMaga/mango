@@ -112,9 +112,25 @@ fn plan_for(tool: &str, os: Os, has: &dyn Fn(&str) -> bool) -> Option<Plan> {
         ("gh", _) => has("brew").then(|| Plan::direct(&["brew", "install", "gh"], "Homebrew")),
         ("glab", _) => has("brew").then(|| Plan::direct(&["brew", "install", "glab"], "Homebrew")),
 
+        // Lore (Settings > Lore): Epic's own installers, which fetch the release for this platform into
+        // ~/.local/bin (macOS, Linux) or %USERPROFILE%\bin (Windows) and put it on PATH. Releases exist for
+        // Windows x64, macOS arm64 and Linux x64/arm64 only.
+        ("lore", Os::Windows) if cfg!(target_arch = "x86_64") => {
+            has("powershell").then(|| Plan::script(&POWERSHELL, LORE_PS1, "Epic Games' installer", &[]))
+        }
+        ("lore", Os::Mac) if cfg!(target_arch = "aarch64") => {
+            (has("curl") && has("bash")).then(|| Plan::script(&["bash", "-c"], LORE_SH, "Epic Games' installer", &[]))
+        }
+        ("lore", Os::Linux) if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) => {
+            (has("curl") && has("bash")).then(|| Plan::script(&["bash", "-c"], LORE_SH, "Epic Games' installer", &[]))
+        }
+
         _ => None,
     }
 }
+
+const LORE_SH: &str = "curl -fsSL https://raw.githubusercontent.com/EpicGames/lore/main/scripts/install.sh | bash";
+const LORE_PS1: &str = "irm https://raw.githubusercontent.com/EpicGames/lore/main/scripts/install.ps1 | iex";
 
 /// The tools the setup dialog offers: (id, name, binary, page to install by hand).
 const TOOLS: [(&str, &str, &str, &str); 3] = [
@@ -128,6 +144,9 @@ pub(crate) const HOSTING_TOOLS: [(&str, &str, &str, &str); 2] = [
     ("gh", "GitHub CLI", "gh", "https://cli.github.com"),
     ("glab", "GitLab CLI", "glab", "https://gitlab.com/gitlab-org/cli#installation"),
 ];
+
+/// Version control CLIs Settings offers (Settings > Lore): same shape as `TOOLS`.
+pub(crate) const VCS_TOOLS: [(&str, &str, &str, &str); 1] = [("lore", "Lore CLI", "lore", crate::lore_servers::HELP_URL)];
 
 /// How Mango would install `tool` on this computer, as the UI shows it.
 pub(crate) fn install_plan(tool: &str) -> Option<InstallPlan> {
@@ -230,6 +249,7 @@ pub async fn setup_install(
     let name = TOOLS
         .iter()
         .chain(HOSTING_TOOLS.iter())
+        .chain(VCS_TOOLS.iter())
         .find(|t| t.0 == tool)
         .map(|t| t.1)
         .ok_or_else(|| format!("Mango doesn't know how to install \"{tool}\""))?;
@@ -294,6 +314,21 @@ mod tests {
         assert!(plan_for("gh", Os::Mac, &with(&[])).is_none());
         // The setup dialog keeps to what Mango itself needs.
         assert!(TOOLS.iter().all(|t| !matches!(t.0, "gh" | "glab")));
+    }
+
+    #[test]
+    fn lore_uses_epics_installer() {
+        let p = plan_for("lore", Os::Linux, &with(&["curl", "bash"])).unwrap();
+        assert_eq!(p.argv, ["bash", "-c", LORE_SH]);
+        assert_eq!(p.via, "Epic Games' installer");
+        assert!(plan_for("lore", Os::Linux, &with(&["bash"])).is_none(), "needs curl");
+        // Built for x86_64 here: Windows x64 has a release, an Intel Mac has none.
+        if cfg!(target_arch = "x86_64") {
+            let p = plan_for("lore", Os::Windows, &with(&["powershell"])).unwrap();
+            assert_eq!(p.argv.last().unwrap(), LORE_PS1);
+            assert!(plan_for("lore", Os::Mac, &with(&["curl", "bash"])).is_none());
+        }
+        assert!(TOOLS.iter().all(|t| t.0 != "lore"), "the setup dialog keeps to what Mango itself needs");
     }
 
     #[test]
