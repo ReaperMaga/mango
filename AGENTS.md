@@ -67,7 +67,7 @@ app/
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
     plugins/         Settings > Plugins: PluginsBrowse (the official catalog: search, filters), PluginsInstalled, PluginDetail (+ PluginSettingsForm), PluginAddDialog (from a git link or a local folder), PluginViewHost (renders any plugin-provided view)
-    settings/        SettingsView and its sections (General, Agents, Environments, Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
+    settings/        SettingsView and its sections (General, Agents, Environments, Lore (SettingsLore + SettingsLoreServer, SettingsLoreForm), Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
@@ -78,7 +78,7 @@ app/
   stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
-                     plugins.ts (installed plugins, the catalog, each plugin's settings values)
+                     plugins.ts (installed plugins, the catalog, each plugin's settings values), lore.ts (the Lore CLI, saved servers, their last checks)
   plugin-host/       the plugin runtime: types.ts (the public plugin API, the contract), runtime.ts (loading, activating, safe mode), api.ts (the `mango` object),
                      registry.ts (everything plugins registered), fileHooks.ts (what plugins add to project files, as the app reads it), scope.ts, hooks.ts, ids.ts, semver.ts, data.ts (`mango.data`, saved documents) (plain-Node testable), ui/ (icons, toasts and dialogs, tool windows, tabs, status items)
   types/             ipc.ts (the frontend <-> Rust contract), chat.ts (threads, messages, statuses)
@@ -86,7 +86,7 @@ app/
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), idleCompaction.ts (when a large chat after a break is asked about or compacted; plain-Node testable), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
-                     releaseRuns.ts (which runs build which release, job summaries, files by platform)
+                     releaseRuns.ts (which runs build which release, job summaries, files by platform), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   agent_sessions.rs  `agent_transcript`: the end of a Claude Code session's transcript, read only
@@ -117,7 +117,10 @@ src-tauri/src/
   images.rs          `chat_image`: a picture an agent's reply shows; any path, but only real raster images (by their bytes)
   notify.rs          `notify`: one system notification (the frontend decides when, `composables/notify.ts`)
   pty.rs, shells.rs  terminals; discovery of installed shells
-  projects.rs        open / create / clone, recent projects
+  projects.rs        open / create / clone, recent projects (git or Lore: `lore repository create`, `lore clone`)
+  lore_servers.rs    Lore (`lore` CLI): saved servers (lore-servers.json, `upsert` is what an Incus recipe registers its server with), checking
+                     one (`lore_server_check`: name lookup, TCP, then UDP through a data read, then sign-in), `lore login` in a PTY, logout;
+                     the URL/name validators and argv builders `projects.rs` and `envs/remote.rs` use
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
   envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
                      incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel),
@@ -184,6 +187,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
 - GitLab (`gitlab*.rs`): `glab` owns the sign-in, like `gh`. A GitLab-shaped link on a host Mango does not know as GitLab is
   refused before `glab` sees it, so a token never goes to a server the user did not name. Values reach `glab api` as `-f` raw
   fields only (never `-F`, which reads `@file`). The phone ports these files in `mobile/src/remote/gitlab*.ts`: keep them in step.
+- Lore (`lore_servers.rs`, `utils/lore.ts`, `stores/lore.ts`): `lore` owns its sign-in (`lore login`, in a PTY); never pass `--token`,
+  `--access-token` or `--identity-token` (they show in the process table). Every server address and repository name passes
+  `parse_server_url` / `parse_repo_url` / `valid_repo_name` before it reaches an argv (or, in an environment, `ssh::quote`), and
+  `utils/lore.ts` mirrors them for messages while typing. Automated calls get `-P --non-interactive` and a timeout.
 - The browser (`browser.rs`, `browser_mcp.rs`, `stores/browser.ts`): pages in it are untrusted. Its webviews load only http(s)
   (and about:blank) and never get Mango's IPC. The MCP server that hands agents the browser tools binds 127.0.0.1 only, and
   each chat's URL carries its own secret token. Each webview is a native view drawn over all HTML: every floating layer
