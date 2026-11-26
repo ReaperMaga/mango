@@ -225,7 +225,7 @@ else
     echo MANGO-ERR:notempty; exit 0
   fi
   case "$url" in
-  lore://*)
+  lore://*|lores://*)
     need_lore
     out=$(mkdir -p -- "$(dirname -- "$dir")" 2>&1) || { printf 'MANGO-ERR:mkdir\n%s\n' "$out"; exit 0; }
     out=$(NO_COLOR=1 timeout 570 lore -P --non-interactive clone -- "$url" "$dir" 2>&1); code=$?

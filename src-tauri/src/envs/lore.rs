@@ -7,8 +7,12 @@
 //! devices on the instance, both listening on an address and port of the Incus host the user picks:
 //! `lore-quic` (UDP, the QUIC the CLI speaks) and `lore-grpc` (TCP, gRPC on the same port number),
 //! each forwarded to the server's port 41337 inside (a VM's proxy works in NAT mode, as in `shares`).
-//! An SSH tunnel can't carry QUIC, so this is the only way in from outside. The server has no
-//! sign-in: the address is the user's choice, and the interface warns about public ones.
+//! An SSH tunnel can't carry QUIC, so this is the only way in from outside. Without its sign-in
+//! (`lore_auth`) the server takes anyone: the address is the user's choice, and the interface warns
+//! about public ones. With it, two more proxy devices publish TCP ports 80 and 443 at the same
+//! address (`lore-http`, `lore-https`: Let's Encrypt and the sign-in pages, served by Caddy inside),
+//! and clients use `lores://<domain>[:port]`. The sign-in runs in a terminal (`env_lore_auth`): the
+//! GitHub secret and passwords are typed there, inside the instance.
 //!
 //! Each command is one `ssh master sh -c SCRIPT …` run that also reads the state back (`INFO`), so
 //! a publish answers with the new URLs and the host firewall in the same call. Values reach the
@@ -25,6 +29,8 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use super::{blocking, hosts, incus, recipes, shares, ssh, valid_instance, valid_listen_address, valid_publish_port, EnvHost};
+use crate::lore_auth::{self, LoreSignIn, LoreSignInState};
+use tauri::State;
 
 /// The port the Lore server listens on inside the instance (QUIC over UDP and gRPC over TCP).
 pub const LORE_PORT: u16 = 41337;
@@ -51,6 +57,8 @@ pub struct EnvLoreServer {
     pub addresses: Vec<EnvHostAddress>,
     /// Why it can't be published from here, when it can't (a joined environment).
     pub publish_note: Option<String>,
+    /// Its sign-in, once it has been set up (on or off); none before.
+    pub auth: Option<LoreSignInState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -68,6 +76,8 @@ pub struct EnvLorePublished {
     pub reachable: Option<bool>,
     /// Both devices are there (UDP and TCP); `false` when one went missing.
     pub complete: bool,
+    /// Ports 80 and 443 are published at the same address too (for the sign-in).
+    pub web: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -123,12 +133,53 @@ pub(crate) const MASTER_LORE: &str = r##"lore_port_check() {
   fi
 }
 lore_unpublish() {
-  for d in lore-quic lore-grpc; do
+  for d in lore-quic lore-grpc lore-http lore-https; do
     if incus config device list "$T" 2>/dev/null | grep -qx "$d"; then
       incus config device remove "$T" "$d" >/dev/null || fail "could not remove the $d device from $T."
     fi
   done
 }
+lore_vm() {
+  case $(incus info "$T" | sed -n 's/^Type: *//p') in
+    virtual-machine*) return 0 ;;
+  esac
+  return 1
+}
+# Ports 80 and 443 at $LA for the sign-in (Caddy inside: Let's Encrypt and Dex's pages).
+lore_web_unpublish() {
+  for d in lore-http lore-https; do
+    if incus config device list "$T" 2>/dev/null | grep -qx "$d"; then
+      incus config device remove "$T" "$d" >/dev/null || fail "could not remove the $d device from $T."
+    fi
+  done
+}
+lore_web_publish() {
+  if [ -z "$(incus config device get "$T" lore-https listen 2>/dev/null || true)" ]; then
+    set --
+    [ -z "$LR" ] || set -- "$LR"
+    used=$( {
+      [ -n "$LR" ] || ss -ltnH 2>/dev/null | awk '{ print $4 }' || true
+      { incus list "$@" --all-projects -f json 2>/dev/null || incus list "$@" -f json 2>/dev/null; } | grep -o '"listen":"tcp:[^"]*"' || true
+    } | sed -n 's/.*:\([0-9][0-9]*\)"*$/\1/p')
+    for p in 80 443; do
+      if printf '%s\n' "$used" | grep -qx "$p"; then
+        fail "port $p is already in use on the server (a web server, or another environment). The sign-in needs ports 80 and 443 for Let's Encrypt and its pages."
+      fi
+    done
+  fi
+  lore_web_unpublish
+  for p in 80 443; do
+    d=lore-http
+    [ "$p" = 80 ] || d=lore-https
+    if lore_vm; then set -- nat=true "connect=tcp:0.0.0.0:$p"; else set -- "connect=tcp:127.0.0.1:$p"; fi
+    if ! err=$(incus config device add "$T" "$d" proxy "listen=tcp:$LA:$p" "$@" 2>&1); then
+      lore_web_unpublish
+      fail "could not publish port $p for $T (Incus proxy device): $err"
+    fi
+  done
+}
+# The sign-in is on inside the instance.
+lore_signin_on() { incus exec "$T" -T -- test -s /etc/lore-auth/lore.toml 2>/dev/null; }
 lore_publish() {
   lore_port_check
   lore_unpublish
@@ -146,6 +197,8 @@ lore_publish() {
       fail "could not publish $p port $LP for $T (Incus proxy device): $err"
     fi
   done
+  # With the sign-in on, its ports move along.
+  if lore_signin_on; then lore_web_publish; fi
 }
 lore_firewall() {
   [ -z "$LR" ] || return 0
@@ -195,11 +248,21 @@ const INFO: &str = r##"lore_info() {
 "##;
 
 /// Inside the instance (sh, as root): the server's version, whether it runs, the instance's addresses.
+/// The sign-in's lines are what `auth_main status` prints (`lore_auth::parse_status` reads them).
 const INNER: &str = r##"v=
 [ -x /usr/local/bin/loreserver ] && [ -f /etc/systemd/system/lore.service ] && v=$(/usr/local/bin/loreserver --version 2>/dev/null | head -n 1)
 printf 'version %s\n' "$v"
 printf 'active %s\n' "$(systemctl is-active lore.service 2>/dev/null | head -n 1)"
 printf 'ips %s\n' "$(hostname -I 2>/dev/null)"
+a=/etc/lore-auth
+if [ -f $a/settings ]; then
+  if [ -s $a/lore.toml ]; then echo 'authOn yes'; else echo 'authOn no'; fi
+  sed -n 's/^DOMAIN=/authDomain /p; s/^PASSWORDS=/authPasswords /p; s/^GH_ID=/authGithubId /p; s/^GH_ORGS=/authGithubOrgs /p' $a/settings
+  [ ! -s $a/github-secret ] || echo 'authGithubSecret yes'
+  d=$(sed -n 's/^DOMAIN=//p' $a/settings | head -n 1)
+  ! ls /var/lib/lore-auth/caddy/certificates/*/"$d"/"$d".crt >/dev/null 2>&1 || echo 'authCert yes'
+  cut -f1 $a/users 2>/dev/null | sed 's/^/authUser /'
+fi
 exit 0
 "##;
 
@@ -442,6 +505,7 @@ pub(crate) fn parse_info(instance: &str, out: &str) -> EnvLoreServer {
 
     let quic = inst.as_ref().and_then(|i| device_listen(i, QUIC_DEVICE));
     let grpc = inst.as_ref().and_then(|i| device_listen(i, GRPC_DEVICE));
+    let web = inst.as_ref().is_some_and(|i| device_listen(i, "lore-http").is_some() && device_listen(i, "lore-https").is_some());
     let published = quic.as_deref().or(grpc.as_deref()).and_then(split_listen).map(|(address, port)| EnvLorePublished {
         address,
         port,
@@ -449,7 +513,9 @@ pub(crate) fn parse_info(instance: &str, out: &str) -> EnvLoreServer {
         url_note: None,
         reachable: None,
         complete: quic.is_some() && grpc.is_some(),
+        web,
     });
+    let auth = s.get("inside").map(|t| lore_auth::parse_status(t)).filter(|a| a.domain.is_some());
     let firewall = s
         .get("firewall")
         .and_then(|t| t.lines().map(str::trim).find(|l| matches!(*l, "ufw" | "firewalld" | "nftables")))
@@ -465,6 +531,7 @@ pub(crate) fn parse_info(instance: &str, out: &str) -> EnvLoreServer {
         firewall,
         addresses: s.get("host").map(|t| parse_host_addresses(t, net_name)).unwrap_or_default(),
         publish_note: None,
+        auth,
     }
 }
 
@@ -505,14 +572,20 @@ fn run(host: &EnvHost, instance: &str, step: &Step) -> Result<EnvLoreServer, Str
     let timeout = Duration::from_secs(if matches!(step, Step::Read) { 45 } else { 90 });
     let out = ssh::run(host, &remote(host, instance, step), timeout).map_err(|e| script_error(instance, e))?;
     let mut info = parse_info(instance, &out);
+    let signed_in = info.auth.as_ref().filter(|a| a.on).and_then(|a| a.domain.clone());
     if let Some(p) = info.published.as_mut() {
         let names = server_names(host);
-        match outside_host(host, &p.address, &names, &info.addresses, &resolve_here) {
-            Ok(h) => {
+        match (&signed_in, outside_host(host, &p.address, &names, &info.addresses, &resolve_here)) {
+            // With the sign-in on, clients use the domain (its certificate's name) over lores://.
+            (Some(d), _) => {
+                p.reachable = Some(reachable_here(d, p.port));
+                p.url = Some(lore_auth::secure_url(d, p.port));
+            }
+            (None, Ok(h)) => {
                 p.reachable = Some(reachable_here(&h, p.port));
                 p.url = Some(lore_url(&h, p.port));
             }
-            Err(e) => p.url_note = Some(e),
+            (None, Err(e)) => p.url_note = Some(e),
         }
         if p.url.is_some() && host.incus_remote.as_deref().is_some_and(|r| !r.is_empty()) && host.public_address.is_none() {
             p.url_note = Some(format!(
@@ -583,6 +656,109 @@ pub async fn env_host_addresses(app: AppHandle, host_id: String) -> Result<EnvHo
         Ok(EnvHostAddresses { addresses: parse_host_addresses(&out, None), note: None })
     })
     .await
+}
+
+/* ---------- sign-in ---------- */
+
+/// Master side (POSIX sh, after `MASTER_LORE`), in a terminal: the sign-in's ports and `auth_main`
+/// inside the instance. Args: T N LR ACTION S (the instance-side script), then the action's own.
+const MASTER_AUTH: &str = r##"T=$1 N=$2 LR=$3 ACTION=$4 S=$5
+shift 5
+incus info "$T" >/dev/null 2>&1 || fail "$N no longer exists on this server."
+case $ACTION in
+  setup)
+    q=$(incus config device get "$T" lore-quic listen 2>/dev/null || true)
+    [ -n "$q" ] || fail "publish the Lore server first: the sign-in is for the address it is published at."
+    LA=${q#*:}
+    LA=${LA%:*}
+    LP=${q##*:}
+    printf '\n\033[1m==> %s\033[0m\n' "Publishing TCP ports 80 and 443 at $LA (Let's Encrypt and the sign-in pages)"
+    lore_web_publish
+    incus exec "$T" -t --env AUTH_APPLY=1 -- bash -c "$S" mango-lore-auth setup "$1" "$2" "$3" "$4" "$LP" "" "$5"
+    echo
+    lore_firewall_say || true
+    echo "The sign-in needs TCP ports 80 and 443 at $LA too: whatever allows port $LP has to allow them."
+    ;;
+  off)
+    incus exec "$T" -t --env AUTH_APPLY=1 -- bash -c "$S" mango-lore-auth off
+    lore_web_unpublish
+    echo "Ports 80 and 443 are no longer published for $N."
+    ;;
+  *)
+    incus exec "$T" -t -- bash -c "$S" mango-lore-auth "$ACTION" "$@"
+    ;;
+esac
+"##;
+
+const AUTH_ACTIONS: [&str; 5] = ["setup", "off", "user-add", "user-remove", "github-secret"];
+
+/// The remote argv for a sign-in action (values already checked): `args` follow the action.
+fn auth_remote(host: &EnvHost, instance: &str, action: &str, args: &[String]) -> Vec<String> {
+    let fail = r#"fail() { printf '\n\033[1;31mMango: %s\033[0m\n' "$*" >&2; exit 1; }
+"#;
+    let script = format!("set -eu\n{fail}{MASTER_LORE}{MASTER_AUTH}");
+    let inside = format!(
+        "set -Eeuo pipefail\n{}{}{}auth_main \"$@\"\n",
+        recipes::BASICS,
+        recipes::LORE_COMMON,
+        lore_auth::functions()
+    );
+    let mut v: Vec<String> = vec![
+        "sh".into(),
+        "-c".into(),
+        script,
+        "mango-lore-auth".into(),
+        ssh::target(host, instance),
+        instance.to_string(),
+        ssh::remote_prefix(host).unwrap_or_default(),
+        action.to_string(),
+        inside,
+    ];
+    v.extend(args.iter().cloned());
+    v
+}
+
+/// The arguments of one sign-in action, checked: `setup` takes the sign-in and an optional first
+/// user, `user-add` / `user-remove` an email, `off` and `github-secret` nothing.
+pub(crate) fn auth_args(action: &str, sign_in: Option<LoreSignIn>, email: Option<&str>) -> Result<Vec<String>, String> {
+    if !AUTH_ACTIONS.contains(&action) {
+        return Err(format!("\"{action}\" is not something Mango does to a Lore server's sign-in."));
+    }
+    let email = email.map(str::trim).filter(|e| !e.is_empty()).map(lore_auth::valid_email).transpose()?;
+    Ok(match action {
+        "setup" => {
+            let s = lore_auth::clean(sign_in.ok_or("Pick how people sign in first.")?)?;
+            let mut v = lore_auth::setup_args(&s).to_vec();
+            v.push(if s.passwords { email.unwrap_or_default() } else { String::new() });
+            v
+        }
+        "user-add" | "user-remove" => vec![email.ok_or("Type the email address of the user.")?],
+        _ => vec![],
+    })
+}
+
+/// Set up (or change) the Lore server's sign-in in `instance`, turn it off, add or remove a password
+/// user, or type the GitHub secret again, in a terminal: passwords and the secret are typed there.
+/// Answers the pty id.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn env_lore_auth(
+    app: AppHandle,
+    state: State<'_, crate::pty::PtyState>,
+    host_id: String,
+    instance: String,
+    action: String,
+    sign_in: Option<LoreSignIn>,
+    email: Option<String>,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
+    valid_instance(&instance)?;
+    let args = auth_args(&action, sign_in, email.as_deref())?;
+    let host = hosts::get(&app, &host_id)?;
+    super::owner_only(&host, "change this environment's Lore server")?;
+    let argv = ssh::argv(&host, ssh::Mode::Tty, &auth_remote(&host, &instance, &action, &args))?;
+    crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }
 
 /// Validated create-time publish values: (listen address, port).
@@ -772,5 +948,56 @@ mod tests {
         check("sh", &master);
         check("bash", &master);
         check("sh", INNER);
+        let auth = auth_remote(&host(), "lore", "setup", &[]);
+        check("sh", &auth[2]);
+        check("bash", &auth[8]);
+    }
+
+    #[test]
+    fn sign_in_actions() {
+        use crate::lore_auth::LoreSignInGithub;
+        let s = LoreSignIn {
+            domain: "Lore.Example.com".into(),
+            passwords: true,
+            github: Some(LoreSignInGithub { client_id: "Ov23li".into(), orgs: vec!["fruit".into()] }),
+        };
+        assert_eq!(
+            auth_args("setup", Some(s.clone()), Some(" Ann@Example.com ")).unwrap(),
+            ["lore.example.com", "yes", "Ov23li", "fruit", "ann@example.com"]
+        );
+        // No passwords: no first user, whatever was typed.
+        let gh = LoreSignIn { passwords: false, ..s.clone() };
+        assert_eq!(auth_args("setup", Some(gh), Some("ann@example.com")).unwrap()[4], "");
+        assert_eq!(auth_args("user-add", None, Some("ann@example.com")).unwrap(), ["ann@example.com"]);
+        assert!(auth_args("off", None, None).unwrap().is_empty());
+        assert!(auth_args("setup", None, None).is_err());
+        assert!(auth_args("user-add", None, None).is_err());
+        assert!(auth_args("user-add", None, Some("x;id")).is_err());
+        assert!(auth_args("rm", None, None).is_err());
+
+        let r = auth_remote(&host(), "lore", "setup", &auth_args("setup", Some(s), Some("ann@example.com")).unwrap());
+        assert_eq!(&r[..2], ["sh", "-c"]);
+        assert_eq!(&r[3..8], ["mango-lore-auth", "lore", "lore", "", "setup"]);
+        assert_eq!(&r[9..], ["lore.example.com", "yes", "Ov23li", "fruit", "ann@example.com"]);
+        // Neither script names a value itself.
+        assert!(!r[2].contains("example.com") && !r[8].contains("example.com"));
+        assert!(ssh::line(&r).is_ascii());
+    }
+
+    #[test]
+    fn reads_the_sign_in() {
+        let out = format!(
+            "@@instance\n{INSTANCE}\n@@inside\nversion loreserver 0.14.0\nactive active\nips 10.88.0.44\n\
+             authOn yes\nauthDomain lore.example.com\nauthPasswords yes\nauthGithubId \nauthGithubOrgs \nauthCert yes\n\
+             authUser ann@example.com\nauthUser bo@example.com\n"
+        );
+        let i = parse_info("lore", &out);
+        let a = i.auth.unwrap();
+        assert!(a.on && a.passwords && a.certificate && a.github.is_none());
+        assert_eq!(a.users, ["ann@example.com", "bo@example.com"]);
+        assert!(!i.published.unwrap().web);
+        // Never set up: no sign-in at all.
+        let i = parse_info("lore", "@@inside\nversion loreserver 0.14.0\n");
+        assert!(i.auth.is_none());
     }
 }

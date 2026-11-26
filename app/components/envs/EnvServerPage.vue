@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronRight, CircleCheck, Pencil, Plus, RefreshCw, Server, TriangleAlert } from 'lucide-vue-next'
+import { ChevronRight, CircleCheck, Pencil, Plus, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import { hostState, instanceKey, sshUser, useEnvironments } from '~/stores/environments'
 import type { EnvInstance } from '~/types/ipc'
 import EnvStatus from './EnvStatus.vue'
@@ -315,9 +315,6 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? t('envs.common.vmShort'
           <span v-if="instances?.length" class="sp__count tabular">{{ instances.length }}</span>
         </h3>
         <span v-if="ready" class="sp__list-actions">
-          <UiButton size="sm" :title="t('envs.lore.newServerTitle')" @click="envs.dialog = { kind: 'create', hostId, preset: 'lore-server' }">
-            <Server />{{ t('envs.lore.newServer') }}
-          </UiButton>
           <UiButton variant="primary" size="sm" @click="envs.dialog = { kind: 'create', hostId }">
             <Plus />{{ t('envs.common.newEnvironment') }}
           </UiButton>

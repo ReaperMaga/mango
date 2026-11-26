@@ -145,7 +145,7 @@ pub(crate) const RECIPES: &[Recipe] = &[
     Recipe {
         id: "lore-server",
         name: "Lore server",
-        description: "A Lore server (loreserver) running as a service, its data in /var/lib/lore. It has no sign-in: anyone who can reach it can read and write, so only this server's environments reach it unless you publish it.",
+        description: "A Lore server (loreserver) running as a service, its data in /var/lib/lore. Only this server's environments reach it unless you publish it; once published, its page can require sign-in.",
         requires: &["base"],
         script: LORE_SERVER,
         version_var: None,
@@ -474,6 +474,46 @@ lore_get() {
 }
 # The version a Lore binary reports (lore 0.14.0+2389 -> 0.14.0), or nothing.
 lore_version() { "$1" --version 2>/dev/null | head -n 1 | awk '{ print $2 }' | sed 's/+.*//' || true; }
+# The service's mango.toml: Mango's settings, then the sign-in's when it is on (`lore_auth`).
+lore_toml() {
+  cat <<'EOF'
+# Written by Mango, and rewritten when Mango updates the Lore server: put your own settings
+# in local.toml next to this file, which loads after it and which Mango never changes.
+# One server on its own: everything is stored on this machine, in /var/lib/lore/store.
+# Without Mango's sign-in (its settings follow below when it is on) anyone who reaches the
+# server's port can read and write.
+
+[immutable_store]
+mode = "local"
+
+[mutable_store]
+mode = "local"
+
+[lock_store]
+mode = "local"
+
+[immutable_store.local]
+path = "/var/lib/lore/store"
+flush_delay_seconds = 10
+
+[mutable_store.local]
+path = "/var/lib/lore/store"
+flush_delay_seconds = 10
+
+[topology]
+provider = "none"
+
+[notification]
+mode = "local"
+
+[telemetry.logger]
+format = "ansi"
+EOF
+  if [ -s /etc/lore-auth/lore.toml ]; then
+    echo
+    cat /etc/lore-auth/lore.toml
+  fi
+}
 "##;
 
 const LORE: &str = r##"say "Lore CLI (lore, a pinned release from GitHub)"
@@ -509,39 +549,7 @@ if ! id -u lore >/dev/null 2>&1; then
 fi
 install -d -o lore -g lore -m 0750 /var/lib/lore /var/lib/lore/store
 install -d -m 0755 /etc/lore /etc/lore/config
-put /etc/lore/config/mango.toml 0644 <<'EOF' && changed=1
-# Written by Mango, and rewritten when Mango updates the Lore server: put your own settings
-# in local.toml next to this file, which loads after it and which Mango never changes.
-# One server on its own: everything is stored on this machine, in /var/lib/lore/store.
-# There is no sign-in ([server.auth] needs an OpenID Connect identity provider): anyone who
-# reaches port 41337 can read and write.
-
-[immutable_store]
-mode = "local"
-
-[mutable_store]
-mode = "local"
-
-[lock_store]
-mode = "local"
-
-[immutable_store.local]
-path = "/var/lib/lore/store"
-flush_delay_seconds = 10
-
-[mutable_store.local]
-path = "/var/lib/lore/store"
-flush_delay_seconds = 10
-
-[topology]
-provider = "none"
-
-[notification]
-mode = "local"
-
-[telemetry.logger]
-format = "ansi"
-EOF
+lore_toml | put /etc/lore/config/mango.toml 0644 && changed=1
 if [ ! -e /etc/lore/config/local.toml ]; then
   cat > /etc/lore/config/local.toml <<'EOF'
 # Your own settings for this Lore server: they load after mango.toml and win over it.
@@ -553,7 +561,7 @@ fi
 put /etc/systemd/system/lore.service 0644 <<'EOF' && changed=1
 [Unit]
 Description=Lore server (set up by Mango)
-After=network-online.target
+After=network-online.target lore-auth-dex.service
 Wants=network-online.target
 
 [Service]

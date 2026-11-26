@@ -490,7 +490,7 @@ const mock = (() => {
       case 'lore_machine_probe': return mockLoreMachineProbe(args.machine)
       case 'lore_machine_run': {
         const id = newPtyId()
-        mockLoreMachineRun(emit, id, args.machine, args.action)
+        mockLoreMachineRun(emit, id, args.machine, args.action, args.email ?? null)
         return id
       }
       case 'gitlab_hosts': return mockGitlabHosts()

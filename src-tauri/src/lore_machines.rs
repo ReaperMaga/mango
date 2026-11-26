@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 
 use crate::envs::lore::{parse_host_addresses, EnvHostAddress};
+use crate::lore_auth::{self, LoreSignIn};
 use crate::envs::{blocking, hosts, recipes, ssh, valid_listen_address, valid_publish_port, EnvHost};
 
 /// Where and how a Lore server runs on a machine (saved with its entry in `lore-servers.json`;
@@ -43,6 +44,9 @@ pub struct LoreMachine {
     pub address: String,
     /// The TCP and UDP port it listens on there.
     pub listen_port: u16,
+    /// Sign-in (Dex and Caddy beside it, `lore_auth`); none: anyone who reaches it can read and write.
+    #[serde(default)]
+    pub auth: Option<LoreSignIn>,
 }
 
 /// How to reach a machine, for a look at it before setting up.
@@ -81,7 +85,7 @@ pub struct LoreMachineProbe {
 }
 
 const RUNTIMES: [&str; 3] = ["auto", "docker", "service"];
-const ACTIONS: [&str; 3] = ["setup", "restart", "remove"];
+const ACTIONS: [&str; 6] = ["setup", "restart", "remove", "user-add", "user-remove", "github-secret"];
 
 /* ---------- checking input ---------- */
 
@@ -131,6 +135,7 @@ pub(crate) fn clean(m: LoreMachine, strict: bool) -> Result<LoreMachine, String>
     }
     let address = valid_listen_address(&m.address)?;
     valid_publish_port(m.listen_port)?;
+    let auth = m.auth.map(lore_auth::clean).transpose()?;
     Ok(LoreMachine {
         ssh: h.ssh,
         port: h.port,
@@ -139,6 +144,7 @@ pub(crate) fn clean(m: LoreMachine, strict: bool) -> Result<LoreMachine, String>
         runtime: m.runtime,
         address,
         listen_port: m.listen_port,
+        auth,
     })
 }
 
@@ -187,8 +193,10 @@ sudo -n true 2>/dev/null || printf '\nThis needs root on %s: sudo asks for your 
 sudo -- bash "$f" "$@"
 "##;
 
-/// As root (bash), after `recipes::BASICS` and `recipes::LORE_COMMON`. Arguments: ACTION RUNTIME LA LP.
-const MACHINE: &str = r##"ACTION=$1 RUNTIME=$2 LA=$3 LP=$4
+/// As root (bash), after `recipes::BASICS`, `recipes::LORE_COMMON` and `lore_auth::functions`.
+/// Arguments: ACTION RUNTIME LA LP, then the sign-in (`lore_auth::setup_args`: DOMAIN PASSWORDS
+/// GH_ID GH_ORGS, all empty for none) and EMAIL (a user to add or remove, or the first user).
+const MACHINE: &str = r##"ACTION=$1 RUNTIME=$2 LA=$3 LP=$4 DOMAIN=${5:-} PW=${6:-} GH_ID=${7:-} GH_ORGS=${8:-} EMAIL=${9:-}
 trap 'printf "\n\033[1;31mMango: the step above failed. Running it again is safe.\033[0m\n" >&2' ERR
 C=mango-lore
 VOL=mango-lore-data
@@ -197,10 +205,12 @@ DROPIN=/etc/systemd/system/lore.service.d/10-mango-listen.conf
 BARE=${LA#[}
 BARE=${BARE%]}
 case $BARE in
-  0.0.0.0) UP=127.0.0.1 ;;
-  ::) UP=::1 ;;
-  *) UP=$BARE ;;
+  0.0.0.0) UP=127.0.0.1 WEB_LA= ;;
+  ::) UP=::1 WEB_LA= ;;
+  *) UP=$BARE WEB_LA=$BARE ;;
 esac
+# The sign-in is on here (its settings for the server are written).
+signin_on() { [ -s /etc/lore-auth/lore.toml ]; }
 
 docker_ok() { command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; }
 image_ok() { case "$(uname -m)" in x86_64|amd64) return 0 ;; esac; return 1; }
@@ -245,7 +255,11 @@ wait_up() {
   return 1
 }
 done_say() {
-  echo "The Lore server listens on $LA port $LP (UDP and TCP). It has no sign-in: anyone who reaches that port can read and write."
+  if signin_on; then
+    echo "The Lore server listens on $LA port $LP (UDP and TCP), and only signed-in people get in: $(auth_url)"
+  else
+    echo "The Lore server listens on $LA port $LP (UDP and TCP). It has no sign-in: anyone who reaches that port can read and write."
+  fi
 }
 
 setup_docker() {
@@ -266,14 +280,32 @@ EOF
   fi
   docker volume create "$VOL" >/dev/null
   spec="$LORE_IMAGE $LA $LP"
+  # With sign-in, the server reads Dex's keys on this machine's 127.0.0.1, so the container shares
+  # the host's network and listens where a service would. Its mango.toml is what the image's
+  # docker.toml says (the store in /data) and the sign-in's settings; the certificate is mounted.
+  local restart=${AUTH_CERT_CHANGED:-0}
+  if signin_on; then
+    spec="$spec signin"
+    { printf '# Written by Mango: the store in /data (as the image has it), then the sign-in.\n'
+      printf '[immutable_store.local]\npath = "/data"\n\n[mutable_store.local]\npath = "/data"\n\n'
+      cat /etc/lore-auth/lore.toml; } | put /etc/mango-lore/mango.toml 0644 && restart=1
+  fi
   cur=$(docker container inspect -f '{{index .Config.Labels "dev.mango.lore.spec"}}' "$C" 2>/dev/null || true)
   if [ -n "$cur" ] && [ "$cur" = "$spec" ]; then
     echo "The container is up to date."
-    docker start "$C" >/dev/null
+    if [ "$restart" = 1 ]; then docker restart "$C" >/dev/null; else docker start "$C" >/dev/null; fi
   else
     if docker container inspect "$C" >/dev/null 2>&1; then
       echo "Replacing the container (its data stays in the $VOL volume)."
       docker rm -f "$C" >/dev/null
+    fi
+    if signin_on; then
+      set -- --network host -e LORE_ENV=mango \
+        -e "LORE__SERVER__QUIC__HOST=$BARE" -e "LORE__SERVER__QUIC__PORT=$LP" \
+        -e "LORE__SERVER__GRPC__HOST=$BARE" -e "LORE__SERVER__GRPC__PORT=$LP" \
+        -v /etc/mango-lore/mango.toml:/etc/lore/config/mango.toml:ro -v /etc/lore/tls:/etc/lore/tls:ro
+    else
+      set -- -p "$LA:$LP:41337/udp" -p "$LA:$LP:41337/tcp"
     fi
     # No capabilities, no HTTP endpoint (it serves more than the health check), data in a volume.
     docker run -d --name "$C" --restart unless-stopped \
@@ -281,7 +313,7 @@ EOF
       --label "dev.mango.lore.spec=$spec" \
       -e LORE__SERVER__HTTP__ENABLED=false \
       -v "$VOL:/data" -v /etc/mango-lore/local.toml:/etc/lore/config/local.toml:ro \
-      -p "$LA:$LP:41337/udp" -p "$LA:$LP:41337/tcp" \
+      "$@" \
       "$LORE_IMAGE" >/dev/null || fail "Docker could not start the Lore server (see above)."
   fi
   if ! wait_up; then
@@ -289,7 +321,11 @@ EOF
     fail "the Lore server did not start (see above)."
   fi
   done_say
-  echo "Docker publishes the port itself, past ufw's rules. A cloud provider's firewall has to allow UDP and TCP port $LP too."
+  if signin_on; then
+    echo "A firewall here or at a cloud provider has to allow UDP and TCP port $LP, and TCP ports 80 and 443."
+  else
+    echo "Docker publishes the port itself, past ufw's rules. A cloud provider's firewall has to allow UDP and TCP port $LP too."
+  fi
 }
 
 setup_service() {
@@ -308,10 +344,21 @@ Environment=LORE__SERVER__GRPC__HOST=$BARE
 Environment=LORE__SERVER__GRPC__PORT=$LP
 Environment=LORE__SERVER__HTTP__ENABLED=false
 EOF
+  # A renewed or first certificate needs a restart even when nothing else changed.
+  [ "${AUTH_CERT_CHANGED:-0}" = 0 ] || LORE_CHANGED=1
   LORE_UP_HOST=$UP
   LORE_UP_PORT=$LP
   LORE_DONE=$(done_say)
   service_script
+}
+
+# The sign-in as asked: set up (or updated) before the server, which then starts with it; or off.
+signin_setup() {
+  if [ -n "$DOMAIN" ]; then
+    AUTH_APPLY=0 auth_main setup "$DOMAIN" "$PW" "$GH_ID" "$GH_ORGS" "$LP" "$WEB_LA" "$EMAIL"
+  elif [ -f /etc/lore-auth/lore.toml ]; then
+    AUTH_APPLY=0 auth_off
+  fi
 }
 
 case $ACTION in
@@ -329,6 +376,7 @@ case $ACTION in
       fail "Mango's Lore server already runs here as $(said "$now"). Remove it from Mango first (its data stays), then set it up again."
     fi
     port_check "$want"
+    signin_setup
     "setup_$want"
     ;;
   restart)
@@ -358,6 +406,17 @@ case $ACTION in
         ;;
       *) echo "Mango's Lore server isn't on this machine: nothing to remove." ;;
     esac
+    if [ -f /etc/lore-auth/settings ]; then
+      systemctl disable --now lore-auth-caddy.service lore-auth-dex.service lore-auth-cert.timer >/dev/null 2>&1 || true
+      rm -f /etc/lore-auth/lore.toml
+      echo "Stopped its sign-in (Dex and Caddy). Users, certificates and settings stay in /etc/lore-auth and /var/lib/lore-auth."
+    fi
+    ;;
+  user-add|user-remove)
+    auth_main "$ACTION" "$EMAIL"
+    ;;
+  github-secret)
+    auth_main github-secret
     ;;
   *) fail "unknown action $ACTION." ;;
 esac
@@ -367,17 +426,18 @@ say "Done."
 /// The root script: the basics, the pinned release, the service as a function, then [`MACHINE`].
 fn root_script() -> String {
     format!(
-        "set -Eeuo pipefail\nLORE_IMAGE={}\n{}{}service_script() {{\n{}}}\n{MACHINE}",
+        "set -Eeuo pipefail\nLORE_IMAGE={}\n{}{}{}service_script() {{\n{}}}\n{MACHINE}",
         ssh::quote(recipes::LORE_IMAGE),
         recipes::BASICS,
         recipes::LORE_COMMON,
+        lore_auth::functions(),
         recipes::LORE_SERVER,
     )
 }
 
-/// The remote argv for `action` on `m` (already [`clean`]ed).
-fn run_remote(m: &LoreMachine, action: &str) -> Vec<String> {
-    vec![
+/// The remote argv for `action` on `m` (already [`clean`]ed); `email` already `valid_email`ed.
+fn run_remote(m: &LoreMachine, action: &str, email: &str) -> Vec<String> {
+    let mut v: Vec<String> = vec![
         "sh".into(),
         "-c".into(),
         RUN_AS_ROOT.into(),
@@ -387,7 +447,13 @@ fn run_remote(m: &LoreMachine, action: &str) -> Vec<String> {
         m.runtime.clone(),
         m.address.clone(),
         m.listen_port.to_string(),
-    ]
+    ];
+    match &m.auth {
+        Some(a) => v.extend(lore_auth::setup_args(a)),
+        None => v.extend(std::iter::repeat_n(String::new(), 4)),
+    }
+    v.push(email.to_string());
+    v
 }
 
 /// A look at the machine as the SSH user, never asking for anything (POSIX sh).
@@ -460,6 +526,7 @@ pub async fn lore_machine_probe(machine: LoreMachineAccess) -> Result<LoreMachin
             runtime: "auto".into(),
             address: "0.0.0.0".into(),
             listen_port: 41337,
+            auth: None,
         };
         let mut host = h;
         host.name = display_name(&m.ssh);
@@ -512,15 +579,18 @@ fn run_captured(host: &EnvHost, argv: &[String], timeout: Duration) -> Result<St
     }
 }
 
-/// Set up (or update, or move) the Lore server on `machine`, restart it, or remove it (its data
-/// stays), in a terminal: ssh asks for a password there when the machine wants one, and so does
-/// sudo. Answers the pty id.
+/// Set up (or update, or move) the Lore server on `machine` with its sign-in, restart it, remove it
+/// (its data stays), or add or remove a sign-in user (`email`) or retype the GitHub secret, in a
+/// terminal: ssh asks for a password there when the machine wants one, and so do sudo and the
+/// sign-in. `email` on a setup is the first password user. Answers the pty id.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn lore_machine_run(
     app: AppHandle,
     state: State<'_, crate::pty::PtyState>,
     machine: LoreMachine,
     action: String,
+    email: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
@@ -528,7 +598,17 @@ pub async fn lore_machine_run(
         return Err(format!("\"{action}\" is not something Mango does to a Lore server."));
     }
     let m = clean(machine, true)?;
-    let argv = ssh_argv(&m, ssh::Mode::Tty, &run_remote(&m, &action))?;
+    let email = match email.as_deref().map(str::trim).filter(|e| !e.is_empty()) {
+        Some(e) => lore_auth::valid_email(e)?,
+        None if action.starts_with("user-") => return Err("Type the email address of the user.".into()),
+        None => String::new(),
+    };
+    if (action.starts_with("user-") && !m.auth.as_ref().is_some_and(|a| a.passwords))
+        || (action == "github-secret" && !m.auth.as_ref().is_some_and(|a| a.github.is_some()))
+    {
+        return Err("This Lore server's sign-in doesn't use that. Change its sign-in first.".into());
+    }
+    let argv = ssh_argv(&m, ssh::Mode::Tty, &run_remote(&m, &action, &email))?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }
 
@@ -545,6 +625,7 @@ mod tests {
             runtime: "auto".into(),
             address: "0.0.0.0".into(),
             listen_port: 41337,
+            auth: None,
         }
     }
 
@@ -574,10 +655,10 @@ mod tests {
     #[test]
     fn command_lines() {
         let m = clean(LoreMachine { address: "100.64.0.7".into(), listen_port: 41400, ..machine() }, false).unwrap();
-        let r = run_remote(&m, "setup");
+        let r = run_remote(&m, "setup", "");
         assert_eq!(&r[..2], ["sh", "-c"]);
         assert_eq!(r[2], RUN_AS_ROOT);
-        assert_eq!(&r[5..], ["setup", "auto", "100.64.0.7", "41400"]);
+        assert_eq!(&r[5..], ["setup", "auto", "100.64.0.7", "41400", "", "", "", "", ""]);
         // The scripts never name a value from the user.
         assert!(!r[4].contains("100.64.0.7") && !r[4].contains("41400") && !r[4].contains("build.example"));
         assert!(r[4].contains(recipes::LORE_IMAGE) && r[4].contains("service_script() {"));
@@ -586,7 +667,20 @@ mod tests {
         assert_eq!(a[a.len() - 2], "me@build.example.com");
         assert!(a.contains(&"-tt".to_string()) && a.contains(&"2222".to_string()));
         assert!(!a.iter().any(|x| x.contains("PubkeyAuthentication")));
-        assert!(a.last().unwrap().ends_with(" setup auto 100.64.0.7 41400"));
+        assert!(a.last().unwrap().ends_with(" setup auto 100.64.0.7 41400 '' '' '' '' ''"), "{}", a.last().unwrap());
+
+        // With sign-in: its settings and the first user follow, still as arguments only.
+        let signed = LoreMachine {
+            auth: Some(LoreSignIn {
+                domain: "lore.example.com".into(),
+                passwords: true,
+                github: Some(lore_auth::LoreSignInGithub { client_id: "Ov23li".into(), orgs: vec!["fruit".into()] }),
+            }),
+            ..m.clone()
+        };
+        let r = run_remote(&signed, "setup", "ann@example.com");
+        assert_eq!(&r[5..], ["setup", "auto", "100.64.0.7", "41400", "lore.example.com", "yes", "Ov23li", "fruit", "ann@example.com"]);
+        assert!(!r[4].contains("lore.example.com") && !r[4].contains("ann@"));
 
         // A password: keys are never tried, and the options come before the destination.
         let p = LoreMachine { password: true, ..m };

@@ -70,7 +70,7 @@ export const envs: Messages['envs'] = {
     },
     'lore-server': {
       name: 'Lore-Server',
-      description: 'Ein Lore-Server als Dienst. Ohne Anmeldung: Nur die Umgebungen dieses Servers erreichen ihn, solange du ihn nicht veröffentlichst.',
+      description: 'Ein Lore-Server als Dienst. Nur die Umgebungen dieses Servers erreichen ihn, solange du ihn nicht veröffentlichst; dann kann seine Seite eine Anmeldung verlangen.',
     },
     claude: {
       name: 'Claude Code',
@@ -430,8 +430,6 @@ export const envs: Messages['envs'] = {
   },
   lore: {
     title: 'Lore-Server',
-    newServer: 'Neuer Lore-Server',
-    newServerTitle: 'Eine neue Umgebung mit einem Lore-Server, in einem Schritt',
     running: 'Läuft',
     stopped: 'Läuft nicht',
     notInstalled: 'Nicht installiert',
@@ -478,7 +476,7 @@ export const envs: Messages['envs'] = {
     },
     addressInvalid: 'Gib eine IP-Adresse des Servers an, etwa 100.101.7.1.',
     portInvalid: 'Ein Port von 1024 bis 65535.',
-    publicWarning: 'Jeder im Internet, der diese Adresse erreicht, kann alles auf dem Lore-Server lesen und schreiben: Er hat keine Anmeldung. Nimm lieber eine Tailscale- oder private Adresse.',
+    publicWarning: 'Jeder im Internet, der diese Adresse erreicht, kann alles auf dem Lore-Server lesen und schreiben: Er hat keine Anmeldung. Nimm lieber eine Tailscale- oder private Adresse, oder verlange nach dem Veröffentlichen eine Anmeldung.',
     addressesFailed: 'Die Adressen des Servers ließen sich nicht lesen: Gib eine ein.',
   },
   delete: {

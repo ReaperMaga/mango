@@ -21,6 +21,7 @@ mod hosting;
 mod gitlab_releases;
 mod images;
 mod lore;
+mod lore_auth;
 mod lore_machines;
 mod lore_servers;
 mod lsp;
@@ -258,6 +259,7 @@ pub fn run() {
             envs::recipes::env_versions,
             envs::lore::env_lore_server,
             envs::lore::env_lore_publish,
+            envs::lore::env_lore_auth,
             envs::lore::env_lore_unpublish,
             envs::lore::env_host_addresses,
             envs::remote::env_shell,

@@ -211,7 +211,47 @@ export interface LoreMachine {
   /** Where it listens there: an IP, or 0.0.0.0 / [::] for all of them. */
   address: string
   listenPort: number
+  /** Its sign-in (Dex and Caddy beside it); null: anyone who reaches it can read and write. */
+  auth?: LoreSignIn | null
 }
+
+/**
+ * A Lore server's sign-in (`lore_auth.rs`): Dex beside the server keeps who may sign in, Caddy gets a
+ * Let's Encrypt certificate for `domain` (ports 80 and 443), and clients use `lores://domain[:port]`.
+ * No secrets: passwords and the GitHub client secret are typed in a terminal on the server.
+ */
+export interface LoreSignIn {
+  /** The DNS name that points at the server. */
+  domain: string
+  /** People sign in with an email and a password kept on the server. */
+  passwords: boolean
+  /** People sign in with GitHub, when they belong to one of the organisations. */
+  github: LoreSignInGithub | null
+}
+
+export interface LoreSignInGithub {
+  /** The GitHub OAuth app's client ID (not a secret). */
+  clientId: string
+  orgs: string[]
+}
+
+/** A sign-in as the server has it (read back from an instance). */
+export interface LoreSignInState {
+  /** On: only signed-in callers get in. Off: set up before, turned off since. */
+  on: boolean
+  domain: string | null
+  passwords: boolean
+  github: LoreSignInGithub | null
+  /** The GitHub client secret has been typed in. */
+  githubSecret: boolean
+  /** Caddy has the certificate for the domain. */
+  certificate: boolean
+  /** The password users' emails. */
+  users: string[]
+}
+
+/** What Mango does to a sign-in, in a terminal: set it up (or change it), turn it off, a user, the secret. */
+export type LoreSignInAction = 'setup' | 'off' | 'user-add' | 'user-remove' | 'github-secret'
 
 /** How to reach a machine for a look at it (`lore_machine_probe`, keys only). */
 export interface LoreMachineAccess { ssh: string; port: number | null; identityFile: string | null }
@@ -235,8 +275,11 @@ export interface LoreMachineProbe {
   addresses: EnvHostAddress[]
 }
 
-/** What `lore_machine_run` does: set up (also update or move), restart, or remove (the data stays). */
-export type LoreMachineAction = 'setup' | 'restart' | 'remove'
+/**
+ * What `lore_machine_run` does: set up (also update or move, with its sign-in), restart, remove (the
+ * data stays), or, with sign-in, add or remove a password user or type the GitHub secret again.
+ */
+export type LoreMachineAction = 'setup' | 'restart' | 'remove' | 'user-add' | 'user-remove' | 'github-secret'
 
 /**
  * How a server answered this computer. Lore talks gRPC over TCP (listing, creating) and QUIC over UDP
@@ -1202,6 +1245,8 @@ export interface EnvLoreServer {
   addresses: EnvHostAddress[]
   /** Why it can't be published from here (a joined environment). */
   publishNote: string | null
+  /** Its sign-in, once set up (on or off); null before. */
+  auth: LoreSignInState | null
 }
 
 export interface EnvLorePublished {
@@ -1215,6 +1260,8 @@ export interface EnvLorePublished {
   reachable: boolean | null
   /** Both proxy devices (UDP and TCP) are there. */
   complete: boolean
+  /** TCP ports 80 and 443 are published at the same address too (for the sign-in). */
+  web: boolean
 }
 
 /** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
@@ -1508,7 +1555,8 @@ export interface Commands {
   /** A look at a machine over SSH (keys only, never prompts): Docker, Incus, systemd, sudo, addresses. */
   lore_machine_probe: [{ machine: LoreMachineAccess }, LoreMachineProbe]
   /** Set up, restart or remove the Lore server on a machine, in a terminal (ssh and sudo ask there); answers the pty id. */
-  lore_machine_run: [{ machine: LoreMachine; action: LoreMachineAction; cols: number; rows: number }, string]
+  /** `email`: the user to add or remove, or on a setup with passwords the first user (asked for a password there). */
+  lore_machine_run: [{ machine: LoreMachine; action: LoreMachineAction; email?: string | null; cols: number; rows: number }, string]
   /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
   gitlab_hosts: [Record<string, never>, string[]]
   /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */
@@ -1925,8 +1973,14 @@ export interface Commands {
   env_lore_server: [{ hostId: string; instance: string }, EnvLoreServer]
   /** Publish it outside the server (Incus proxy devices, UDP and TCP), replacing an earlier publish. Owner only. */
   env_lore_publish: [{ hostId: string; instance: string; address: string; port: number }, EnvLoreServer]
-  /** Stop publishing it. Owner only. */
+  /** Stop publishing it (its sign-in's ports too). Owner only. */
   env_lore_unpublish: [{ hostId: string; instance: string }, EnvLoreServer]
+  /**
+   * Its sign-in, in a terminal (passwords and the GitHub secret are typed there): set up or change
+   * (`signIn`, `email` the first password user), turn off, add or remove a user (`email`), type the
+   * GitHub secret again. Needs it published. Owner only. Returns the pty id.
+   */
+  env_lore_auth: [{ hostId: string; instance: string; action: LoreSignInAction; signIn?: LoreSignIn | null; email?: string | null; cols: number; rows: number }, string]
   /** The addresses of a server's Incus host to publish at (for the create dialog). */
   env_host_addresses: [{ hostId: string }, EnvHostAddresses]
   /** A login shell as the agent user inside the instance; returns the pty id. */

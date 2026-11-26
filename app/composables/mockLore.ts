@@ -62,7 +62,7 @@ export async function mockLoreCheck(input: string): Promise<LoreServerCheck> {
   const url = normalizeLoreServer(input)
   if (!url) throw new Error(`"${input}" is not a Lore server address.`)
   await wait(500 + Math.random() * 600)
-  const host = url.slice(7).replace(/:\d+$/, '')
+  const host = url.slice(url.indexOf('://') + 3).replace(/:\d+$/, '')
   const port = /:(\d+)$/.exec(url)?.[1] ?? '41337'
   const base = { url, auth: 'unknown' as const, user: null, repositories: null, dataChecked: false }
   if (!cli.installed) return { ...base, reach: 'noCli', message: 'The Lore CLI (lore) is not installed on this computer. Install it in Settings > Lore.' }
@@ -76,6 +76,8 @@ export async function mockLoreCheck(input: string): Promise<LoreServerCheck> {
     }
   }
   const list = repos[url] ?? []
+  // A lores:// server is one with sign-in (Mango's sign-in turns them into that).
+  if (url.startsWith('lores://')) wantsSignIn.add(url)
   if (wantsSignIn.has(url) && !signedIn.has(url)) {
     return { ...base, reach: 'ok', auth: 'signedOut', repositories: null, message: `${url} wants you to sign in.` }
   }
@@ -96,7 +98,7 @@ export function mockLoreLogin(emit: Emit, id: string, url: string) {
   if (!cli.installed) throw new Error('The Lore CLI (lore) is not installed on this computer.')
   play(emit, id, [
     `\x1b[2m$ lore login ${u}\x1b[0m`,
-    `Login at: https://auth.${u.slice(7).split(':')[0]}/device`,
+    `Login at: https://${u.startsWith('lores://') ? '' : 'auth.'}${u.slice(u.indexOf('://') + 3).split(':')[0]}${u.startsWith('lores://') ? '/dex' : ''}/device`,
     'Code: MNGO-4217',
     'Authentication successful \x1b[2m(simulated: the browser preview signs in to nothing)\x1b[0m',
   ], () => {
@@ -176,7 +178,7 @@ export async function mockLoreMachineProbe(access: LoreMachineAccess): Promise<L
 }
 
 /** The preview's setup, restart or removal, played into the terminal (a password asked first, when it wants one). */
-export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, action: LoreMachineAction) {
+export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, action: LoreMachineAction, email: string | null = null) {
   const host = m.ssh.slice(m.ssh.lastIndexOf('@') + 1)
   const docker = m.runtime === 'docker' || (m.runtime === 'auto' && host.includes('docker'))
   const lines = [
@@ -184,12 +186,34 @@ export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, actio
     'This needs root: sudo asks for your password below.',
     `[sudo] password for ${m.ssh.split('@')[0] || 'you'}: \x1b[2m(simulated)\x1b[0m`,
   ]
+  const typed = (what: string) => `${what}: \x1b[2m(simulated: typed here, on the server)\x1b[0m`
+  const a = m.auth
   if (action === 'setup') {
+    if (a) {
+      lines.push(
+        `\x1b[1m==> Lore sign-in for ${a.domain} (Dex 2.46.1 and Caddy 2.11.9)\x1b[0m`,
+        'Downloading Caddy 2.11.9',
+        'Downloading Dex 2.46.1',
+        ...(a.github ? [`Paste the client secret of the GitHub OAuth app ${a.github.clientId} (it is not shown; Enter when done).`, typed('Client secret')] : []),
+        ...(a.passwords && email ? [`Choose the password ${email} signs in to Lore with (it is not shown).`, typed('Enter password'), typed('Confirm password')] : []),
+        `Waiting for Let's Encrypt's certificate for ${a.domain} (up to 3 minutes)...`,
+        'Caddy has the certificate.',
+      )
+    }
+    const url = a ? `lores://${a.domain}${m.listenPort === 41337 ? '' : `:${m.listenPort}`}` : ''
     lines.push(
       docker ? '\x1b[1m==> Lore server in Docker (Epic\'s image for 0.14.0, pinned)\x1b[0m' : '\x1b[1m==> Lore server (loreserver, a pinned release from GitHub, as a service)\x1b[0m',
       docker ? 'Pulling ghcr.io/epicgames/lore/loreserver…' : 'Downloading loreserver-v0.14.0-x86_64-unknown-linux-gnu.tar.gz',
-      `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP). It has no sign-in: anyone who reaches that port can read and write.`,
+      a
+        ? `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP), and only signed-in people get in: ${url}`
+        : `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP). It has no sign-in: anyone who reaches that port can read and write.`,
     )
+  } else if (action === 'user-add') {
+    lines.push(`Choose the password ${email} signs in to Lore with (it is not shown).`, typed('Enter password'), typed('Confirm password'), `${email} can sign in with that password.`)
+  } else if (action === 'user-remove') {
+    lines.push(`${email} can no longer sign in with a password (a sign-in they already have ends within an hour).`)
+  } else if (action === 'github-secret') {
+    lines.push(`Paste the client secret of the GitHub OAuth app ${a?.github?.clientId ?? ''} (it is not shown; Enter when done).`, typed('Client secret'), 'Dex uses the new secret.')
   } else if (action === 'restart') {
     lines.push('\x1b[1m==> Restarting the Lore server\x1b[0m', `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP).`)
   } else {
@@ -205,6 +229,7 @@ export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, actio
 }
 
 function loreUrlOfMachine(m: LoreMachine) {
+  if (m.auth) return m.listenPort === 41337 ? `lores://${m.auth.domain}` : `lores://${m.auth.domain}:${m.listenPort}`
   const everywhere = m.address === '0.0.0.0' || m.address === '[::]'
   const host = everywhere ? m.ssh.slice(m.ssh.lastIndexOf('@') + 1) : m.address
   return m.listenPort === 41337 ? `lore://${host}` : `lore://${host}:${m.listenPort}`
