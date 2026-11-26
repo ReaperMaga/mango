@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions,
+  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions, LoreNew,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { formatLocale, t } from '~/i18n'
@@ -441,11 +441,11 @@ export const useEnvironments = defineStore('environments', {
     },
 
     /**
-     * Make sure a folder exists in the instance, cloning into it or running `git init` in it when asked;
-     * returns its absolute path.
+     * Make sure a folder exists in the instance, cloning into it (git, or `lore clone` for a `lore://` URL)
+     * or running `git init` / `lore repository create` in it when asked; returns its absolute path.
      */
-    prepareDir(hostId: string, instance: string, dir: string, cloneUrl: string | null, gitInit = false) {
-      return call('env_prepare_dir', { hostId, instance, dir, cloneUrl, ...(gitInit ? { gitInit: true } : {}) })
+    prepareDir(hostId: string, instance: string, dir: string, cloneUrl: string | null, gitInit = false, lore: LoreNew | null = null) {
+      return call('env_prepare_dir', { hostId, instance, dir, cloneUrl, ...(gitInit ? { gitInit: true } : {}), ...(lore ? { lore } : {}) })
     },
 
     /** The sub-folders of `dir` inside the instance (`~` is the agent's home). Throws with a readable message. */

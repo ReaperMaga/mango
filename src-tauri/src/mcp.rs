@@ -104,7 +104,7 @@ fn save(app: &AppHandle, list: &[McpServer]) -> Result<(), String> {
 }
 
 /// Writes a file only its owner can read: it holds tokens.
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);

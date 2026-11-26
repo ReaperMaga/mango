@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Archive, Bell, Bot, FilePen, Folder, GitPullRequest, History, Keyboard, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
+import { Archive, Bell, Bot, FilePen, Folder, GitPullRequest, History, Keyboard, Layers, MessageSquareMore, Mic, Plug, Puzzle, Server, SlidersHorizontal, SquareTerminal, SunMoon, Wrench, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import SettingsAgents from './SettingsAgents.vue'
 import SettingsArchive from './SettingsArchive.vue'
@@ -10,6 +10,7 @@ import SettingsEditor from './SettingsEditor.vue'
 import SettingsEnvironments from './SettingsEnvironments.vue'
 import SettingsGeneral from './SettingsGeneral.vue'
 import SettingsHosting from './SettingsHosting.vue'
+import SettingsLore from './SettingsLore.vue'
 import SettingsMaintenance from './SettingsMaintenance.vue'
 import SettingsMcp from './SettingsMcp.vue'
 import SettingsNotifications from './SettingsNotifications.vue'
@@ -64,6 +65,7 @@ const groups: Array<{ id: 'general' | 'technical'; items: Item[] }> = [
     items: [
       { id: 'environments', icon: Server },
       { id: 'hosting', icon: GitPullRequest },
+      { id: 'lore', icon: Layers },
       { id: 'terminal', icon: SquareTerminal },
       { id: 'mcp', icon: Plug },
       { id: 'plugins', icon: Puzzle },
@@ -310,6 +312,10 @@ onBeforeUnmount(() => {
               <!-- Git hosting too: an install or a sign-in running there survives a look elsewhere. -->
               <Transition name="page">
                 <SettingsHosting v-show="section === 'hosting'" :active="open && section === 'hosting'" />
+              </Transition>
+              <!-- Lore too, for the same reason (its CLI installer and server sign-ins run in the section). -->
+              <Transition name="page">
+                <SettingsLore v-show="section === 'lore'" :active="open && section === 'lore'" />
               </Transition>
               <Transition name="page">
                 <SettingsTerminal v-if="section === 'terminal'" />

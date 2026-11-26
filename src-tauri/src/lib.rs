@@ -21,6 +21,7 @@ mod hosting;
 mod gitlab_releases;
 mod images;
 mod lore;
+mod lore_servers;
 mod lsp;
 mod mcp;
 mod notify;
@@ -206,6 +207,13 @@ pub fn run() {
             hosting::hosting_status,
             hosting::hosting_login,
             hosting::hosting_logout,
+            lore_servers::lore_cli,
+            lore_servers::lore_servers,
+            lore_servers::lore_server_upsert,
+            lore_servers::lore_server_remove,
+            lore_servers::lore_server_check,
+            lore_servers::lore_login,
+            lore_servers::lore_logout,
             releases::gh_releases,
             releases::gh_tag_run,
             releases::gh_run,

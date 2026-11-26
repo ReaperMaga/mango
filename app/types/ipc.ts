@@ -153,6 +153,67 @@ export interface HostingCli {
   helpUrl: string
 }
 
+/* ---------- Lore: Epic Games' version control (Settings > Lore, New project, Clone) ---------- */
+
+/** The `lore` CLI on this computer. */
+export interface LoreCli {
+  installed: boolean
+  /** e.g. "0.14.0" */
+  version: string | null
+  path: string | null
+  /** How Mango would install it here (`setup_install` with `lore`); null when it can't (send the user to `helpUrl`). */
+  install: { command: string; via: string } | null
+  helpUrl: string
+}
+
+/** Where a Lore server runs when Mango set it up: an Incus instance on a saved environment server. */
+export interface LoreOrigin { hostId: string; instance: string }
+
+/** A saved Lore server (`lore-servers.json` in the app data folder; no secrets). */
+export interface LoreServer {
+  id: string
+  name: string
+  /** How this computer reaches it: `lore://host[:port]` (the default port 41337 left out). */
+  url: string
+  /** How projects in environments on the origin's server reach it (`lore://<instance>.incus`). */
+  insideUrl: string | null
+  /** null for a server Mango did not set up. */
+  origin: LoreOrigin | null
+}
+
+/** A server to add (no `id`; one with the same `origin` is updated instead) or change (`id`). */
+export interface LoreServerInput {
+  id?: string | null
+  name: string
+  url: string
+  insideUrl?: string | null
+  origin?: LoreOrigin | null
+}
+
+/**
+ * How a server answered this computer. Lore talks gRPC over TCP (listing, creating) and QUIC over UDP
+ * (file data) on the same port: `udp` is TCP fine, UDP blocked.
+ */
+export type LoreReach = 'ok' | 'noCli' | 'dns' | 'refused' | 'timeout' | 'udp' | 'notLore' | 'error'
+export type LoreAuth = 'notRequired' | 'signedIn' | 'signedOut' | 'unknown'
+
+export interface LoreServerCheck {
+  url: string
+  reach: LoreReach
+  auth: LoreAuth
+  /** Who the CLI is signed in as. */
+  user: string | null
+  /** The server's repositories, when it listed them. */
+  repositories: string[] | null
+  /** The UDP (data) port was proved too; false when there was no repository to read. */
+  dataChecked: boolean
+  /** What is wrong and what to do, in plain words. */
+  message: string | null
+}
+
+/** A new project's Lore repository: on `server` (`lore://host[:port]`), or only in the folder (`server` null). */
+export interface LoreNew { server: string | null; repository: string }
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -1276,7 +1337,8 @@ export interface Commands {
   open_project: [{ path: string }, ProjectInfo]
   forget_project: [{ path: string }, void]
   /** mkdir parent/name, optionally `git init`, record as recent. Errors if it exists and is non-empty. */
-  create_project: [{ parent: string; name: string; gitInit: boolean }, ProjectInfo]
+  /** `lore`: create a Lore repository in the new folder instead (then `gitInit` is ignored). */
+  create_project: [{ parent: string; name: string; gitInit: boolean; lore?: LoreNew | null }, ProjectInfo]
   /** `git clone --progress url parent/<name>`; streams `clone://progress` events. */
   git_clone: [{ url: string; parent: string; name: string | null; jobId: string }, ProjectInfo]
   /** Default folder for new projects (~/Projects, created lazily) */
@@ -1321,7 +1383,7 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId | 'lore'; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
@@ -1333,6 +1395,17 @@ export interface Commands {
   hosting_login: [{ tool: HostingToolId; host: string; cols: number; rows: number }, string]
   /** Sign `tool` out of `host`; for gh, of `user` there (it can hold several accounts per host). */
   hosting_logout: [{ tool: HostingToolId; host: string; user: string | null }, void]
+  /** Settings > Lore: the CLI on this computer. */
+  lore_cli: [Record<string, never>, LoreCli]
+  lore_servers: [Record<string, never>, LoreServer[]]
+  /** Add or change a saved server (validated); answers the whole list. */
+  lore_server_upsert: [{ server: LoreServerInput }, LoreServer[]]
+  lore_server_remove: [{ id: string }, LoreServer[]]
+  /** Is the CLI here, does the server answer (TCP, then UDP), and does it want a sign-in. Up to ~20 s. */
+  lore_server_check: [{ url: string }, LoreServerCheck]
+  /** `lore login <url>` in a terminal; answers the pty id. */
+  lore_login: [{ url: string; cols: number; rows: number }, string]
+  lore_logout: [{ url: string }, void]
   /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
   gitlab_hosts: [Record<string, never>, string[]]
   /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */
@@ -1754,7 +1827,8 @@ export interface Commands {
    * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
    * `git init` in a new or empty folder when `gitInit`); returns its absolute path.
    */
-  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean }, string]
+  /** `cloneUrl` may be a `lore://` repository (cloned with `lore`); `lore` creates a Lore repository in the new folder. */
+  env_prepare_dir: [{ hostId: string; instance: string; dir: string; cloneUrl: string | null; gitInit?: boolean; lore?: LoreNew | null }, string]
   /** The sub-folders of `dir` inside the environment (as the agent user); `dir` may be '~'. */
   env_list_dir: [{ hostId: string; instance: string; dir: string }, EnvDirListing]
   /** Open (or reuse) a tunnel to the instance's desktop. */

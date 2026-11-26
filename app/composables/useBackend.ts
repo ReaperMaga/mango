@@ -10,6 +10,7 @@ import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockR
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { mockGitlabHosts, mockGitlabHostsSave, mockHostingInstall, mockHostingLogin, mockHostingLogout, mockHostingStatus } from '~/composables/mockHosting'
+import { mockLoreCheck, mockLoreCli, mockLoreCloneLines, mockLoreCreate, mockLoreInstall, mockLoreLogin, mockLoreLogout, mockLoreRemove, mockLoreServers, mockLoreUpsert } from '~/composables/mockLore'
 import { mockPlugins } from '~/composables/mockPlugins'
 import { followMockPluginData, mockPluginData } from '~/composables/mockPluginData'
 import { isEnvPath } from '~/utils/envPath'
@@ -413,10 +414,11 @@ const mock = (() => {
       }
       case 'forget_project': recent = recent.filter(r => r.path !== args.path); return
       case 'create_project':
+        if (args.lore) await mockLoreCreate(args.lore.server, args.lore.repository)
         return remember({ path: `${args.parent.replace(/\/+$/, '')}/${args.name}`, name: args.name, isGit: !!args.gitInit, branch: args.gitInit ? 'main' : null, lastOpened: Date.now() })
       case 'git_clone': {
         const name = args.name || basename(String(args.url)).replace(/\.git$/, '')
-        const lines = [`Cloning into '${name}'...`, 'remote: Enumerating objects: 1284, done.', 'remote: Counting objects: 100% (1284/1284), done.', 'Receiving objects:  48% (617/1284)', 'Receiving objects: 100% (1284/1284), 2.31 MiB | 9.8 MiB/s, done.', 'Resolving deltas: 100% (702/702), done.']
+        const lines = /^lore:\/\//i.test(String(args.url)) ? mockLoreCloneLines(String(args.url)) : [`Cloning into '${name}'...`, 'remote: Enumerating objects: 1284, done.', 'remote: Counting objects: 100% (1284/1284), done.', 'Receiving objects:  48% (617/1284)', 'Receiving objects: 100% (1284/1284), 2.31 MiB | 9.8 MiB/s, done.', 'Resolving deltas: 100% (702/702), done.']
         for (const line of lines) {
           await new Promise(r => setTimeout(r, 380))
           emit('clone://progress', { jobId: args.jobId, line })
@@ -463,6 +465,7 @@ const mock = (() => {
       case 'setup_install': {
         const id = newPtyId()
         if (args.tool === 'gh' || args.tool === 'glab') mockHostingInstall(emit, id, args.tool)
+        else if (args.tool === 'lore') mockLoreInstall(emit, id)
         else fakeInstall(id, args.tool)
         return id
       }
@@ -473,6 +476,17 @@ const mock = (() => {
         return id
       }
       case 'hosting_logout': await new Promise(r => setTimeout(r, 300)); return mockHostingLogout(args.tool, args.host, args.user)
+      case 'lore_cli': await new Promise(r => setTimeout(r, 200)); return mockLoreCli()
+      case 'lore_servers': return mockLoreServers()
+      case 'lore_server_upsert': return mockLoreUpsert(args.server)
+      case 'lore_server_remove': return mockLoreRemove(args.id)
+      case 'lore_server_check': return mockLoreCheck(args.url)
+      case 'lore_login': {
+        const id = newPtyId()
+        mockLoreLogin(emit, id, args.url)
+        return id
+      }
+      case 'lore_logout': await new Promise(r => setTimeout(r, 300)); return mockLoreLogout(args.url)
       case 'gitlab_hosts': return mockGitlabHosts()
       case 'gitlab_hosts_save': return mockGitlabHostsSave(args.hosts)
       case 'lsp_servers': return lspServers.map(s => ({ ...s }))
