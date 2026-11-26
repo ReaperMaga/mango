@@ -1,6 +1,6 @@
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvDirListing, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions,
+  EnvHostAddress, EnvHostAddresses, EnvLoreServer, EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
 import { GITLAB_COM, normalizeHost } from '~/utils/gitHosts'
 import { mockGitlabHosts, mockGitlabHostsSave } from '~/composables/mockHosting'
@@ -45,6 +45,8 @@ const CATALOG: Array<Omit<EnvComponent, 'installed' | 'version' | 'versioned'> &
   { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'], latest: '0.98.0' },
   { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'], latest: '2.83.1' },
   { id: 'glab', name: 'GitLab CLI', description: "glab, GitLab's own release package: merge requests, issues and git sign-in on gitlab.com and your own GitLab servers.", requires: ['base'], latest: '1.131.0' },
+  { id: 'lore', name: 'Lore CLI', description: "lore, Epic Games' version control (a pinned release, checked against its SHA-256): for Lore projects in this environment.", requires: ['base'], latest: '0.14.0' },
+  { id: 'lore-server', name: 'Lore server', description: "A Lore server (loreserver) running as a service, its data in /var/lib/lore. It has no sign-in: anyone who can reach it can read and write, so only this server's environments reach it unless you publish it.", requires: ['base'], latest: '0.14.0' },
   { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'], latest: '143.0.7499.4' },
   { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can view in Mango.', requires: ['base'], latest: 'xfce 4.20' },
   { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose. A container restarts once to allow it.', requires: ['base'], latest: '29.0.2' },
@@ -63,11 +65,17 @@ interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp' | 'disk'
   shares?: EnvShare[]
   /** Its own SSH server is set up (the first share does that, slowly). */
   sshd?: boolean
+  /** Where its Lore server is published outside the server (the lore-quic and lore-grpc proxy devices). */
+  lorePublished?: { address: string; port: number } | null
 }
 
 interface MockHost {
   host: EnvHost
   instances: MockInstance[]
+  /** The Incus host's own addresses (what a Lore server can be published at). */
+  addresses?: EnvHostAddress[]
+  /** A host firewall that is on. */
+  firewall?: 'ufw' | 'firewalld' | 'nftables'
   /** null: Incus is not installed yet. */
   incusVersion: string | null
   os: string
@@ -115,6 +123,10 @@ const hosts: MockHost[] = [
     },
     incusVersion: '6.18',
     os: 'Ubuntu 24.04.3 LTS',
+    addresses: [
+      { address: '100.101.7.1', kind: 'tailscale', interface: 'tailscale0' },
+      { address: '192.168.1.20', kind: 'private', interface: 'enp3s0' },
+    ],
     instances: [
       {
         name: 'dev', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261101_07:42)',
@@ -125,6 +137,12 @@ const hosts: MockHost[] = [
           { id: 'sh-sam', label: 'Sam', via: 'public', endpoint: 'forge.lan:22101', createdAt: now - 2 * DAY, expiresAt: now + 5 * DAY },
           { id: 'sh-ci', label: 'Review bot', via: 'tailscale', endpoint: '100.101.7.33:22022', createdAt: now - 9 * DAY, expiresAt: now - DAY },
         ],
+      },
+      {
+        name: 'lore', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261120_07:42)',
+        addr: '10.88.0.44', tsIp: null, cpus: 2, memory: '4GiB', disk: '100GiB', createdAt: now - 2 * DAY,
+        installed: all(['base', 'lore-server']),
+        lorePublished: { address: '100.101.7.1', port: 41337 },
       },
       {
         name: 'gpu-box', kind: 'vm', status: 'stopped', image: 'Ubuntu noble amd64 cloud (20261028_07:42)',
@@ -150,6 +168,12 @@ const hosts: MockHost[] = [
     },
     incusVersion: '6.0.4',
     os: 'Debian GNU/Linux 13 (trixie)',
+    addresses: [
+      { address: '10.0.0.2', kind: 'private', interface: 'enp7s0' },
+      { address: '203.0.113.24', kind: 'public', interface: 'enp1s0' },
+      { address: '2a01:4f8::24', kind: 'public', interface: 'enp1s0' },
+    ],
+    firewall: 'ufw',
     instances: [
       {
         name: 'ci-runner', kind: 'container', status: 'running', image: 'Ubuntu noble amd64 (20261020_07:42)',
@@ -444,6 +468,8 @@ export function createMockEnvs(ctx: MockEnvContext) {
       else if (cid === 'codex') steps.push([450, dim('curl -fsSL https://chatgpt.com/codex/install.sh | sh')], [600, `Installed codex to ${AGENT_HOME}/.local/bin/codex`])
       else if (cid === 'gh') steps.push([450, dim('apt-get install -y gh')], [500, 'Setting up gh (2.83.1) ...'])
       else if (cid === 'glab') steps.push([450, dim('curl -fsSL https://gitlab.com/gitlab-org/cli/-/releases/v1.131.0/downloads/glab_1.131.0_linux_amd64.deb')], [400, 'glab_1.131.0_linux_amd64.deb: OK'], [500, 'Setting up glab (1.131.0) ...'])
+      else if (cid === 'lore') steps.push([450, dim('curl -fsSL https://github.com/EpicGames/lore/releases/download/v0.14.0/lore-v0.14.0-x86_64-unknown-linux-gnu.tar.gz')], [400, 'lore 0.14.0+2389'])
+      else if (cid === 'lore-server') steps.push([450, dim('curl -fsSL https://github.com/EpicGames/lore/releases/download/v0.14.0/loreserver-v0.14.0-x86_64-unknown-linux-gnu.tar.gz')], [500, 'Created the system user lore.'], [600, "loreserver 0.14.0 is running on port 41337 (UDP and TCP). It has no sign-in: only this server's environments reach it, unless you publish it from its page in Mango."])
       else if (cid === 'chromium') steps.push([450, dim('npm install -g @playwright/mcp@latest')], [800, 'Downloading Chromium 143.0.7499.4 (playwright build)'], [400, 'Claude Code has the chromium MCP server.'])
       else if (cid === 'desktop') steps.push([500, dim('apt-get install -y xfce4 tigervnc-standalone-server novnc chromium')], [900, 'Setting up xfce4 (4.20) ...'], [400, 'noVNC listening on 127.0.0.1:6080'])
       else if (cid === 'docker') steps.push([450, dim('apt-get install -y docker-ce docker-compose-plugin')], [600, 'Setting up docker-ce (5:29.0.2-1~ubuntu.24.04~noble) ...'], [300, 'The agent user can run docker (in new shells and chats).'])
@@ -454,6 +480,59 @@ export function createMockEnvs(ctx: MockEnvContext) {
       }])
     }
     return steps
+  }
+
+  /** Refuse what the backend refuses: a bad address or port, or a port another instance publishes at. */
+  function checkPublish(h: MockHost, self: MockInstance | null, address: string, port: number) {
+    const a = address.trim().replace(/^\[|\]$/g, '')
+    const v4 = /^(\d{1,3}\.){3}\d{1,3}$/.test(a) && a.split('.').every(n => Number(n) <= 255)
+    if ((!v4 && !a.includes(':')) || /^127\.|^::1$/.test(a)) {
+      throw new Error(`"${address}" is not an address of the server. Pick one of its addresses, or 0.0.0.0 for all of them.`)
+    }
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error(`Pick a port from 1024 to 65535 (not ${port}).`)
+    if (h.instances.some(x => x !== self && x.lorePublished?.port === port)) {
+      throw new Error(`Port ${port} is already in use on the server (by another program, or another environment's published port). Pick another port.`)
+    }
+  }
+
+  /** The create terminal's lines for publishing a new Lore server. */
+  function publishSteps(id: string, h: MockHost, i: MockInstance, address: string, port: number): Array<[number, string | (() => void)]> {
+    const steps: Array<[number, string | (() => void)]> = [
+      [300, head(`Publishing the Lore server outside this server: ${address} port ${port} (UDP and TCP)`)],
+      [400, dim(`incus config device add ${i.name} lore-quic proxy listen=udp:${address}:${port} connect=udp:127.0.0.1:41337`)],
+      [300, dim(`incus config device add ${i.name} lore-grpc proxy listen=tcp:${address}:${port} connect=tcp:127.0.0.1:41337`)],
+    ]
+    if (h.firewall === 'ufw') steps.push([200, `ufw is active on this server: open the port with  sudo ufw allow ${port}/udp && sudo ufw allow ${port}/tcp`])
+    steps.push([200, () => {
+      i.lorePublished = { address, port }
+      out(id, `A cloud provider's firewall or security group (which Mango can't see) has to allow UDP and TCP port ${port} too.`)
+    }])
+    return steps
+  }
+
+  /** What `env_lore_server` says about an instance. */
+  function loreView(h: MockHost, i: MockInstance): EnvLoreServer {
+    const installed = !!i.installed['lore-server']
+    const running = installed && i.status === 'running'
+    const p = i.lorePublished ?? null
+    const url = (host: string, port: number) => `lore://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}${port === 41337 ? '' : `:${port}`}`
+    const named = h.host.publicAddress || h.host.ssh.slice(h.host.ssh.lastIndexOf('@') + 1)
+    const outside = p ? (p.address === '0.0.0.0' || p.address === '[::]' ? named : p.address) : null
+    return {
+      installed,
+      version: i.installed['lore-server'] ?? null,
+      running,
+      insideUrl: url(`${i.name}.incus`, 41337),
+      insideIpUrl: i.status === 'running' ? url(i.addr, 41337) : null,
+      published: p && outside
+        ? { address: p.address, port: p.port, url: url(outside, p.port), urlNote: null, reachable: running && p.address !== '0.0.0.0', complete: true }
+        : null,
+      firewall: p && h.firewall
+        ? { kind: h.firewall, commands: h.firewall === 'ufw' ? [`sudo ufw allow ${p.port}/udp && sudo ufw allow ${p.port}/tcp`] : [] }
+        : null,
+      addresses: structuredClone(h.addresses ?? []),
+      publishNote: h.host.direct ? 'This environment was shared with you: only its owner can publish its Lore server.' : null,
+    }
   }
 
   async function call(cmd: string, args: any): Promise<any> {
@@ -634,7 +713,41 @@ export function createMockEnvs(ctx: MockEnvContext) {
         return CATALOG.map(c => ({
           id: c.id, name: c.name, description: c.description, requires: [...c.requires], versioned: !!c.versioned,
           installed: !!i.installed[c.id], version: i.installed[c.id] ?? null,
+          running: c.id === 'lore-server' && i.installed[c.id] ? i.status === 'running' : null,
         })) satisfies EnvComponent[]
+      }
+
+      case 'env_lore_server': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        await latency(500)
+        mustRun(h, i)
+        return loreView(h, i)
+      }
+
+      case 'env_lore_publish': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner can publish this environment\'s Lore server.')
+        await latency(900)
+        mustRun(h, i)
+        checkPublish(h, i, args.address, args.port)
+        const a = String(args.address).trim()
+        i.lorePublished = { address: a.includes(':') && !a.startsWith('[') ? `[${a}]` : a, port: args.port }
+        return loreView(h, i)
+      }
+
+      case 'env_lore_unpublish': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner can change this environment\'s Lore server.')
+        await latency(600)
+        i.lorePublished = null
+        return loreView(h, i)
+      }
+
+      case 'env_host_addresses': {
+        const h = hostOf(args.hostId)
+        if (h.host.direct) throw new Error('Only the owner can publish ports on this server.')
+        await latency(400)
+        return { addresses: structuredClone(h.addresses ?? []), note: null } satisfies EnvHostAddresses
       }
 
       case 'env_versions':
@@ -667,6 +780,11 @@ export function createMockEnvs(ctx: MockEnvContext) {
           cpus: input.cpus, memory: input.memoryGib ? `${input.memoryGib}GiB` : null, disk: input.diskGib ? `${input.diskGib}GiB` : null, createdAt: Date.now(), installed: {},
         }
         const ids = withRequired(input.components)
+        const pub = input.lorePublish ?? null
+        if (pub) {
+          if (!ids.includes('lore-server')) throw new Error('Only a Lore server can be published: pick the Lore server component too.')
+          checkPublish(h, null, pub.address, pub.port)
+        }
         play(id, [
           [0, dim(`$ incus launch ${image} ${name}${flags ? ` ${flags}` : ''}`)],
           [500, `Launching ${name}`],
@@ -674,6 +792,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
           [vm ? 1800 : 900, `Starting ${name}`],
           [700, () => { inst.status = 'running'; out(id, `Waiting for the network… ${inst.addr}`) }],
           ...installSteps(id, inst, ids, input.versions),
+          ...(pub ? publishSteps(id, h, inst, pub.address, pub.port) : []),
           [300, ok(`${name} is ready ${dim('(simulated: the browser preview creates nothing)')}`)],
         ])
         return id

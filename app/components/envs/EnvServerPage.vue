@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ChevronRight, CircleCheck, Pencil, Plus, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { ChevronRight, CircleCheck, Pencil, Plus, RefreshCw, Server, TriangleAlert } from 'lucide-vue-next'
 import { hostState, instanceKey, sshUser, useEnvironments } from '~/stores/environments'
 import type { EnvInstance } from '~/types/ipc'
 import EnvStatus from './EnvStatus.vue'
@@ -314,9 +314,14 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? t('envs.common.vmShort'
           {{ t('envs.common.title') }}
           <span v-if="instances?.length" class="sp__count tabular">{{ instances.length }}</span>
         </h3>
-        <UiButton v-if="ready" variant="primary" size="sm" @click="envs.dialog = { kind: 'create', hostId }">
-          <Plus />{{ t('envs.common.newEnvironment') }}
-        </UiButton>
+        <span v-if="ready" class="sp__list-actions">
+          <UiButton size="sm" :title="t('envs.lore.newServerTitle')" @click="envs.dialog = { kind: 'create', hostId, preset: 'lore-server' }">
+            <Server />{{ t('envs.lore.newServer') }}
+          </UiButton>
+          <UiButton variant="primary" size="sm" @click="envs.dialog = { kind: 'create', hostId }">
+            <Plus />{{ t('envs.common.newEnvironment') }}
+          </UiButton>
+        </span>
       </header>
 
       <p v-if="listError" class="sp__error" role="alert">
@@ -480,6 +485,7 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? t('envs.common.vmShort'
 /* ---- instances ---- */
 .sp__list { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
 .sp__list-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.sp__list-actions { display: inline-flex; align-items: center; gap: var(--space-1); }
 .sp__h3 {
   display: inline-flex;
   align-items: baseline;
