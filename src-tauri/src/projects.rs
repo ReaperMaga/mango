@@ -494,9 +494,9 @@ pub async fn git_clone(
     .await
 }
 
-/// A `lore://` address (any case), cloned with `lore` rather than git.
+/// A `lore://` or `lores://` address (any case), cloned with `lore` rather than git.
 pub(crate) fn is_lore_url(url: &str) -> bool {
-    url.trim().get(..7).is_some_and(|p| p.eq_ignore_ascii_case("lore://"))
+    crate::lore_servers::strip_scheme(url.trim()).is_some()
 }
 
 /// `lore clone <url> <dir>`, its lines streamed as `clone://progress`. A failed clone leaves no folder

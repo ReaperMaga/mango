@@ -54,12 +54,15 @@ const E_REPO_NOT_FOUND: i32 = 89;
 // URLs and names
 // ---------------------------------------------------------------------------
 
-/// A Lore server: `lore://host[:port]`. The host is a DNS name (lower case), an IPv4 address or a
-/// bracketed IPv6 address.
+/// A Lore server: `lore://host[:port]`, or `lores://host[:port]` for one the CLI authenticates (its
+/// certificate checked, gRPC over TLS: what a server with sign-in needs, or tokens travel in the clear).
+/// The host is a DNS name (lower case), an IPv4 address or a bracketed IPv6 address.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerUrl {
     pub host: String,
     pub port: Option<u16>,
+    /// `lores://`.
+    pub secure: bool,
 }
 
 impl ServerUrl {
@@ -80,11 +83,22 @@ impl ServerUrl {
 
 impl std::fmt::Display for ServerUrl {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let scheme = if self.secure { "lores" } else { "lore" };
         match self.port {
-            Some(p) => write!(f, "lore://{}:{p}", self.host),
-            None => write!(f, "lore://{}", self.host),
+            Some(p) => write!(f, "{scheme}://{}:{p}", self.host),
+            None => write!(f, "{scheme}://{}", self.host),
         }
     }
+}
+
+/// What follows `lore://` or `lores://` (either in any case), and whether it was `lores://`.
+pub(crate) fn strip_scheme(s: &str) -> Option<(&str, bool)> {
+    for (scheme, secure) in [("lores://", true), ("lore://", false)] {
+        if s.get(..scheme.len()).is_some_and(|p| p.eq_ignore_ascii_case(scheme)) {
+            return Some((&s[scheme.len()..], secure));
+        }
+    }
+    None
 }
 
 fn is_dns_name(s: &str) -> bool {
@@ -99,7 +113,7 @@ fn is_dns_name(s: &str) -> bool {
 }
 
 /// `host[:port]` after `lore://`, before any path.
-fn parse_authority(authority: &str, whole: &str) -> Result<ServerUrl, String> {
+fn parse_authority(authority: &str, whole: &str, secure: bool) -> Result<ServerUrl, String> {
     let bad = |why: &str| Err(format!("\"{whole}\" is not a Lore server address: {why}"));
     if authority.is_empty() {
         return bad("the server name is missing. Use lore://host or lore://host:port.");
@@ -144,27 +158,25 @@ fn parse_authority(authority: &str, whole: &str) -> Result<ServerUrl, String> {
             }
         }
     };
-    Ok(ServerUrl { host, port })
+    Ok(ServerUrl { host, port, secure })
 }
 
-/// Splits `lore://authority[/path]`, refusing anything a URL could smuggle in (query, fragment,
-/// userinfo, whitespace, control characters).
-fn split_url(s: &str) -> Result<(&str, &str), String> {
+/// Splits `lore[s]://authority[/path]`, refusing anything a URL could smuggle in (query, fragment,
+/// userinfo, whitespace, control characters). The flag is `lores://`.
+fn split_url(s: &str) -> Result<(&str, &str, bool), String> {
     if s.chars().any(|c| c.is_whitespace() || c.is_control()) || s.len() > 600 {
         return Err(format!("\"{}\" is not a Lore address: it has spaces or other characters a URL can't hold.", s.trim()));
     }
-    let Some(rest) = s.strip_prefix("lore://").or_else(|| {
-        // The scheme is case-insensitive; anything else is not a Lore address.
-        s.get(..7).filter(|p| p.eq_ignore_ascii_case("lore://")).map(|_| &s[7..])
-    }) else {
-        return Err(format!("\"{s}\" is not a Lore address. It starts with lore://, like lore://lore.example.com."));
+    // The scheme is case-insensitive; anything else is not a Lore address.
+    let Some((rest, secure)) = strip_scheme(s) else {
+        return Err(format!("\"{s}\" is not a Lore address. It starts with lore:// or lores://, like lore://lore.example.com."));
     };
     if rest.contains(['?', '#', '\\']) {
         return Err(format!("\"{s}\" is not a Lore address: leave out ?, # and \\."));
     }
     Ok(match rest.split_once('/') {
-        Some((a, p)) => (a, p),
-        None => (rest, ""),
+        Some((a, p)) => (a, p, secure),
+        None => (rest, "", secure),
     })
 }
 
@@ -172,13 +184,13 @@ fn split_url(s: &str) -> Result<(&str, &str), String> {
 /// kept out of the result, so `lore://h:41337` and `lore://h` are the same server.
 pub fn parse_server_url(s: &str) -> Result<ServerUrl, String> {
     let s = s.trim();
-    let (authority, path) = split_url(s)?;
+    let (authority, path, secure) = split_url(s)?;
     if !path.is_empty() {
         return Err(format!(
             "\"{s}\" names a repository. A server is only lore://host or lore://host:port; the repository is picked when you create or clone."
         ));
     }
-    let mut url = parse_authority(authority, s)?;
+    let mut url = parse_authority(authority, s, secure)?;
     if url.port == Some(DEFAULT_PORT) {
         url.port = None;
     }
@@ -203,8 +215,8 @@ pub fn valid_repo_name(s: &str) -> Result<(), String> {
 /// the default port dropped.
 pub fn parse_repo_url(s: &str) -> Result<(ServerUrl, String), String> {
     let s = s.trim();
-    let (authority, path) = split_url(s)?;
-    let mut server = parse_authority(authority, s)?;
+    let (authority, path, secure) = split_url(s)?;
+    let mut server = parse_authority(authority, s, secure)?;
     if server.port == Some(DEFAULT_PORT) {
         server.port = None;
     }
@@ -937,6 +949,8 @@ mod tests {
             ("lore://[::1]", "lore://[::1]"),
             ("lore://[2001:DB8::1]:9000", "lore://[2001:db8::1]:9000"),
             ("lore://my-lore.incus", "lore://my-lore.incus"),
+            ("lores://Lore.Example.com:41337", "lores://lore.example.com"),
+            ("LORES://h:9000/", "lores://h:9000"),
         ];
         for (input, want) in ok {
             assert_eq!(parse_server_url(input).map(|u| u.to_string()).as_deref(), Ok(want), "{input}");
@@ -965,6 +979,9 @@ mod tests {
             "lore://h;rm",
             "lore://h$(x)",
             "lore://\"h\"",
+            "loress://h",
+            "lore:/h",
+            "https://h",
         ];
         for input in bad {
             assert!(parse_server_url(input).is_err(), "{input:?} should be refused");
@@ -998,6 +1015,13 @@ mod tests {
         assert_eq!(create_argv(None, "x"), ["-P", "--non-interactive", "repository", "create", "--offline", "x"]);
         assert_eq!(clone_argv("lore://h/x", "/p/x")[2..], ["clone", "--", "lore://h/x", "/p/x"]);
         assert_eq!(login_argv("/bin/lore", &s), ["/bin/lore", "login", "lore://h:9000"]);
+        let secure = parse_server_url("lores://h:9000").unwrap();
+        assert!(secure.secure);
+        assert_eq!(info_argv(&secure, "demo").last().unwrap(), "lores://h:9000/demo");
+        assert_eq!(probe_config(&secure), "remote_url = \"lores://h:9000\"
+");
+        let (rs, _) = parse_repo_url("lores://h/x").unwrap();
+        assert_eq!(rs.to_string(), "lores://h");
         assert_eq!(auth_info_argv("/tmp/p")[2..], ["--repository", "/tmp/p", "auth", "info"]);
         assert_eq!(probe_config(&s), "remote_url = \"lore://h:9000\"\n");
     }

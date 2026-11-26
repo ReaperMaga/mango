@@ -9,9 +9,14 @@ import { t } from '../i18n/index.ts'
 
 export const LORE_DEFAULT_PORT = 41337
 
-/** A `lore://` address (any case). */
+/** A `lore://` or `lores://` address (any case). `lores://` is a server the CLI authenticates (TLS). */
 export function isLoreUrl(s: string): boolean {
-  return /^lore:\/\//i.test(s.trim())
+  return /^lores?:\/\//i.test(s.trim())
+}
+
+/** The scheme an address keeps: `lores://` when it was typed so, else `lore://`. */
+function schemeOf(s: string): string {
+  return /^lores:\/\//i.test(s.trim()) ? 'lores://' : 'lore://'
 }
 
 function dnsName(s: string): boolean {
@@ -47,22 +52,23 @@ function authority(a: string): string | null {
   return host
 }
 
-/** Splits `[lore://]authority[/path]`; null for anything a URL could smuggle in. */
-function split(input: string, schemeOptional: boolean): { authority: string; path: string } | null {
+/** Splits `[lore[s]://]authority[/path]`; null for anything a URL could smuggle in. */
+function split(input: string, schemeOptional: boolean): { authority: string; path: string; scheme: string } | null {
   let s = input.trim()
   if (!s || /[\s\u0000-\u001f\u007f?#\\@]/.test(s)) return null
-  if (isLoreUrl(s)) s = s.slice(7)
+  const scheme = schemeOf(s)
+  if (isLoreUrl(s)) s = s.slice(s.indexOf('://') + 3)
   else if (!schemeOptional || /^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return null
   const i = s.indexOf('/')
-  return i < 0 ? { authority: s, path: '' } : { authority: s.slice(0, i), path: s.slice(i + 1) }
+  return i < 0 ? { authority: s, path: '', scheme } : { authority: s.slice(0, i), path: s.slice(i + 1), scheme }
 }
 
-/** A server address, `lore://` optional: canonical `lore://host[:port]`, or null. */
+/** A server address, `lore://` optional: canonical `lore://host[:port]` (or `lores://…`), or null. */
 export function normalizeLoreServer(input: string): string | null {
   const parts = split(input, true)
   if (!parts || parts.path.replace(/\/$/, '') !== '') return null
   const a = authority(parts.authority)
-  return a ? `lore://${a}` : null
+  return a ? `${parts.scheme}${a}` : null
 }
 
 /** Why `input` can't be saved as a server (null when it can); `list` and `selfId` catch a duplicate. */
@@ -90,14 +96,14 @@ export function loreRepoNameFrom(project: string): string {
   return project.trim().replace(/[^A-Za-z0-9_.-]+/g, '-').replace(/^[-.]+/, '').replace(/-+$/, '').slice(0, 200)
 }
 
-/** `lore://host[:port]/name` → its server and name, or null. */
+/** `lore[s]://host[:port]/name` → its server and name, or null. */
 export function parseLoreRepoUrl(input: string): { server: string; name: string } | null {
   const parts = split(input, false)
   if (!parts) return null
   const a = authority(parts.authority)
   const name = parts.path.replace(/\/$/, '')
   if (!a || loreRepoNameProblem(name)) return null
-  return { server: `lore://${a}`, name }
+  return { server: `${parts.scheme}${a}`, name }
 }
 
 /**

@@ -22,10 +22,12 @@ test('server addresses normalise like the backend', () => {
     ['lore://[::1]', 'lore://[::1]'],
     ['lore://[2001:DB8::1]:9000', 'lore://[2001:db8::1]:9000'],
     ['lore://my-lore.incus', 'lore://my-lore.incus'],
+    ['lores://Lore.Example.com:41337', 'lores://lore.example.com'],
+    ['LORES://h:9000/', 'lores://h:9000'],
   ]
   for (const [input, want] of ok) assert.equal(normalizeLoreServer(input), want, input)
   for (const bad of ['', 'https://h', 'lore://', 'lore://:1', 'lore://h:0', 'lore://h:65536', 'lore://user@h', 'lore://h/repo',
-    'lore://h?x', 'lore://h#x', 'lore://h h', 'lore://-h', 'lore://h_x', 'lore://[::1', 'lore://h;rm']) {
+    'lore://h?x', 'lore://h#x', 'lore://h h', 'lore://-h', 'lore://h_x', 'lore://[::1', 'lore://h;rm', 'loress://h', 'lores:/h']) {
     assert.equal(normalizeLoreServer(bad), null, bad)
   }
 })
@@ -47,7 +49,8 @@ test('repository names and addresses', () => {
   assert.deepEqual(parseLoreRepoUrl('lore://H:41337/game/art/'), { server: 'lore://h', name: 'game/art' })
   assert.deepEqual(parseLoreRepoUrl('lore://h:9/x'), { server: 'lore://h:9', name: 'x' })
   for (const bad of ['lore://h', 'lore://h/', 'h/x', 'lore://h/../x', 'lore://u@h/x']) assert.equal(parseLoreRepoUrl(bad), null, bad)
-  assert.ok(isLoreUrl(' LORE://x') && !isLoreUrl('https://x'))
+  assert.deepEqual(parseLoreRepoUrl('LORES://H/x'), { server: 'lores://h', name: 'x' })
+  assert.ok(isLoreUrl(' LORE://x') && isLoreUrl('lores://x') && !isLoreUrl('https://x'))
 })
 
 test('a server set up in an environment is reached by its inside address from there', () => {
