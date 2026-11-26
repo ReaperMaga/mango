@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.7.0
+
+### New
+
+- GitLab in remote projects: `glab` runs inside the environment, signed in there, and falls back to this computer's sign-in when the environment has none.
+
 ## 0.6.0
 
 ### New
