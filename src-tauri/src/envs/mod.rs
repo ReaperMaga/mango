@@ -12,6 +12,8 @@
 //! - `recipes`: one-click components (agents, gh, Node.js, Java, desktop, Tailscale)
 //!              and their install/update scripts, run in a PTY the user watches;
 //!              the versions Node.js and Java offer
+//! - `lore`:    a Lore server's state in an instance, and publishing it outside the
+//!              server (Incus proxy devices on the master)
 //! - `remote`:  a shell or sign-in terminal inside an instance, and the
 //!              desktop (noVNC) tunnel
 //! - `server`:  installing, updating and initialising Incus itself on the master
@@ -24,6 +26,7 @@
 pub mod hosts;
 pub mod incus;
 pub mod join;
+pub mod lore;
 pub mod recipes;
 pub mod remote;
 pub mod server;
@@ -271,6 +274,31 @@ pub fn valid_gitlab_host(s: Option<&str>) -> Result<String, String> {
     }
 }
 
+/// An address on the Incus host to publish a port at (an Incus proxy device's `listen`):
+/// an IPv4 or IPv6 literal, or `0.0.0.0` / `::` for all of them. Never a name, loopback or
+/// multicast. Returns it as Incus writes it in a listen address (IPv6 in brackets).
+pub fn valid_listen_address(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    let bad = || format!("\"{s}\" is not an address of the server. Pick one of its addresses, or 0.0.0.0 for all of them.");
+    let ip: std::net::IpAddr = s.trim_start_matches('[').trim_end_matches(']').parse().map_err(|_| bad())?;
+    if ip.is_loopback() || ip.is_multicast() {
+        return Err(bad());
+    }
+    if let std::net::IpAddr::V6(v6) = ip {
+        // Link-local addresses need a zone, which a listen address can't carry.
+        if v6.segments()[0] & 0xffc0 == 0xfe80 {
+            return Err(bad());
+        }
+        return Ok(format!("[{v6}]"));
+    }
+    Ok(ip.to_string())
+}
+
+/// A port to publish at on the Incus host: unprivileged (1024 and up).
+pub fn valid_publish_port(port: u16) -> Result<(), String> {
+    (port >= 1024).then_some(()).ok_or_else(|| format!("Pick a port from 1024 to 65535 (not {port})."))
+}
+
 /// An environment variable name for an agent run.
 pub fn valid_env_key(s: &str) -> bool {
     !s.is_empty()
@@ -326,6 +354,20 @@ mod tests {
         for bad in ["localhost", "a.io;id", "$(id).io", "-x.io", "a.io:0", "a b.io", "'a.io"] {
             assert!(valid_gitlab_host(Some(bad)).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn listen_addresses_and_ports() {
+        assert_eq!(valid_listen_address("100.101.7.1").unwrap(), "100.101.7.1");
+        assert_eq!(valid_listen_address(" 0.0.0.0 ").unwrap(), "0.0.0.0");
+        assert_eq!(valid_listen_address("::").unwrap(), "[::]");
+        assert_eq!(valid_listen_address("2a01:4f8::1").unwrap(), "[2a01:4f8::1]");
+        assert_eq!(valid_listen_address("[fd7a:115c:a1e0::1]").unwrap(), "[fd7a:115c:a1e0::1]");
+        for bad in ["", "localhost", "forge.lan", "127.0.0.1", "::1", "224.0.0.1", "fe80::1", "1.2.3.4:80", "1.2.3.4 -x", "1.2.3.4;id", "$(id)", "10.0.0.256"] {
+            assert!(valid_listen_address(bad).is_err(), "{bad:?}");
+        }
+        assert!(valid_publish_port(41337).is_ok() && valid_publish_port(1024).is_ok() && valid_publish_port(65535).is_ok());
+        assert!(valid_publish_port(0).is_err() && valid_publish_port(22).is_err() && valid_publish_port(1023).is_err());
     }
 
     #[test]
