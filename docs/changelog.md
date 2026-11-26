@@ -2,6 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.10.3
+
+### New
+
+- Sign in to a Lore server from its environment page.
+
+### Fixes
+
+- A Lore server with sign-in that was saved without its port (`lores://domain`) gets port 41337 back by itself.
+
 ## 0.10.2
 
 ### Fixes
