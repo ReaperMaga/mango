@@ -46,8 +46,12 @@ const kinds = computed(() => [
   { value: 'vm' as const, label: t('envs.common.vm'), icon: Monitor },
 ])
 
-watch(open, (isOpen) => {
-  if (!isOpen) return
+watch(open, (isOpen) => { if (isOpen) init() })
+// Asked for before this page mounted (Settings > Lore sends a machine with Incus here): start from it too.
+onMounted(() => { if (open.value) init() })
+
+/** Fill the form from `envs.dialog` (its server, and a preset). */
+function init() {
   hostId.value = envs.dialog?.kind === 'create' ? envs.dialog.hostId : ''
   preset.value = envs.dialog?.kind === 'create' ? envs.dialog.preset ?? null : null
   name.value = suggestName(preset.value ? 'lore' : 'dev')
@@ -70,7 +74,7 @@ watch(open, (isOpen) => {
   touched.value = false
   notice.value = null
   running.value = null
-})
+}
 
 /** "dev" (or `base`), or "dev-2" when that is taken. */
 function suggestName(base = 'dev') {
