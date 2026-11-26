@@ -22,6 +22,7 @@ export const settings: Messages['settings'] = {
     shortcuts: 'Tastenkürzel',
     environments: 'Umgebungen',
     hosting: 'Git-Hosting',
+    lore: 'Lore',
     terminal: 'Terminal',
     mcp: 'MCP-Server',
     plugins: 'Plugins',

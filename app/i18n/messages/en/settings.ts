@@ -20,6 +20,7 @@ export const settings = {
     shortcuts: 'Shortcuts',
     environments: 'Environments',
     hosting: 'Git hosting',
+    lore: 'Lore',
     terminal: 'Terminal',
     mcp: 'MCP servers',
     plugins: 'Plugins',

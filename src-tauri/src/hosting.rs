@@ -132,7 +132,7 @@ fn looks_secret(word: &str) -> bool {
 
 /// A line from a CLI as something safe to show: anything that looks like a token hidden, one line,
 /// at most 240 characters.
-fn scrub(text: &str) -> String {
+pub(crate) fn scrub(text: &str) -> String {
     let joined = text
         .split_whitespace()
         .map(|w| if looks_secret(w) { "[hidden]" } else { w })
