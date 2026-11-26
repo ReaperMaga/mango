@@ -1388,11 +1388,7 @@ mod tests {
     /// `sh -n`). Skipped where there is no such shell (Windows).
     #[test]
     fn scripts_parse() {
-        let check = |shell: &str, script: &str| {
-            if let Ok(out) = std::process::Command::new(shell).args(["-n", "-c", script]).output() {
-                assert!(out.status.success(), "{shell}: {}", String::from_utf8_lossy(&out.stderr));
-            }
-        };
+        let check = crate::bin::assert_parses;
         let all: Vec<String> = RECIPES.iter().map(|r| r.id.to_string()).collect();
         let ts = EnvTailscale { tags: vec!["tag:mango".into()], auth_key_file: None };
         let p = install_plan(&host(Some(ts)), "dev", &all, &Versions::new()).unwrap();

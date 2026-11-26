@@ -617,11 +617,7 @@ mod tests {
     /// Every script parses: a broken quote would only show on a real machine.
     #[test]
     fn scripts_parse() {
-        let check = |shell: &str, script: &str| {
-            if let Ok(out) = std::process::Command::new(shell).args(["-n", "-c", script]).output() {
-                assert!(out.status.success(), "{shell}: {}", String::from_utf8_lossy(&out.stderr));
-            }
-        };
+        let check = crate::bin::assert_parses;
         check("sh", RUN_AS_ROOT);
         check("sh", PROBE);
         check("bash", &root_script());

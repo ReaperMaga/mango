@@ -188,3 +188,30 @@ pub fn hide_console(cmd: &mut std::process::Command) -> &mut std::process::Comma
     }
     cmd
 }
+
+/// A real `name` (`sh`, `bash`) for tests that syntax-check scripts. Not WSL's launcher in
+/// System32 (or the Store's alias), which cannot run without a distribution installed.
+#[cfg(test)]
+pub(crate) fn test_shell(name: &str) -> Option<PathBuf> {
+    find(name).filter(|p| {
+        let s = p.to_string_lossy().to_lowercase();
+        !s.contains("system32") && !s.contains("windowsapps")
+    })
+}
+
+/// `name -n` the script when a real one is around (skipped otherwise). Through stdin:
+/// MSYS/Cygwin shells re-parse a Windows command line with their own quoting rules.
+#[cfg(test)]
+pub(crate) fn assert_parses(name: &str, script: &str) {
+    use std::io::Write;
+    let Some(shell) = test_shell(name) else { return eprintln!("no {name} found; skipping") };
+    let mut child = std::process::Command::new(&shell)
+        .arg("-n")
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("run shell");
+    child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
+}

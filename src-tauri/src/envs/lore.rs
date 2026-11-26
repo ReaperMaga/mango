@@ -767,12 +767,7 @@ mod tests {
     /// would only show on a real server.
     #[test]
     fn scripts_parse() {
-        let check = |shell: &str, script: &str| {
-            let out = std::process::Command::new(shell).args(["-n", "-c", script]).output();
-            if let Ok(out) = out {
-                assert!(out.status.success(), "{shell}: {}", String::from_utf8_lossy(&out.stderr));
-            }
-        };
+        let check = crate::bin::assert_parses;
         let master = format!("{CAPTURED}{MASTER_LORE}{INFO}lore_info\n");
         check("sh", &master);
         check("bash", &master);
