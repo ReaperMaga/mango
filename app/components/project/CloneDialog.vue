@@ -4,10 +4,12 @@ import type { EnvRemote } from '~/types/ipc'
 import { ENV_WORK_DIR, useEnvironments } from '~/stores/environments'
 import { useWorkspace } from '~/stores/workspace'
 import { GITLAB_COM } from '~/utils/gitHosts'
+import { isLoreUrl, parseLoreRepoUrl } from '~/utils/lore'
 
 /**
  * Clone a git repository into a parent folder. git's own progress lines stream
- * in through `clone://progress`; the percentage drives a thin bar.
+ * in through `clone://progress`; the percentage drives a thin bar. A `lore://server/repository` URL is
+ * cloned with the Lore CLI instead (its lines stream the same way, without a percentage).
  * Where: on this computer, or inside an environment, where its own git (and GitHub or GitLab CLI
  * sign-in) does the cloning and reports no progress, only the outcome.
  */
@@ -50,11 +52,16 @@ function errorText(e: unknown): string {
 
 /* ---------- URL parsing ---------- */
 
-interface Parsed { url: string; name: string; shorthand: boolean }
+interface Parsed { url: string; name: string; shorthand: boolean; lore?: boolean }
 
 function parseRepo(raw: string): Parsed | null {
   const s = raw.trim()
   if (!s) return null
+  // Lore: lore://host[:port]/repository, cloned with `lore clone`; the folder is the last part.
+  if (isLoreUrl(s)) {
+    const lore = parseLoreRepoUrl(s)
+    return lore ? { url: `${lore.server}/${lore.name}`, name: lore.name.split('/').pop()!, shorthand: false, lore: true } : null
+  }
   const nameFrom = (path: string) => path.replace(/\/+$/, '').split(/[/:]/).pop()!.replace(/\.git$/, '')
 
   // owner/repo shorthand → GitHub over https
@@ -91,7 +98,7 @@ function parseRepo(raw: string): Parsed | null {
 const parsed = computed(() => parseRepo(url.value))
 const urlError = computed(() => {
   if (!url.value.trim()) return t('project.clone.urlMissing')
-  if (!parsed.value) return t('project.clone.urlBad')
+  if (!parsed.value) return isLoreUrl(url.value) ? t('project.clone.urlBadLore') : t('project.clone.urlBad')
   return null
 })
 const folderError = computed(() => {
@@ -237,6 +244,13 @@ function pushLine(rawLine: string) {
   for (const seg of rawLine.split(/[\r\n]+/)) {
     const line = seg.replace(/\s+$/, '')
     if (!line) continue
+    if (parsed.value?.lore) {
+      // lore prints whole lines ("Cloned 2/2 files (24 bytes/24 bytes)"): the latest is the stage.
+      log.value.push(line)
+      if (log.value.length > 6) log.value.splice(0, log.value.length - 6)
+      if (!/^\[(?:warn|error)\]/i.test(line) && !/^\s*at /.test(line)) stage.value = line
+      continue
+    }
     const m = PROGRESS.exec(line)
     const last = log.value[log.value.length - 1]
     const lastKey = last ? PROGRESS.exec(last)?.[1] : undefined
@@ -259,6 +273,8 @@ function pushLine(rawLine: string) {
 }
 
 function explain(message: string): { message: string; hint: string } {
+  // The backend words Lore's failures itself ("Could not clone …: … did not answer …").
+  if (parsed.value?.lore) return { message: message.trim().replace(/\.$/, ''), hint: t('project.clone.hintLore') }
   const lines = message.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
   const fatal = lines.filter(l => /^(fatal|error):/i.test(l)).pop() ?? lines.pop() ?? message
   const text = fatal.replace(/^(fatal|error):\s*/i, '').replace(/\.$/, '')
@@ -282,7 +298,7 @@ async function submit() {
   reset()
   phase.value = 'cloning'
   if (where.value) return cloneRemote(where.value, parsed.value.url)
-  stage.value = t('project.clone.starting')
+  stage.value = parsed.value.lore ? t('project.clone.connecting') : t('project.clone.starting')
   const jobId = `clone-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
   let unlisten: (() => void) | null = null
   try {
@@ -355,7 +371,8 @@ watch(error, async (e) => {
         >
       </UiField>
 
-      <p v-if="place" class="cl__note">
+      <p v-if="place && parsed?.lore" class="cl__note">{{ t('project.clone.noteLore', { place: place.label }) }}</p>
+      <p v-else-if="place" class="cl__note">
         {{ t('project.clone.note', { place: place.label, tool: gitlabServer ? 'GitLab' : 'GitHub' }) }}
         <button v-if="gitlabServer" type="button" class="cl__link" :disabled="cloning" @click="signInGitLab">{{ t('project.clone.signIn', { server: gitlabServer, place: place.label }) }}</button>
         <button v-else type="button" class="cl__link" :disabled="cloning" @click="signInGitHub">{{ t('project.clone.signIn', { server: 'GitHub', place: place.label }) }}</button>

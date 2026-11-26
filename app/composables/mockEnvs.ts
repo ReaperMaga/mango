@@ -785,6 +785,10 @@ export function createMockEnvs(ctx: MockEnvContext) {
         const t = treeOf(h.host.id, i)
         if (args.cloneUrl) {
           const url = String(args.cloneUrl)
+          if (/^lore:\/\//i.test(url)) {
+            // No environment in the preview has the Lore component yet.
+            throw new Error('The Lore CLI isn\'t installed in this environment. Add the Lore component to it (Settings > Environments, the environment\'s components), then try again.')
+          }
           if (!/^(https:\/\/|git@|ssh:\/\/)/.test(url)) {
             throw new Error(`git clone failed: "${url}" is not a repository URL Mango can clone`)
           }
@@ -798,6 +802,9 @@ export function createMockEnvs(ctx: MockEnvContext) {
           t.set(dir, true)
           for (const sub of ['src', 'tests', '.github']) t.set(`${dir}/${sub}`, false)
           return dir
+        }
+        if (args.lore) {
+          throw new Error('The Lore CLI isn\'t installed in this environment. Add the Lore component to it (Settings > Environments, the environment\'s components), then try again.')
         }
         mkdirs(t, dir)
         if (args.gitInit) t.set(dir, true)

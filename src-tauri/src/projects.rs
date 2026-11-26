@@ -1,4 +1,5 @@
-//! Project folders: recent list, git branch detection, create and clone.
+//! Project folders: recent list, git branch detection, create and clone (git, or Lore through
+//! `lore_servers`).
 
 use std::fs;
 use std::io::Read;
@@ -308,16 +309,57 @@ pub async fn forget_project(
     Ok(())
 }
 
+/// A new project's Lore repository: on `server` (`lore://host[:port]`), or only on this computer
+/// (`server` null, `lore repository create --offline`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoreNew {
+    #[serde(default)]
+    pub server: Option<String>,
+    pub repository: String,
+}
+
+/// `lore` (validated) as what to run: the server, if any, and the repository name.
+pub(crate) fn lore_target(lore: &LoreNew) -> Result<(Option<crate::lore_servers::ServerUrl>, String), String> {
+    let server = match lore.server.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => Some(crate::lore_servers::parse_server_url(s)?),
+        None => None,
+    };
+    let name = lore.repository.trim();
+    crate::lore_servers::valid_repo_name(name)?;
+    Ok((server, name.to_string()))
+}
+
+/// `lore repository create` in `dir` (new and empty).
+fn lore_create(dir: &Path, lore: &LoreNew) -> Result<(), String> {
+    use crate::lore_servers as lore_cli;
+    let (server, name) = lore_target(lore)?;
+    let bin = lore_cli::find().ok_or(lore_cli::MISSING)?;
+    let mut cmd = lore_cli::command(&bin);
+    cmd.args(lore_cli::create_argv(server.as_ref(), &name)).current_dir(dir);
+    let out = crate::git::run_process(cmd, None, 256 * 1024, lore_cli::CREATE_TIMEOUT, "lore", lore_cli::MISSING)?;
+    if out.ok() {
+        return Ok(());
+    }
+    let place = server.map(|s| s.to_string()).unwrap_or_else(|| "this computer".into());
+    Err(lore_cli::explain(out.code, &out.combined(), &place, &format!("create the Lore repository {name}")))
+}
+
 #[tauri::command]
 pub async fn create_project(
     app: AppHandle,
     parent: String,
     name: String,
     git_init: bool,
+    lore: Option<LoreNew>,
 ) -> Result<ProjectInfo, String> {
     blocking(move || {
         let name = validate_folder_name(&name)?;
+        if let Some(l) = &lore {
+            lore_target(l)?;
+        }
         let dir = normalize(&parent)?.join(name);
+        let existed = dir.exists();
         if dir.exists() {
             if !dir.is_dir() {
                 return Err(format!("{} already exists and is not a folder", dir.display()));
@@ -329,7 +371,18 @@ pub async fn create_project(
         fs::create_dir_all(&dir)
             .map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
 
-        if git_init {
+        if let Some(l) = &lore {
+            // Unlike `git init`, this can fail for reasons the user must see (server, sign-in, name):
+            // then nothing is left behind that was not there before.
+            if let Err(e) = lore_create(&dir, l) {
+                if existed {
+                    let _ = fs::remove_dir_all(dir.join(".lore"));
+                } else {
+                    let _ = fs::remove_dir_all(&dir);
+                }
+                return Err(e);
+            }
+        } else if git_init {
             // Best effort: without git the project is still created, just not a repo.
             let mut init = Command::new(crate::bin::git());
             crate::bin::hide_console(&mut init);
@@ -359,6 +412,13 @@ pub async fn git_clone(
         if url.is_empty() {
             return Err("No repository URL given".into());
         }
+        let lore = is_lore_url(&url);
+        let url = if lore {
+            let (server, name) = crate::lore_servers::parse_repo_url(&url)?;
+            server.repo(&name)
+        } else {
+            url
+        };
         let name = match name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
             Some(n) => validate_folder_name(n)?.to_string(),
             None => repo_name_from_url(&url)
@@ -371,6 +431,10 @@ pub async fn git_clone(
         }
         fs::create_dir_all(&parent)
             .map_err(|e| format!("Could not create {}: {e}", parent.display()))?;
+
+        if lore {
+            return lore_clone(&app, &url, &dir, &job_id).and_then(|_| open_dir(&app, &dir));
+        }
 
         let mut clone = Command::new(crate::bin::git());
         crate::bin::hide_console(&mut clone);
@@ -426,6 +490,57 @@ pub async fn git_clone(
         open_dir(&app, &dir)
     })
     .await
+}
+
+/// A `lore://` address (any case), cloned with `lore` rather than git.
+pub(crate) fn is_lore_url(url: &str) -> bool {
+    url.trim().get(..7).is_some_and(|p| p.eq_ignore_ascii_case("lore://"))
+}
+
+/// `lore clone <url> <dir>`, its lines streamed as `clone://progress`. A failed clone leaves no folder
+/// (the CLI removes what it started).
+fn lore_clone(app: &AppHandle, url: &str, dir: &Path, job_id: &str) -> Result<(), String> {
+    use crate::lore_servers as lore_cli;
+    let bin = lore_cli::find().ok_or(lore_cli::MISSING)?;
+    let mut cmd = lore_cli::command(&bin);
+    let mut child = cmd
+        .args(lore_cli::clone_argv(url, &dir.to_string_lossy()))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::NotFound => lore_cli::MISSING.to_string(),
+            _ => format!("Could not run lore: {e}"),
+        })?;
+    // Errors come on stderr, progress on stdout: both are shown, the errors kept for the message.
+    let stderr = child.stderr.take();
+    let (app2, job2) = (app.clone(), job_id.to_string());
+    let errors = std::thread::spawn(move || {
+        let mut said = String::new();
+        if let Some(stderr) = stderr {
+            for_each_line(stderr, |line| {
+                let _ = app2.emit("clone://progress", CloneProgress { job_id: job2.clone(), line: line.to_string() });
+                if said.len() < 16 * 1024 {
+                    said.push_str(line);
+                    said.push('\n');
+                }
+            });
+        }
+        said
+    });
+    if let Some(stdout) = child.stdout.take() {
+        for_each_line(stdout, |line| {
+            let _ = app.emit("clone://progress", CloneProgress { job_id: job_id.to_string(), line: line.to_string() });
+        });
+    }
+    let status = child.wait().map_err(|e| format!("lore clone did not finish: {e}"))?;
+    let said = errors.join().unwrap_or_default();
+    if status.success() {
+        return Ok(());
+    }
+    let server = crate::lore_servers::parse_repo_url(url).map(|(s, _)| s.to_string()).unwrap_or_else(|_| url.to_string());
+    Err(lore_cli::explain(status.code(), &said, &server, &format!("clone {url}")))
 }
 
 /// Calls `f` for every non-empty line, splitting on both `\r` and `\n`
@@ -538,6 +653,10 @@ mod tests {
         for (url, want) in cases {
             assert_eq!(repo_name_from_url(url).as_deref(), Some(want), "{url}");
         }
+        // Lore: the repository's last part names the folder.
+        assert_eq!(repo_name_from_url("lore://lore.example.com:41337/game/art").as_deref(), Some("art"));
+        assert_eq!(repo_name_from_url("lore://127.0.0.1/demo").as_deref(), Some("demo"));
+        assert!(is_lore_url("LORE://h/x") && !is_lore_url("https://h/x"));
         assert_eq!(repo_name_from_url(""), None);
         assert_eq!(repo_name_from_url("https://"), None);
     }
@@ -564,6 +683,32 @@ mod tests {
                 "done."
             ]
         );
+    }
+
+    /// Against a real `lore` and server, with a scratch HOME:
+    /// `MANGO_LORE_URL=lore://127.0.0.1 cargo test real_lore_create -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_lore_create() {
+        let server = std::env::var("MANGO_LORE_URL").unwrap_or_else(|_| "lore://127.0.0.1".into());
+        let root = std::env::temp_dir().join(format!("mango-lore-create-{}", uuid::Uuid::new_v4().simple()));
+        let name = format!("mango-test-{}", uuid::Uuid::new_v4().simple());
+        let on_server = LoreNew { server: Some(server.clone()), repository: name.clone() };
+        fs::create_dir_all(root.join("a")).unwrap();
+        lore_create(&root.join("a"), &on_server).unwrap();
+        assert!(root.join("a/.lore/config.toml").is_file());
+        // The same name again: refused, in plain words.
+        fs::create_dir_all(root.join("b")).unwrap();
+        let e = lore_create(&root.join("b"), &on_server).unwrap_err();
+        println!("again: {e}");
+        assert!(e.contains("already has a repository"), "{e}");
+        fs::create_dir_all(root.join("c")).unwrap();
+        lore_create(&root.join("c"), &LoreNew { server: None, repository: "offline".into() }).unwrap();
+        fs::create_dir_all(root.join("d")).unwrap();
+        let e = lore_create(&root.join("d"), &LoreNew { server: Some("lore://127.0.0.1:1".into()), repository: "x".into() }).unwrap_err();
+        println!("unreachable: {e}");
+        assert!(e.contains("did not answer"), "{e}");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
