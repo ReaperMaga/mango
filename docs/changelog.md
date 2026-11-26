@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.10.1
+
+### Fixes
+
+- Requiring sign-in for a Lore server no longer stops with exit code 2 on its first setup.
+
 ## 0.10.0
 
 ### New
