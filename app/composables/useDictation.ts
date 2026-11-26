@@ -36,7 +36,18 @@ function micError(e: unknown): string {
   return t('chat.dictation.failed', { error: e instanceof Error ? e.message : String(e) })
 }
 
-export function useDictation(onText: (text: string) => void) {
+/** How often a running recording is transcribed again to show words as they are said. */
+const LIVE_EVERY_MS = 1500
+/** A live pass needs this much new speech; the text before it is kept and the buffer starts over past the cap. */
+const LIVE_MIN_SECONDS = 0.6
+const SEGMENT_SECONDS = 25
+
+/**
+ * `onText` gets the finished text once recording stops. `onLive` gets the text
+ * so far while it runs (and `null` when the recording is thrown away), so the
+ * words appear as they are said instead of after the last one.
+ */
+export function useDictation(onText: (text: string) => void, onLive?: (text: string | null) => void) {
   const voice = useVoice()
   const phase = ref<DictationPhase>('idle')
   /** 0..1, smoothed loudness for a level meter. */
@@ -53,6 +64,42 @@ export function useDictation(onText: (text: string) => void) {
   let ticker: ReturnType<typeof setInterval> | undefined
   /** Bumped by cancel/stop so a start that is still awaiting the mic can tell it was abandoned. */
   let session = 0
+  /** Text of earlier segments of this recording, already final. */
+  let committed = ''
+  let liveTimer: ReturnType<typeof setTimeout> | undefined
+  let liveBusy = false
+
+  const join = (a: string, b: string) => [a, b].filter(Boolean).join(' ')
+
+  function scheduleLive(mine: number) {
+    clearTimeout(liveTimer)
+    liveTimer = setTimeout(() => void liveStep(mine), LIVE_EVERY_MS)
+  }
+
+  /** Transcribes what has been said so far and shows it; never overlaps itself. */
+  async function liveStep(mine: number) {
+    if (mine !== session || phase.value !== 'recording') return
+    const count = chunks.length
+    const samples = chunks.reduce((n, c, i) => (i < count ? n + c.length : n), 0)
+    if (liveBusy || samples / rate < LIVE_MIN_SECONDS) { scheduleLive(mine); return }
+    liveBusy = true
+    try {
+      const pcm = await toPcm16(chunks.slice(0, count), rate)
+      const { text } = await voice.transcribe(pcm)
+      if (mine !== session || phase.value !== 'recording') return
+      const tail = text.trim()
+      onLive?.(join(committed, tail))
+      if (samples / rate > SEGMENT_SECONDS && tail) {
+        committed = join(committed, tail)
+        chunks.splice(0, count)
+      }
+    } catch {
+      // The final pass reports real problems; a missed live pass costs nothing.
+    } finally {
+      liveBusy = false
+      if (mine === session && phase.value === 'recording') scheduleLive(mine)
+    }
+  }
 
   async function start() {
     if (phase.value !== 'idle') return
@@ -71,6 +118,7 @@ export function useDictation(onText: (text: string) => void) {
       const source = ctx.createMediaStreamSource(s)
       node = new AudioWorkletNode(ctx, 'mango-tap')
       chunks = []
+      committed = ''
       node.port.onmessage = (e: MessageEvent<Float32Array>) => {
         chunks.push(e.data)
         let sum = 0
@@ -88,6 +136,7 @@ export function useDictation(onText: (text: string) => void) {
         if (seconds.value >= MAX_SECONDS) void stop()
       }, 250)
       phase.value = 'recording'
+      scheduleLive(mine)
     } catch (e) {
       release()
       if (mine === session) {
@@ -98,6 +147,7 @@ export function useDictation(onText: (text: string) => void) {
   }
 
   function release() {
+    clearTimeout(liveTimer)
     clearInterval(ticker)
     ticker = undefined
     if (node) node.port.onmessage = null
@@ -115,6 +165,8 @@ export function useDictation(onText: (text: string) => void) {
     session++
     release()
     chunks = []
+    if (committed || phase.value === 'recording' || phase.value === 'starting') onLive?.(null)
+    committed = ''
     if (phase.value !== 'transcribing') phase.value = 'idle'
   }
 
@@ -125,16 +177,24 @@ export function useDictation(onText: (text: string) => void) {
     const mine = ++session
     const recorded = chunks
     const sourceRate = rate
+    const before = committed
     chunks = []
     release()
     phase.value = 'transcribing'
     try {
       const pcm = await toPcm16(recorded, sourceRate)
-      if (pcm.length < TARGET_RATE / 4) return // under a quarter second: nothing to hear
-      const { text } = await voice.transcribe(pcm)
-      if (mine === session && text.trim()) onText(text.trim())
+      // Under a quarter second there is nothing to hear: keep what was already said.
+      const tail = pcm.length < TARGET_RATE / 4 ? '' : (await voice.transcribe(pcm)).text.trim()
+      const full = join(before, tail)
+      if (mine !== session) return
+      if (full) onText(full)
+      else onLive?.(null)
     } catch (e) {
-      if (mine === session) error.value = e instanceof Error ? e.message : String(e)
+      if (mine === session) {
+        error.value = e instanceof Error ? e.message : String(e)
+        if (before) onText(before)
+        else onLive?.(null)
+      }
     } finally {
       if (mine === session) phase.value = 'idle'
     }

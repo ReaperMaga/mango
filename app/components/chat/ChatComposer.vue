@@ -393,12 +393,46 @@ onBeforeUnmount(() => clearTimeout(attachErrorTimer))
 
 const voice = useVoice()
 
+/**
+ * The words shown while recording: where they go (the text around them) and
+ * what the field held after the last update. Typing in the field during a
+ * recording ends the live preview; the final text is then inserted at the caret.
+ */
+let live: { before: string, after: string, shown: string } | null = null
+
+/** Shows the words said so far in place; `null` takes the preview back out. */
+function showLive(words: string | null) {
+  if (live && text.value !== live.shown) live = null // the user edited: leave their text alone
+  if (words === null) {
+    if (live) text.value = live.before + live.after
+    live = null
+    return
+  }
+  if (!live) {
+    const el = ta.value
+    const value = text.value
+    const from = el?.selectionStart ?? value.length
+    const to = el?.selectionEnd ?? value.length
+    live = { before: value.slice(0, from), after: value.slice(to), shown: value }
+  }
+  const { before, after } = live
+  const lead = before && !/\s$/.test(before) ? ' ' : ''
+  const trail = after && !/^\s/.test(after) ? ' ' : ''
+  live.shown = text.value = before + lead + words + trail + after
+}
+
 /** Puts dictated text where the caret is, with a space on either side where needed. */
 function insertText(words: string) {
   const el = ta.value
-  const value = text.value
-  const from = el?.selectionStart ?? value.length
-  const to = el?.selectionEnd ?? value.length
+  let value = text.value
+  let from = el?.selectionStart ?? value.length
+  let to = el?.selectionEnd ?? value.length
+  if (live && value === live.shown) {
+    // Replace the preview with the final text.
+    value = live.before + live.after
+    from = to = live.before.length
+  }
+  live = null
   const before = value.slice(0, from)
   const after = value.slice(to)
   const lead = before && !/\s$/.test(before) ? ' ' : ''
@@ -412,7 +446,7 @@ function insertText(words: string) {
   })
 }
 
-const dictation = useDictation(insertText)
+const dictation = useDictation(insertText, showLive)
 const { phase: dictationPhase, error: dictationError } = dictation
 const listening = computed(() => dictationPhase.value === 'recording' || dictationPhase.value === 'starting')
 const dictationShortcut = computed(() => `${modLabel()}+Shift+Space`)
