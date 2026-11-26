@@ -9,6 +9,7 @@ import { formatLocale, t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
+import { useLore } from '~/stores/lore'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
@@ -576,12 +577,25 @@ export const useEnvironments = defineStore('environments', {
     },
 
     /**
-     * MERGE POINT (saved Lore servers, feat/lore): "Use as Lore server" on a Lore server instance's page
-     * calls this with the entry to save. Wire it to the saved Lore servers there: add the entry (or update
-     * the one whose `origin` matches) and show it in Settings. Until that merge it does nothing.
+     * "Use as Lore server" on a Lore server instance's page: save it to Settings > Lore (the entry whose
+     * `origin` matches is updated, not added again) and show it there. Unpublished, its inside address is
+     * all there is: it then works for projects in this server's environments only. Throws the backend's message.
      */
     async useAsLoreServer(entry: EnvLoreServerEntry): Promise<void> {
-      void entry
+      const url = entry.url ?? entry.insideUrl
+      if (!url) throw new Error(t('envs.lore.noAddress'))
+      const lore = useLore()
+      if (!lore.servers) await lore.loadServers()
+      const same = lore.servers?.find(s => s.origin?.hostId === entry.origin.hostId && s.origin.instance === entry.origin.instance)
+      const saved = await lore.upsert({
+        id: same?.id ?? null,
+        name: same?.name ?? entry.name,
+        url,
+        insideUrl: entry.insideUrl,
+        origin: entry.origin,
+      })
+      useWorkspace().openSettings('lore')
+      if (saved) void lore.check(saved.url)
     },
 
     /** What a pasted link would add; saves nothing. */

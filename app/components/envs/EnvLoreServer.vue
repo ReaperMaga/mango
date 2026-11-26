@@ -96,10 +96,12 @@ async function unpublish() {
 /* ---------- hand it over ---------- */
 
 const using = ref(false)
+const useError = ref<string | null>(null)
 async function use() {
   const l = lore.value
   if (!l || !host.value) return
   using.value = true
+  useError.value = null
   try {
     await envs.useAsLoreServer({
       name: t('envs.lore.entryName', { instance: props.instance, host: host.value.name }),
@@ -107,6 +109,8 @@ async function use() {
       insideUrl: l.insideUrl ?? l.insideIpUrl,
       origin: { hostId: props.hostId, instance: props.instance },
     })
+  } catch (e) {
+    useError.value = e instanceof Error ? e.message : String(e)
   } finally {
     using.value = false
   }
@@ -229,6 +233,9 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
           <UiButton variant="primary" size="sm" type="submit" :loading="busy === 'publish'">{{ t('envs.lore.publishAction') }}</UiButton>
         </span>
       </form>
+      <p v-if="useError" class="lore__error" role="alert">
+        {{ t('envs.lore.useFailed') }} <span class="selectable">{{ useError }}</span>
+      </p>
       <p v-if="actionError" class="lore__error" role="alert">
         {{ failed === 'unpublish' ? t('envs.lore.unpublishFailed') : t('envs.lore.publishFailed') }}
         <span class="selectable">{{ actionError }}.</span>

@@ -456,6 +456,8 @@ export const envs = {
     use: 'Use as Lore server',
     useTitle: 'Save it as a Lore server for your projects',
     entryName: '{instance} on {host}',
+    useFailed: 'Could not add it to Settings > Lore.',
+    noAddress: 'This server has no address yet.',
     firewall: {
       ufw: 'ufw is active on {host}. Open the port there with:',
       firewalld: 'firewalld is running on {host}. Open the port there with:',
