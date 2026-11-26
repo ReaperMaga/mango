@@ -179,16 +179,64 @@ export interface LoreServer {
   insideUrl: string | null
   /** null for a server Mango did not set up. */
   origin: LoreOrigin | null
+  /** The machine it runs on, when Mango set it up there over SSH (Docker or a service, no Incus). */
+  machine?: LoreMachine | null
 }
 
-/** A server to add (no `id`; one with the same `origin` is updated instead) or change (`id`). */
+/** A server to add (no `id`; one with the same `origin` or `machine` is updated instead) or change (`id`). */
 export interface LoreServerInput {
   id?: string | null
   name: string
   url: string
   insideUrl?: string | null
   origin?: LoreOrigin | null
+  machine?: LoreMachine | null
 }
+
+/** How Mango runs a Lore server on a machine: Docker when it can (x86_64, Docker running), else a service. */
+export type LoreMachineRuntime = 'auto' | 'docker' | 'service'
+
+/**
+ * A machine Mango set a Lore server up on over SSH (`lore_machine_run`). No secrets: with `password`,
+ * ssh asks for it in a terminal each time; Mango never sees or keeps it.
+ */
+export interface LoreMachine {
+  /** `user@host`, or an alias from ~/.ssh/config. */
+  ssh: string
+  port: number | null
+  /** A private key on this computer; null uses the SSH defaults (or the password). */
+  identityFile: string | null
+  password: boolean
+  runtime: LoreMachineRuntime
+  /** Where it listens there: an IP, or 0.0.0.0 / [::] for all of them. */
+  address: string
+  listenPort: number
+}
+
+/** How to reach a machine for a look at it (`lore_machine_probe`, keys only). */
+export interface LoreMachineAccess { ssh: string; port: number | null; identityFile: string | null }
+
+/** What a machine has (`lore_machine_probe`). */
+export interface LoreMachineProbe {
+  os: string | null
+  arch: string
+  /** root: signed in as root; nopass: sudo without a password; password: sudo will ask; none: no sudo. */
+  sudo: 'root' | 'nopass' | 'password' | 'none'
+  systemd: boolean
+  /** It has Incus: it can be an Environments server instead. */
+  incus: boolean
+  docker: boolean
+  /** Docker answered without a password. */
+  dockerReady: boolean
+  /** Epic's image runs here (x86_64). */
+  dockerImage: boolean
+  /** How Mango's Lore server already runs there. */
+  installed: 'docker' | 'service' | null
+  addresses: EnvHostAddress[]
+}
+
+/** What `lore_machine_run` does: set up (also update or move), restart, or remove (the data stays). */
+export type LoreMachineAction = 'setup' | 'restart' | 'remove'
 
 /**
  * How a server answered this computer. Lore talks gRPC over TCP (listing, creating) and QUIC over UDP
@@ -1457,6 +1505,10 @@ export interface Commands {
   /** `lore login <url>` in a terminal; answers the pty id. */
   lore_login: [{ url: string; cols: number; rows: number }, string]
   lore_logout: [{ url: string }, void]
+  /** A look at a machine over SSH (keys only, never prompts): Docker, Incus, systemd, sudo, addresses. */
+  lore_machine_probe: [{ machine: LoreMachineAccess }, LoreMachineProbe]
+  /** Set up, restart or remove the Lore server on a machine, in a terminal (ssh and sudo ask there); answers the pty id. */
+  lore_machine_run: [{ machine: LoreMachine; action: LoreMachineAction; cols: number; rows: number }, string]
   /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
   gitlab_hosts: [Record<string, never>, string[]]
   /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */

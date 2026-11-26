@@ -1,4 +1,4 @@
-import type { LoreCli, LoreServer, LoreServerCheck, LoreServerInput } from '~/types/ipc'
+import type { LoreCli, LoreMachine, LoreMachineAccess, LoreMachineAction, LoreMachineProbe, LoreServer, LoreServerCheck, LoreServerInput } from '~/types/ipc'
 import { normalizeLoreServer, parseLoreRepoUrl } from '~/utils/lore'
 
 /**
@@ -30,7 +30,7 @@ const repos: Record<string, string[]> = {
 }
 
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
-const copy = (s: LoreServer): LoreServer => ({ ...s, origin: s.origin ? { ...s.origin } : null })
+const copy = (s: LoreServer): LoreServer => ({ ...s, origin: s.origin ? { ...s.origin } : null, machine: s.machine ? { ...s.machine } : null })
 
 export const mockLoreCli = (): LoreCli => ({ ...cli })
 export const mockLoreServers = () => servers.map(copy)
@@ -47,7 +47,7 @@ export function mockLoreUpsert(input: LoreServerInput): LoreServer[] {
   if (other) throw new Error(`${url} is already in the list as "${other.name}".`)
   const entry: LoreServer = {
     id, name: input.name.trim() || url.slice(7).split(':')[0]!, url,
-    insideUrl: input.insideUrl ? normalizeLoreServer(input.insideUrl) : null, origin: input.origin ?? null,
+    insideUrl: input.insideUrl ? normalizeLoreServer(input.insideUrl) : null, origin: input.origin ?? null, machine: input.machine ?? null,
   }
   servers = at >= 0 ? servers.map((s, i) => (i === at ? entry : s)) : [...servers, entry]
   return mockLoreServers()
@@ -152,4 +152,60 @@ export function mockLoreCloneLines(url: string): string[] {
     'Branch main revision e7247e95021725b0d5024e66e8f4d03669f15c070da00041b7e22a66ad12b3db',
     'Clone complete in 14.2s',
   ]
+}
+
+/* ---------- a Lore server on a machine over SSH ---------- */
+
+/** The preview's look at a machine: a name with "docker" has Docker, "incus" has Incus; "nokey" refuses keys. */
+export async function mockLoreMachineProbe(access: LoreMachineAccess): Promise<LoreMachineProbe> {
+  await wait(700)
+  const host = access.ssh.slice(access.ssh.lastIndexOf('@') + 1)
+  if (host.includes('nokey')) {
+    throw new Error(`${host} refused the SSH sign-in. Mango uses your SSH keys and agent without prompting: check that \`ssh ${access.ssh}\` works in a terminal without a password.`)
+  }
+  const docker = host.includes('docker')
+  return {
+    os: 'Ubuntu 24.04.1 LTS', arch: 'x86_64', sudo: access.ssh.startsWith('root@') ? 'root' : 'password',
+    systemd: true, incus: host.includes('incus'), docker, dockerReady: docker, dockerImage: true, installed: null,
+    addresses: [
+      { address: '100.88.12.4', kind: 'tailscale', interface: 'tailscale0' },
+      { address: '192.168.1.30', kind: 'private', interface: 'enp3s0' },
+      { address: '203.0.113.41', kind: 'public', interface: 'enp1s0' },
+    ],
+  }
+}
+
+/** The preview's setup, restart or removal, played into the terminal (a password asked first, when it wants one). */
+export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, action: LoreMachineAction) {
+  const host = m.ssh.slice(m.ssh.lastIndexOf('@') + 1)
+  const docker = m.runtime === 'docker' || (m.runtime === 'auto' && host.includes('docker'))
+  const lines = [
+    ...(m.password ? [`${m.ssh}'s password: \x1b[2m(simulated)\x1b[0m`] : []),
+    'This needs root: sudo asks for your password below.',
+    `[sudo] password for ${m.ssh.split('@')[0] || 'you'}: \x1b[2m(simulated)\x1b[0m`,
+  ]
+  if (action === 'setup') {
+    lines.push(
+      docker ? '\x1b[1m==> Lore server in Docker (Epic\'s image for 0.14.0, pinned)\x1b[0m' : '\x1b[1m==> Lore server (loreserver, a pinned release from GitHub, as a service)\x1b[0m',
+      docker ? 'Pulling ghcr.io/epicgames/lore/loreserver…' : 'Downloading loreserver-v0.14.0-x86_64-unknown-linux-gnu.tar.gz',
+      `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP). It has no sign-in: anyone who reaches that port can read and write.`,
+    )
+  } else if (action === 'restart') {
+    lines.push('\x1b[1m==> Restarting the Lore server\x1b[0m', `The Lore server listens on ${m.address} port ${m.listenPort} (UDP and TCP).`)
+  } else {
+    lines.push('\x1b[1m==> Removing the Lore server\x1b[0m', docker
+      ? 'Removed the container. Its data stays in the Docker volume mango-lore-data and your settings in /etc/mango-lore.'
+      : 'Removed the service. Its data stays in /var/lib/lore, your settings in /etc/lore, and the system user lore.')
+  }
+  lines.push('\x1b[1m==> Done.\x1b[0m \x1b[2m(simulated: the browser preview connects to nothing)\x1b[0m')
+  play(emit, id, lines, () => {
+    if (action === 'setup') repos[loreUrlOfMachine(m)] ??= []
+    return 0
+  })
+}
+
+function loreUrlOfMachine(m: LoreMachine) {
+  const everywhere = m.address === '0.0.0.0' || m.address === '[::]'
+  const host = everywhere ? m.ssh.slice(m.ssh.lastIndexOf('@') + 1) : m.address
+  return m.listenPort === 41337 ? `lore://${host}` : `lore://${host}:${m.listenPort}`
 }

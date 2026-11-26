@@ -10,7 +10,7 @@ import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockR
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
 import { mockGitlabHosts, mockGitlabHostsSave, mockHostingInstall, mockHostingLogin, mockHostingLogout, mockHostingStatus } from '~/composables/mockHosting'
-import { mockLoreCheck, mockLoreCli, mockLoreCloneLines, mockLoreCreate, mockLoreInstall, mockLoreLogin, mockLoreLogout, mockLoreRemove, mockLoreServers, mockLoreUpsert } from '~/composables/mockLore'
+import { mockLoreCheck, mockLoreCli, mockLoreCloneLines, mockLoreCreate, mockLoreInstall, mockLoreLogin, mockLoreLogout, mockLoreMachineProbe, mockLoreMachineRun, mockLoreRemove, mockLoreServers, mockLoreUpsert } from '~/composables/mockLore'
 import { mockPlugins } from '~/composables/mockPlugins'
 import { followMockPluginData, mockPluginData } from '~/composables/mockPluginData'
 import { isEnvPath } from '~/utils/envPath'
@@ -487,6 +487,12 @@ const mock = (() => {
         return id
       }
       case 'lore_logout': await new Promise(r => setTimeout(r, 300)); return mockLoreLogout(args.url)
+      case 'lore_machine_probe': return mockLoreMachineProbe(args.machine)
+      case 'lore_machine_run': {
+        const id = newPtyId()
+        mockLoreMachineRun(emit, id, args.machine, args.action)
+        return id
+      }
       case 'gitlab_hosts': return mockGitlabHosts()
       case 'gitlab_hosts_save': return mockGitlabHostsSave(args.hosts)
       case 'lsp_servers': return lspServers.map(s => ({ ...s }))

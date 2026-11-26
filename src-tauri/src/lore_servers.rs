@@ -244,6 +244,9 @@ pub struct LoreServer {
     /// null for a server Mango did not set up.
     #[serde(default)]
     pub origin: Option<LoreOrigin>,
+    /// The machine it runs on, when Mango set it up there over SSH (`lore_machines`).
+    #[serde(default)]
+    pub machine: Option<crate::lore_machines::LoreMachine>,
 }
 
 /// A server to add or change: [`upsert`] fills in the id.
@@ -260,6 +263,8 @@ pub struct LoreServerInput {
     pub inside_url: Option<String>,
     #[serde(default)]
     pub origin: Option<LoreOrigin>,
+    #[serde(default)]
+    pub machine: Option<crate::lore_machines::LoreMachine>,
 }
 
 fn valid_id(s: &str) -> bool {
@@ -277,7 +282,7 @@ fn servers_file(app: &AppHandle) -> Result<PathBuf, String> {
 fn read_servers(file: &Path) -> Vec<LoreServer> {
     let Ok(text) = fs::read_to_string(file) else { return Vec::new() };
     let list: Vec<LoreServer> = serde_json::from_str(&text).unwrap_or_default();
-    list.into_iter().filter_map(|s| clean(s).ok()).take(MAX_SERVERS).collect()
+    list.into_iter().filter_map(|s| clean(s, false).ok()).take(MAX_SERVERS).collect()
 }
 
 fn write_servers(file: &Path, list: &[LoreServer]) -> Result<(), String> {
@@ -291,8 +296,9 @@ fn write_servers(file: &Path, list: &[LoreServer]) -> Result<(), String> {
         .map_err(|e| format!("Could not save {}: {e}", file.display()))
 }
 
-/// One entry checked and normalised (the URLs canonical, the name trimmed or the host).
-fn clean(s: LoreServer) -> Result<LoreServer, String> {
+/// One entry checked and normalised (the URLs canonical, the name trimmed or the host). `strict`
+/// also asks the disk (a machine's key file exists): on a change, not when loading the list.
+fn clean(s: LoreServer, strict: bool) -> Result<LoreServer, String> {
     if !valid_id(&s.id) {
         return Err("The server's id is not valid.".into());
     }
@@ -307,17 +313,26 @@ fn clean(s: LoreServer) -> Result<LoreServer, String> {
         }
         crate::envs::valid_instance(&o.instance)?;
     }
+    let machine = match s.machine {
+        Some(m) => Some(crate::lore_machines::clean(m, strict)?),
+        None => None,
+    };
     let name: String = s.name.trim().chars().filter(|c| !c.is_control()).take(80).collect();
     let name = if name.is_empty() { url.host.clone() } else { name };
-    Ok(LoreServer { id: s.id, name, url: url.to_string(), inside_url, origin: s.origin })
+    Ok(LoreServer { id: s.id, name, url: url.to_string(), inside_url, origin: s.origin, machine })
 }
 
 /// Adds `input` to `list`, or replaces the entry with its id (or, with no id, the one with the same
-/// origin). Refuses a second entry for the same address.
+/// origin, or set up on the same machine). Refuses a second entry for the same address.
 fn upsert_in(list: &mut Vec<LoreServer>, input: LoreServerInput) -> Result<LoreServer, String> {
     let at = match input.id.as_deref() {
         Some(id) => Some(list.iter().position(|s| s.id == id).ok_or("That server is no longer in the list.")?),
-        None => input.origin.as_ref().and_then(|o| list.iter().position(|s| s.origin.as_ref() == Some(o))),
+        None => match (&input.origin, &input.machine) {
+            (Some(o), _) => list.iter().position(|s| s.origin.as_ref() == Some(o)),
+            // The same machine (SSH destination and port) set up again.
+            (None, Some(m)) => list.iter().position(|s| s.machine.as_ref().is_some_and(|x| x.ssh == m.ssh && x.port == m.port)),
+            (None, None) => None,
+        },
     };
     let id = match at {
         Some(i) => list[i].id.clone(),
@@ -329,7 +344,8 @@ fn upsert_in(list: &mut Vec<LoreServer>, input: LoreServerInput) -> Result<LoreS
         url: input.url,
         inside_url: input.inside_url,
         origin: input.origin,
-    })?;
+        machine: input.machine,
+    }, true)?;
     if let Some(other) = list.iter().find(|s| s.id != id && s.url == entry.url) {
         return Err(format!("{} is already in the list as \"{}\".", entry.url, other.name));
     }
@@ -1021,10 +1037,10 @@ mod tests {
     #[test]
     fn saved_servers() {
         let mut list = Vec::new();
-        let a = upsert_in(&mut list, LoreServerInput { id: None, name: "  ".into(), url: "lore://A.example:41337".into(), inside_url: None, origin: None }).unwrap();
+        let a = upsert_in(&mut list, LoreServerInput { id: None, name: "  ".into(), url: "lore://A.example:41337".into(), inside_url: None, origin: None, machine: None }).unwrap();
         assert_eq!((a.name.as_str(), a.url.as_str()), ("a.example", "lore://a.example"));
         // The same address twice is refused.
-        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "x".into(), url: "lore://a.example".into(), inside_url: None, origin: None }).is_err());
+        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "x".into(), url: "lore://a.example".into(), inside_url: None, origin: None, machine: None }).is_err());
         // An Incus recipe registers its server, then runs again: one entry, updated.
         let origin = LoreOrigin { host_id: "h1".into(), instance: "lore-srv".into() };
         let input = |url: &str| LoreServerInput {
@@ -1033,6 +1049,7 @@ mod tests {
             url: url.into(),
             inside_url: Some("lore://lore-srv.incus".into()),
             origin: Some(origin.clone()),
+            machine: None,
         };
         let b = upsert_in(&mut list, input("lore://203.0.113.7:41400")).unwrap();
         let b2 = upsert_in(&mut list, input("lore://203.0.113.7:41401")).unwrap();
@@ -1041,12 +1058,12 @@ mod tests {
         assert_eq!(list[1].url, "lore://203.0.113.7:41401");
         assert_eq!(list[1].inside_url.as_deref(), Some("lore://lore-srv.incus"));
         // Edits by id.
-        upsert_in(&mut list, LoreServerInput { id: Some(a.id.clone()), name: "Main".into(), url: "lore://a.example:9".into(), inside_url: None, origin: None }).unwrap();
+        upsert_in(&mut list, LoreServerInput { id: Some(a.id.clone()), name: "Main".into(), url: "lore://a.example:9".into(), inside_url: None, origin: None, machine: None }).unwrap();
         assert_eq!((list[0].name.as_str(), list[0].url.as_str()), ("Main", "lore://a.example:9"));
-        assert!(upsert_in(&mut list, LoreServerInput { id: Some("gone".into()), name: "".into(), url: "lore://z".into(), inside_url: None, origin: None }).is_err());
+        assert!(upsert_in(&mut list, LoreServerInput { id: Some("gone".into()), name: "".into(), url: "lore://z".into(), inside_url: None, origin: None, machine: None }).is_err());
         // Bad values never reach the file.
-        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "".into(), url: "lore://z".into(), inside_url: None, origin: Some(LoreOrigin { host_id: "h;x".into(), instance: "i".into() }) }).is_err());
-        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "".into(), url: "lore://z".into(), inside_url: Some("http://z".into()), origin: None }).is_err());
+        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "".into(), url: "lore://z".into(), inside_url: None, origin: Some(LoreOrigin { host_id: "h;x".into(), instance: "i".into() }), machine: None }).is_err());
+        assert!(upsert_in(&mut list, LoreServerInput { id: None, name: "".into(), url: "lore://z".into(), inside_url: Some("http://z".into()), origin: None, machine: None }).is_err());
 
         // The file round-trips, owner-only, and tolerates a broken entry.
         let dir = std::env::temp_dir().join(format!("mango-lore-test-{}", uuid::Uuid::new_v4().simple()));

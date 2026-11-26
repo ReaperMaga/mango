@@ -202,9 +202,23 @@ pub(crate) const RECIPES: &[Recipe] = &[
 
 /* ---------- instance-side scripts (bash, run as root) ---------- */
 
-const HEADER: &str = r##"export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a LANG=C.UTF-8
-say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
+/// `say`, `fail`, `put` and `need_systemd`: what every root-side bash script here builds on, in an
+/// instance (before `HEADER`) and on a machine over SSH (`lore_machines`).
+pub(crate) const BASICS: &str = r##"say() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 fail() { printf '\n\033[1;31mMango: %s\033[0m\n' "$*" >&2; exit 1; }
+# put PATH MODE < content: write when different; succeeds only when the file changed.
+# (Called as `put ... && changed=1`, where errexit is off: failures go through fail.)
+put() {
+  local tmp; tmp=$(mktemp) || fail "could not create a temporary file."
+  cat > "$tmp" || fail "could not write a temporary file."
+  if [ -f "$1" ] && cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 1; fi
+  install -m "$2" "$tmp" "$1" || { rm -f "$tmp"; fail "could not write $1."; }
+  rm -f "$tmp"
+}
+need_systemd() { [ -d /run/systemd/system ] || fail "$1 needs systemd, which is not running here."; }
+"##;
+
+const HEADER: &str = r##"export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a LANG=C.UTF-8
 trap 'rm -f /run/mango-tailscale-authkey' EXIT
 trap 'printf "\n\033[1;31mMango: the step above failed. Running the install again is safe.\033[0m\n" >&2' ERR
 [ "$(id -u)" = 0 ] || fail "the install script has to run as root."
@@ -226,16 +240,6 @@ as_agent() {
   id -u agent >/dev/null 2>&1 || fail "the agent user is missing. Install the base component first."
   runuser -u agent -- env HOME=/home/agent USER=agent LOGNAME=agent SHELL=/bin/bash bash -lc "set -o pipefail; cd ~; $1"
 }
-# put PATH MODE < content: write when different; succeeds only when the file changed.
-# (Called as `put ... && changed=1`, where errexit is off: failures go through fail.)
-put() {
-  local tmp; tmp=$(mktemp) || fail "could not create a temporary file."
-  cat > "$tmp" || fail "could not write a temporary file."
-  if [ -f "$1" ] && cmp -s "$tmp" "$1"; then rm -f "$tmp"; return 1; fi
-  install -m "$2" "$tmp" "$1" || { rm -f "$tmp"; fail "could not write $1."; }
-  rm -f "$tmp"
-}
-need_systemd() { [ -d /run/systemd/system ] || fail "$1 needs systemd running in the environment."; }
 # Tell the agent, in a CLI's global instructions file ($1), how to show a picture in Mango's chat. Once.
 picture_note() {
   grep -qs 'mango-pictures' "$1" && return 0
@@ -433,10 +437,16 @@ fi
 glab --version | head -n 1
 "##;
 
+/// Epic's server image for the same release as `LORE_COMMON` (x86_64 only: its arm64 tags are built
+/// for Graviton3), pinned by digest, for a Lore server in Docker (`lore_machines`). Change it with
+/// `LORE_V` and the four sums below.
+pub(crate) const LORE_IMAGE: &str =
+    "ghcr.io/epicgames/lore/loreserver@sha256:6add6c1bf96c959b63a5faf395bd00c7e890a57aeea828e3a3b9febab6ce893b";
+
 /// What both Lore recipes share: the pinned release and `lore_get`, which downloads one of its
 /// tarballs for this machine, checks it against the sum pinned here and unpacks it into `$lore_tmp`.
 /// Added once, before the Lore scripts (`install_plan`).
-const LORE_COMMON: &str = r##"LORE_V=0.14.0
+pub(crate) const LORE_COMMON: &str = r##"LORE_V=0.14.0
 lore_get() {
   local arch sum file
   case "$(uname -m)" in
@@ -478,10 +488,12 @@ fi
 "##;
 
 /// The Lore server as a service. Mango's settings (`mango.toml`) are rewritten on every update;
-/// the owner's `local.toml` and the data in /var/lib/lore are kept.
-const LORE_SERVER: &str = r##"say "Lore server (loreserver, a pinned release from GitHub, as a service)"
+/// the owner's `local.toml` and the data in /var/lib/lore are kept. A machine over SSH
+/// (`lore_machines`) runs it too, after setting `LORE_CHANGED` (1: restart even when nothing here
+/// changed), `LORE_UP_HOST` / `LORE_UP_PORT` (where to wait for it) and `LORE_DONE` (the last line).
+pub(crate) const LORE_SERVER: &str = r##"say "Lore server (loreserver, a pinned release from GitHub, as a service)"
 need_systemd "The Lore server"
-changed=0
+changed=${LORE_CHANGED:-0}
 if [ -x /usr/local/bin/loreserver ] && [ "$(lore_version /usr/local/bin/loreserver)" = "$LORE_V" ]; then
   echo "loreserver $LORE_V is up to date."
 else
@@ -568,8 +580,8 @@ else
   systemctl start lore.service
 fi
 up=
-for _ in $(seq 60); do
-  if (exec 3<>/dev/tcp/127.0.0.1/41337) 2>/dev/null; then up=1; break; fi
+for _ in $(seq 120); do
+  if (exec 3<>"/dev/tcp/${LORE_UP_HOST:-127.0.0.1}/${LORE_UP_PORT:-41337}") 2>/dev/null; then up=1; break; fi
   sleep 0.5
 done
 if [ -z "$up" ]; then
@@ -577,7 +589,8 @@ if [ -z "$up" ]; then
   journalctl --no-pager -u lore.service -n 20 || true
   fail "the Lore server did not start (see above)."
 fi
-echo "loreserver $LORE_V is running on port 41337 (UDP and TCP). It has no sign-in: only this server's environments reach it, unless you publish it from its page in Mango."
+[ -n "${LORE_DONE:-}" ] || LORE_DONE="loreserver $LORE_V is running on port 41337 (UDP and TCP). It has no sign-in: only this server's environments reach it, unless you publish it from its page in Mango."
+echo "$LORE_DONE"
 "##;
 
 const CLAUDE: &str = r##"say "Claude Code (install or update)"
@@ -885,6 +898,7 @@ pub(crate) fn install_plan(host: &EnvHost, instance: &str, ids: &[String], versi
             s.push_str(&format!("{var}={}\n", ssh::quote(v)));
         }
     }
+    s.push_str(BASICS);
     s.push_str(HEADER);
     if recipes.iter().any(|r| r.id == "lore" || r.id == "lore-server") {
         s.push_str(LORE_COMMON);
@@ -1406,7 +1420,7 @@ mod tests {
         let d = dir.to_string_lossy().to_string();
         let mine = "# mine\n[server.quic]\nport = 41437\n[server.grpc]\nport = 41437\n[server.http]\nport = 41439\n";
         std::fs::write(dir.join("etc/lore/config/local.toml"), mine).unwrap();
-        let header = HEADER
+        let header = format!("{BASICS}{HEADER}")
             .replace("[ \"$(id -u)\" = 0 ] ||", "true ||")
             .replace("command -v apt-get >/dev/null 2>&1 ||", "true ||")
             .replace("trap 'rm -f /run/mango-tailscale-authkey' EXIT\n", "");
@@ -1416,7 +1430,6 @@ mod tests {
                 .replace("/etc/systemd/system/", &format!("{d}/systemd/"))
                 .replace("/var/lib/lore", &format!("{d}/var/lib/lore"))
                 .replace("-o lore -g lore ", "")
-                .replace("/dev/tcp/127.0.0.1/41337", "/dev/tcp/127.0.0.1/41437")
         };
         let stubs = format!(
             r#"need_systemd() {{ :; }}
@@ -1434,6 +1447,7 @@ systemctl() {{
   esac
 }}
 mkdir -p {d}/bin {d}/systemd {d}/var/lib
+LORE_UP_PORT=41437
 "#
         );
         let run = |body: &str| {

@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { CircleAlert, CircleCheck, CircleDashed, Pencil, RefreshCw, Server, TriangleAlert, X } from 'lucide-vue-next'
-import type { LoreServer, LoreServerCheck } from '~/types/ipc'
+import { CircleAlert, CircleCheck, CircleDashed, Download, Ellipsis, Pencil, RefreshCw, RotateCw, Server, Settings2, TriangleAlert, Trash2, X } from 'lucide-vue-next'
+import type { LoreMachineAction, LoreServer, LoreServerCheck } from '~/types/ipc'
+import type { MenuItem } from '~/types/ui'
+import { machineHost } from '~/utils/loreMachine'
 import { call, openExternal } from '~/composables/useBackend'
 import { useLore } from '~/stores/lore'
 import LoginTerminal from './LoginTerminal.vue'
@@ -71,7 +73,7 @@ async function save(name: string, url: string) {
   saving.value = true
   saveError.value = null
   try {
-    const saved = await lore.upsert({ id: props.server.id, name, url, insideUrl: props.server.insideUrl, origin: props.server.origin })
+    const saved = await lore.upsert({ id: props.server.id, name, url, insideUrl: props.server.insideUrl, origin: props.server.origin, machine: props.server.machine })
     editing.value = false
     if (saved) void lore.check(saved.url)
   } catch (e) {
@@ -139,6 +141,92 @@ async function closeJob() {
   if (wasRunning) void lore.check(props.server.url)
 }
 
+/* ---------- a server Mango set up on a machine over SSH ---------- */
+
+const machine = computed(() => props.server.machine ?? null)
+const machineHostName = computed(() => (machine.value ? machineHost(machine.value.ssh) : ''))
+const runsAs = computed(() => {
+  const m = machine.value
+  if (!m) return ''
+  return m.runtime === 'docker' ? t('lore.machine.inDocker') : m.runtime === 'service' ? t('lore.machine.asService') : ''
+})
+
+/** Update, restart or remove it, in a terminal in the row (ssh and sudo ask there). */
+interface MachineJob { action: LoreMachineAction; phase: 'running' | 'done' | 'failed'; note: string; attempt: number }
+const mjob = ref<MachineJob | null>(null)
+const mjobEl = ref<HTMLElement | null>(null)
+const mjobFocused = ref(false)
+/** Removing asks first: the server goes away for everyone using it. */
+const confirmRemove = ref(false)
+const startMachine = (cols: number, rows: number) =>
+  call('lore_machine_run', { machine: machine.value!, action: mjob.value!.action, cols, rows })
+
+function runMachine(action: LoreMachineAction) {
+  if (!machine.value || mjob.value?.phase === 'running') return
+  confirmRemove.value = false
+  actionError.value = null
+  mjob.value = { action, phase: 'running', note: '', attempt: ++attempts }
+  nextTick(() => mjobEl.value?.scrollIntoView({ block: 'nearest' }))
+}
+
+async function onMachineExit(code: number | null) {
+  const j = mjob.value
+  if (!j || j.phase !== 'running') return
+  if (code !== 0) {
+    j.note = code === null ? t('lore.machine.jobStopped') : t('lore.machine.jobExited', { code })
+    j.phase = 'failed'
+    return
+  }
+  j.phase = 'done'
+  // Removed: the entry goes when its output (where the data stayed) is closed.
+  if (j.action !== 'remove') void lore.check(props.server.url)
+}
+
+function onMachineFailed(message: string) {
+  if (!mjob.value) return
+  mjob.value.note = t('agents.cli.cantStart', { message: message.replace(/\.$/, '') })
+  mjob.value.phase = 'failed'
+}
+
+async function closeMachineJob() {
+  const j = mjob.value
+  mjob.value = null
+  mjobFocused.value = false
+  if (j?.action === 'remove' && j.phase === 'done') {
+    // It is gone from the machine: nothing is left to point at.
+    try {
+      await lore.remove(props.server.id)
+    } catch (e) {
+      actionError.value = t('lore.servers.removeFailed', { name: props.server.name, message: e instanceof Error ? e.message : String(e) })
+    }
+    return
+  }
+  if (j?.phase === 'running') void lore.check(props.server.url)
+}
+
+const machineTitle = computed(() => {
+  const j = mjob.value
+  if (!j) return ''
+  const host = machineHostName.value
+  if (j.phase === 'failed') return t(`lore.machine.jobFailed.${j.action}`, { host })
+  if (j.phase === 'done') return t(`lore.machine.jobDone.${j.action}`, { host })
+  return t(`lore.machine.jobRunning.${j.action}`, { host })
+})
+
+const moreItems = computed<MenuItem[]>(() => [
+  { label: t('lore.machine.change'), icon: Settings2, onSelect: () => { lore.machineDialog = { server: props.server } } },
+  { label: t('lore.machine.update'), icon: Download, disabled: mjob.value?.phase === 'running', onSelect: () => runMachine('setup') },
+  { label: t('lore.machine.restart'), icon: RotateCw, disabled: mjob.value?.phase === 'running', onSelect: () => runMachine('restart') },
+  {
+    label: t('lore.machine.remove'),
+    icon: Trash2,
+    danger: true,
+    divider: true,
+    disabled: mjob.value?.phase === 'running',
+    onSelect: () => { confirmRemove.value = true; mjob.value = null },
+  },
+])
+
 const signingOut = ref(false)
 async function signOut() {
   if (signingOut.value) return
@@ -177,6 +265,7 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
         <h4 class="srv__name">{{ server.name }}</h4>
         <code class="srv__url selectable" :title="server.url">{{ server.url }}</code>
         <span v-if="place" class="srv__origin" :title="server.insideUrl ? t('lore.servers.insideUrl', { url: server.insideUrl }) : undefined">{{ t('lore.servers.setUpIn', { place: place.label }) }}</span>
+        <span v-else-if="machine" class="srv__origin" :title="machine.ssh">{{ t('lore.machine.on', { host: machineHostName }) }}<template v-if="runsAs"> · {{ runsAs }}</template></span>
         <span class="srv__grow" />
         <span class="srv__actions">
           <UiButton v-if="canSignIn" size="sm" :disabled="!!job && job.phase !== 'failed'" data-land @click="signIn">{{ t('lore.servers.signIn') }}</UiButton>
@@ -185,6 +274,13 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
             <RefreshCw :class="{ 'is-turning': checking }" />
           </UiIconButton>
           <UiIconButton size="sm" :label="t('lore.servers.edit', { name: server.name })" @click="startEdit"><Pencil /></UiIconButton>
+          <UiMenu v-if="machine" :items="moreItems" placement="bottom-end" :width="220" :label="t('lore.machine.actions', { name: server.name })">
+            <template #default="{ toggle, open }">
+              <UiIconButton size="sm" :label="t('lore.machine.actions', { name: server.name })" :active="open" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+                <Ellipsis />
+              </UiIconButton>
+            </template>
+          </UiMenu>
           <UiIconButton size="sm" :label="t('lore.servers.remove', { name: server.name })" :disabled="removing" @click="remove"><X /></UiIconButton>
         </span>
       </div>
@@ -203,6 +299,48 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
     </template>
 
     <p v-if="actionError" class="srv__error selectable" role="alert">{{ actionError }}</p>
+
+    <div v-if="confirmRemove && machine" class="srv__confirm" role="group" :aria-label="t('lore.machine.remove')">
+      <p class="srv__confirm-text">{{ t('lore.machine.removeConfirm', { host: machineHostName }) }}</p>
+      <span class="srv__confirm-actions">
+        <UiButton size="sm" variant="ghost" @click="confirmRemove = false">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton size="sm" variant="danger" @click="runMachine('remove')">{{ t('lore.machine.removeAction') }}</UiButton>
+      </span>
+    </div>
+
+    <section
+      v-if="mjob"
+      ref="mjobEl"
+      class="job"
+      :class="[`job--${mjob.phase}`, { 'is-focused': mjobFocused }]"
+      :aria-label="t('lore.machine.terminal', { host: machineHostName })"
+    >
+      <header class="job__head">
+        <span class="job__status" role="status">
+          <TriangleAlert v-if="mjob.phase === 'failed'" class="job__warn" aria-hidden="true" />
+          <CircleCheck v-else-if="mjob.phase === 'done'" class="job__ok" aria-hidden="true" />
+          <span v-else class="ring ring--work" aria-hidden="true" />
+          <span class="job__title">{{ machineTitle }}</span>
+        </span>
+        <span class="job__actions">
+          <UiButton v-if="mjob.phase === 'failed'" size="sm" @click="runMachine(mjob.action)">{{ t('common.actions.retry') }}</UiButton>
+          <UiButton size="sm" variant="ghost" @click="closeMachineJob">{{ mjob.phase === 'running' ? t('envs.common.stop') : t('common.actions.close') }}</UiButton>
+        </span>
+      </header>
+      <p v-if="mjob.phase === 'failed'" class="job__note selectable" role="alert">{{ mjob.note }} {{ t('agents.cli.outputKept') }}</p>
+      <div class="job__term" @focusin="mjobFocused = true" @focusout="mjobFocused = false">
+        <LoginTerminal
+          :key="mjob.attempt"
+          :start="startMachine"
+          :label="t('lore.machine.terminal', { host: machineHostName })"
+          :rows="12"
+          @exit="onMachineExit"
+          @failed="onMachineFailed"
+        />
+      </div>
+      <p v-if="mjob.phase === 'running'" class="job__hint">{{ machine?.password ? t('lore.machine.runHintPassword') : t('lore.machine.runHint') }}</p>
+      <p v-else-if="mjob.phase === 'done' && mjob.action === 'remove'" class="job__hint">{{ t('lore.machine.removedHint') }}</p>
+    </section>
 
     <section
       v-if="job"
@@ -323,6 +461,21 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
   text-wrap: pretty;
 }
 
+/* ---- removing it from its machine: asked first, in the row ---- */
+.srv__confirm {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin: var(--space-2) 0 var(--space-1) 22px;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  background: var(--bg-raised);
+  border: 1px solid color-mix(in oklch, var(--ripe-error) 35%, var(--line));
+  border-radius: var(--radius-md);
+}
+.srv__confirm-text { margin: 0; min-width: 0; font-size: var(--text-xs); color: var(--fg); text-wrap: pretty; }
+.srv__confirm-actions { flex: none; display: inline-flex; gap: var(--space-1); }
+
 /* ---- the sign-in, running in the row (as Settings > Git hosting) ---- */
 .job {
   margin: var(--space-2) 0 var(--space-1);
@@ -339,6 +492,8 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
 .job__status { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
 .job__title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 560; }
 .job__warn { flex: none; width: 14px; height: 14px; stroke-width: 1.85; color: var(--ripe-error); }
+.job__ok { flex: none; width: 14px; height: 14px; stroke-width: 1.85; color: var(--ripe-queued); }
+.job--done, .job--done.is-focused { box-shadow: none; }
 .job__actions { flex: none; display: inline-flex; align-items: center; gap: var(--space-1); }
 .job__note { margin: 0; padding: 0 var(--space-3) var(--space-2); font-size: var(--text-xs); color: var(--ripe-error-fg); text-wrap: pretty; }
 .job__term { border-top: 1px solid var(--line-soft); background: var(--term-bg); }

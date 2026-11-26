@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { CircleDashed, ExternalLink, Layers, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { CircleDashed, ExternalLink, Layers, RefreshCw, Server, TriangleAlert } from 'lucide-vue-next'
 import { call, openExternal } from '~/composables/useBackend'
 import { useLore } from '~/stores/lore'
 import SettingsSection from './SettingsSection.vue'
 import SettingsLoreForm from './SettingsLoreForm.vue'
 import SettingsLoreServer from './SettingsLoreServer.vue'
+import SettingsLoreMachine from './SettingsLoreMachine.vue'
 import LoginTerminal from './LoginTerminal.vue'
 
 /**
@@ -201,12 +202,19 @@ async function add(name: string, url: string) {
       <h4 class="servers__add">{{ t('lore.servers.add') }}</h4>
       <SettingsLoreForm ref="form" class="servers__form" :server="null" :list="lore.servers ?? []" :saving="saving" :error="saveError" @edit="saveError = null" @save="add" />
 
+      <h4 class="servers__add">{{ t('lore.machine.own') }}</h4>
+      <div class="servers__own">
+        <p class="servers__own-text">{{ t('lore.machine.ownText') }}</p>
+        <UiButton size="sm" @click="lore.machineDialog = { server: null }"><Server />{{ t('lore.machine.setUp') }}</UiButton>
+      </div>
+
       <p class="servers__env">
         <i18n-t keypath="lore.servers.envNote" scope="global">
           <template #command><code>lore login</code></template>
         </i18n-t>
       </p>
     </section>
+    <SettingsLoreMachine />
   </SettingsSection>
 </template>
 
@@ -246,6 +254,8 @@ async function add(name: string, url: string) {
 .servers__error { margin: 0 0 var(--space-3); font-size: var(--text-xs); color: var(--ripe-error-fg); text-wrap: pretty; }
 .servers__add { margin: var(--space-5) 0 var(--space-2); font-size: var(--text-sm); font-weight: 600; color: var(--fg); }
 .servers__form { max-width: 620px; }
+.servers__own { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); max-width: 620px; }
+.servers__own-text { margin: 0; max-width: 56ch; font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
 .servers__env { margin: var(--space-5) 0 0; max-width: 62ch; font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
 .servers__env code { font-size: var(--text-2xs); color: var(--fg-muted); }
 

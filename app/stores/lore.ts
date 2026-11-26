@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import type { LoreCli, LoreServer, LoreServerCheck, LoreServerInput } from '~/types/ipc'
+import type { LoreCli, LoreMachineAccess, LoreMachineProbe, LoreServer, LoreServerCheck, LoreServerInput } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 
 /** One server's last check from this computer. */
@@ -27,6 +27,8 @@ export const useLore = defineStore('lore', {
     installAsked: false,
     /** By server URL. */
     checks: {} as Record<string, LoreCheckState>,
+    /** The set-up dialog (a Lore server on a machine over SSH): a new one, or changing `server`. */
+    machineDialog: null as { server: LoreServer | null } | null,
   }),
 
   actions: {
@@ -63,6 +65,11 @@ export const useLore = defineStore('lore', {
 
     async remove(id: string) {
       this.servers = await call('lore_server_remove', { id })
+    },
+
+    /** A look at a machine over SSH (keys only); throws with the backend's message. */
+    probeMachine(machine: LoreMachineAccess): Promise<LoreMachineProbe> {
+      return call('lore_machine_probe', { machine })
     },
 
     checkOf(url: string): LoreCheckState | null {
