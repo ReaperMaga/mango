@@ -96,6 +96,8 @@ src-tauri/src/
   vcs.rs             the `git_*` commands: detects git or Unity VCS per folder and dispatches; an `env://` path runs git in its environment (`git::At`)
   git.rs             everything the Changes view and branch popup need (shells out to git)
   plastic/           the same for Unity Version Control workspaces (shells out to `cm`, XML output): mod.rs, one file per extra feature
+  lore/              the same for Epic Games' Lore (shells out to `lore`, local or in an environment): mod.rs, parse.rs (its text
+                     output, no JSON), locks.rs
   lsp/               language servers (`lsp_*`): servers.rs (the only command lines and installers), resolve.rs (which program runs), session.rs + framing.rs (pipes), tree.rs (the whole process tree ends with it), folder.rs (which folder the user's consent is bound to, and whether a worktree follows its project's)
   files.rs           the Files view: `fs_*` commands, every path confined to the project folder
   file_ops.rs        the Files view's new folder, rename, duplicate, delete and show in file manager: the entry itself (never a link's target), never replacing
@@ -292,6 +294,10 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   `PLASTICEDITOR` removed). Read structured output with `--xml --encoding=utf-8`: plain `cm` output is in the
   console code page and mangles non-ASCII names. Prove changes with the ignored `plastic::tests::real_cm` test
   against a throwaway workspace (`MANGO_CM_WORKSPACE`), never a real one.
+- Lore (`lore/`): branch names go through `lore::safe_branch`, paths through `clean_rel`, and every argument
+  after `--`. Every call gets `-P --non-interactive`. Lore prints text only and is pre-1.0: `parse.rs` ignores
+  lines it does not know and never panics; record the version its fixtures came from. Prove changes with the
+  ignored `lore::tests::real_lore` test (`MANGO_LORE_SERVER`, `MANGO_LORE_BIN`) against a scratch server and HOME.
 
 ## Design: use the impeccable skill
 
