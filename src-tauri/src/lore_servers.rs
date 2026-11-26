@@ -26,6 +26,14 @@ use tauri::{AppHandle, Manager, State};
 use crate::git::{blocking, run_process, Output};
 
 pub const DEFAULT_PORT: u16 = 41337;
+/// The CLI's port for a `lores://` address without one: 443, like `https://` (measured with lore
+/// 0.14.0: `lores://host` sends gRPC to 443, `lores://host:41337` reaches the server).
+pub const SECURE_DEFAULT_PORT: u16 = 443;
+
+/// The port the CLI uses when the address names none.
+pub fn default_port(secure: bool) -> u16 {
+    if secure { SECURE_DEFAULT_PORT } else { DEFAULT_PORT }
+}
 const SERVERS_FILE: &str = "lore-servers.json";
 const MAX_SERVERS: usize = 50;
 const CAP: usize = 512 * 1024;
@@ -67,7 +75,7 @@ pub struct ServerUrl {
 
 impl ServerUrl {
     pub fn port_or_default(&self) -> u16 {
-        self.port.unwrap_or(DEFAULT_PORT)
+        self.port.unwrap_or(default_port(self.secure))
     }
 
     /// The host without IPv6 brackets, for name lookups.
@@ -180,8 +188,9 @@ fn split_url(s: &str) -> Result<(&str, &str, bool), String> {
     })
 }
 
-/// A server address as typed (`lore://host[:port]`, one trailing `/` allowed). The default port is
-/// kept out of the result, so `lore://h:41337` and `lore://h` are the same server.
+/// A server address as typed (`lore://host[:port]`, one trailing `/` allowed). The scheme's default port
+/// is kept out of the result, so `lore://h:41337` and `lore://h` are the same server (and
+/// `lores://h:443` and `lores://h`; `lores://h:41337` keeps its port).
 pub fn parse_server_url(s: &str) -> Result<ServerUrl, String> {
     let s = s.trim();
     let (authority, path, secure) = split_url(s)?;
@@ -191,7 +200,7 @@ pub fn parse_server_url(s: &str) -> Result<ServerUrl, String> {
         ));
     }
     let mut url = parse_authority(authority, s, secure)?;
-    if url.port == Some(DEFAULT_PORT) {
+    if url.port == Some(default_port(secure)) {
         url.port = None;
     }
     Ok(url)
@@ -212,12 +221,12 @@ pub fn valid_repo_name(s: &str) -> Result<(), String> {
 }
 
 /// A repository address, `lore://host[:port]/name`: the server and the name. The URL comes back with
-/// the default port dropped.
+/// the scheme's default port dropped.
 pub fn parse_repo_url(s: &str) -> Result<(ServerUrl, String), String> {
     let s = s.trim();
     let (authority, path, secure) = split_url(s)?;
     let mut server = parse_authority(authority, s, secure)?;
-    if server.port == Some(DEFAULT_PORT) {
+    if server.port == Some(default_port(secure)) {
         server.port = None;
     }
     let name = path.trim_end_matches('/');
@@ -949,7 +958,8 @@ mod tests {
             ("lore://[::1]", "lore://[::1]"),
             ("lore://[2001:DB8::1]:9000", "lore://[2001:db8::1]:9000"),
             ("lore://my-lore.incus", "lore://my-lore.incus"),
-            ("lores://Lore.Example.com:41337", "lores://lore.example.com"),
+            ("lores://Lore.Example.com:41337", "lores://lore.example.com:41337"),
+            ("lores://Lore.Example.com:443", "lores://lore.example.com"),
             ("LORES://h:9000/", "lores://h:9000"),
         ];
         for (input, want) in ok {
@@ -988,6 +998,8 @@ mod tests {
         }
         assert_eq!(parse_server_url("lore://h:9000").unwrap().port_or_default(), 9000);
         assert_eq!(parse_server_url("lore://h").unwrap().port_or_default(), DEFAULT_PORT);
+        assert_eq!(parse_server_url("lores://h").unwrap().port_or_default(), 443);
+        assert_eq!(parse_server_url("lores://h:41337").unwrap().port_or_default(), 41337);
     }
 
     #[test]

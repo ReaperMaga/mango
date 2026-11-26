@@ -200,7 +200,7 @@ export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, actio
         'Caddy has the certificate.',
       )
     }
-    const url = a ? `lores://${a.domain}${m.listenPort === 41337 ? '' : `:${m.listenPort}`}` : ''
+    const url = a ? `lores://${a.domain}${m.listenPort === 443 ? '' : `:${m.listenPort}`}` : ''
     lines.push(
       docker ? '\x1b[1m==> Lore server in Docker (Epic\'s image for 0.14.0, pinned)\x1b[0m' : '\x1b[1m==> Lore server (loreserver, a pinned release from GitHub, as a service)\x1b[0m',
       docker ? 'Pulling ghcr.io/epicgames/lore/loreserver…' : 'Downloading loreserver-v0.14.0-x86_64-unknown-linux-gnu.tar.gz',
@@ -229,7 +229,7 @@ export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, actio
 }
 
 function loreUrlOfMachine(m: LoreMachine) {
-  if (m.auth) return m.listenPort === 41337 ? `lores://${m.auth.domain}` : `lores://${m.auth.domain}:${m.listenPort}`
+  if (m.auth) return m.listenPort === 443 ? `lores://${m.auth.domain}` : `lores://${m.auth.domain}:${m.listenPort}`
   const everywhere = m.address === '0.0.0.0' || m.address === '[::]'
   const host = everywhere ? m.ssh.slice(m.ssh.lastIndexOf('@') + 1) : m.address
   return m.listenPort === 41337 ? `lore://${host}` : `lore://${host}:${m.listenPort}`

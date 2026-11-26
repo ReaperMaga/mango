@@ -45,7 +45,8 @@ test('a draft becomes the sign-in the backend takes', () => {
 })
 
 test('addresses and names to offer', () => {
-  assert.equal(secureUrl('Lore.Example.com', 41337), 'lores://lore.example.com')
+  assert.equal(secureUrl('Lore.Example.com', 41337), 'lores://lore.example.com:41337')
+  assert.equal(secureUrl('lore.example.com', 443), 'lores://lore.example.com')
   assert.equal(secureUrl('lore.example.com', 41400), 'lores://lore.example.com:41400')
   assert.equal(githubCallback('lore.example.com'), 'https://lore.example.com/dex/callback')
   assert.equal(sslipName('203.0.113.7'), '203-0-113-7.sslip.io')

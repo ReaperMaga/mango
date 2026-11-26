@@ -8,6 +8,8 @@ import { t } from '../i18n/index.ts'
  */
 
 export const LORE_DEFAULT_PORT = 41337
+/** The CLI's port for `lores://` without one: 443, like `https://`. Lore's own 41337 has to be written out. */
+export const LORE_SECURE_DEFAULT_PORT = 443
 
 /** A `lore://` or `lores://` address (any case). `lores://` is a server the CLI authenticates (TLS). */
 export function isLoreUrl(s: string): boolean {
@@ -24,8 +26,8 @@ function dnsName(s: string): boolean {
     && s.split('.').every(l => l.length > 0 && l.length <= 63 && !l.startsWith('-') && !l.endsWith('-') && /^[a-z0-9-]+$/.test(l))
 }
 
-/** `host[:port]` → canonical `host[:port]` (lower case, default port dropped), or null. */
-function authority(a: string): string | null {
+/** `host[:port]` → canonical `host[:port]` (lower case, the scheme's default port dropped), or null. */
+function authority(a: string, scheme: string): string | null {
   let host: string
   let port: string | undefined
   if (a.startsWith('[')) {
@@ -47,7 +49,7 @@ function authority(a: string): string | null {
     if (!/^\d{1,5}$/.test(port)) return null
     const n = Number(port)
     if (n < 1 || n > 65535) return null
-    if (n !== LORE_DEFAULT_PORT) return `${host}:${n}`
+    if (n !== (scheme === 'lores://' ? LORE_SECURE_DEFAULT_PORT : LORE_DEFAULT_PORT)) return `${host}:${n}`
   }
   return host
 }
@@ -67,7 +69,7 @@ function split(input: string, schemeOptional: boolean): { authority: string; pat
 export function normalizeLoreServer(input: string): string | null {
   const parts = split(input, true)
   if (!parts || parts.path.replace(/\/$/, '') !== '') return null
-  const a = authority(parts.authority)
+  const a = authority(parts.authority, parts.scheme)
   return a ? `${parts.scheme}${a}` : null
 }
 
@@ -100,7 +102,7 @@ export function loreRepoNameFrom(project: string): string {
 export function parseLoreRepoUrl(input: string): { server: string; name: string } | null {
   const parts = split(input, false)
   if (!parts) return null
-  const a = authority(parts.authority)
+  const a = authority(parts.authority, parts.scheme)
   const name = parts.path.replace(/\/$/, '')
   if (!a || loreRepoNameProblem(name)) return null
   return { server: `${parts.scheme}${a}`, name }

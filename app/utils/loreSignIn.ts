@@ -1,5 +1,5 @@
 import type { LoreSignIn, LoreSignInState } from '~/types/ipc'
-import { LORE_DEFAULT_PORT } from './lore.ts'
+import { LORE_SECURE_DEFAULT_PORT } from './lore.ts'
 
 /**
  * A Lore server's sign-in as typed (Settings > Lore > Set up a server, and an environment's Lore server):
@@ -113,7 +113,7 @@ export function firstUserOf(d: LoreSignInDraft): string | null {
 /** `lores://domain[:port]`, the address clients use with the sign-in on (as `secure_url`). */
 export function secureUrl(domain: string, port: number): string {
   const d = normalizeDomain(domain)
-  return port === LORE_DEFAULT_PORT ? `lores://${d}` : `lores://${d}:${port}`
+  return port === LORE_SECURE_DEFAULT_PORT ? `lores://${d}` : `lores://${d}:${port}`
 }
 
 /** The callback URL the GitHub OAuth app needs. */

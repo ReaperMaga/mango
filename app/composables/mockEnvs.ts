@@ -521,7 +521,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
     const named = h.host.publicAddress || h.host.ssh.slice(h.host.ssh.lastIndexOf('@') + 1)
     const outside = p ? (p.address === '0.0.0.0' || p.address === '[::]' ? named : p.address) : null
     const auth = i.loreAuth ? structuredClone(i.loreAuth) : null
-    const outsideUrl = (port: number) => (auth?.on && auth.domain ? `lores://${auth.domain}${port === 41337 ? '' : `:${port}`}` : url(outside!, port))
+    const outsideUrl = (port: number) => (auth?.on && auth.domain ? `lores://${auth.domain}${port === 443 ? '' : `:${port}`}` : url(outside!, port))
     return {
       installed,
       version: i.installed['lore-server'] ?? null,
@@ -567,7 +567,7 @@ export function createMockEnvs(ctx: MockEnvContext) {
           [400, () => {
             const users = s.passwords ? [...(a?.users ?? []), ...(email && !a?.users.includes(email) ? [email] : [])] : (a?.users ?? [])
             i.loreAuth = { on: true, domain: s.domain, passwords: s.passwords, github: s.github, githubSecret: !!s.github || !!a?.githubSecret, certificate: true, users }
-            out(id, `Sign-in is on. Clients use lores://${s.domain}${i.lorePublished?.port === 41337 ? '' : `:${i.lorePublished?.port}`} and sign in with: lore login lores://${s.domain}`)
+            out(id, `Sign-in is on. Clients use lores://${s.domain}:${i.lorePublished?.port ?? 41337} and sign in with: lore login lores://${s.domain}:${i.lorePublished?.port ?? 41337}`)
           }],
           [200, ok(`Done ${dim('(simulated: the browser preview sets up nothing)')}`)],
         )

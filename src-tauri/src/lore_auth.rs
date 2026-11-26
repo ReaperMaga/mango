@@ -147,9 +147,10 @@ pub(crate) fn clean(s: LoreSignIn) -> Result<LoreSignIn, String> {
     Ok(LoreSignIn { domain, passwords: s.passwords, github })
 }
 
-/// `lores://domain[:port]`: the address clients use once the sign-in is on.
+/// `lores://domain[:port]`: the address clients use once the sign-in is on. The port stays unless it
+/// is 443, which the CLI assumes for `lores://` (Lore's own 41337 has to be written out).
 pub(crate) fn secure_url(domain: &str, port: u16) -> String {
-    if port == crate::lore_servers::DEFAULT_PORT {
+    if port == crate::lore_servers::SECURE_DEFAULT_PORT {
         format!("lores://{domain}")
     } else {
         format!("lores://{domain}:{port}")
@@ -314,7 +315,8 @@ auth_url() {
   local d p
   d=$(auth_setting DOMAIN)
   p=$(auth_setting LP)
-  if [ -z "$p" ] || [ "$p" = 41337 ]; then echo "lores://$d"; else echo "lores://$d:$p"; fi
+  # The CLI takes 443 for lores:// without a port, so Lore's port is written out.
+  if [ "${p:-41337}" = 443 ]; then echo "lores://$d"; else echo "lores://$d:${p:-41337}"; fi
 }
 
 auth_tools() {
@@ -830,7 +832,8 @@ mod tests {
         for bad in ["", "ann", "ann@", "@x.com", "a@b@c.com", "a b@x.com", "a@localhost", "a\t@x.com", ".a@x.com", "a\"@x.com"] {
             assert!(valid_email(bad).is_err(), "{bad}");
         }
-        assert_eq!(secure_url("lore.example.com", 41337), "lores://lore.example.com");
+        assert_eq!(secure_url("lore.example.com", 41337), "lores://lore.example.com:41337");
+        assert_eq!(secure_url("lore.example.com", 443), "lores://lore.example.com");
         assert_eq!(secure_url("lore.example.com", 41400), "lores://lore.example.com:41400");
     }
 

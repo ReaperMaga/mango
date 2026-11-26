@@ -22,7 +22,8 @@ test('server addresses normalise like the backend', () => {
     ['lore://[::1]', 'lore://[::1]'],
     ['lore://[2001:DB8::1]:9000', 'lore://[2001:db8::1]:9000'],
     ['lore://my-lore.incus', 'lore://my-lore.incus'],
-    ['lores://Lore.Example.com:41337', 'lores://lore.example.com'],
+    ['lores://Lore.Example.com:41337', 'lores://lore.example.com:41337'],
+    ['lores://Lore.Example.com:443', 'lores://lore.example.com'],
     ['LORES://h:9000/', 'lores://h:9000'],
   ]
   for (const [input, want] of ok) assert.equal(normalizeLoreServer(input), want, input)
