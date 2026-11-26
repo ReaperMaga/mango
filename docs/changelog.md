@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.10.2
+
+### Fixes
+
+- Lore servers with sign-in are reached at their own port (`lores://…:41337`): without it the Lore CLI used port 443 and failed with "invalid compression flag: 84". Press "Use as Lore server" again to update a saved one.
+
 ## 0.10.1
 
 ### Fixes
