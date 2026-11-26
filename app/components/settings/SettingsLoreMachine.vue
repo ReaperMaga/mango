@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { CircleAlert, Container, Layers, Server } from 'lucide-vue-next'
-import type { LoreMachine, LoreMachineProbe, LoreMachineRuntime } from '~/types/ipc'
+import type { LoreMachine, LoreMachineAction, LoreMachineProbe, LoreMachineRuntime } from '~/types/ipc'
 import { call, isTauri, pickFiles } from '~/composables/useBackend'
 import { useLore } from '~/stores/lore'
 import { useEnvironments } from '~/stores/environments'
 import { normalizeLoreServer } from '~/utils/lore'
 import { ALL_V4, LORE_PORT, defaultLoreAddress, validListenAddress, validPublishPort } from '~/utils/lorePublish'
 import { clientUrl, machineHost, validSshDest } from '~/utils/loreMachine'
+import { type LoreSignInDraft, draftFrom, draftValid, firstUserOf, secureUrl, signInFrom, validDomain, validEmail } from '~/utils/loreSignIn'
 import EnvLorePublishFields from '~/components/envs/EnvLorePublishFields.vue'
 import EnvTerminal from '~/components/envs/EnvTerminal.vue'
+import LoreSignInFields from './LoreSignInFields.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
+import SettingsSwitch from './SettingsSwitch.vue'
 
 /**
  * Settings > Lore > Set up a server: a Lore server on a machine over SSH, without Incus. In Docker
@@ -18,6 +21,10 @@ import SettingsSegmented from './SettingsSegmented.vue'
  * for its own, so Mango never handles either (`lore_machine_run`). With keys, Mango first looks at
  * the machine (`lore_machine_probe`): what it has, its addresses, and whether it runs Incus, which
  * makes it an Environments server instead. Also opened from a set-up server's row to change it.
+ *
+ * It can require sign-in (`lore_auth.rs`): Dex and Caddy beside the server, a Let's Encrypt
+ * certificate for a domain, clients on `lores://`. Changing a server with sign-in also adds and
+ * removes its password users or takes a new GitHub secret, each in the terminal here.
  */
 const { t } = useI18n()
 const lore = useLore()
@@ -41,6 +48,15 @@ const nameEdited = ref(false)
 const urlEdited = ref(false)
 const touched = ref(false)
 const addressTouched = ref(false)
+const signInOn = ref(false)
+const signIn = ref<LoreSignInDraft>(draftFrom(null))
+/** A user to add or remove (changing a server with password sign-in). */
+const person = ref('')
+const personTouched = ref(false)
+/** What the terminal runs: the setup, or (changing a server with sign-in) a people action. */
+const runAction = ref<LoreMachineAction>('setup')
+const runEmail = ref<string | null>(null)
+
 
 type Phase = 'form' | 'running' | 'saving' | 'done' | 'failed'
 const phase = ref<Phase>('form')
@@ -69,6 +85,12 @@ watch(() => lore.machineDialog, (d) => {
   urlEdited.value = !!editing.value
   touched.value = false
   addressTouched.value = !!m
+  signInOn.value = !!m?.auth
+  signIn.value = draftFrom(m?.auth ?? null)
+  person.value = ''
+  personTouched.value = false
+  runAction.value = 'setup'
+  runEmail.value = null
   phase.value = 'form'
   notice.value = null
   running.value = null
@@ -204,9 +226,12 @@ const runtimeHint = computed(() => {
 })
 
 const listenPort = computed(() => Number(port.value.trim()))
-const suggestedUrl = computed(() => (host.value && validListenAddress(address.value) && validPublishPort(port.value)
-  ? clientUrl({ ssh: ssh.value, address: address.value, listenPort: listenPort.value })
-  : ''))
+const suggestedUrl = computed(() => {
+  if (!host.value || !validListenAddress(address.value) || !validPublishPort(port.value)) return ''
+  // With sign-in, clients use the domain its certificate is for.
+  if (signInOn.value) return validDomain(signIn.value.domain) ? secureUrl(signIn.value.domain, listenPort.value) : ''
+  return clientUrl({ ssh: ssh.value, address: address.value, listenPort: listenPort.value })
+})
 watch(suggestedUrl, (u) => { if (!urlEdited.value) url.value = u }, { immediate: true })
 watch(address, (_a, before) => { if (before !== undefined) addressTouched.value = true })
 
@@ -217,7 +242,15 @@ const urlError = computed(() => {
   return taken ? t('lore.servers.urlTaken', { name: taken.name }) : null
 })
 const listenInvalid = computed(() => !validListenAddress(address.value) || !validPublishPort(port.value))
-const invalid = computed(() => accessInvalid.value || listenInvalid.value || !!urlError.value)
+const signInInvalid = computed(() => signInOn.value && !draftValid(signIn.value))
+const invalid = computed(() => accessInvalid.value || listenInvalid.value || !!urlError.value || signInInvalid.value)
+/** A public IPv4 address it listens at (for an sslip.io name), when there is one. */
+const publicAddress = computed(() => {
+  if (address.value.trim() !== ALL_V4) return address.value.trim()
+  return probe.value?.addresses.find(a => a.kind === 'public')?.address ?? (host.value || null)
+})
+/** The saved server's sign-in, which the people actions act on (not the form's). */
+const savedAuth = computed(() => editing.value?.machine?.auth ?? null)
 
 /* ---------- run ---------- */
 
@@ -230,6 +263,7 @@ function machine(): LoreMachine {
     runtime: runtime.value,
     address: address.value.trim(),
     listenPort: listenPort.value,
+    auth: signInOn.value ? signInFrom(signIn.value) : null,
   }
 }
 
@@ -238,14 +272,47 @@ function submit() {
   notice.value = null
   if (invalid.value || phase.value !== 'form') return
   running.value = machine()
+  runAction.value = 'setup'
+  runEmail.value = signInOn.value ? firstUserOf(signIn.value) : null
   phase.value = 'running'
 }
 
-const start = (cols: number, rows: number) => call('lore_machine_run', { machine: running.value!, action: 'setup', cols, rows })
+/** Add or remove a password user, or take a new GitHub secret, on the server as it is saved. */
+function people(action: 'user-add' | 'user-remove' | 'github-secret') {
+  const saved = editing.value?.machine
+  if (!saved || phase.value !== 'form') return
+  if (action !== 'github-secret') {
+    personTouched.value = true
+    if (!validEmail(person.value)) return
+  }
+  notice.value = null
+  running.value = saved
+  runAction.value = action
+  runEmail.value = action === 'github-secret' ? null : person.value.trim().toLowerCase()
+  phase.value = 'running'
+}
+const personError = computed(() => (personTouched.value && !validEmail(person.value) ? t('lore.signIn.emailBad') : null))
+
+const start = (cols: number, rows: number) =>
+  call('lore_machine_run', { machine: running.value!, action: runAction.value, email: runEmail.value, cols, rows })
+
+const runTitles = computed(() => {
+  const e = runEmail.value ?? ''
+  switch (runAction.value) {
+    case 'user-add': return [t('lore.signIn.adding', { email: e }), t('lore.signIn.added', { email: e })]
+    case 'user-remove': return [t('lore.signIn.removing', { email: e }), t('lore.signIn.removed', { email: e })]
+    case 'github-secret': return [t('lore.signIn.secret'), t('lore.signIn.secretSet')]
+    default: return [t('lore.machine.running', { host: host.value }), t('lore.machine.done', { host: host.value })]
+  }
+})
 
 async function onExit(code: number | null) {
   if (code !== 0) {
     phase.value = 'failed'
+    return
+  }
+  if (runAction.value !== 'setup') {
+    phase.value = 'done'
     return
   }
   phase.value = 'saving'
@@ -363,6 +430,40 @@ const title = computed(() => (editing.value ? t('lore.machine.titleChange', { na
       </fieldset>
 
       <fieldset class="lm__section">
+        <legend class="lm__label">{{ t('lore.signIn.title') }}</legend>
+        <div class="lm__switch">
+          <span class="lm__switch-text">
+            <span id="lm-signin-label" class="lm__switch-label">{{ t('lore.signIn.require') }}</span>
+            <span class="lm__hint">{{ t('lore.signIn.requireHint') }}</span>
+          </span>
+          <SettingsSwitch v-model="signInOn" labelledby="lm-signin-label" />
+        </div>
+        <LoreSignInFields
+          v-if="signInOn"
+          v-model="signIn"
+          id-prefix="lm-auth"
+          :touched="touched"
+          :address="publicAddress"
+          :first-user="!savedAuth?.passwords"
+        />
+        <p v-if="signInOn" class="lm__hint">{{ runtime === 'docker' ? t('lore.machine.signInDocker') : t('lore.machine.signInService') }}</p>
+        <p v-else-if="savedAuth" class="lm__hint">{{ t('lore.machine.signInOff') }}</p>
+      </fieldset>
+
+      <fieldset v-if="editing && savedAuth && (savedAuth.passwords || savedAuth.github)" class="lm__section">
+        <legend class="lm__label">{{ t('lore.signIn.machineUsers') }}</legend>
+        <p class="lm__hint">{{ t('lore.signIn.machineUsersHint', { host }) }}</p>
+        <div v-if="savedAuth.passwords" class="lm__people">
+          <UiField :label="t('lore.signIn.email')" for="lm-person" :error="personError">
+            <input id="lm-person" v-model="person" class="input" type="email" placeholder="you@example.com" autocomplete="off" spellcheck="false">
+          </UiField>
+          <UiButton @click="people('user-add')">{{ t('lore.signIn.add') }}</UiButton>
+          <UiButton variant="ghost" @click="people('user-remove')">{{ t('lore.signIn.remove') }}</UiButton>
+        </div>
+        <UiButton v-if="savedAuth.github" class="lm__secret" variant="ghost" size="sm" @click="people('github-secret')">{{ t('lore.signIn.newSecret') }}</UiButton>
+      </fieldset>
+
+      <fieldset class="lm__section">
         <legend class="lm__label">{{ t('lore.machine.entry') }}</legend>
         <div class="lm__row lm__row--even">
           <UiField :label="t('lore.servers.name')" for="lm-name">
@@ -384,8 +485,8 @@ const title = computed(() => (editing.value ? t('lore.machine.titleChange', { na
     <div v-else class="lm__run">
       <EnvTerminal
         :start="start"
-        :title="t('lore.machine.running', { host })"
-        :done-title="t('lore.machine.done', { host })"
+        :title="runTitles[0]!"
+        :done-title="runTitles[1]"
         :failed-title="t('lore.machine.failed')"
         :label="t('lore.machine.terminal', { host })"
         :rows="14"
@@ -394,10 +495,15 @@ const title = computed(() => (editing.value ? t('lore.machine.titleChange', { na
         :retryable="false"
         @exit="onExit"
       >
-        <template #hint>{{ running?.password ? t('lore.machine.runHintPassword') : t('lore.machine.runHint') }}</template>
+        <template #hint>
+          {{ running?.password ? t('lore.machine.runHintPassword') : t('lore.machine.runHint') }}
+          <template v-if="running?.auth">{{ t('lore.signIn.runHint') }}</template>
+        </template>
       </EnvTerminal>
       <p v-if="phase === 'failed' && notice" class="lm__error selectable" role="alert">{{ notice }}</p>
-      <p v-if="phase === 'done'" class="lm__hint">{{ t('lore.machine.doneHint') }}</p>
+      <p v-if="phase === 'done' && runAction === 'setup'" class="lm__hint">
+        {{ running?.auth ? t('lore.signIn.doneHint', { url: url.trim() }) : t('lore.machine.doneHint') }}
+      </p>
     </div>
 
     <template #footer>
@@ -474,4 +580,13 @@ const title = computed(() => (editing.value ? t('lore.machine.titleChange', { na
 .lm__notice span { color: var(--fg); }
 
 .lm__run { display: grid; gap: var(--space-3); padding-top: var(--space-2); }
+
+.lm__switch { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.lm__switch-text { display: grid; gap: 2px; min-width: 0; }
+.lm__switch-label { font-size: var(--text-sm); font-weight: 560; color: var(--fg); }
+.lm__switch :deep(.switch) { margin-top: 2px; }
+.lm__people { display: grid; grid-template-columns: 1fr auto auto; gap: var(--space-2); align-items: end; }
+.lm__people :deep(.field) { min-width: 0; }
+.lm__people > :deep(button) { margin-bottom: 0; }
+.lm__secret { justify-self: start; }
 </style>

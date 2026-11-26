@@ -125,6 +125,8 @@ src-tauri/src/
   lore_servers.rs    Lore (`lore` CLI): saved servers (lore-servers.json, `upsert` is what an Incus recipe registers its server with), checking
                      one (`lore_server_check`: name lookup, TCP, then UDP through a data read, then sign-in), `lore login` in a PTY, logout;
                      the URL/name validators and argv builders `projects.rs` and `envs/remote.rs` use
+  lore_auth.rs       a Lore server's sign-in (Dex + Caddy beside it, pinned; `[server.auth]` and the certificate for Lore), the
+                     root script both installers run (`auth_main`) and the `mango-lore-auth` tool it installs
   lore_machines.rs   a Lore server on a machine over SSH without Incus (`lore_machine_probe`, `lore_machine_run`): Epic's image in Docker
                      (pinned by digest, `recipes::LORE_IMAGE`) or the `lore-server` recipe's script as a systemd service; every change in a
                      terminal where ssh and sudo ask for their passwords; health is `lore_server_check` from this computer
@@ -199,6 +201,13 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   `--access-token` or `--identity-token` (they show in the process table). Every server address and repository name passes
   `parse_server_url` / `parse_repo_url` / `valid_repo_name` before it reaches an argv (or, in an environment, `ssh::quote`), and
   `utils/lore.ts` mirrors them for messages while typing. Automated calls get `-P --non-interactive` and a timeout.
+- Lore server sign-in (`lore_auth.rs`, `utils/loreSignIn.ts`, `LoreSignInFields.vue`; `env_lore_auth` and `lore_machine_run`): Lore
+  verifies JWTs only, so Dex issues them (password users, GitHub organisation members) and Caddy gets the Let's Encrypt certificate
+  the CLI needs (it only sends a token to a `lores://` server, and only to the host the token's `aud` names: never hand out an inside
+  `lore://` address for a server with sign-in). Passwords go to `caddy hash-password` and the GitHub secret to `read -s`, both in the
+  terminal on the server; Mango never sees either. Values pass `lore_auth::clean` (and the same patterns in the script) and reach it
+  as positional arguments only. Caddy and Dex are pinned by SHA-256 (Dex by the digest of its image layer holding the static
+  binary): change a version and both sums together, then run the ignored `lore_auth::tests::real_downloads`.
 - Lore servers on machines over SSH (`lore_machines.rs`, `SettingsLoreMachine.vue`, `utils/loreMachine.ts`): Mango never sees a
   password. Anything that changes the machine runs in a terminal (`lore_machine_run`), where ssh asks for a password (password
   machines never try keys) and sudo for its own; only the look before it (`lore_machine_probe`) is captured, keys only, and it changes

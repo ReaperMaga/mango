@@ -1,9 +1,15 @@
 <script setup lang="ts">
-import { Check, CircleCheck, CircleDashed, Copy, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { Check, CircleCheck, CircleDashed, Copy, LockKeyhole, RefreshCw, TriangleAlert, UserMinus } from 'lucide-vue-next'
+import type { LoreSignInAction } from '~/types/ipc'
+import { call } from '~/composables/useBackend'
 import { instanceKey, useEnvironments } from '~/stores/environments'
+import { useLore } from '~/stores/lore'
 import { copyText } from '~/utils/clipboard'
 import { ALL_V4, LORE_PORT, defaultLoreAddress, validListenAddress, validPublishPort } from '~/utils/lorePublish'
+import { type LoreSignInDraft, draftFrom, draftValid, firstUserOf, signInFrom, signInWays, validEmail } from '~/utils/loreSignIn'
 import EnvLorePublishFields from './EnvLorePublishFields.vue'
+import EnvTerminal from './EnvTerminal.vue'
+import LoreSignInFields from '~/components/settings/LoreSignInFields.vue'
 
 /**
  * The Lore server in an instance (the `lore-server` component), on its page: whether it runs,
@@ -11,6 +17,11 @@ import EnvLorePublishFields from './EnvLorePublishFields.vue'
  * outside use once it is published (UDP and TCP, on an address of the Incus host the user picks),
  * with what a host firewall needs. "Use as Lore server" hands both URLs to the saved Lore servers
  * (`envs.useAsLoreServer`). A joined environment shows its state, without publishing.
+ *
+ * Once published it can require sign-in (`env_lore_auth`, `lore_auth.rs`): Dex and Caddy inside the
+ * instance, ports 80 and 443 published beside it, and clients on `lores://<domain>`. Setting it up,
+ * turning it off and each user change run in a terminal here, where passwords and the GitHub secret
+ * are typed on the server.
  */
 const props = defineProps<{ hostId: string; instance: string; running: boolean }>()
 
@@ -103,10 +114,11 @@ async function use() {
   using.value = true
   useError.value = null
   try {
+    // With sign-in, every client uses the domain (the CLI only sends its token to the host the token names).
     await envs.useAsLoreServer({
       name: t('envs.lore.entryName', { instance: props.instance, host: host.value.name }),
       url: l.published?.url ?? null,
-      insideUrl: l.insideUrl ?? l.insideIpUrl,
+      insideUrl: l.auth?.on ? null : l.insideUrl ?? l.insideIpUrl,
       origin: { hostId: props.hostId, instance: props.instance },
     })
   } catch (e) {
@@ -123,6 +135,113 @@ const where = computed(() => {
   return t('envs.lore.publishedAt', { port: p.port, address: all ? t('envs.lore.allAddresses') : p.address })
 })
 const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
+
+/* ---------- sign-in ---------- */
+
+const auth = computed(() => lore.value?.auth ?? null)
+const signedIn = computed(() => !!auth.value?.on)
+const ways = computed(() => (auth.value
+  ? signInWays(auth.value, { passwords: t('lore.signIn.waysPasswords'), github: t('lore.signIn.waysGithub') })
+  : ''))
+
+type SignInForm = 'setup' | 'user' | null
+const signInForm = ref<SignInForm>(null)
+const draft = ref<LoreSignInDraft>(draftFrom(null))
+const draftTouched = ref(false)
+const email = ref('')
+const emailTouched = ref(false)
+
+function startSignIn() {
+  draft.value = draftFrom(auth.value)
+  draftTouched.value = false
+  signInForm.value = 'setup'
+  editing.value = false
+}
+function startUser() {
+  email.value = ''
+  emailTouched.value = false
+  signInForm.value = 'user'
+}
+
+/** The sign-in action running in the terminal below, with what it needs. */
+interface SignInJob { action: LoreSignInAction; email: string | null; key: number }
+const job = ref<SignInJob | null>(null)
+let jobs = 0
+const jobTitles = computed(() => {
+  const j = job.value
+  const e = j?.email ?? ''
+  switch (j?.action) {
+    case 'off': return [t('lore.signIn.turningOff'), t('lore.signIn.turnedOff')]
+    case 'user-add': return [t('lore.signIn.adding', { email: e }), t('lore.signIn.added', { email: e })]
+    case 'user-remove': return [t('lore.signIn.removing', { email: e }), t('lore.signIn.removed', { email: e })]
+    case 'github-secret': return [t('lore.signIn.secret'), t('lore.signIn.secretSet')]
+    default: return [t('lore.signIn.setting'), t('lore.signIn.set')]
+  }
+})
+/** The sign-in a setup job asked for (the form may change while it runs). */
+let jobSignIn: ReturnType<typeof signInFrom> | null = null
+
+const jobRunning = ref(false)
+function run(action: LoreSignInAction, who: string | null = null) {
+  if (jobRunning.value) return
+  job.value = { action, email: who, key: ++jobs }
+  jobRunning.value = true
+  signInForm.value = null
+}
+
+function submitSignIn() {
+  draftTouched.value = true
+  if (!draftValid(draft.value)) return
+  jobSignIn = signInFrom(draft.value)
+  run('setup', firstUserOf(draft.value))
+}
+function submitUser() {
+  emailTouched.value = true
+  if (!validEmail(email.value)) return
+  run('user-add', email.value.trim().toLowerCase())
+}
+
+const startJob = (cols: number, rows: number) => {
+  const j = job.value!
+  return call('env_lore_auth', {
+    hostId: props.hostId,
+    instance: props.instance,
+    action: j.action,
+    signIn: j.action === 'setup' ? jobSignIn : null,
+    email: j.email,
+    cols,
+    rows,
+  })
+}
+
+/** After a setup or turning it off, the saved entry for this server (if any) follows its new address. */
+async function jobExit(code: number | null) {
+  jobRunning.value = false
+  const action = job.value?.action
+  if (!props.running) return
+  await envs.refreshLore(props.hostId, props.instance)
+  if (code !== 0 || (action !== 'setup' && action !== 'off')) return
+  const saved = useLore().servers?.some(x => x.origin?.hostId === props.hostId && x.origin.instance === props.instance)
+  if (saved) await use()
+}
+function closeJob() {
+  if (jobRunning.value) return
+  job.value = null
+}
+
+/** The address ports 80 and 443 are published at, as people read it. */
+const webAddress = computed(() => {
+  const p = published.value
+  if (!p) return ''
+  return p.address === ALL_V4 || p.address === '[::]' ? t('envs.lore.allAddresses') : p.address
+})
+const emailError = computed(() => (emailTouched.value && !validEmail(email.value) ? t('lore.signIn.emailBad') : null))
+const outsideAddress = computed(() => {
+  const p = published.value
+  if (!p) return null
+  if (p.address !== ALL_V4 && p.address !== '[::]') return p.address
+  return lore.value?.addresses.find(a => a.kind === 'public')?.address ?? null
+})
 </script>
 
 <template>
@@ -162,7 +281,8 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
         </template>
         <template v-if="lore.version"><span aria-hidden="true">·</span><span class="tabular">Lore {{ lore.version }}</span></template>
         <span aria-hidden="true">·</span>
-        <span>{{ t('envs.lore.noSignIn') }}</span>
+        <span v-if="signedIn" class="lore__lock"><LockKeyhole aria-hidden="true" />{{ t('lore.signIn.on') }}</span>
+        <span v-else>{{ t('envs.lore.noSignIn') }}</span>
       </p>
       <p v-if="lore.installed && !lore.running" class="lore__desc">{{ t('envs.lore.stoppedHint') }}</p>
 
@@ -170,7 +290,8 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
         <div class="lore__url-row">
           <dt>{{ t('envs.lore.inside') }}</dt>
           <dd>
-            <template v-if="lore.insideUrl ?? lore.insideIpUrl">
+            <span v-if="signedIn" class="lore__sub">{{ t('lore.signIn.insideSame') }}</span>
+            <template v-else-if="lore.insideUrl ?? lore.insideIpUrl">
               <span class="lore__url">
                 <code class="lore__mono selectable">{{ lore.insideUrl ?? lore.insideIpUrl }}</code>
                 <UiIconButton :label="t('envs.lore.copy', { what: lore.insideUrl ?? lore.insideIpUrl })" size="sm" @click="copy((lore.insideUrl ?? lore.insideIpUrl)!)">
@@ -208,16 +329,95 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
             <span v-else class="lore__sub">{{ t('envs.lore.notPublished', { host: host?.name ?? '' }) }}</span>
             <span v-if="lore.publishNote" class="lore__sub">{{ lore.publishNote }}</span>
             <span v-else-if="!editing" class="lore__url-actions">
-              <UiButton size="sm" :variant="published ? 'ghost' : 'secondary'" :disabled="!running || !!busy" @click="startEdit">
+              <UiButton size="sm" :variant="published ? 'ghost' : 'secondary'" :disabled="!running || !!busy || jobRunning" @click="startEdit">
                 {{ published ? t('envs.lore.change') : t('envs.lore.publish') }}
               </UiButton>
-              <UiButton v-if="published" variant="ghost" size="sm" :loading="busy === 'unpublish'" :disabled="!!busy" @click="unpublish">
+              <UiButton v-if="published" variant="ghost" size="sm" :loading="busy === 'unpublish'" :disabled="!!busy || jobRunning" @click="unpublish">
                 {{ t('envs.lore.unpublish') }}
               </UiButton>
             </span>
           </dd>
         </div>
+
+        <div v-if="lore.installed" class="lore__url-row">
+          <dt>{{ t('lore.signIn.title') }}</dt>
+          <dd>
+            <template v-if="signedIn && auth">
+              <span class="lore__sub lore__sub--strong">{{ t('lore.signIn.onText', { ways }) }}</span>
+              <span v-if="!auth.certificate" class="lore__sub lore__sub--wait">{{ t('lore.signIn.noCert', { domain: auth.domain }) }}</span>
+              <span v-if="auth.github && !auth.githubSecret" class="lore__sub lore__sub--wait">{{ t('lore.signIn.noSecret') }}</span>
+              <span v-if="published && !published.web" class="lore__sub lore__sub--wait">{{ t('envs.lore.incomplete') }}</span>
+              <template v-if="auth.passwords">
+                <span class="lore__sub">{{ auth.users.length ? t('lore.signIn.users') : t('lore.signIn.noUsers') }}</span>
+                <ul v-if="auth.users.length" class="lore__users">
+                  <li v-for="u in auth.users" :key="u" class="lore__user">
+                    <span class="lore__user-name selectable" :title="u">{{ u }}</span>
+                    <UiIconButton
+                      :label="t('lore.signIn.removeUser', { email: u })"
+                      size="sm"
+                      :disabled="!running || jobRunning || !!lore.publishNote"
+                      @click="run('user-remove', u)"
+                    >
+                      <UserMinus />
+                    </UiIconButton>
+                  </li>
+                </ul>
+              </template>
+            </template>
+            <span v-else class="lore__sub">{{ auth ? t('lore.signIn.offBefore') : t('lore.signIn.offText') }}</span>
+            <span v-if="!published && !lore.publishNote" class="lore__sub">{{ t('lore.signIn.needsPublish') }}</span>
+            <span v-if="!lore.publishNote && published && !signInForm" class="lore__url-actions">
+              <template v-if="signedIn && auth">
+                <UiButton v-if="auth.passwords" size="sm" variant="ghost" :disabled="!running || jobRunning" @click="startUser">{{ t('lore.signIn.addUser') }}</UiButton>
+                <UiButton v-if="auth.github" size="sm" variant="ghost" :disabled="!running || jobRunning" @click="run('github-secret')">{{ t('lore.signIn.newSecret') }}</UiButton>
+                <UiButton size="sm" variant="ghost" :disabled="!running || jobRunning" @click="startSignIn">{{ t('lore.signIn.change') }}</UiButton>
+                <UiButton size="sm" variant="ghost" :disabled="!running || jobRunning" @click="run('off')">{{ t('lore.signIn.turnOff') }}</UiButton>
+              </template>
+              <UiButton v-else size="sm" variant="secondary" :disabled="!running || jobRunning || !!busy" @click="startSignIn">{{ t('lore.signIn.turnOn') }}</UiButton>
+            </span>
+          </dd>
+        </div>
       </dl>
+
+      <form v-if="signInForm === 'setup'" class="lore__form" novalidate @submit.prevent="submitSignIn">
+        <p class="lore__desc">{{ t('lore.signIn.requireHint') }}</p>
+        <LoreSignInFields
+          v-model="draft"
+          id-prefix="lore-auth"
+          :touched="draftTouched"
+          :address="outsideAddress"
+          :first-user="!signedIn || !auth?.users.length"
+        />
+        <p class="lore__desc">{{ t('lore.signIn.portsHint', { address: webAddress, host: host?.name ?? '' }) }}</p>
+        <span class="lore__form-actions">
+          <UiButton variant="ghost" size="sm" @click="signInForm = null">{{ t('common.actions.cancel') }}</UiButton>
+          <UiButton variant="primary" size="sm" type="submit">{{ signedIn ? t('lore.signIn.changeAction') : t('lore.signIn.turnOnAction') }}</UiButton>
+        </span>
+      </form>
+      <form v-else-if="signInForm === 'user'" class="lore__form" novalidate @submit.prevent="submitUser">
+        <UiField :label="t('lore.signIn.email')" for="lore-auth-email" :error="emailError" :hint="t('lore.signIn.firstUserHint')">
+          <input id="lore-auth-email" v-model="email" class="input" type="email" placeholder="you@example.com" autocomplete="off" spellcheck="false">
+        </UiField>
+        <span class="lore__form-actions">
+          <UiButton variant="ghost" size="sm" @click="signInForm = null">{{ t('common.actions.cancel') }}</UiButton>
+          <UiButton variant="primary" size="sm" type="submit">{{ t('lore.signIn.add') }}</UiButton>
+        </span>
+      </form>
+      <EnvTerminal
+        v-if="job"
+        :key="job.key"
+        :start="startJob"
+        :title="jobTitles[0]!"
+        :done-title="jobTitles[1]"
+        :failed-title="t('lore.signIn.stopped')"
+        :label="t('lore.signIn.terminal')"
+        :rows="12"
+        :retryable="false"
+        @exit="jobExit"
+        @close="closeJob"
+      >
+        <template #hint>{{ t('lore.signIn.runHint') }}</template>
+      </EnvTerminal>
 
       <form v-if="editing && canPublish" class="lore__form" novalidate @submit.prevent="publish">
         <EnvLorePublishFields
@@ -255,6 +455,7 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
           </span>
         </template>
         <p class="lore__desc">{{ t('envs.lore.cloud', { port: published.port }) }}</p>
+        <p v-if="published.web" class="lore__desc">{{ t('lore.signIn.portsHint', { address: webAddress, host: host?.name ?? '' }) }}</p>
       </div>
     </template>
     <div v-else-if="loading" class="lore__skeleton" aria-busy="true" aria-hidden="true">
@@ -313,6 +514,12 @@ const canPublish = computed(() => !!lore.value && !lore.value.publishNote)
 }
 .lore__sub { display: inline-flex; flex-wrap: wrap; gap: 4px 6px; font-size: var(--text-xs); color: var(--fg-subtle); text-wrap: pretty; }
 .lore__sub--wait { color: var(--ripe-waiting-fg); }
+.lore__sub--strong { color: var(--fg-muted); }
+.lore__lock { display: inline-flex; align-items: center; gap: 4px; color: var(--ripe-done-fg); }
+.lore__lock svg { width: 13px; height: 13px; }
+.lore__users { display: grid; width: 100%; max-width: 420px; margin: 0; padding: 0; list-style: none; }
+.lore__user { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 26px; }
+.lore__user-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg); }
 .lore__url-actions { display: inline-flex; gap: var(--space-1); margin-top: 2px; }
 
 .lore__form {

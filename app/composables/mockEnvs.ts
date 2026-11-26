@@ -1,6 +1,6 @@
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvDirListing, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvHostAddress, EnvHostAddresses, EnvLoreServer, EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions,
+  EnvHostAddress, EnvHostAddresses, EnvLoreServer, EnvProbe, EnvShare, EnvShareLink, EnvShareVia, EnvVersion, EnvVersions, LoreSignIn, LoreSignInState,
 } from '~/types/ipc'
 import { GITLAB_COM, normalizeHost } from '~/utils/gitHosts'
 import { mockGitlabHosts, mockGitlabHostsSave } from '~/composables/mockHosting'
@@ -67,6 +67,8 @@ interface MockInstance extends Omit<EnvInstance, 'ipv4' | 'tailscaleIp' | 'disk'
   sshd?: boolean
   /** Where its Lore server is published outside the server (the lore-quic and lore-grpc proxy devices). */
   lorePublished?: { address: string; port: number } | null
+  /** Its Lore server's sign-in, once set up (`env_lore_auth`). */
+  loreAuth?: LoreSignInState | null
 }
 
 interface MockHost {
@@ -518,6 +520,8 @@ export function createMockEnvs(ctx: MockEnvContext) {
     const url = (host: string, port: number) => `lore://${host.includes(':') && !host.startsWith('[') ? `[${host}]` : host}${port === 41337 ? '' : `:${port}`}`
     const named = h.host.publicAddress || h.host.ssh.slice(h.host.ssh.lastIndexOf('@') + 1)
     const outside = p ? (p.address === '0.0.0.0' || p.address === '[::]' ? named : p.address) : null
+    const auth = i.loreAuth ? structuredClone(i.loreAuth) : null
+    const outsideUrl = (port: number) => (auth?.on && auth.domain ? `lores://${auth.domain}${port === 41337 ? '' : `:${port}`}` : url(outside!, port))
     return {
       installed,
       version: i.installed['lore-server'] ?? null,
@@ -525,14 +529,76 @@ export function createMockEnvs(ctx: MockEnvContext) {
       insideUrl: url(`${i.name}.incus`, 41337),
       insideIpUrl: i.status === 'running' ? url(i.addr, 41337) : null,
       published: p && outside
-        ? { address: p.address, port: p.port, url: url(outside, p.port), urlNote: null, reachable: running && p.address !== '0.0.0.0', complete: true }
+        ? { address: p.address, port: p.port, url: outsideUrl(p.port), urlNote: null, reachable: running && p.address !== '0.0.0.0', complete: true, web: !!auth?.on }
         : null,
       firewall: p && h.firewall
         ? { kind: h.firewall, commands: h.firewall === 'ufw' ? [`sudo ufw allow ${p.port}/udp && sudo ufw allow ${p.port}/tcp`] : [] }
         : null,
       addresses: structuredClone(h.addresses ?? []),
       publishNote: h.host.direct ? 'This environment was shared with you: only its owner can publish its Lore server.' : null,
+      auth,
     }
+  }
+
+  /** What `env_lore_auth` prints and does (passwords and the secret are "typed" in the terminal). */
+  function loreAuthSteps(id: string, i: MockInstance, action: string, signIn: LoreSignIn | null, email: string | null): Array<[number, string | (() => void)]> {
+    const steps: Array<[number, string | (() => void)]> = []
+    const a = i.loreAuth
+    const asked = (what: string) => `${what}: ${dim('(simulated: typed here, on the server)')}`
+    switch (action) {
+      case 'setup': {
+        const s = signIn!
+        steps.push(
+          [0, head(`Publishing TCP ports 80 and 443 at ${i.lorePublished?.address ?? '0.0.0.0'} (Let's Encrypt and the sign-in pages)`)],
+          [300, head(`Lore sign-in for ${s.domain} (Dex 2.46.1 and Caddy 2.11.9)`)],
+          [400, 'Downloading Caddy 2.11.9'],
+          [400, 'Downloading Dex 2.46.1'],
+        )
+        if (s.github && (!a?.githubSecret || a.github?.clientId !== s.github.clientId)) {
+          steps.push([300, `Paste the client secret of the GitHub OAuth app ${s.github.clientId} (it is not shown; Enter when done).`], [500, asked('Client secret')])
+        }
+        if (s.passwords && email && !a?.users.includes(email)) {
+          steps.push([300, `Choose the password ${email} signs in to Lore with (it is not shown).`], [300, asked('Enter password')], [300, asked('Confirm password')], [200, `${email} can sign in with that password.`])
+        }
+        steps.push(
+          [400, `Waiting for Let's Encrypt's certificate for ${s.domain} (up to 3 minutes)...`],
+          [900, 'Caddy has the certificate.'],
+          [200, head('Restarting the Lore server')],
+          [400, () => {
+            const users = s.passwords ? [...(a?.users ?? []), ...(email && !a?.users.includes(email) ? [email] : [])] : (a?.users ?? [])
+            i.loreAuth = { on: true, domain: s.domain, passwords: s.passwords, github: s.github, githubSecret: !!s.github || !!a?.githubSecret, certificate: true, users }
+            out(id, `Sign-in is on. Clients use lores://${s.domain}${i.lorePublished?.port === 41337 ? '' : `:${i.lorePublished?.port}`} and sign in with: lore login lores://${s.domain}`)
+          }],
+          [200, ok(`Done ${dim('(simulated: the browser preview sets up nothing)')}`)],
+        )
+        break
+      }
+      case 'off':
+        steps.push(
+          [0, head("Turning the Lore server's sign-in off")],
+          [300, head('Restarting the Lore server')],
+          [300, () => { if (i.loreAuth) i.loreAuth = { ...i.loreAuth, on: false }; out(id, 'Sign-in is off: anyone who reaches the server can read and write again.') }],
+          [200, 'Ports 80 and 443 are no longer published.'],
+        )
+        break
+      case 'user-add':
+        steps.push(
+          [0, `Choose the password ${email} signs in to Lore with (it is not shown).`],
+          [300, asked('Enter password')], [300, asked('Confirm password')],
+          [200, () => { if (i.loreAuth && email && !i.loreAuth.users.includes(email)) i.loreAuth.users.push(email); out(id, `${email} can sign in with that password.`) }],
+        )
+        break
+      case 'user-remove':
+        steps.push([0, () => { if (i.loreAuth) i.loreAuth.users = i.loreAuth.users.filter(u => u !== email); out(id, `${email} can no longer sign in with a password (a sign-in they already have ends within an hour).`) }])
+        break
+      case 'github-secret':
+        steps.push([0, `Paste the client secret of the GitHub OAuth app ${a?.github?.clientId ?? ''} (it is not shown; Enter when done).`], [400, asked('Client secret')], [200, () => {
+          if (i.loreAuth) i.loreAuth.githubSecret = true
+          out(id, 'Dex uses the new secret.')
+        }])
+        break
+    }
+    return steps
   }
 
   async function call(cmd: string, args: any): Promise<any> {
@@ -733,6 +799,17 @@ export function createMockEnvs(ctx: MockEnvContext) {
         const a = String(args.address).trim()
         i.lorePublished = { address: a.includes(':') && !a.startsWith('[') ? `[${a}]` : a, port: args.port }
         return loreView(h, i)
+      }
+
+      case 'env_lore_auth': {
+        const { h, i } = instanceOf(args.hostId, args.instance)
+        if (h.host.direct) throw new Error('Only the owner can change this environment\'s Lore server.')
+        mustRun(h, i)
+        if (args.action === 'setup' && !i.lorePublished) throw new Error('Publish the Lore server first: the sign-in is for the address it is published at.')
+        await latency(150)
+        const id = ctx.newPty()
+        play(id, [[0, dim(`$ ssh ${h.host.ssh} incus exec ${i.name} -- mango-lore-auth ${args.action}`)], ...loreAuthSteps(id, i, args.action, args.signIn ?? null, args.email ?? null)])
+        return id
       }
 
       case 'env_lore_unpublish': {

@@ -68,7 +68,7 @@ export const envs = {
     },
     'lore-server': {
       name: 'Lore server',
-      description: 'A Lore server as a service. No sign-in: only this server\'s environments reach it unless you publish it.',
+      description: 'A Lore server as a service. Only this server\'s environments reach it unless you publish it; its page can then require sign-in.',
     },
     claude: {
       name: 'Claude Code',
@@ -476,7 +476,7 @@ export const envs = {
     },
     addressInvalid: 'Use an IP address of the server, such as 100.101.7.1.',
     portInvalid: 'A port from 1024 to 65535.',
-    publicWarning: 'Anyone on the internet who reaches this address can read and write everything on the Lore server: it has no sign-in. Prefer a Tailscale or private address.',
+    publicWarning: 'Anyone on the internet who reaches this address can read and write everything on the Lore server: it has no sign-in. Prefer a Tailscale or private address, or require sign-in once it is published.',
     addressesFailed: 'Could not read the server\'s addresses: type one.',
   },
   delete: {
