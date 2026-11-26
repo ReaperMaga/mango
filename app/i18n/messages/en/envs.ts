@@ -428,8 +428,6 @@ export const envs = {
   },
   lore: {
     title: 'Lore server',
-    newServer: 'New Lore server',
-    newServerTitle: 'A new environment running a Lore server, in one go',
     running: 'Running',
     stopped: 'Not running',
     notInstalled: 'Not installed',

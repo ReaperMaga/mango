@@ -430,8 +430,6 @@ export const envs: Messages['envs'] = {
   },
   lore: {
     title: 'Сервер Lore',
-    newServer: 'Новый сервер Lore',
-    newServerTitle: 'Новое окружение с сервером Lore, за один шаг',
     running: 'Работает',
     stopped: 'Не работает',
     notInstalled: 'Не установлен',

@@ -430,8 +430,6 @@ export const envs: Messages['envs'] = {
   },
   lore: {
     title: 'Lore-Server',
-    newServer: 'Neuer Lore-Server',
-    newServerTitle: 'Eine neue Umgebung mit einem Lore-Server, in einem Schritt',
     running: 'Läuft',
     stopped: 'Läuft nicht',
     notInstalled: 'Nicht installiert',
