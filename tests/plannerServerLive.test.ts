@@ -1,7 +1,7 @@
 /**
  * Two computers' planners, synced through the real planner server. Skipped unless `PLANNER_SERVER` names its binary:
  *
- *   (cd planner-server && go build -o "$TMPDIR/planner-server" .)
+ *   (cd plugins/planner/server && go build -o "$TMPDIR/planner-server" .)
  *   PLANNER_SERVER="$TMPDIR/planner-server" node --test tests/plannerServerLive.test.ts
  */
 import { test } from 'node:test'

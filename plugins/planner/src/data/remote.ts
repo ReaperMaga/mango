@@ -1,5 +1,5 @@
 /**
- * A planner server's space (`planner-server/`, `planner-server/PROTOCOL.md`): documents read and written over HTTP, and
+ * A planner server's space (`plugins/planner/server/`, its `PROTOCOL.md`): documents read and written over HTTP, and
  * everyone's writes heard as they happen on an event stream, which comes back by itself after a lost connection.
  *
  * Chat links mean something on this computer only: they are taken out of what is sent, kept here (`storage`), and put

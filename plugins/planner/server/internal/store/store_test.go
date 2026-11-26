@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/patch"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/patch"
 )
 
 var ctx = context.Background()

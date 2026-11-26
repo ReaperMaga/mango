@@ -1,5 +1,5 @@
 /**
- * The planner's remote source against a stand-in planner server (planner-server/PROTOCOL.md, in memory), and the
+ * The planner's remote source against a stand-in planner server (plugins/planner/server/PROTOCOL.md, in memory), and the
  * routed source that puts each collection on this computer or the server, under the real store.
  *
  *   node --test tests/plannerRemote.test.ts     (or: pnpm test)

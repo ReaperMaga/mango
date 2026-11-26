@@ -32,7 +32,7 @@ them to go. Nothing is sent anywhere unless you connect a planner server.
 
 ## Sharing through a planner server
 
-A [planner server](../../planner-server/README.md) keeps collections for every computer and person connected to one of
+A [planner server](server/README.md) keeps collections for every computer and person connected to one of
 its spaces. You run it yourself, and the server's own command line makes the spaces and their access tokens. A token
 either edits or only reads.
 
@@ -71,5 +71,5 @@ The notes' editor is [TipTap](https://tiptap.dev) (MIT, like the rest that is bu
 out of it is `src/item/notes/markdown.ts`.
 
 Where documents live is behind `PlannerSource` (`src/data/source.ts`): `local.ts` on this computer, `remote.ts` on a
-planner server (its protocol is `planner-server/PROTOCOL.md`), and `routed.ts` puts each collection in one of them.
+planner server (its protocol is `server/PROTOCOL.md`), and `routed.ts` puts each collection in one of them.
 `src/store.ts` is all the interface uses.

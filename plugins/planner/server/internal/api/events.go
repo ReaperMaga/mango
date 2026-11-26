@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/ReaperMaga/mango/planner-server/internal/live"
-	"github.com/ReaperMaga/mango/planner-server/internal/store"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/live"
+	"github.com/ReaperMaga/mango/plugins/planner/server/internal/store"
 )
 
 type stream struct {

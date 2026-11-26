@@ -1,7 +1,7 @@
 # Checks every pull request: the version agrees everywhere, the frontend typechecks, builds
 # and passes its tests, the backend's tests pass with no warnings, Windows and macOS keep
 # compiling, the iOS app in mobile/ typechecks and passes its tests, and the planner server
-# in planner-server/ is vetted, tested and builds for every platform it ships for.
+# in plugins/planner/server/ is vetted, tested and builds for every platform it ships for.
 #
 # Only the parts a pull request touches run: a frontend-only change skips the Rust jobs
 # and the other way round, and the mobile job runs only for mobile/ and the desktop code
@@ -65,7 +65,7 @@ jobs:
               - '**'
               - '!src-tauri/**'
               - '!mobile/**'
-              - '!planner-server/**'
+              - '!plugins/planner/server/**'
               - '!docs/**'
               - '!**/*.md'
               - '!.github/**'
@@ -75,7 +75,7 @@ jobs:
             mobile:
               - '{mobile/**,app/agents/**,app/types/**,.github/workflows/ci.yml}'
             server:
-              - '{planner-server/**,.github/workflows/ci.yml}'
+              - '{plugins/planner/server/**,.github/workflows/ci.yml}'
             ci:
               - '.github/workflows/ci.yml'
 
@@ -128,14 +128,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: planner-server
+        working-directory: plugins/planner/server
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-go@v6
         with:
-          go-version-file: planner-server/go.mod
-          cache-dependency-path: planner-server/go.sum
+          go-version-file: plugins/planner/server/go.mod
+          cache-dependency-path: plugins/planner/server/go.sum
 
       - name: Formatted
         run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }

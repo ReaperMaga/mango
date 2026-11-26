@@ -1,4 +1,4 @@
-module github.com/ReaperMaga/mango/planner-server
+module github.com/ReaperMaga/mango/plugins/planner/server
 
 go 1.26.0
 
