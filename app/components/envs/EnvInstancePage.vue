@@ -14,6 +14,7 @@ import EnvDesktop from './EnvDesktop.vue'
 import EnvDeleteDialog from './EnvDeleteDialog.vue'
 import EnvProjectDialog from './EnvProjectDialog.vue'
 import EnvSharing from './EnvSharing.vue'
+import EnvLoreServer from './EnvLoreServer.vue'
 import EnvShareDialog from './EnvShareDialog.vue'
 import EnvRenameDialog from './EnvRenameDialog.vue'
 import EnvResizeDialog from './EnvResizeDialog.vue'
@@ -148,6 +149,8 @@ const components = computed(() => envs.components[key.value] ?? null)
 const loadingComponents = computed(() => !!envs.loadingComponents[key.value])
 const componentError = computed(() => envs.componentErrors[key.value] ?? null)
 const installed = (id: EnvComponentId) => components.value?.find(c => c.id === id)?.installed ?? null
+/** It runs a Lore server: its own section shows where to reach it. */
+const hasLoreServer = computed(() => installed('lore-server') === true)
 
 function loadComponents(force = false) {
   if (!running.value) return
@@ -552,6 +555,9 @@ const disk = computed(() => inst.value?.disk?.replace(/([0-9])([A-Za-z])/, '$1 $
       </section>
 
       <!-- who else may use it (only its owner shares it) -->
+      <!-- a Lore server in it: where to reach it, inside and outside the server -->
+      <EnvLoreServer v-if="hasLoreServer" :host-id="hostId" :instance="name" :running="running" />
+
       <EnvSharing v-if="!direct" :host-id="hostId" :instance="name" :running="running" @share="sharing = true" />
 
       <!-- components -->

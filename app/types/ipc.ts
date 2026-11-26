@@ -1071,7 +1071,8 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
+export type EnvComponentId =
+  | 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'lore' | 'lore-server' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId
@@ -1083,6 +1084,8 @@ export interface EnvComponent {
   requires: EnvComponentId[]
   /** A version can be picked for it (`env_versions` lists them): Node.js and Java. */
   versioned: boolean
+  /** For a component that is a service (the Lore server): whether it runs; null for the others. */
+  running?: boolean | null
 }
 
 /** Versions picked for components that take one, by component id; a missing one takes the default. */
@@ -1116,6 +1119,54 @@ export interface EnvCreateInput {
   components: EnvComponentId[]
   /** Versions picked for some of them. */
   versions?: EnvVersions
+  /** Publish its Lore server outside the server once installed (needs 'lore-server' in `components`). */
+  lorePublish?: EnvLorePublishInput | null
+}
+
+/** Where to publish a Lore server on the Incus host: one of its addresses (or 0.0.0.0 / :: for all) and a port (1024 and up). */
+export interface EnvLorePublishInput { address: string; port: number }
+
+/** An address of a server's Incus host something can be published at. */
+export interface EnvHostAddress {
+  address: string
+  kind: 'tailscale' | 'private' | 'public'
+  interface: string
+}
+
+/** `env_host_addresses`: what to offer, or why there is nothing (an Incus remote: type one). */
+export interface EnvHostAddresses { addresses: EnvHostAddress[]; note: string | null }
+
+/** A Lore server in an instance (`env_lore_server`), and where to reach it. */
+export interface EnvLoreServer {
+  /** The 'lore-server' component is installed. */
+  installed: boolean
+  version: string | null
+  running: boolean
+  /** For the other environments on the same server: `lore://<instance>.incus` (when its network has DNS). */
+  insideUrl: string | null
+  /** The same by the instance's IPv4 address. */
+  insideIpUrl: string | null
+  /** Where it is published outside the server (UDP and TCP), when it is. */
+  published: EnvLorePublished | null
+  /** A host firewall that may block the published port, with the commands that open it (empty: say what to accept). */
+  firewall: { kind: 'ufw' | 'firewalld' | 'nftables'; commands: string[] } | null
+  /** Addresses of the Incus host it can be published at. */
+  addresses: EnvHostAddress[]
+  /** Why it can't be published from here (a joined environment). */
+  publishNote: string | null
+}
+
+export interface EnvLorePublished {
+  /** The listen address on the Incus host (`0.0.0.0` / `[::]`: all of them). */
+  address: string
+  port: number
+  /** `lore://<host>[:port]`: what this computer and anyone outside uses. */
+  url: string | null
+  urlNote: string | null
+  /** This computer could open a TCP connection to the port just now (a hint; UDP can't be checked that way). */
+  reachable: boolean | null
+  /** Both proxy devices (UDP and TCP) are there. */
+  complete: boolean
 }
 
 /** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
@@ -1818,6 +1869,14 @@ export interface Commands {
   env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; versions?: EnvVersions; cols: number; rows: number }, string]
   /** The versions a component can install, newest first (read from nodejs.org or SDKMAN, not from an environment). */
   env_versions: [{ component: EnvComponentId }, EnvVersion[]]
+  /** The Lore server in an instance: running or not, its URLs inside and outside the server, where it can be published. */
+  env_lore_server: [{ hostId: string; instance: string }, EnvLoreServer]
+  /** Publish it outside the server (Incus proxy devices, UDP and TCP), replacing an earlier publish. Owner only. */
+  env_lore_publish: [{ hostId: string; instance: string; address: string; port: number }, EnvLoreServer]
+  /** Stop publishing it. Owner only. */
+  env_lore_unpublish: [{ hostId: string; instance: string }, EnvLoreServer]
+  /** The addresses of a server's Incus host to publish at (for the create dialog). */
+  env_host_addresses: [{ hostId: string }, EnvHostAddresses]
   /** A login shell as the agent user inside the instance; returns the pty id. */
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */

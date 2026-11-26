@@ -86,7 +86,8 @@ app/
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), idleCompaction.ts (when a large chat after a break is asked about or compacted; plain-Node testable), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
-                     releaseRuns.ts (which runs build which release, job summaries, files by platform), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable)
+                     releaseRuns.ts (which runs build which release, job summaries, files by platform), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable),
+                     lorePublish.ts (publishing a Lore server: the address offered first, typed values checked as the backend does)
 src-tauri/src/
   agent_proc.rs      starts agent CLIs, forwards stdio line by line as events
   agent_sessions.rs  `agent_transcript`: the end of a Claude Code session's transcript, read only
@@ -124,6 +125,7 @@ src-tauri/src/
   updater.rs         self-update: checks the latest GitHub release's latest.json, installs, restarts
   envs/              remote environments over ssh + incus: hosts.rs (saved servers), ssh.rs (quoting, command lines),
                      incus.rs (instances), recipes.rs (one-click components), remote.rs (shells, sign-in, desktop tunnel),
+                     lore.rs (a Lore server in an instance: its URLs, publishing it outside the server with Incus proxy devices),
                      server.rs (install, set up and update Incus on the server)
   voice.rs           voice input: pinned Whisper download (SHA-256 checked) and local transcription (candle)
   bin.rs             finding binaries on PATH, `hide_console`
@@ -217,6 +219,13 @@ mobile/              the iOS app (Expo SDK 58, React Native, expo-router): its o
   commands accept them (git and file access run inside the instance through `git::At`; `gh` stays local and only the
   repository is read from the remotes there; `glab` runs inside the instance, signed in there, through `gitlab::GlabAt`,
   and falls back to this computer's only when the instance has none); anything else that touches the local disk must skip them (`isEnvPath`).
+- Lore in environments (`recipes.rs` `lore` / `lore-server`, `envs/lore.rs`): pinned releases with SHA-256 sums hard-coded in
+  `LORE_COMMON` (change the version and all four sums together; prove it with the ignored `recipes::tests::real_lore_scripts`,
+  which runs the scripts for real in a scratch folder on ports 41437/41439). The server has no sign-in, so it is reachable only
+  from its server's instances until the user publishes it: two proxy devices (`lore-quic` UDP, `lore-grpc` TCP) on an address
+  and port they pick, checked by `valid_listen_address` / `valid_publish_port`. Firewalls are looked at, never changed. Mango's
+  settings are `/etc/lore/config/mango.toml` (rewritten on updates); `local.toml` is the owner's and never touched.
+  "Use as Lore server" goes through `useAsLoreServer` in `stores/environments.ts`.
 - Remote round trips are the cost to watch (a fresh SSH connection is ~1 s on a distant server). Short captured commands
   share one background connection per host (`ssh::batch_argv`, `ControlMaster`; not on Windows, whose OpenSSH lacks it);
   terminals, agents and tunnels keep their own. Git reads that would run one after another go in one call (`git::run_all`),

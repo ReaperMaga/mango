@@ -208,15 +208,15 @@ fn ssh_g_hostname(out: &str) -> Option<String> {
 }
 
 /// `host` from `user@host`.
-fn host_part(dest: &str) -> &str {
+pub(super) fn host_part(dest: &str) -> &str {
     dest.rsplit_once('@').map_or(dest, |(_, h)| h)
 }
 
-fn plain_address(a: &str) -> bool {
+pub(super) fn plain_address(a: &str) -> bool {
     !a.is_empty() && a.len() <= 253 && !a.starts_with('-') && a.chars().all(|c| c.is_ascii_alphanumeric() || ".-:".contains(c))
 }
 
-fn is_loopback(a: &str) -> bool {
+pub(super) fn is_loopback(a: &str) -> bool {
     let a = a.to_ascii_lowercase();
     a == "localhost" || a.ends_with(".localhost") || a.starts_with("127.") || a == "::1" || a == "0.0.0.0" || a == "::"
 }
@@ -242,7 +242,7 @@ fn share_address(host: &EnvHost, ssh_g: Option<String>) -> Result<String, String
 }
 
 /// Run `ssh -G <dest>` here (no connection) for the HostName it resolves to.
-fn resolve_with_ssh_g(host: &EnvHost) -> Option<String> {
+pub(super) fn resolve_with_ssh_g(host: &EnvHost) -> Option<String> {
     let bin = ssh::ssh_bin().ok()?;
     let argv = vec![bin.to_string_lossy().into_owned(), "-G".into(), host.ssh.clone()];
     let out = ssh::command(&argv).stdin(std::process::Stdio::null()).output().ok()?;

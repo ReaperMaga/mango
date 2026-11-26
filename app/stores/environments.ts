@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type {
-  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
+  EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvHostAddresses, EnvInstance, EnvInstanceAction, EnvJoinPreview,
+  EnvLoginTool, EnvLoreServer,
   EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions, LoreNew,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
@@ -38,6 +39,8 @@ export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; requires: EnvCo
   { id: 'java', requires: ['base'], versioned: true },
   { id: 'gh', requires: ['base'] },
   { id: 'glab', requires: ['base'] },
+  { id: 'lore', requires: ['base'] },
+  { id: 'lore-server', requires: ['base'] },
   { id: 'claude', requires: ['base'] },
   { id: 'codex', requires: ['base'] },
   { id: 'chromium', requires: ['base', 'node'] },
@@ -63,7 +66,7 @@ export interface EnvSelection { hostId: string; instance: string | null }
 /** Dialogs the Environments section owns. */
 export type EnvDialog =
   | { kind: 'host'; id: string } // id '' adds a server; a joined environment's id renames it
-  | { kind: 'create'; hostId: string }
+  | { kind: 'create'; hostId: string; preset?: 'lore-server' } // preset: a Lore server in one go (name, components, publishing)
   | { kind: 'join'; link: string } // link '' asks for one; a deep link fills it in
 
 /**
@@ -133,6 +136,19 @@ export function directState(host: EnvHost, probe: EnvProbe | null | undefined, p
   return { tone: 'ready', label: t('envs.state.connected') }
 }
 
+/**
+ * What "Use as Lore server" on a Lore server instance's page hands over (`useAsLoreServer`): an entry
+ * for the saved Lore servers, with where it runs. `url` is what this computer uses (the published,
+ * outside address; `.incus` names resolve only inside the server); `insideUrl` is for projects in the
+ * other environments on that same server. `url` is null when it is not published.
+ */
+export interface EnvLoreServerEntry {
+  name: string
+  url: string | null
+  insideUrl: string | null
+  origin: { hostId: string; instance: string }
+}
+
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
 /** A joined environment before (or without) the backend listing it: just its name and whether it answers. */
@@ -185,6 +201,12 @@ export const useEnvironments = defineStore('environments', {
     revoking: {} as Record<string, boolean>,
     /** Per instance: something to tell about the last rename or resize (e.g. it didn't start again). */
     notes: {} as Record<string, string>,
+    /** A Lore server's state and URLs, per instance (see `instanceKey`). */
+    lore: {} as Record<string, EnvLoreServer>,
+    loadingLore: {} as Record<string, boolean>,
+    loreErrors: {} as Record<string, string | null>,
+    /** The addresses a server's Incus host can publish at, per server (for the create dialog). */
+    hostAddresses: {} as Record<string, EnvHostAddresses>,
 
     /* ---- UI (Settings > Environments) ---- */
     /** The page showing: null is the list of servers. */
@@ -324,6 +346,7 @@ export const useEnvironments = defineStore('environments', {
         await call('env_instance_action', { hostId, instance, action })
         if (action === 'delete') {
           delete this.components[key]
+          delete this.lore[key]
           await this.closeDesktop(hostId, instance)
         }
       } finally {
@@ -358,7 +381,7 @@ export const useEnvironments = defineStore('environments', {
         throw e
       }
       const to = instanceKey(hostId, name)
-      for (const map of [this.components, this.componentErrors, this.shares, this.shareErrors, this.intents, this.notes] as Array<Record<string, unknown>>) {
+      for (const map of [this.components, this.componentErrors, this.shares, this.shareErrors, this.intents, this.notes, this.lore, this.loreErrors] as Array<Record<string, unknown>>) {
         if (key in map) { map[to] = map[key]; delete map[key] }
       }
       this.busy[key] = null
@@ -511,6 +534,54 @@ export const useEnvironments = defineStore('environments', {
       } finally {
         delete this.revoking[shareId]
       }
+    },
+
+    /* ---- a Lore server in an instance ---- */
+
+    /** Its state and URLs (one SSH call). */
+    async refreshLore(hostId: string, instance: string) {
+      const key = instanceKey(hostId, instance)
+      this.loadingLore[key] = true
+      try {
+        this.lore[key] = await call('env_lore_server', { hostId, instance })
+        this.loreErrors[key] = null
+      } catch (e) {
+        this.loreErrors[key] = message(e)
+      } finally {
+        this.loadingLore[key] = false
+      }
+    },
+
+    /** Publish it outside the server at `address:port` (UDP and TCP). Throws with a readable message. */
+    async publishLore(hostId: string, instance: string, address: string, port: number) {
+      const key = instanceKey(hostId, instance)
+      this.lore[key] = await call('env_lore_publish', { hostId, instance, address, port })
+      this.loreErrors[key] = null
+      return this.lore[key]
+    },
+
+    /** Stop publishing it. Throws with a readable message. */
+    async unpublishLore(hostId: string, instance: string) {
+      const key = instanceKey(hostId, instance)
+      this.lore[key] = await call('env_lore_unpublish', { hostId, instance })
+      this.loreErrors[key] = null
+      return this.lore[key]
+    },
+
+    /** The addresses a server's Incus host can publish at; read once per session unless `force`. */
+    async loadHostAddresses(hostId: string, force = false) {
+      if (!force && this.hostAddresses[hostId]) return this.hostAddresses[hostId]
+      this.hostAddresses[hostId] = await call('env_host_addresses', { hostId })
+      return this.hostAddresses[hostId]
+    },
+
+    /**
+     * MERGE POINT (saved Lore servers, feat/lore): "Use as Lore server" on a Lore server instance's page
+     * calls this with the entry to save. Wire it to the saved Lore servers there: add the entry (or update
+     * the one whose `origin` matches) and show it in Settings. Until that merge it does nothing.
+     */
+    async useAsLoreServer(entry: EnvLoreServerEntry): Promise<void> {
+      void entry
     },
 
     /** What a pasted link would add; saves nothing. */

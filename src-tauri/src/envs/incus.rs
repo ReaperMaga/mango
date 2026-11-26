@@ -3,7 +3,8 @@
 //! Each action is one `ssh master incus …` call. Creating runs in a terminal
 //! the user watches: one master-side script launches the instance, waits for
 //! it (a VM's agent can take minutes), waits for its network, then installs
-//! the chosen components with the same script as `env_install` (`recipes`).
+//! the chosen components with the same script as `env_install` (`recipes`), and, when asked,
+//! publishes its Lore server outside the server (`lore`; the port is checked before the launch).
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -11,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{AppHandle, State};
 
-use super::{hosts, recipes, ssh, valid_image, valid_instance, EnvHost};
+use super::{hosts, lore, recipes, ssh, valid_image, valid_instance, EnvHost};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +52,9 @@ pub struct EnvCreateInput {
     /// Versions picked for some of them (Node.js, Java), by component id.
     #[serde(default)]
     pub versions: recipes::Versions,
+    /// Publish its Lore server outside the server once it is installed (needs `lore-server`).
+    #[serde(default)]
+    pub lore_publish: Option<lore::EnvLorePublishInput>,
 }
 
 /* ---------- listing ---------- */
@@ -543,13 +547,15 @@ pub async fn env_resize(app: AppHandle, host_id: String, instance: String, input
 /* ---------- create ---------- */
 
 /// Launches `$T` (`incus launch "$@"`), waits for it to answer and reach the network,
-/// then installs (`recipes::MASTER_INSTALL`). Arguments: T SCRIPT KEY TUN NEST, launch args.
-const CREATE: &str = r##"T=$1 SCRIPT=$2 KEY=$3 TUN=$4 NEST=$5
-shift 5
+/// then installs (`recipes::MASTER_INSTALL`). Arguments: T SCRIPT KEY TUN NEST LA LP LR, launch
+/// args. With `LP` set, the Lore server's port must be free before anything is launched.
+const CREATE: &str = r##"T=$1 SCRIPT=$2 KEY=$3 TUN=$4 NEST=$5 LA=$6 LP=$7 LR=$8
+shift 8
 command -v incus >/dev/null 2>&1 || fail "this server has no incus command."
 if incus info "$T" >/dev/null 2>&1; then
   fail "an instance called $T already exists. Pick another name."
 fi
+[ -z "$LP" ] || lore_port_check
 say "Launching $T from $1"
 incus launch "$@" || fail "incus could not launch $T (see above). If a half-made $T is left over, delete it in Mango."
 say "Waiting for $T to boot"
@@ -577,6 +583,8 @@ struct CreatePlan {
     /// `incus launch` arguments: image, target, flags.
     launch: Vec<String>,
     install: Option<recipes::InstallPlan>,
+    /// Publish the Lore server at (listen address, port) once installed.
+    lore: Option<(String, u16)>,
 }
 
 /// `images:ubuntu/24.04` -> `images:ubuntu/24.04/cloud` for VMs: the cloud variant runs
@@ -626,14 +634,32 @@ fn create_plan(host: &EnvHost, input: &EnvCreateInput, now_ms: u64) -> Result<Cr
         }
     }
     launch.extend(["-c".into(), format!("user.mango.created={now_ms}")]);
-    Ok(CreatePlan { launch, install })
+    let lore = match &input.lore_publish {
+        None => None,
+        Some(p) => {
+            if !input.components.iter().any(|c| c == "lore-server") {
+                return Err("Only a Lore server can be published: pick the Lore server component too.".into());
+            }
+            Some(lore::publish_args(p)?)
+        }
+    };
+    Ok(CreatePlan { launch, install, lore })
 }
+
+/// After the install: publish the Lore server when asked, and say what a firewall needs.
+const LORE_PUBLISH: &str = r##"if [ -n "$LP" ]; then
+  say "Publishing the Lore server outside this server: $LA port $LP (UDP and TCP)"
+  lore_publish
+  lore_firewall_say
+fi
+"##;
 
 /// The remote argv (for `ssh::argv`) creating the instance.
 fn create_remote(host: &EnvHost, name: &str, plan: &CreatePlan) -> Vec<String> {
     let script = format!(
-        "{}{CREATE}if [ -n \"$SCRIPT\" ]; then\n{}fi\nsay \"$T is ready.\"\n",
+        "{}{}{CREATE}if [ -n \"$SCRIPT\" ]; then\n{}fi\n{LORE_PUBLISH}say \"$T is ready.\"\n",
         recipes::MASTER_PRELUDE,
+        lore::MASTER_LORE,
         recipes::MASTER_INSTALL
     );
     let mut a = vec!["sh".to_string(), "-c".into(), script, "mango-create".into()];
@@ -641,6 +667,8 @@ fn create_remote(host: &EnvHost, name: &str, plan: &CreatePlan) -> Vec<String> {
         Some(p) => a.extend(recipes::master_install_args(&ssh::target(host, name), p)),
         None => a.extend([ssh::target(host, name), String::new(), String::new(), String::new(), String::new()]),
     }
+    let (la, lp) = plan.lore.clone().map_or((String::new(), String::new()), |(a, p)| (a, p.to_string()));
+    a.extend([la, lp, ssh::remote_prefix(host).unwrap_or_default()]);
     a.extend(plan.launch.iter().cloned());
     a
 }
@@ -822,6 +850,7 @@ mod tests {
             disk_gib: Some(40),
             components: vec!["claude".into(), "tailscale".into()],
             versions: Default::default(),
+            lore_publish: None,
         }
     }
 
@@ -842,9 +871,10 @@ mod tests {
         assert_eq!(&remote[3..5], ["mango-create", "os1:dev"]);
         assert_eq!(remote[7], "1");
         assert_eq!(remote[8], "");
-        assert_eq!(remote[9], "images:ubuntu/24.04/cloud");
+        assert_eq!(&remote[9..12], ["", "", "os1:"]);
+        assert_eq!(remote[12], "images:ubuntu/24.04/cloud");
         let l = ssh::line(&remote);
-        assert!(l.ends_with(" 1 '' images:ubuntu/24.04/cloud os1:dev --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=40GiB -c user.mango.created=42"), "{l}");
+        assert!(l.ends_with(" 1 '' '' '' os1: images:ubuntu/24.04/cloud os1:dev --vm -c limits.cpu=4 -c limits.memory=8GiB -d root,size=40GiB -c user.mango.created=42"), "{l}");
 
         // A container with nothing to install: no flags it didn't ask for, empty install args.
         let mut i = input();
@@ -874,6 +904,40 @@ mod tests {
         i.kind = "vm".into();
         let p = create_plan(&host(), &i, 1).unwrap();
         assert!(!p.launch.iter().any(|a| a.starts_with("security.")));
+    }
+
+    #[test]
+    fn create_publishes_a_lore_server() {
+        let mut i = input();
+        i.name = "lore".into();
+        i.kind = "container".into();
+        i.components = vec!["base".into(), "lore-server".into()];
+        i.lore_publish = Some(lore::EnvLorePublishInput { address: "100.101.7.1".into(), port: 41337 });
+        let p = create_plan(&host(), &i, 1).unwrap();
+        assert_eq!(p.lore, Some(("100.101.7.1".into(), 41337)));
+        let remote = create_remote(&host(), "lore", &p);
+        assert_eq!(&remote[9..12], ["100.101.7.1", "41337", "os1:"]);
+        assert_eq!(remote[12], "images:ubuntu/24.04");
+        let script = &remote[2];
+        // The port is checked before the launch; the devices come after the install.
+        assert!(script.find("lore_port_check\n").unwrap() < script.find("incus launch").unwrap());
+        assert!(script.find("bash -c \"$SCRIPT\"").unwrap() < script.find("  lore_publish\n").unwrap());
+        assert!(script.contains("listen=$p:$LA:$LP") && script.contains("connect=$p:127.0.0.1:41337"));
+        assert!(p.install.as_ref().unwrap().script.contains("loreserver"));
+
+        // Only with the Lore server, and only valid values.
+        let mut bad = i.clone();
+        bad.components = vec!["base".into()];
+        assert!(create_plan(&host(), &bad, 1).is_err());
+        for (a, port) in [("forge.lan", 41337), ("1.2.3.4", 80), ("127.0.0.1", 41337), ("1.2.3.4 x", 41337)] {
+            let mut bad = i.clone();
+            bad.lore_publish = Some(lore::EnvLorePublishInput { address: a.into(), port });
+            assert!(create_plan(&host(), &bad, 1).is_err(), "{a} {port}");
+        }
+        // The create script parses with the Lore pieces in it.
+        if let Ok(out) = std::process::Command::new("sh").args(["-n", "-c", script]).output() {
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        }
     }
 
     #[test]
