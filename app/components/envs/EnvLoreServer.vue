@@ -10,6 +10,7 @@ import { type LoreSignInDraft, draftFrom, draftValid, firstUserOf, signInFrom, s
 import EnvLorePublishFields from './EnvLorePublishFields.vue'
 import EnvTerminal from './EnvTerminal.vue'
 import LoreSignInFields from '~/components/settings/LoreSignInFields.vue'
+import LoreLoginJob from '~/components/settings/LoreLoginJob.vue'
 
 /**
  * The Lore server in an instance (the `lore-server` component), on its page: whether it runs,
@@ -21,12 +22,14 @@ import LoreSignInFields from '~/components/settings/LoreSignInFields.vue'
  * Once published it can require sign-in (`env_lore_auth`, `lore_auth.rs`): Dex and Caddy inside the
  * instance, ports 80 and 443 published beside it, and clients on `lores://<domain>`. Setting it up,
  * turning it off and each user change run in a terminal here, where passwords and the GitHub secret
- * are typed on the server.
+ * are typed on the server. With sign-in on, the row also says whether this computer is signed in, and
+ * "Sign in on this computer" saves the server (as "Use as Lore server") and runs `lore login` right here.
  */
 const props = defineProps<{ hostId: string; instance: string; running: boolean }>()
 
 const { t } = useI18n()
 const envs = useEnvironments()
+const loreServers = useLore()
 const key = computed(() => instanceKey(props.hostId, props.instance))
 const host = computed(() => envs.host(props.hostId))
 const lore = computed(() => envs.lore[key.value] ?? null)
@@ -108,21 +111,23 @@ async function unpublish() {
 
 const using = ref(false)
 const useError = ref<string | null>(null)
-async function use() {
+/** Saves it as a Lore server; `show` moves on to Settings > Lore. Answers the saved entry. */
+async function use(show = true) {
   const l = lore.value
-  if (!l || !host.value) return
+  if (!l || !host.value) return null
   using.value = true
   useError.value = null
   try {
     // With sign-in, every client uses the domain (the CLI only sends its token to the host the token names).
-    await envs.useAsLoreServer({
+    return await envs.useAsLoreServer({
       name: t('envs.lore.entryName', { instance: props.instance, host: host.value.name }),
       url: l.published?.url ?? null,
       insideUrl: l.auth?.on ? null : l.insideUrl ?? l.insideIpUrl,
       origin: { hostId: props.hostId, instance: props.instance },
-    })
+    }, show)
   } catch (e) {
     useError.value = e instanceof Error ? e.message : String(e)
+    return null
   } finally {
     using.value = false
   }
@@ -221,8 +226,38 @@ async function jobExit(code: number | null) {
   if (!props.running) return
   await envs.refreshLore(props.hostId, props.instance)
   if (code !== 0 || (action !== 'setup' && action !== 'off')) return
-  const saved = useLore().servers?.some(x => x.origin?.hostId === props.hostId && x.origin.instance === props.instance)
-  if (saved) await use()
+  const saved = loreServers.servers?.some(x => x.origin?.hostId === props.hostId && x.origin.instance === props.instance)
+  // It stays on this page, where signing this computer in comes next.
+  if (saved) await use(false)
+}
+
+/* ---------- this computer's sign-in ---------- */
+
+/** The address this computer signs in to: the published one, once sign-in is on. */
+const hereUrl = computed(() => (signedIn.value ? published.value?.url ?? null : null))
+const hereState = computed(() => (hereUrl.value ? loreServers.checkOf(hereUrl.value) : null))
+watch(hereUrl, (url) => { if (url && !loreServers.checkOf(url)) void loreServers.check(url) }, { immediate: true })
+/** What the row says about this computer, and whether it offers to sign in. */
+const here = computed<{ text: string; wait: boolean; signIn: boolean } | null>(() => {
+  const s = hereState.value
+  if (!hereUrl.value || !s) return null
+  const c = s.check
+  if (!c) {
+    if (s.loading) return { text: t('lore.signIn.hereChecking'), wait: false, signIn: false }
+    return s.error ? { text: t('lore.signIn.hereUnreachable', { message: s.error }), wait: true, signIn: false } : null
+  }
+  if (c.auth === 'signedIn') return { text: c.user ? t('lore.signIn.hereSignedInAs', { user: c.user }) : t('lore.signIn.hereSignedIn'), wait: false, signIn: false }
+  if (c.auth === 'signedOut') return { text: t('lore.signIn.hereSignedOut'), wait: true, signIn: true }
+  if (c.reach === 'noCli') return { text: t('lore.signIn.hereNoCli'), wait: true, signIn: false }
+  if (c.reach !== 'ok') return { text: t('lore.signIn.hereUnreachable', { message: c.message ?? t('lore.state.unreachable') }), wait: true, signIn: false }
+  return null
+})
+/** The saved entry `lore login` runs for, while it runs. */
+const login = ref<{ url: string; name: string } | null>(null)
+async function signInHere() {
+  if (login.value) return
+  const saved = await use(false)
+  if (saved) login.value = { url: saved.url, name: saved.name }
 }
 function closeJob() {
   if (jobRunning.value) return
@@ -344,6 +379,7 @@ const outsideAddress = computed(() => {
           <dd>
             <template v-if="signedIn && auth">
               <span class="lore__sub lore__sub--strong">{{ t('lore.signIn.onText', { ways }) }}</span>
+              <span v-if="here" class="lore__sub selectable" :class="{ 'lore__sub--wait': here.wait }" role="status">{{ here.text }}</span>
               <span v-if="!auth.certificate" class="lore__sub lore__sub--wait">{{ t('lore.signIn.noCert', { domain: auth.domain }) }}</span>
               <span v-if="auth.github && !auth.githubSecret" class="lore__sub lore__sub--wait">{{ t('lore.signIn.noSecret') }}</span>
               <span v-if="published && !published.web" class="lore__sub lore__sub--wait">{{ t('envs.lore.incomplete') }}</span>
@@ -368,6 +404,16 @@ const outsideAddress = computed(() => {
             <span v-if="!published && !lore.publishNote" class="lore__sub">{{ t('lore.signIn.needsPublish') }}</span>
             <span v-if="!lore.publishNote && published && !signInForm" class="lore__url-actions">
               <template v-if="signedIn && auth">
+                <UiButton
+                  v-if="here?.signIn"
+                  size="sm"
+                  variant="secondary"
+                  :loading="using"
+                  :disabled="!!login || jobRunning"
+                  @click="signInHere"
+                >
+                  {{ t('lore.signIn.signInHere') }}
+                </UiButton>
                 <UiButton v-if="auth.passwords" size="sm" variant="ghost" :disabled="!running || jobRunning" @click="startUser">{{ t('lore.signIn.addUser') }}</UiButton>
                 <UiButton v-if="auth.github" size="sm" variant="ghost" :disabled="!running || jobRunning" @click="run('github-secret')">{{ t('lore.signIn.newSecret') }}</UiButton>
                 <UiButton size="sm" variant="ghost" :disabled="!running || jobRunning" @click="startSignIn">{{ t('lore.signIn.change') }}</UiButton>
@@ -418,6 +464,7 @@ const outsideAddress = computed(() => {
       >
         <template #hint>{{ t('lore.signIn.runHint') }}</template>
       </EnvTerminal>
+      <LoreLoginJob v-if="login" :url="login.url" :name="login.name" @close="login = null" />
 
       <form v-if="editing && canPublish" class="lore__form" novalidate @submit.prevent="publish">
         <EnvLorePublishFields

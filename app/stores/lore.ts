@@ -25,6 +25,8 @@ export const useLore = defineStore('lore', {
     serversError: null as string | null,
     /** The New project dialog asked Settings > Lore to install the CLI (it starts when the section shows). */
     installAsked: false,
+    /** The New project dialog asked Settings > Lore to sign in to this server (it starts when its row shows). */
+    signInAsked: null as string | null,
     /** By server URL. */
     checks: {} as Record<string, LoreCheckState>,
     /** The set-up dialog (a Lore server on a machine over SSH): a new one, or changing `server`. */

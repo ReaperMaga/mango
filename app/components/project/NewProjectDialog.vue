@@ -142,6 +142,13 @@ function openLoreSettings() {
   ws.openSettings('lore')
 }
 
+/** Settings > Lore, with the sign-in for the chosen server already started in its row. */
+function signInLore() {
+  if (!loreUrl.value) return
+  lore.signInAsked = loreUrl.value
+  openLoreSettings()
+}
+
 function installLore() {
   lore.installAsked = true
   openLoreSettings()
@@ -367,7 +374,7 @@ async function submit() {
             <span class="np__state-word">{{ serverState.word }}</span>
             <span v-if="serverState.detail" class="np__state-detail selectable">{{ serverState.detail }}</span>
           </span>
-          <button v-if="serverState.signIn" type="button" class="np__link" :disabled="busy" @click="openLoreSettings">{{ t('project.new.loreSignIn') }}</button>
+          <button v-if="serverState.signIn" type="button" class="np__link" :disabled="busy" @click="signInLore">{{ t('project.new.loreSignIn') }}</button>
           <button v-else-if="serverState.tone !== 'ok' && serverState.tone !== 'checking' && loreUrl" type="button" class="np__link" :disabled="busy" @click="lore.check(loreUrl)">{{ t('project.new.loreCheck') }}</button>
         </p>
 

@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvHostAddresses, EnvInstance, EnvInstanceAction, EnvJoinPreview,
   EnvLoginTool, EnvLoreServer,
-  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions, LoreNew,
+  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions, LoreNew, LoreServer,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
 import { formatLocale, t } from '~/i18n'
@@ -581,7 +581,8 @@ export const useEnvironments = defineStore('environments', {
      * `origin` matches is updated, not added again) and show it there. Unpublished, its inside address is
      * all there is: it then works for projects in this server's environments only. Throws the backend's message.
      */
-    async useAsLoreServer(entry: EnvLoreServerEntry): Promise<void> {
+    /** Saves it (or updates the entry with the same origin) and shows Settings > Lore, unless `show` is false. */
+    async useAsLoreServer(entry: EnvLoreServerEntry, show = true): Promise<LoreServer | null> {
       const url = entry.url ?? entry.insideUrl
       if (!url) throw new Error(t('envs.lore.noAddress'))
       const lore = useLore()
@@ -594,8 +595,9 @@ export const useEnvironments = defineStore('environments', {
         insideUrl: entry.insideUrl,
         origin: entry.origin,
       })
-      useWorkspace().openSettings('lore')
+      if (show) useWorkspace().openSettings('lore')
       if (saved) void lore.check(saved.url)
+      return saved
     },
 
     /** What a pasted link would add; saves nothing. */

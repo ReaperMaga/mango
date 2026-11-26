@@ -3,9 +3,10 @@ import { CircleAlert, CircleCheck, CircleDashed, Download, Ellipsis, Pencil, Ref
 import type { LoreMachineAction, LoreServer, LoreServerCheck } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { machineHost } from '~/utils/loreMachine'
-import { call, openExternal } from '~/composables/useBackend'
+import { call } from '~/composables/useBackend'
 import { useLore } from '~/stores/lore'
 import LoginTerminal from './LoginTerminal.vue'
+import LoreLoginJob from './LoreLoginJob.vue'
 import SettingsLoreForm from './SettingsLoreForm.vue'
 
 /**
@@ -97,49 +98,26 @@ async function remove() {
 
 /* ---------- sign in, sign out ---------- */
 
-interface Job { phase: 'running' | 'checking' | 'failed'; note: string; attempt: number }
-const job = ref<Job | null>(null)
-let attempts = 0
-const termFocused = ref(false)
-const link = ref<string | null>(null)
-const jobEl = ref<HTMLElement | null>(null)
-const startLogin = (cols: number, rows: number) => call('lore_login', { url: props.server.url, cols, rows })
+/** `lore login` runs in the row (`LoreLoginJob`), which closes itself once the server lets this computer in. */
+const signingIn = ref(false)
 
 function signIn() {
   actionError.value = null
-  link.value = null
-  job.value = { phase: 'running', note: '', attempt: ++attempts }
-  nextTick(() => jobEl.value?.scrollIntoView({ block: 'nearest' }))
+  signingIn.value = true
 }
 
-async function onExit(code: number | null) {
-  const j = job.value
-  if (!j || j.phase !== 'running') return
-  j.phase = 'checking'
-  const now = await lore.check(props.server.url)
-  if (job.value !== j) return
-  if (now?.auth === 'signedIn' || now?.auth === 'notRequired') {
-    await closeJob()
-    return
-  }
-  j.note = code === 0 || code === null ? t('lore.servers.loginClosed', { name: props.server.name }) : t('lore.servers.loginExited', { code })
-  j.phase = 'failed'
-}
-
-function onFailed(message: string) {
-  if (!job.value) return
-  job.value.note = t('agents.cli.cantStart', { message: message.replace(/\.$/, '') })
-  job.value.phase = 'failed'
-}
-
-async function closeJob() {
-  const wasRunning = job.value?.phase === 'running'
-  job.value = null
-  termFocused.value = false
+async function signInClosed() {
+  signingIn.value = false
   await nextTick()
   root.value?.querySelector<HTMLElement>('[data-land]')?.focus()
-  if (wasRunning) void lore.check(props.server.url)
 }
+
+/* The New project dialog's "Sign in" lands here and starts it for this server. */
+watch(() => lore.signInAsked, (url) => {
+  if (!url || url !== props.server.url) return
+  lore.signInAsked = null
+  if (!signingIn.value) signIn()
+}, { immediate: true })
 
 /* ---------- a server Mango set up on a machine over SSH ---------- */
 
@@ -156,6 +134,7 @@ interface MachineJob { action: LoreMachineAction; phase: 'running' | 'done' | 'f
 const mjob = ref<MachineJob | null>(null)
 const mjobEl = ref<HTMLElement | null>(null)
 const mjobFocused = ref(false)
+let attempts = 0
 /** Removing asks first: the server goes away for everyone using it. */
 const confirmRemove = ref(false)
 const startMachine = (cols: number, rows: number) =>
@@ -268,7 +247,7 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
         <span v-else-if="machine" class="srv__origin" :title="machine.ssh">{{ t('lore.machine.on', { host: machineHostName }) }}<template v-if="runsAs"> · {{ runsAs }}</template></span>
         <span class="srv__grow" />
         <span class="srv__actions">
-          <UiButton v-if="canSignIn" size="sm" :disabled="!!job && job.phase !== 'failed'" data-land @click="signIn">{{ t('lore.servers.signIn') }}</UiButton>
+          <UiButton v-if="canSignIn" size="sm" :disabled="signingIn" data-land @click="signIn">{{ t('lore.servers.signIn') }}</UiButton>
           <UiButton v-if="canSignOut" size="sm" variant="ghost" :loading="signingOut" @click="signOut">{{ t('common.actions.signOut') }}</UiButton>
           <UiIconButton size="sm" :label="t('lore.servers.check', { name: server.name })" :disabled="checking" @click="recheck">
             <RefreshCw :class="{ 'is-turning': checking }" />
@@ -342,39 +321,7 @@ onMounted(() => { if (!state.value) void lore.check(props.server.url) })
       <p v-else-if="mjob.phase === 'done' && mjob.action === 'remove'" class="job__hint">{{ t('lore.machine.removedHint') }}</p>
     </section>
 
-    <section
-      v-if="job"
-      ref="jobEl"
-      class="job"
-      :class="[`job--${job.phase}`, { 'is-focused': termFocused }]"
-      :aria-label="t('lore.servers.signInTerminal', { name: server.name })"
-    >
-      <header class="job__head">
-        <span class="job__status" role="status">
-          <TriangleAlert v-if="job.phase === 'failed'" class="job__warn" aria-hidden="true" />
-          <span v-else class="ring" :class="{ 'ring--work': job.phase === 'running' }" aria-hidden="true" />
-          <span class="job__title">{{ job.phase === 'checking' ? t('lore.servers.checkingSignIn') : job.phase === 'failed' ? t('lore.servers.signInUnfinished') : t('lore.servers.signingIn', { name: server.name }) }}</span>
-        </span>
-        <span v-if="job.phase !== 'checking'" class="job__actions">
-          <UiButton v-if="job.phase === 'running' && link" variant="ghost" size="sm" :title="link" @click="openExternal(link)">{{ t('agents.hosting.openPage') }}</UiButton>
-          <UiButton v-if="job.phase === 'failed'" size="sm" @click="signIn">{{ t('common.actions.retry') }}</UiButton>
-          <UiButton size="sm" variant="ghost" @click="closeJob">{{ job.phase === 'running' ? t('common.actions.cancel') : t('common.actions.close') }}</UiButton>
-        </span>
-      </header>
-      <p v-if="job.phase === 'failed'" class="job__note selectable" role="alert">{{ job.note }} {{ t('agents.cli.outputKept') }}</p>
-      <div class="job__term" @focusin="termFocused = true" @focusout="termFocused = false">
-        <LoginTerminal
-          :key="job.attempt"
-          :start="startLogin"
-          :label="t('lore.servers.signInTerminal', { name: server.name })"
-          :rows="12"
-          @exit="onExit"
-          @failed="onFailed"
-          @link="link = $event"
-        />
-      </div>
-      <p v-if="job.phase === 'running'" class="job__hint">{{ t('lore.servers.loginHint') }}</p>
-    </section>
+    <LoreLoginJob v-if="signingIn" :url="server.url" :name="server.name" @close="signInClosed" />
   </li>
 </template>
 

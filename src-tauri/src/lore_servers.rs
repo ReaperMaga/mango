@@ -303,7 +303,21 @@ fn servers_file(app: &AppHandle) -> Result<PathBuf, String> {
 fn read_servers(file: &Path) -> Vec<LoreServer> {
     let Ok(text) = fs::read_to_string(file) else { return Vec::new() };
     let list: Vec<LoreServer> = serde_json::from_str(&text).unwrap_or_default();
-    list.into_iter().filter_map(|s| clean(s, false).ok()).take(MAX_SERVERS).collect()
+    list.into_iter().map(with_lore_port).filter_map(|s| clean(s, false).ok()).take(MAX_SERVERS).collect()
+}
+
+/// Builds before 0.10.2 saved a server Mango set up with sign-in as `lores://domain`, meaning Lore's
+/// port; the CLI reads that as 443, where Caddy answers. Such an entry gets 41337 back. Nothing Mango
+/// sets up has Lore on 443 (Caddy holds it beside the server), so no entry saved since looks like that.
+fn with_lore_port(mut s: LoreServer) -> LoreServer {
+    if s.origin.is_some() || s.machine.is_some() {
+        if let Ok(u) = parse_server_url(&s.url) {
+            if u.secure && u.port.is_none() {
+                s.url = format!("{u}:{DEFAULT_PORT}");
+            }
+        }
+    }
+    s
 }
 
 fn write_servers(file: &Path, list: &[LoreServer]) -> Result<(), String> {
@@ -1116,6 +1130,14 @@ mod tests {
         let read = read_servers(&file);
         assert_eq!(read.len(), 1);
         assert_eq!(read[0].origin, None);
+        // A sign-in server saved by an older build without its port gets Lore's port back; one the
+        // user added (no origin, no machine) means what it says.
+        let json = r#"[{"id":"x1","name":"set up","url":"lores://lore.example.com","origin":{"hostId":"h1","instance":"lore"}},
+                       {"id":"x2","name":"own","url":"lores://other.example.com"}]"#;
+        fs::write(&file, json).unwrap();
+        let read = read_servers(&file);
+        assert_eq!(read[0].url, "lores://lore.example.com:41337");
+        assert_eq!(read[1].url, "lores://other.example.com");
         fs::remove_dir_all(&dir).unwrap();
     }
 
