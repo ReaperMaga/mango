@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.9.0
+
+### New
+
+- Add Epic Games' Lore, its servers, and servers Mango sets up.
+
 ## 0.8.0
 
 ### New
