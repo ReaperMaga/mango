@@ -1,20 +1,25 @@
 import { defineStore } from 'pinia'
 import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
-import { answerQuestion, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
+import { answerQuestion, interruptRun, isRunning, readAgentContext, releaseAgents, respondApproval, runAgentTurn, steerRun, stopTask } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
+import { isDecompiledTab, parseDecompiledTab } from '~/utils/decompiledTabs'
 import { useGit } from '~/stores/git'
 import { useFiles } from '~/stores/files'
+import { useLanguageServers } from '~/lsp/store'
 import { isFileTab, parseFileTab, tabProject } from '~/utils/fileTabs'
 import { isBrowserTab, parseBrowserTab } from '~/utils/browserTabs'
 import { isTerminalTab, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
 import { useBrowser } from '~/stores/browser'
 import { demoThreads } from '~/utils/demoThreads'
-import { createdBy } from '~/utils/githubLinks'
+import { createdBy, linkFromRef } from '~/utils/githubLinks'
 import { useLinks } from '~/stores/links'
 import { createPrPrompt } from '~/utils/createPr'
+import { createReleasePrompt } from '~/utils/createRelease'
+import { useForge } from '~/stores/forge'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
 import { call } from '~/composables/useBackend'
@@ -24,6 +29,13 @@ import { adoptRemote, attachRemoteChats, forgetRemote } from '~/utils/remoteChat
 import { useWindows } from '~/stores/windows'
 import { chatRefs, rootIds, type ChatRef } from '~/utils/windows'
 import { notifyChange } from '~/composables/notify'
+import { t } from '~/i18n'
+import { normalizeCache, normalizeContext } from '~/agents/context'
+import { attachmentDrafts, drafts } from '~/utils/drafts'
+import { savedWorktree } from '~/agents/workdir'
+import { transcript } from '~/utils/transcript'
+import { isPanelEditorTab, isPluginTab, normalizePluginTabs, parsePanelEditorTab, savedPluginTabs } from '~/plugin-host/ids'
+import { emitThreadCreated, emitTurnEnd, hooks as pluginHooks, pluginBeforeSend, pluginTabs, reg as pluginReg, restorePluginTabs, runPluginSlash } from '~/plugin-host/registry'
 
 /** Where builds before the chat history database kept chats: read once, to move them over. */
 const LS_KEY = 'mango.threads.v1'
@@ -32,6 +44,8 @@ const uid = (p: string) => `${p}-${Date.now().toString(36)}${Math.random().toStr
 const isCommand = (text: string) => /^\/[\w.:-]+(\s|$)/.test(text.trim())
 /** Mango's own `/clear`: handled here, never sent to the agent. */
 const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
+/** A turn waits this long for open files to save; a slower save still lands, checked against the disk. */
+const AGENT_SAVE_MS = 10_000
 
 export interface Pane { id: string; threadId: string | null }
 
@@ -42,6 +56,8 @@ export interface QueuedMessage {
   attachments: Attachment[]
   /** Already in the chat (sent now, but the run could not take it): only its turn is still due. */
   shown?: boolean
+  /** When the person wrote it. */
+  queuedAt?: number
 }
 
 /** What a running chat has going on besides its reply. Not saved: it dies with the run. */
@@ -74,6 +90,8 @@ export const useThreads = defineStore('threads', {
     live: {} as Record<string, LiveState>,
     /** Per chat id: messages waiting for the running turn to end. Not saved: it dies with the app. */
     queue: {} as Record<string, QueuedMessage[]>,
+    /** Chats whose context window is being read from the CLI (`readContext`). */
+    contextReading: {} as Record<string, true>,
   }),
 
   getters: {
@@ -83,12 +101,12 @@ export const useThreads = defineStore('threads', {
      * Sub-agent chats are not in it: they sit under their parent (childrenOf).
      */
     forProject: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && !t.archived && !t.parentId).sort(byListOrder),
+      s.threads.filter(t => t.projectPath === path && !t.archived && !t.parentId && !isListedUnderOriginal(s.threads, t)).sort(byListOrder),
     archivedFor: s => (path: string) =>
-      s.threads.filter(t => t.projectPath === path && t.archived && !t.parentId).sort((a, b) => b.updatedAt - a.updatedAt),
-    /** The sub-agent chats a chat (or a sub-agent) started, oldest first. */
+      s.threads.filter(t => t.projectPath === path && t.archived && !t.parentId && !isListedUnderOriginal(s.threads, t)).sort((a, b) => b.updatedAt - a.updatedAt),
+    /** The sub-agent chats a chat (or a sub-agent) started and the forks made from it, oldest first. */
     childrenOf: s => (id: string) =>
-      s.threads.filter(t => t.parentId === id).sort((a, b) => a.createdAt - b.createdAt),
+      s.threads.filter(t => t.parentId === id || t.forkOf === id).sort((a, b) => a.createdAt - b.createdAt),
     /** The top-level chat a sub-agent chat belongs to, whose run fills it (a top-level chat is its own). */
     rootOf(): (id: string) => Thread | null {
       return (id) => {
@@ -131,7 +149,7 @@ export const useThreads = defineStore('threads', {
       const project = useWorkspace().activeProjectPath
       if (!project) return null
       const id = this.activePane.threadId
-      const tabPath = parseDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath
+      const tabPath = folderOfTab(id)
       if (tabPath && this.ownerOf(tabPath) === project) return tabPath
       const t = this.byId(id)
       if (t && t.projectPath === project) return this.workdirFor(t.id)
@@ -141,12 +159,15 @@ export const useThreads = defineStore('threads', {
     worktreesOf: s => (projectPath: string): string[] =>
       [...new Set(s.threads.filter(t => t.projectPath === projectPath && t.worktree).map(t => t.worktree!))],
     /**
-     * The active project's tabs, in order. `tabs` holds every project's tabs; only these
-     * are on screen, so only these may be put in a pane (closing a tab, split, Ctrl+1–9).
+     * The active project's tabs, in order, plus any chat another project has in a pane (a split of
+     * two repos). `tabs` holds every project's tabs; only these are on screen, so only these may be
+     * put in a pane (closing a tab, split, Ctrl+1–9).
      */
     visibleTabs(): string[] {
       const path = useWorkspace().activeProjectPath
-      return path ? this.tabs.filter(id => this.projectOf(id) === path) : []
+      if (!path) return []
+      return this.tabs.filter(id => this.projectOf(id) === path
+        || (!!this.byId(id) && this.panes.some(p => p.threadId === id)))
     },
     /** The pane whose tab strip holds a tab: the pane showing it, else the one it was put in, else the left one. */
     groupOf(): (id: string) => string {
@@ -194,9 +215,16 @@ export const useThreads = defineStore('threads', {
         // Anything that was mid-run when the app closed is no longer running.
         this.threads = threads.map(normalizeLoaded)
         if (layout) {
-          this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id))
+          // Plugin tabs that come back; their plugins start later (a tab whose plugin is gone closes then).
+          const plugins = normalizePluginTabs(layout.pluginTabs)
+          restorePluginTabs(plugins)
+          this.tabs = (Array.isArray(layout.tabs) ? layout.tabs : []).filter((id: string) => this.threads.some(t => t.id === id) || plugins.some(p => p.id === id))
           this.panes = Array.isArray(layout.panes) && layout.panes.length ? layout.panes : this.panes
           this.activePaneId = this.panes.some(p => p.id === layout.activePaneId) ? layout.activePaneId : this.panes[0]!.id
+          for (const p of plugins) {
+            const pane = this.tabs.includes(p.id) ? this.panes.find(x => x.id === p.pane) : null
+            if (pane && !pane.threadId) pane.threadId = p.id
+          }
           // Builds before per-pane tab strips saved none: every tab starts in the left pane.
           const groups = layout.groups && typeof layout.groups === 'object' ? layout.groups : {}
           this.groups = Object.fromEntries(Object.entries(groups).filter(([id, pane]) => pane === 'pane-b' && this.tabs.includes(id))) as Record<string, string>
@@ -208,10 +236,11 @@ export const useThreads = defineStore('threads', {
         byId: id => this.byId(id),
         layout: !main ? undefined : () => ({
           // Diff and file tabs are views onto the disk, and a browser's page and a terminal's shell die
-          // with the app: none of them is something to restore next time.
-          tabs: this.tabs.filter(id => !isViewTab(id)),
+          // with the app: none of them is something to restore next time. A plugin's tab is when its view says so.
+          tabs: this.tabs.filter(isKeptTab),
           panes: this.panes.map(p => (isViewTab(p.threadId) ? { ...p, threadId: null } : p)),
-          groups: Object.fromEntries(Object.entries(this.groups).filter(([id]) => !isViewTab(id) && this.tabs.includes(id))),
+          groups: Object.fromEntries(Object.entries(this.groups).filter(([id]) => isKeptTab(id) && this.tabs.includes(id))),
+          pluginTabs: savedPluginTabs(this.tabs, pluginTabs, this.panes),
           activePaneId: this.activePaneId, defaultAgent: this.defaultAgent,
         }),
       })
@@ -268,10 +297,13 @@ export const useThreads = defineStore('threads', {
     release(ids: string[]) {
       const gone = new Set(ids)
       if (!gone.size) return
+      void releaseAgents(p => gone.has(p.chat))
       const projects = new Set(this.threads.filter(t => gone.has(t.id)).map(t => t.projectPath))
       this.threads = this.threads.filter(t => !gone.has(t.id))
       for (const p of projects) if (this.threads.some(t => t.projectPath === p)) projects.delete(p)
-      const leaving = (tab: string) => gone.has(tab) || (!this.byId(tab) && projects.has(this.projectOf(tab) ?? ''))
+      // With autosave, text that could not be saved stays in this window, which asks before it closes.
+      const kept = new Set(useWorkspace().editorAutoSave ? this.tabs.filter(tab => isFileTab(tab) && useFiles().isUnsaved(tab)) : [])
+      const leaving = (tab: string) => gone.has(tab) || (!this.byId(tab) && !kept.has(tab) && projects.has(this.projectOf(tab) ?? ''))
       for (const tab of this.tabs.filter(leaving)) {
         const browser = parseBrowserTab(tab)
         if (browser) useBrowser().forget(browser.browserId)
@@ -372,7 +404,7 @@ export const useThreads = defineStore('threads', {
         projectPath,
         title: 'New chat',
         agent,
-        model: !agentArg && project?.model && useModels().find(agent, project.model) ? project.model : AGENTS[agent].models[0]!.id,
+        model: !agentArg && project?.model && useModels().find(agent, project.model, projectPath) ? project.model : AGENTS[agent].models[0]!.id,
         mode: project?.mode ?? useWorkspace().defaultMode,
         effort: null,
         status: 'working',
@@ -389,6 +421,7 @@ export const useThreads = defineStore('threads', {
       useWindows().claimNew(t.id, projectPath)
       this.show(t.id)
       this.persist(t.id)
+      emitThreadCreated(this.byId(t.id) ?? t)
       return t
     },
 
@@ -408,6 +441,7 @@ export const useThreads = defineStore('threads', {
         const wt = await call('git_worktree_add', { path: projectPath, branch: opts.branch ?? '', from: opts.from ?? null, create: opts.create ?? true })
         folder = wt.path
         branch = wt.branch
+        await useLanguageServers().worktreeMade(folder)
       }
       const t = this.create(projectPath, opts.agent, branch, folder)
       void useGit().loadWorktrees(projectPath)
@@ -460,6 +494,16 @@ export const useThreads = defineStore('threads', {
      * which downloads the branch's files first, so this can take minutes on a big project.
      */
     async _addWorktreeFor(id: string) {
+      // A turn sent after the one that began this was stopped waits for the same worktree.
+      let added = addingWorktree.get(id)
+      if (!added) {
+        added = this._makeWorktreeFor(id).finally(() => addingWorktree.delete(id))
+        addingWorktree.set(id, added)
+      }
+      return added
+    },
+
+    async _makeWorktreeFor(id: string) {
       const t = this.byId(id)
       if (!t?.awaitingWorktree) return
       const path = t.projectPath
@@ -486,6 +530,7 @@ export const useThreads = defineStore('threads', {
         const branch = untakenName(base, taken)
         try {
           const wt = await call('git_worktree_add', { path, branch, from: null, create: true })
+          await useLanguageServers().worktreeMade(wt.path)
           await this.moveToWorktree(id, wt.path, wt.branch ?? branch)
           return
         } catch (e) {
@@ -502,22 +547,33 @@ export const useThreads = defineStore('threads', {
      * back to the project folder. Rejects with the reason (uncommitted changes, unless `force`).
      */
     async removeWorktree(id: string, force = false) {
-      const t = this.byId(id)
-      const folder = t?.worktree
-      if (!t || !folder) return
+      const chat = this.byId(id)
+      const folder = chat?.worktree
+      if (!chat || !folder) return
       const users = this.threads.filter(x => x.worktree === folder)
-      const term = vcsTerms(useWorkspace().openProjects.find(p => p.path === t.projectPath)?.vcs).worktree
-      if (users.some(isBusy)) throw new Error(`A chat is still working in this ${term}. Stop it first.`)
-      await call('git_worktree_remove', { path: t.projectPath, worktree: folder, force })
+      const { pathBranches } = vcsTerms(useWorkspace().openProjects.find(p => p.path === chat.projectPath)?.vcs)
+      if (users.some(isBusy)) throw new Error(t('chat.errors.worktreeBusy', { term: t(pathBranches ? 'chat.terms.workspace' : 'chat.terms.worktree') }))
+      // A process in the folder would keep Windows from removing it.
+      await releaseAgents(p => p.folder === folder)
+      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: chat.projectPath, worktree: folder, force }))
+      this.forgetWorktree(chat.projectPath, folder)
+    },
+
+    /**
+     * A worktree folder of `projectPath` was removed (here or with its branch): the chats that
+     * worked there go back to the project folder, and tabs opened from it close.
+     */
+    forgetWorktree(projectPath: string, folder: string) {
+      const users = this.threads.filter(x => x.worktree === folder)
       for (const x of users) x.worktree = null
       // Diff and file tabs opened from the folder show nothing now.
       for (const tab of [...this.tabs]) {
-        if ((parseDiffTab(tab)?.projectPath ?? parseFileTab(tab)?.projectPath) === folder) this.closeTab(tab)
+        if (folderOfTab(tab) === folder) this.closeTab(tab)
       }
       const git = useGit()
       delete git.repos[folder]
-      void git.loadWorktrees(t.projectPath)
-      this.persist(users.map(x => x.id))
+      void git.loadWorktrees(projectPath)
+      if (users.length) this.persist(users.map(x => x.id))
     },
 
     /**
@@ -564,13 +620,19 @@ export const useThreads = defineStore('threads', {
       else if (this.panes.length > 1) this.closePane(paneId)
     },
 
-    closeTab(id: string) {
+    closeTab(id: string, discard = false) {
       const i = this.tabs.indexOf(id)
       if (i === -1) return
-      // A file with unsaved edits asks first, in its own pane.
-      if (parseFileTab(id) && useFiles().isDirty(id)) {
+      const files = !discard && isFileTab(id) ? useFiles() : null
+      if (files?.isUnsaved(id)) {
+        // With autosave it closes once it has saved, and asks only when that fails.
+        if (useWorkspace().editorAutoSave) {
+          void files.closeWhenSaved(id)
+          return
+        }
+        // A file with unsaved edits asks first, in its own pane.
         this.show(id)
-        useFiles().askClose(id)
+        files.askClose(id)
         return
       }
       const diff = parseDiffTab(id)
@@ -578,6 +640,10 @@ export const useThreads = defineStore('threads', {
       if (isFileTab(id)) useFiles().forget(id)
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
+      if (isPluginTab(id)) delete pluginTabs[id]
+      // A panel tab is closed wherever it is (it can be opened again, into the panel).
+      const panelTab = parsePanelEditorTab(id)
+      if (panelTab) return useWorkspace().closePanelTab(panelTab.ref)
       this.removeTab(id)
       // Closing a terminal's tab ends its shell, as closing it in the panel does.
       const term = parseTerminalTab(id)
@@ -759,7 +825,10 @@ export const useThreads = defineStore('threads', {
       t.status = status
       t.seen = true
       t.archived = false
-      if (status === 'done') this.closeTab(id)
+      if (status === 'done') {
+        this.closeTab(id)
+        void releaseAgents(p => p.chat === id)
+      }
       this.persist(id)
     },
 
@@ -770,6 +839,7 @@ export const useThreads = defineStore('threads', {
       t.archived = true
       t.seen = true
       this.closeTab(id)
+      void releaseAgents(p => p.chat === id)
       this.persist(id)
     },
 
@@ -792,21 +862,24 @@ export const useThreads = defineStore('threads', {
         grew = false
         for (const t of this.threads) if (t.parentId && doomed.has(t.parentId) && !doomed.has(t.id)) { doomed.add(t.id); grew = true }
       }
+      void releaseAgents(p => doomed.has(p.chat))
       for (const x of doomed) { this.closeTab(x); delete this.queue[x]; held.delete(x) }
       this.threads = this.threads.filter(t => !doomed.has(t.id))
       for (const p of this.panes) if (p.threadId && doomed.has(p.threadId)) p.threadId = null
       this.persist()
     },
 
-    setAgent(id: string, agent: AgentId) {
+    /** `model`: the new agent's model to run (its first one when left out). */
+    setAgent(id: string, agent: AgentId, model?: string) {
       const t = this.byId(id)
       if (!t) return
       if (t.agent !== agent) {
         t.agent = agent
-        t.model = AGENTS[agent].models[0]!.id
+        t.model = model ?? AGENTS[agent].models[0]!.id
         t.effort = null
         // Each CLI keeps its own conversation; the other agent starts fresh.
         t.sessionId = null
+        t.context = undefined
       }
       this.defaultAgent = agent
       this.persist(id)
@@ -823,6 +896,29 @@ export const useThreads = defineStore('threads', {
     },
 
     /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
+    /**
+     * A chat shown without a context reading (one from before Mango kept them) gets one from its
+     * CLI, without a turn: once per chat while the app runs, since Claude Code notes the visit in
+     * its session file. Codex cannot say without a turn; its chats wait for their next reply.
+     */
+    async readContext(id: string) {
+      const t = this.byId(id)
+      if (!t || t.parentId || t.context || !t.sessionId || isRunning(id) || contextTried.has(id)) return
+      contextTried.add(id)
+      const session = t.sessionId
+      this.contextReading[id] = true
+      try {
+        const usage = await readAgentContext(t.agent, this.workdirFor(id) ?? t.projectPath, session, t.model)
+        const now = this.byId(id)
+        // A run that started meanwhile reports its own, newer reading.
+        if (!usage || !now || now.context || now.sessionId !== session || isRunning(id)) return
+        now.context = usage
+        this.persist(id)
+      } catch { /* no reading: the ring stays empty until the next reply */ } finally {
+        delete this.contextReading[id]
+      }
+    },
+
     setModel(id: string, model: string, efforts?: string[]) {
       const t = this.byId(id)
       if (!t) return
@@ -850,9 +946,15 @@ export const useThreads = defineStore('threads', {
       const t = this.byId(id)
       // A sub-agent's chat is written by its parent's run only.
       if (!t || t.parentId || (!text.trim() && !attachments.length)) return
+      // Plugins: their own slash commands, then their `onBeforeSend` hooks (only awaited when there are any).
+      if (pluginReg.slashCommands.length || pluginHooks.beforeSend.length) {
+        const plugged = await this._pluginSend(t, text, attachments)
+        if (!plugged || (!plugged.text.trim() && !plugged.attachments.length)) return
+        ;({ text, attachments } = plugged)
+      }
       t.archived = false // writing in an archived chat brings it back
       if (isBusy(t)) {
-        const queued = { id: uid('q'), text: text.trim(), attachments }
+        const queued = { id: uid('q'), text: text.trim(), attachments, queuedAt: Date.now() }
         ;(this.queue[id] ??= []).push(queued)
         // Steer: hand it to the running turn now. Queue: it waits for the turn to end. `opposite` flips the
         // setting for this one message. When the agent has answered and only background tasks (a dev server)
@@ -869,6 +971,22 @@ export const useThreads = defineStore('threads', {
     },
 
     /**
+     * What plugins make of a message before it goes: a plugin's `/command` runs (and may hand back the
+     * text to send instead), then each `onBeforeSend` hook may change it or cancel it (null). Slash
+     * commands (Mango's and the CLI's) are not handed to the hooks: rewritten, they would break.
+     */
+    async _pluginSend(t: Thread, text: string, attachments: Attachment[]): Promise<{ text: string; attachments: Attachment[] } | null> {
+      const projectPath = this.workdirFor(t.id) ?? t.projectPath
+      const slash = await runPluginSlash(text, { threadId: t.id, agent: t.agent, projectPath })
+      if (slash) {
+        if (slash.send === null) return null
+        text = slash.send
+      }
+      if (isCommand(text)) return { text, attachments }
+      return pluginBeforeSend({ threadId: t.id, text, attachments, agent: t.agent, projectPath })
+    },
+
+    /**
      * Give a waiting message to the running turn now: the agent reads it at its next step. A turn
      * that cannot take it (or none running) answers it as the next turn.
      */
@@ -882,14 +1000,19 @@ export const useThreads = defineStore('threads', {
       const [q] = list.splice(i, 1) as [QueuedMessage]
       if (!list.length) delete this.queue[id]
       held.delete(id)
-      this._appendUser(t, q.text, q.attachments)
+      this._appendUser(t, q.text, q.attachments, q.queuedAt)
       if (!isBusy(t)) {
         await this._runTurn(id, q.text, q.attachments)
         await this._sendFollowUps(id)
         return
       }
       // A command waits for the turn to end and then runs on its own; anything else steers.
-      if (!isCommand(q.text) && await steerRun(id, q.text, q.attachments)) return
+      if (!isCommand(q.text)) {
+        const turn = turns.get(id)
+        await this._saveFilesOf(id)
+        // Not when that turn was stopped while the files saved, nor into one started since: it waits with the rest.
+        if (!held.has(id) && turns.get(id) === turn && await steerRun(id, q.text, q.attachments)) return
+      }
       const waiting = this.queue[id] ?? (this.queue[id] = [])
       waiting.unshift({ ...q, shown: true })
       // The turn may have ended while the steer was being tried: nothing else would send it then.
@@ -903,34 +1026,193 @@ export const useThreads = defineStore('threads', {
       else delete this.queue[id]
     },
 
+    /** Keep a message (or let it go): it is listed under "Pinned" in the chat's message list. */
+    togglePin(id: string, messageId: string) {
+      const m = this.byId(id)?.messages.find(x => x.id === messageId)
+      if (!m) return
+      if (m.pinned) delete m.pinned
+      else m.pinned = true
+      this.persist(id)
+    },
+
+    /**
+     * Cut a chat back to just before message `index`. The CLI's session cannot be rewound, so the next
+     * turn starts a fresh one and gets what came before as text (`Thread.history`).
+     */
+    _cutBack(t: Thread, index: number) {
+      t.messages.splice(index)
+      t.sessionId = null
+      t.context = undefined
+      const earlier = transcript(t.messages)
+      if (earlier) t.history = earlier
+      else delete t.history
+      this.persist(t.id)
+    },
+
+    /** Messages that would go if the chat were cut back at `messageId` (the message itself included). */
+    cutCount(id: string, messageId: string): number {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      return t && i >= 0 ? t.messages.length - i : 0
+    },
+
+    /** Replace one of your messages and run it again: it and everything after it make way. */
+    async editMessage(id: string, messageId: string, text: string) {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      const old = t?.messages[i]
+      if (!t || !old || old.role !== 'user' || t.parentId || isBusy(t) || (!text.trim() && !old.attachments?.length)) return
+      const attachments = old.attachments ?? []
+      this._cutBack(t, i)
+      await this.send(id, text, attachments)
+    },
+
+    /** Ask again: an answer and everything after it make way, and the message before it runs once more. */
+    async regenerate(id: string, messageId: string) {
+      const t = this.byId(id)
+      const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+      if (!t || i < 0 || t.parentId || isBusy(t)) return
+      let ask = i
+      while (ask >= 0 && t.messages[ask]!.role !== 'user') ask--
+      const old = t.messages[ask]
+      if (!old || old.fromAgent) return
+      const text = old.parts.map(p => (p.type === 'text' ? p.text : '')).join('')
+      await this.editMessage(id, old.id, text)
+    },
+
+    /**
+     * A new chat that continues from a message: it holds the conversation up to and including it, in
+     * the same folder and with the same settings. The agent gets the earlier part as text.
+     */
+    branchFrom(id: string, messageId: string): Thread | null {
+      const src = this.byId(id)
+      const i = src?.messages.findIndex(m => m.id === messageId) ?? -1
+      if (!src || i < 0 || src.parentId) return null
+      const now = Date.now()
+      const kept = src.messages.slice(0, i + 1).map((m): Message => {
+        const copy = JSON.parse(JSON.stringify(m)) as Message
+        delete copy.pinned
+        // A question or approval that was still open stays open only in the chat it was asked in.
+        copy.parts = copy.parts.filter(p => !awaitsUser(p))
+        return { ...copy, id: uid('m') }
+      }).filter(m => m.parts.length || m.attachments?.length)
+      const t: Thread = {
+        id: uid('t'),
+        projectPath: src.projectPath,
+        title: `${src.title} (branch)`,
+        agent: src.agent,
+        model: src.model,
+        mode: src.mode,
+        effort: src.effort ?? null,
+        status: 'working',
+        messages: kept,
+        createdAt: now,
+        updatedAt: now,
+        seen: true,
+        branch: src.branch ?? null,
+        forkOf: src.id,
+        ...(src.worktree ? { worktree: src.worktree } : {}),
+      }
+      const earlier = transcript(kept)
+      if (earlier) t.history = earlier
+      this.threads.push(t)
+      useWindows().claimNew(t.id, src.projectPath)
+      this.show(t.id)
+      this.persist(t.id)
+      emitThreadCreated(this.byId(t.id) ?? t)
+      return t
+    },
+
     /** A user message into the chat (the title follows the first one). */
-    _appendUser(t: Thread, text: string, attachments: Attachment[]) {
+    _appendUser(t: Thread, text: string, attachments: Attachment[], writtenAt?: number) {
+      const now = Date.now()
       const msg: Message = {
         id: uid('m'),
         role: 'user',
         parts: text ? [{ type: 'text', text }] : [],
-        createdAt: Date.now(),
+        createdAt: now,
+        // Only worth a note when it waited a while for the turn before it.
+        ...(writtenAt && now - writtenAt > 5000 ? { writtenAt } : {}),
       }
       if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
       t.messages.push(msg)
-      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
+      if (t.title === 'New chat' && !isClear(text)) t.title = createPrPrompt(text) ? (useForge().providerOf(t.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       t.updatedAt = Date.now()
       this.persist(t.id)
     },
 
-    /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
-    async _runTurn(id: string, text: string, attachments: Attachment[]) {
+    /**
+     * Compact a large chat after a break. 'asked' ("Compact first"): as the user's `/compact`, and `then`
+     * (what was written) goes out once it worked, or back to the composer. 'idle': by itself, in a break. That
+     * one is no news: nothing is said about it outside the chat, and one that fails leaves no trace.
+     */
+    async compact(id: string, how: 'asked' | 'idle', then?: { text: string; attachments: Attachment[] }) {
+      const t = this.byId(id)
+      if (!t || t.parentId || t.agent !== 'claude' || isBusy(t)) return
+      held.delete(id)
+      if (how === 'asked') {
+        t.archived = false
+        const queued = then && (then.text.trim() || then.attachments.length)
+          ? { id: uid('q'), text: then.text.trim(), attachments: then.attachments, queuedAt: Date.now() }
+          : null
+        if (queued) (this.queue[id] ??= []).push(queued)
+        this._appendUser(t, '/compact', [])
+        await this._runTurn(id, '/compact', [])
+        // It did not work (or was stopped): the message would have the whole conversation read after all. Back to the composer with it.
+        if (this.byId(id)?.cache && queued && this.queue[id]?.some(q => q.id === queued.id) && !drafts.get(id) && !attachmentDrafts.get(id)?.length) {
+          this.dropQueued(id, queued.id)
+          if (queued.text) drafts.set(id, queued.text)
+          if (queued.attachments.length) attachmentDrafts.set(id, queued.attachments)
+        } else if (this.byId(id)?.cache && this.queue[id]?.length) held.add(id)
+        await this._sendFollowUps(id)
+        return
+      }
+      const before = t.updatedAt
+      const began = Date.now()
+      // Once per break, whatever comes of it and in whichever window.
+      if (t.cache) t.cache.tried = true
+      this.persist(id)
+      await this._runTurn(id, '/compact', [], true)
+      const now = this.byId(id)
+      if (now && !isBusy(now)) {
+        const note = now.messages.findLast(m => m.idle && m.createdAt >= began)
+        if (note && now.cache) {
+          now.messages.splice(now.messages.indexOf(note), 1)
+          now.status = 'working'
+        }
+        if (!this.queue[id]?.length) now.updatedAt = before
+        this.persist(id)
+      }
+      // Written while it ran.
+      await this._sendFollowUps(id)
+    },
+
+    /** Never offer to compact this chat after a break, nor do it. */
+    keepContext(id: string) {
+      const t = this.byId(id)
+      if (!t) return
+      t.keepContext = true
+      this.persist(id)
+    },
+
+    /** One turn for a message already in the chat, or Mango's own `/clear`, `/create-pr` and `/create-release`. */
+    async _runTurn(id: string, text: string, attachments: Attachment[], idle = false) {
       const t = this.byId(id)
       if (!t) return
       if (isClear(text) && !attachments.length) {
         // The CLI's conversation is left behind; the next message starts a fresh one.
         t.sessionId = null
+        t.context = undefined
         const m = this._pushAgentMessage(id)
         if (m) this._pushPart(id, m, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
         this.persist(id)
         return
       }
       t.status = 'queued'
+      const turn = ++lastTurn
+      turns.set(id, turn)
+      // The status alone can't say: stopped and sent again, the chat is queued once more.
+      const current = () => turns.get(id) === turn && this.byId(id)?.status === 'queued'
       this.persist(id)
       if (t.awaitingWorktree) {
         // Nothing has run in this chat yet: a message kept from a failed try goes along with this one.
@@ -942,6 +1224,8 @@ export const useThreads = defineStore('threads', {
         try {
           await this._addWorktreeFor(id)
         } catch (e) {
+          // The turn sent since says so.
+          if (turns.has(id) && turns.get(id) !== turn) return
           const m = this._pushAgentMessage(id)
           if (m) {
             this._pushPart(id, m, {
@@ -954,10 +1238,35 @@ export const useThreads = defineStore('threads', {
           return
         }
         // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
-        if (t.status !== 'queued') { stopFlags.delete(id); return }
+        if (!current()) return this._standDown(id)
       }
-      // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-      await runAgentTurn(this, id, createPrPrompt(text) ?? text, attachments)
+      if (useWorkspace().editorAutoSave && !idle) await this._saveFilesOf(id)
+      if (!current()) return this._standDown(id)
+      // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
+      // GitHub's `gh` or GitLab's `glab`, by where the project's repository lives (read with the titlebar's button).
+      const forge = useForge().providerOf(t.projectPath)
+      const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
+      // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
+      const handOver = t.history && !t.sessionId
+      const started = await runAgentTurn(this, id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments, idle)
+      // Never started: the history still has to go along next time, and no turn finished.
+      if (!started) return this._standDown(id)
+      if (t.history && (t.sessionId || this.byId(id)?.status !== 'error')) delete t.history
+      emitTurnEnd(id, this.byId(id)?.status !== 'error')
+    },
+
+    /** The agent reads the saved text: save what is open in the folders it works in. */
+    async _saveFilesOf(id: string) {
+      const t = this.byId(id)
+      if (!t) return
+      const files = useFiles()
+      await files.saveAll(AGENT_SAVE_MS, files.touching(t.projectPath, this.workdirFor(id) ?? t.projectPath))
+    },
+
+    /** A turn was stopped before its agent started, and does not start. */
+    _standDown(id: string) {
+      // With a turn sent since, the flag is that one's.
+      if (!turns.has(id)) stopFlags.delete(id)
     },
 
     /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -971,7 +1280,7 @@ export const useThreads = defineStore('threads', {
         if (!isCommand(waiting[0]!.text)) while (n < waiting.length && !isCommand(waiting[n]!.text)) n++
         const batch = waiting.splice(0, n)
         if (!waiting.length) delete this.queue[id]
-        for (const w of batch) if (!w.shown) this._appendUser(t, w.text, w.attachments)
+        for (const w of batch) if (!w.shown) this._appendUser(t, w.text, w.attachments, w.queuedAt)
         await this._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
       }
     },
@@ -1013,6 +1322,7 @@ export const useThreads = defineStore('threads', {
       }
       // Stop means stop: messages waiting for the next turn stay in the queue but are not sent.
       held.add(id)
+      turns.delete(id)
       // A real run winds down by itself and reports 'stopped'; the simulated one is just flagged.
       if (interruptRun(id)) return
       stopFlags.add(id)
@@ -1045,7 +1355,7 @@ export const useThreads = defineStore('threads', {
       this.persist(t.id)
     },
 
-    /** What GitHub said about an item, on every chat that links it. */
+    /** What GitHub or GitLab said about an item, on every chat that links it. */
     _updateLinks(key: string, patch: Partial<Pick<LinkedItem, 'title' | 'state' | 'url' | 'kind'>>) {
       let changed = false
       for (const t of this.threads) {
@@ -1059,14 +1369,14 @@ export const useThreads = defineStore('threads', {
     },
 
     /**
-     * A tool call finished: when it created a pull request or issue, link it to the chat. If the
+     * A tool call finished: when it created a pull request, merge request or issue, link it to the chat. If the
      * chat is the one in front of the user, the new item opens in the Pull requests tool window.
      */
     _linkCreated(id: string, part: Extract<Part, { type: 'tool' }>) {
       const root = this.rootOf(id)
       if (!root) return
       for (const ref of createdBy(part)) {
-        const fresh = this.link(root.id, { ...ref, source: 'agent', linkedAt: Date.now() })
+        const fresh = this.link(root.id, linkFromRef(ref, 'agent'))
         const links = useLinks()
         void links.load(ref, root.projectPath, true)
         if (fresh && this.activePane.threadId === root.id) links.show(ref.key)
@@ -1160,15 +1470,18 @@ export const useThreads = defineStore('threads', {
       if (wasBusy && !isBusy(t)) {
         const last = t.messages[t.messages.length - 1]
         if (last?.role === 'agent' && last.elapsedMs === undefined) {
-          const asked = [...t.messages].reverse().find(m => m.role === 'user')
+          const asked = last.idle ? last : [...t.messages].reverse().find(m => m.role === 'user')
           last.elapsedMs = Date.now() - (asked?.createdAt ?? last.createdAt)
           last.outcome = outcome ?? (status === 'error' ? 'error' : 'stopped')
         }
       }
       const visible = this.panes.some(p => p.threadId === id)
-      if (outcome === 'done') t.seen = visible
+      // A compaction nobody asked for is no news.
+      const quiet = !!t.messages.at(-1)?.idle
+      if (outcome === 'done' && !quiet) t.seen = visible
       this._touch(id)
       this.persist(id)
+      if (quiet) return
       try { notifyChange(t, before, outcome) } catch { /* a notification never breaks a run */ }
     },
     /** The chat changed (an agent's output too): note the time, and save it soon. */
@@ -1210,10 +1523,24 @@ export const approvalWaiters = new Map<string, (allow: boolean) => void>()
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
 export const stopFlags = new Set<string>()
+/** Each chat's latest turn, until it is stopped: one that waited (files saving, a worktree) starts only as that. */
+const turns = new Map<string, number>()
+let lastTurn = 0
+/** Worktrees being made for chats. */
+const addingWorktree = new Map<string, Promise<void>>()
+/** Chats whose context window was already read from the CLI while the app runs (`readContext`). */
+const contextTried = new Set<string>()
 
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
-/** A tab that shows something other than a chat; none of them is saved with the layout. */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isFileTab(id) || isBrowserTab(id) || isTerminalTab(id)
+/** The folder a diff, file or decompiled source tab was opened from: the project, or a worktree of it. */
+const folderOfTab = (id: string | null | undefined) =>
+  parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath ?? parseDecompiledTab(id)?.projectPath
+
+/** A tab that shows something other than a chat: not saved with the layout (but see `isKeptTab`). */
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isDecompiledTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
+
+/** A tab the layout saves: a chat, or a plugin's that comes back (`restore`). */
+const isKeptTab = (id: string) => (isPluginTab(id) ? !!pluginTabs[id]?.restore : !isViewTab(id))
 
 function normalizeLoaded(t: Thread): Thread {
   const agent: AgentId = t.agent in AGENTS ? t.agent : 'claude'
@@ -1235,18 +1562,32 @@ function normalizeLoaded(t: Thread): Thread {
     }),
   }))
   const links = Array.isArray(t.links)
-    ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+    ? t.links
+      .filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+      // No provider (older builds) is GitHub; only GitLab is written out.
+      .map(({ provider, ...l }) => (provider === 'gitlab' ? { ...l, provider } : l))
     : []
-  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
+  // Older builds took an agent's `cd` into a folder of its project for a worktree: that chat works in the project.
+  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId && typeof t.projectPath === 'string'
+    ? savedWorktree(t.projectPath, t.worktree) ?? undefined
+    : undefined
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree }
+  const context = normalizeContext(t.context)
+  const cache = normalizeCache(t.cache)
+  const keepContext = t.keepContext === true ? true as const : undefined
+  return { ...t, cache, keepContext, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context, history: typeof t.history === 'string' && t.history ? t.history : undefined }
 }
 
 /** The reason in a rejected backend call or a thrown error, without a trailing period. */
 function errorText(e: unknown): string {
   const text = e instanceof Error ? e.message : typeof e === 'string' ? e : String(e)
   return text.trim().replace(/\.$/, '') || 'git gave no reason'
+}
+
+/** A fork sits under its original in the sidebar (while the original is still there, in the same list). */
+function isListedUnderOriginal(all: Thread[], t: Thread) {
+  return !!t.forkOf && all.some(o => o.id === t.forkOf && !!o.archived === !!t.archived)
 }
 
 function titleFrom(text: string) {

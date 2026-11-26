@@ -1,6 +1,8 @@
 import type { Message, Part, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
 import type { AgentEvent } from '~/agents/types'
+import { mergeCache, mergeContext } from '~/agents/context'
+import { cacheOwner } from '~/utils/idleCompaction'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import type { ThreadsState } from '@/state/threads'
 
@@ -99,6 +101,8 @@ export function createTurn(store: Store, threadId: string, first: Message, workd
     return !!t && main.msgIds.some(id => msgOf(t, id)?.parts.some(awaitsUser))
   }
   const moved = new Set<string>()
+  /** What the run has used so far (each `usage` event replaces the one before). */
+  let runUsage: { input: number; output: number; costUsd?: number } | null = null
   let ended = false
   let finish!: () => void
   const finished = new Promise<void>(resolve => (finish = resolve))
@@ -134,6 +138,20 @@ export function createTurn(store: Store, threadId: string, first: Message, workd
     switch (e.type) {
       case 'session':
         store.edit(threadId, (d) => { d.sessionId = e.sessionId })
+        break
+      case 'context':
+        // Kept with the chat, so the desktop shows it too; the phone does not draw it yet.
+        store.edit(threadId, (d) => { d.context = mergeContext(d.context, e.usage) })
+        break
+      case 'cache':
+        // Like the desktop, which offers to compact a large chat after a break: it must know of requests made here.
+        store.edit(threadId, (d) => { d.cache = mergeCache(d.cache, e, cacheOwner(d)) })
+        break
+      case 'compacted':
+        store.edit(threadId, (d) => { delete d.cache })
+        break
+      case 'usage':
+        runUsage = e.usage
         break
       case 'workdir': {
         // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns follow
@@ -320,6 +338,9 @@ export function createTurn(store: Store, threadId: string, first: Message, workd
           }
           if (e.status === 'stopped') push(d, main, { type: 'notice', level: 'info', text: 'Stopped.' })
           dropEmpty(d, main.msgIds)
+          // What the turn spent goes on its last reply, beside how long it took.
+          const lastReply = d.messages[d.messages.length - 1]
+          if (runUsage && lastReply?.role === 'agent' && main.msgIds.includes(lastReply.id)) lastReply.usage = { ...runUsage }
         })
         onEnd()
         store._clearLive(threadId)

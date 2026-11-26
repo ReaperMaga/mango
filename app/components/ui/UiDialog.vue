@@ -21,8 +21,8 @@ const onBodyScroll = (e: Event) => { scrolled.value = (e.target as HTMLElement).
 
 function onKey(e: KeyboardEvent) {
   if (e.key === 'Escape' && props.open) {
-    // In an embedded terminal Escape belongs to the program.
-    if ((e.target as HTMLElement | null)?.closest?.('.xterm')) return
+    // In an embedded terminal Escape belongs to the program; a popup over the dialog that says so closes itself first.
+    if ((e.target as HTMLElement | null)?.closest?.('.xterm, [data-own-escape]')) return
     e.stopPropagation()
     if (props.dismissible) emit('close')
   }

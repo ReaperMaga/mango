@@ -5,16 +5,21 @@ import {
 } from 'lucide-vue-next'
 import type { GitFile, VcsLock } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
+import { releaseAgents } from '~/agents'
 import { useWorkspace } from '~/stores/workspace'
 import { gitFileKey, useGit, type GitAction } from '~/stores/git'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
 import { useLinks } from '~/stores/links'
 import { call } from '~/composables/useBackend'
 import { linkFromItem } from '~/utils/githubLinks'
+import { useForge } from '~/stores/forge'
+import { siteName } from '~/utils/forge'
+import { formatLocale } from '~/i18n'
 import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
-import { lockHolder, lockSummary, resultLines, units, vcsTerms } from '~/utils/vcs'
+import { lockHolder, lockSummary, resultLines, vcsTerms } from '~/utils/vcs'
 import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
 
@@ -23,6 +28,7 @@ const TICK_MS = 4000
 /** A remote project's every read is a few SSH connections: look less often. */
 const REMOTE_POLL_MS = 15000
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const git = useGit()
 const now = useNow()
@@ -36,6 +42,7 @@ const status = computed(() => repo.value?.status ?? null)
 const isRepo = computed(() => !!status.value?.isRepo)
 /** Words and actions for git or Unity VCS. */
 const terms = computed(() => vcsTerms(status.value?.vcs))
+const isUnity = computed(() => status.value?.vcs === 'plastic')
 const staged = computed(() => git.stagedFiles(path.value))
 const changes = computed(() => git.changedFiles(path.value))
 const conflicts = computed(() => changes.value.filter(f => f.conflicted).length)
@@ -47,7 +54,6 @@ const running = (action: GitAction) => git.isBusy(path.value, action)
 /** Staging takes milliseconds; only the slow actions are worth greying controls out for. */
 const waiting = computed(() => !!git.busy && !['stage', 'unstage', 'discard'].includes(git.busy))
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ? e.message : String(e)).trim()
 
 /* ---------- keeping it fresh ---------- */
@@ -97,7 +103,7 @@ const notice = computed(() => {
     if (git.lastOutput) return noticeOf(false, git.lastOutput, true)
   }
   // A failed background refresh while older data is still on screen.
-  if (repo.value?.error && status.value) return noticeOf(true, `Couldn't refresh.\n${repo.value.error}`, false)
+  if (repo.value?.error && status.value) return noticeOf(true, `${t('git.panel.couldNotRefresh')}\n${repo.value.error}`, false)
   return null
 })
 /* Confirmations ("Committed a1b2c3d", "Pulled 3 commits into main.") clear themselves; failures stay until dismissed. */
@@ -109,7 +115,7 @@ watch(() => git.lastOutput, (out) => {
 
 /* ---------- branch ---------- */
 
-const branchLabel = computed(() => status.value?.branch ?? (status.value?.head ? `${status.value.head} (detached)` : 'No branch'))
+const branchLabel = computed(() => status.value?.branch ?? (status.value?.head ? t('git.panel.detached', { head: status.value.head }) : t('git.panel.noBranch')))
 const branchItems = computed<MenuItem[]>(() => {
   const current = status.value?.branch ?? null
   const local = repo.value?.branches?.local ?? (current ? [current] : [])
@@ -119,7 +125,7 @@ const branchItems = computed<MenuItem[]>(() => {
     checked: name === current,
     onSelect: () => { if (name !== current && path.value) void git.checkout(path.value, name) },
   }))
-  items.push({ label: 'New branch…', icon: Plus, divider: items.length > 0, onSelect: startCreate })
+  items.push({ label: t('git.newBranch'), icon: Plus, divider: items.length > 0, onSelect: startCreate })
   return items
 })
 function openBranches(toggle: () => void, open: boolean) {
@@ -169,51 +175,62 @@ const wtBranch = computed(() => status.value?.branch ?? null)
 const base = computed(() => repo.value?.vsMain?.base ?? git.worktrees(path.value).find(w => w.isMain)?.branch ?? null)
 /** Commits here that the base lacks; null when it can't be read. */
 const aheadOfBase = computed(() => repo.value?.vsMain?.ahead ?? null)
-const vsLabel = computed(() => (aheadOfBase.value === null || !base.value ? null
-  : aheadOfBase.value === 0 ? 'up to date with' : `${plural(aheadOfBase.value, 'commit')} ahead of`))
+const vsTitle = computed(() => {
+  if (aheadOfBase.value === null || !base.value) return null
+  const names = { name: wtBranch.value ?? t('git.panel.thisWorktree'), base: base.value }
+  return aheadOfBase.value === 0 ? t('git.panel.upToDateTitle', names) : t('git.panel.aheadOfTitle', names, aheadOfBase.value)
+})
 
 const mergeBlocked = computed(() => {
-  if (!wtBranch.value) return 'HEAD is detached: switch to a branch to merge it'
-  if (!base.value || !mainFolder.value) return "The project's main folder is not on a branch"
-  if (wtBranch.value === base.value) return `This worktree is on ${base.value} itself`
-  if (!clean.value) return 'Commit or discard the changes in this worktree first'
-  if (aheadOfBase.value === 0) return `Nothing to merge: ${base.value} already has every commit`
+  if (!wtBranch.value) return t('git.panel.detachedMerge')
+  if (!base.value || !mainFolder.value) return t('git.panel.mainNoBranch')
+  if (wtBranch.value === base.value) return t('git.panel.onBase', { base: base.value })
+  if (!clean.value) return t('git.panel.dirty')
+  if (aheadOfBase.value === 0) return t('git.panel.nothingToMerge', { base: base.value })
   return null
 })
-const mergeTitle = computed(() => mergeBlocked.value ?? `Merge ${wtBranch.value} into ${base.value}, in the project folder`)
+const mergeTitle = computed(() => mergeBlocked.value ?? t('git.panel.mergeTitle', { branch: wtBranch.value, base: base.value }))
 function mergeIntoBase() {
   if (mergeBlocked.value || !path.value || !mainFolder.value || !wtBranch.value) return
   void git.mergeWorktree(path.value, mainFolder.value, wtBranch.value)
 }
 
+/** GitHub's pull request or GitLab's merge request, by the remotes of the folder in view. */
+const forge = useForge()
+watch(path, p => forge.ensure(p), { immediate: true })
+const forgeLink = computed(() => (path.value ? forge.links[path.value] ?? null : null))
+const onGitlab = computed(() => forgeLink.value?.provider === 'gitlab')
+const prLabel = computed(() => (onGitlab.value ? t('git.panel.mergeRequest') : t('git.panel.pullRequest')))
 const prBlocked = computed(() => {
-  if (!terms.value.remotes) return 'Pull requests need a git remote'
-  if (!wtBranch.value) return 'HEAD is detached: switch to a branch first'
-  if (!base.value) return "The project's main folder is not on a branch"
-  if (wtBranch.value === base.value) return `This worktree is on ${base.value} itself`
-  if (aheadOfBase.value === 0) return `No commits to propose: ${base.value} already has them all`
+  if (!terms.value.remotes) return onGitlab.value ? t('git.panel.mrNeedRemote') : t('git.panel.prNeedRemote')
+  if (!wtBranch.value) return t('git.panel.detachedPr')
+  if (!base.value) return t('git.panel.mainNoBranch')
+  if (wtBranch.value === base.value) return t('git.panel.onBase', { base: base.value })
+  if (aheadOfBase.value === 0) return t('git.panel.noProposal', { base: base.value })
   return null
 })
-const prTitle = computed(() => prBlocked.value ?? `Push ${wtBranch.value} and open a pull request into ${base.value} on GitHub`)
-/** Open the pull request and link it to the chats that work in this worktree. */
+const prTitle = computed(() => prBlocked.value ?? t(onGitlab.value ? 'git.panel.mrTitle' : 'git.panel.prTitle', {
+  branch: wtBranch.value, base: base.value, site: siteName(forgeLink.value?.provider, forgeLink.value?.host),
+}))
+/** Open the pull request (merge request) and link it to the chats that work in this worktree. */
 async function openPullRequest() {
   const folder = path.value
   if (prBlocked.value || !folder || !base.value) return
   const item = await git.openPullRequest(folder, base.value)
   if (!item) return
-  const users = threads.threads.filter(t => t.worktree === folder && !t.parentId)
+  const users = threads.threads.filter(x => x.worktree === folder && !x.parentId)
   if (!users.length) return
   const links = useLinks()
   const link = linkFromItem(item, 'user')
   links.details[link.key] = { item, loading: false, quiet: false, error: null, fetchedAt: Date.now(), bodyAt: Date.now() }
-  for (const t of users) threads.link(t.id, link)
+  for (const x of users) threads.link(x.id, link)
   links.show(link.key)
 }
 
 const stripMenu = computed<MenuItem[]>(() => [
-  { label: 'Reveal in Files', icon: FolderOpen, onSelect: () => ws.openTool('files') },
-  { label: 'Open terminal here', icon: SquareTerminal, onSelect: () => { if (path.value) ws.newTerminal(path.value) } },
-  { label: 'Remove worktree…', icon: FolderMinus, danger: true, divider: true, disabled: !!git.busy, onSelect: askRemove },
+  { label: t('git.panel.revealInFiles'), icon: FolderOpen, onSelect: () => ws.openTool('files') },
+  { label: t('git.panel.openTerminal'), icon: SquareTerminal, onSelect: () => { if (path.value) ws.newTerminal(path.value) } },
+  { label: t('git.panel.removeWorktreeItem'), icon: FolderMinus, danger: true, divider: true, disabled: !!git.busy, onSelect: askRemove },
 ])
 
 /* Remove: asks first, then once more when the worktree has uncommitted work (as the sidebar does). */
@@ -224,7 +241,7 @@ const removeError = ref('')
 /** The worktree has changes git would throw away: the next press removes it anyway. */
 const removeForce = ref(false)
 /** The chats that work in the folder; they go back to the project folder. */
-const removeUsers = computed(() => threads.threads.filter(t => t.worktree === removing.value && !t.parentId))
+const removeUsers = computed(() => threads.threads.filter(x => x.worktree === removing.value && !x.parentId))
 watch(path, () => { if (!removeBusy.value) removing.value = null })
 function askRemove() {
   removing.value = linkedWorktree.value
@@ -242,8 +259,11 @@ async function removeWorktree() {
       await threads.removeWorktree(user.id, removeForce.value)
     } else {
       const main = mainFolder.value
-      if (!main) throw new Error("Couldn't find the project's main folder")
-      await call('git_worktree_remove', { path: main, worktree: folder, force: removeForce.value })
+      if (!main) throw new Error(t('git.panel.noMainFolder'))
+      const force = removeForce.value
+      // A process in the folder would keep Windows from removing it.
+      await releaseAgents(p => p.folder === folder)
+      await useFiles().aroundChange([folder], () => call('git_worktree_remove', { path: main, worktree: folder, force }))
       delete git.repos[folder]
       await git.loadWorktrees(main)
     }
@@ -263,20 +283,20 @@ async function removeWorktree() {
 const upstream = computed(() => status.value?.upstream ?? null)
 const ahead = computed(() => status.value?.ahead ?? 0)
 const behind = computed(() => status.value?.behind ?? 0)
-const pullTitle = computed(() => (behind.value ? `Pull ${plural(behind.value, 'commit')} from ${upstream.value}` : `Pull from ${upstream.value}`))
+const pullTitle = computed(() => (behind.value ? t('git.panel.pullN', { upstream: upstream.value }, behind.value) : t('git.panel.pull', { upstream: upstream.value })))
 /** Unity VCS: bring the workspace to the newest changeset on its branch. */
 const updateTitle = computed(() => (behind.value
-  ? `Update: ${units(behind.value, terms.value)} on ${status.value?.branch ?? 'the branch'} you don't have yet`
-  : 'Update the workspace to the latest changeset'))
+  ? t('git.panel.updateN', { branch: status.value?.branch ?? t('git.panel.theBranch') }, behind.value)
+  : t('git.panel.update')))
 /** Unity VCS: the repository the workspace is bound to, without the server part. */
 const repository = computed(() => status.value?.repository ?? null)
 const repositoryName = computed(() => repository.value?.split('@')[0] ?? null)
-const pushTitle = computed(() => (ahead.value ? `Push ${plural(ahead.value, 'commit')} to ${upstream.value}` : `Push to ${upstream.value} (nothing new)`))
+const pushTitle = computed(() => (ahead.value ? t('git.panel.pushN', { upstream: upstream.value }, ahead.value) : t('git.panel.pushNothing', { upstream: upstream.value })))
 const canPublish = computed(() => !!status.value?.branch && !!status.value?.head)
 const publishTitle = computed(() => {
-  if (!status.value?.branch) return 'Switch to a branch to publish it'
-  if (!status.value.head) return 'Commit something first, then publish'
-  return `Push ${status.value.branch} and start tracking it on the remote`
+  if (!status.value?.branch) return t('git.panel.publishNoBranch')
+  if (!status.value.head) return t('git.panel.publishNoCommit')
+  return t('git.panel.publishTitle', { branch: status.value.branch })
 })
 
 /* ---------- commit ---------- */
@@ -305,26 +325,25 @@ const lockedOut = computed(() => (terms.value.locks
   ? (staged.value.length ? staged.value : changes.value).map(f => lockOf(f.path)).filter((l): l is VcsLock => !!l && !l.mine)
   : []))
 const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title?: string }>(() => {
-  if (conflicts.value) return { text: `Resolve ${plural(conflicts.value, 'conflict')} first`, warn: true }
+  if (conflicts.value) return { text: t('git.panel.resolveConflicts', conflicts.value), warn: true }
   const out = lockedOut.value
   if (out.length) {
     const first = out[0]!
     const name = first.path.slice(first.path.lastIndexOf('/') + 1)
     return {
-      text: out.length === 1 ? `${name} is locked by ${lockHolder(first)}` : `${plural(out.length, 'file')} locked by others`,
+      text: out.length === 1 ? t('git.panel.lockedBy', { name, who: lockHolder(first) }) : t('git.panel.lockedByOthers', out.length),
       warn: false,
       lock: true,
-      title: `${out.map(l => `${l.path}: ${lockSummary(l)}`).join('\n')}\nThe checkin is likely to be refused until the lock is released.`,
+      title: `${out.map(l => `${l.path}: ${lockSummary(l)}`).join('\n')}\n${t('git.panel.refused')}`,
     }
   }
-  if (staged.value.length) return { text: `${plural(staged.value.length, 'file')} staged`, warn: false }
-  const all = changes.value.length === 1 ? 'the 1 change' : `all ${changes.value.length} changes`
-  if (changes.value.length) return { text: terms.value.amend ? `Nothing staged. Stages ${all}.` : `Nothing staged. Checks in ${all}.`, warn: false }
-  return { text: `Nothing to ${terms.value.commit.toLowerCase()}`, warn: false }
+  if (staged.value.length) return { text: t('git.panel.stagedFiles', staged.value.length), warn: false }
+  if (changes.value.length) return { text: terms.value.amend ? t('git.panel.stagesAll', changes.value.length) : t('git.panel.checksInAll', changes.value.length), warn: false }
+  return { text: isUnity.value ? t('git.panel.nothingToCheckIn') : t('git.panel.nothingToCommit'), warn: false }
 })
 const commitTitle = computed(() => {
-  const verb = terms.value.commit.toLowerCase()
-  return commitsAll.value ? `Stage everything and ${verb}` : `${terms.value.commit} staged files`
+  if (isUnity.value) return commitsAll.value ? t('git.panel.stageAndCheckIn') : t('git.panel.checkInStaged')
+  return commitsAll.value ? t('git.panel.stageAndCommit') : t('git.panel.commitStaged')
 })
 const showCommit = computed(() => isRepo.value && (!clean.value || !!message.value))
 
@@ -340,15 +359,15 @@ function onMessageKey(e: KeyboardEvent) {
 /** Unity VCS: the Shelves section, whose form the commit menu opens with the comment typed so far. */
 const shelvesView = ref<{ start: (comment?: string) => void } | null>(null)
 const shelveMenu = computed<MenuItem[]>(() => [{
-  label: 'Shelve changes…',
+  label: t('git.shelves.shelveItem'),
   icon: Archive,
-  hint: 'Park them on the server, with the comment above',
+  hint: t('git.panel.shelveHint'),
   disabled: !!git.busy || (!staged.value.length && !changes.value.length),
   onSelect: () => shelvesView.value?.start(message.value),
 }])
 const commitMenu = computed<MenuItem[]>(() => [{
-  label: 'Amend last commit',
-  hint: message.value.trim() ? 'Adds what is staged and replaces its message' : 'Adds what is staged, keeps its message',
+  label: t('git.panel.amend'),
+  hint: message.value.trim() ? t('git.panel.amendReplace') : t('git.panel.amendKeep'),
   disabled: !status.value?.head || !!git.busy || conflicts.value > 0,
   onSelect: () => { if (path.value) animated(git.commit(path.value, { amend: true })) },
 }])
@@ -437,23 +456,23 @@ function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
   const code = isStaged ? file.index : file.worktree
   const lock = lockOf(file.path)
   const items: MenuItem[] = [
-    { label: 'Open diff', onSelect: () => toggle(file, isStaged) },
+    { label: t('git.panel.openDiff'), onSelect: () => toggle(file, isStaged) },
     isStaged
-      ? { label: 'Unstage', icon: Minus, disabled: waiting.value, onSelect: () => unstage(file) }
-      : { label: 'Stage', icon: Plus, disabled: waiting.value, onSelect: () => stage(file) },
+      ? { label: t('git.unstage'), icon: Minus, disabled: waiting.value, onSelect: () => unstage(file) }
+      : { label: t('git.stage'), icon: Plus, disabled: waiting.value, onSelect: () => stage(file) },
   ]
   if (lock?.mine) {
-    items.push({ label: 'Release lock', icon: LockOpen, hint: 'Others can check it out again', divider: true, disabled: !!git.busy, onSelect: () => unlockFile(file.path) })
+    items.push({ label: t('git.panel.releaseLock'), icon: LockOpen, hint: t('git.panel.releaseLockHint'), divider: true, disabled: !!git.busy, onSelect: () => unlockFile(file.path) })
   } else if (lock) {
-    items.push({ label: 'Lock', icon: Lock, hint: `Held by ${lock.owner}`, divider: true, disabled: true })
+    items.push({ label: t('git.panel.lock'), icon: Lock, hint: t('git.panel.heldBy', { owner: lock.owner }), divider: true, disabled: true })
   } else {
-    const cannot = code === '?' || code === 'A' ? 'New files can be locked once checked in'
-      : code === 'D' ? 'Deleted from the workspace'
+    const cannot = code === '?' || code === 'A' ? t('git.panel.lockNew')
+      : code === 'D' ? t('git.panel.lockDeleted')
         : null
     items.push({
-      label: 'Lock',
+      label: t('git.panel.lock'),
       icon: Lock,
-      hint: cannot ?? 'Checks it out so only you can change it',
+      hint: cannot ?? t('git.panel.lockHint'),
       divider: true,
       disabled: !!cannot || !!git.busy,
       onSelect: () => lockFile(file.path),
@@ -480,10 +499,10 @@ function onListKey(e: KeyboardEvent) {
 
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
-  <section class="gp" aria-label="Changes">
+  <section class="gp" :aria-label="t('git.changes')">
     <header class="gp__head">
       <h2 class="gp__title">
-        Changes<span v-if="linkedWorktree" class="gp__wt" :title="`Worktree: ${linkedWorktree}`"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
+        {{ t('git.changes') }}<span v-if="linkedWorktree" class="gp__wt" :title="t('git.panel.worktreePath', { path: linkedWorktree })"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
       </h2>
       <div class="gp__tools">
         <template v-if="isRepo && !terms.remotes">
@@ -494,7 +513,7 @@ function onListKey(e: KeyboardEvent) {
           </button>
         </template>
         <template v-else-if="isRepo">
-          <UiIconButton label="Fetch from the remote" :disabled="waiting" @click="path && git.fetch(path)">
+          <UiIconButton :label="t('git.panel.fetch')" :disabled="waiting" @click="path && git.fetch(path)">
             <span v-if="running('fetch')" class="gp__spin" aria-hidden="true" />
             <CloudDownload v-else />
           </UiIconButton>
@@ -511,15 +530,17 @@ function onListKey(e: KeyboardEvent) {
             </button>
           </template>
         </template>
-        <UiIconButton label="Refresh" :class="{ 'is-spun': spun }" @click="manualRefresh"><RefreshCw /></UiIconButton>
+        <UiIconButton :label="t('common.actions.refresh')" :class="{ 'is-spun': spun }" @click="manualRefresh"><RefreshCw /></UiIconButton>
       </div>
     </header>
 
-    <div v-if="showStrip" class="gp__wtstrip" role="group" :aria-label="`Worktree ${worktreeName(linkedWorktree!)}`">
+    <div v-if="showStrip" class="gp__wtstrip" role="group" :aria-label="t('git.panel.worktree', { name: worktreeName(linkedWorktree!) })">
       <!-- The branch is in the row below; this line only says how it stands against the base. -->
-      <p v-if="vsLabel" class="gp__wtline" :title="`${wtBranch ?? 'This worktree'}: ${vsLabel} ${base}`">
+      <p v-if="vsTitle" class="gp__wtline tabular" :title="vsTitle">
         <GitCompareArrows aria-hidden="true" />
-        <span class="tabular">{{ vsLabel }}</span> <code class="gp__wtbase">{{ base }}</code>
+        <i18n-t :keypath="aheadOfBase ? 'git.panel.aheadOf' : 'git.panel.upToDate'" :plural="aheadOfBase ?? 0" scope="global">
+          <template #base><code class="gp__wtbase">{{ base }}</code></template>
+        </i18n-t>
       </p>
       <div class="gp__wtbtns">
         <UiButton
@@ -531,7 +552,7 @@ function onListKey(e: KeyboardEvent) {
           :title="mergeTitle"
           @click="mergeIntoBase"
         >
-          <GitMerge v-if="!running('merge')" /><span class="gp__wtmerge-label">Merge into <span class="gp__wtmerge-base">{{ base ?? 'base' }}</span></span>
+          <GitMerge v-if="!running('merge')" /><i18n-t keypath="git.panel.mergeInto" tag="span" class="gp__wtmerge-label" scope="global"><template #base><span class="gp__wtmerge-base">{{ base ?? t('git.panel.base') }}</span></template></i18n-t>
         </UiButton>
         <UiButton
           size="sm"
@@ -539,15 +560,15 @@ function onListKey(e: KeyboardEvent) {
           :loading="running('pr')"
           :disabled="waiting || !!prBlocked"
           :title="prTitle"
-          aria-label="Pull request"
+          :aria-label="prLabel"
           @click="openPullRequest"
         >
-          <GitPullRequestArrow v-if="!running('pr')" /><span class="gp__wtpr-label">Pull request</span>
+          <GitPullRequestArrow v-if="!running('pr')" /><span class="gp__wtpr-label">{{ prLabel }}</span>
         </UiButton>
         <span class="gp__wtgap" />
-        <UiMenu :items="stripMenu" placement="bottom-end" :width="220" label="More worktree actions">
+        <UiMenu :items="stripMenu" placement="bottom-end" :width="220" :label="t('git.panel.moreWorktree')">
           <template #default="{ toggle: toggleMenu, open: menuOpen }">
-            <UiIconButton size="sm" label="More worktree actions" :active="menuOpen" @click="toggleMenu"><MoreHorizontal /></UiIconButton>
+            <UiIconButton size="sm" :label="t('git.panel.moreWorktree')" :active="menuOpen" @click="toggleMenu"><MoreHorizontal /></UiIconButton>
           </template>
         </UiMenu>
       </div>
@@ -563,7 +584,7 @@ function onListKey(e: KeyboardEvent) {
               :class="{ 'is-open': menuOpen }"
               aria-haspopup="dialog"
               :aria-expanded="menuOpen"
-              :title="menuOpen ? undefined : `Branch: ${branchLabel}`"
+              :title="menuOpen ? undefined : t('git.panel.branch', { name: branchLabel })"
               @click="toggle"
             >
               <span v-if="running('checkout')" class="gp__spin" aria-hidden="true" />
@@ -573,8 +594,8 @@ function onListKey(e: KeyboardEvent) {
             </button>
           </template>
         </GitBranchPopup>
-        <span v-if="upstream" class="gp__upstream" :title="`Tracks ${upstream}`">{{ upstream }}</span>
-        <span v-else-if="repository" class="gp__upstream" :title="`Unity VCS repository ${repository}`">{{ repositoryName }}</span>
+        <span v-if="upstream" class="gp__upstream" :title="t('git.panel.tracks', { name: upstream })">{{ upstream }}</span>
+        <span v-else-if="repository" class="gp__upstream" :title="t('git.panel.repository', { name: repository })">{{ repositoryName }}</span>
         <UiButton
           v-else-if="status?.branch && terms.remotes"
           class="gp__publish"
@@ -585,7 +606,7 @@ function onListKey(e: KeyboardEvent) {
           :title="publishTitle"
           @click="path && git.push(path)"
         >
-          <CloudUpload />Publish branch
+          <CloudUpload />{{ t('git.panel.publish') }}
         </UiButton>
       </template>
     </div>
@@ -597,7 +618,7 @@ function onListKey(e: KeyboardEvent) {
         <p class="gp__notice-title">{{ notice.title }}</p>
         <p v-if="notice.detail" class="gp__notice-detail">{{ notice.detail }}</p>
       </div>
-      <UiIconButton v-if="notice.dismiss" size="sm" label="Dismiss" @click="git.dismiss()"><X /></UiIconButton>
+      <UiIconButton v-if="notice.dismiss" size="sm" :label="t('git.panel.dismiss')" @click="git.dismiss()"><X /></UiIconButton>
     </div>
 
     <form v-if="showCommit" class="gp__commit" @submit.prevent="commit">
@@ -626,9 +647,9 @@ function onListKey(e: KeyboardEvent) {
           >
             {{ commitsAll ? terms.commitAll : terms.commit }}
           </UiButton>
-          <UiMenu v-if="terms.amend || terms.shelves" :items="terms.amend ? commitMenu : shelveMenu" placement="bottom-end" :width="264" label="More commit options">
+          <UiMenu v-if="terms.amend || terms.shelves" :items="terms.amend ? commitMenu : shelveMenu" placement="bottom-end" :width="264" :label="t('git.panel.moreCommit')">
             <template #default="{ toggle, open: menuOpen }">
-              <UiIconButton size="sm" label="More commit options" :active="menuOpen" class="gp__commit-more" @click="toggle"><ChevronDown /></UiIconButton>
+              <UiIconButton size="sm" :label="t('git.panel.moreCommit')" :active="menuOpen" class="gp__commit-more" @click="toggle"><ChevronDown /></UiIconButton>
             </template>
           </UiMenu>
         </div>
@@ -641,11 +662,11 @@ function onListKey(e: KeyboardEvent) {
           <div class="gp__sec-head">
             <button type="button" class="gp__sec-toggle" :aria-expanded="open.staged" @click="open.staged = !open.staged">
               <ChevronRight class="gp__caret" :class="{ 'is-open': open.staged }" aria-hidden="true" />
-              <span>Staged</span>
+              <span>{{ t('git.panel.staged') }}</span>
               <span class="gp__count tabular">{{ staged.length }}</span>
             </button>
             <div class="gp__sec-actions">
-              <UiIconButton size="sm" label="Unstage all" :disabled="waiting" @click="unstageAll"><Minus /></UiIconButton>
+              <UiIconButton size="sm" :label="t('git.panel.unstageAll')" :disabled="waiting" @click="unstageAll"><Minus /></UiIconButton>
             </div>
           </div>
           <TransitionGroup v-show="open.staged" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
@@ -670,33 +691,33 @@ function onListKey(e: KeyboardEvent) {
           <div class="gp__sec-head">
             <button type="button" class="gp__sec-toggle" :aria-expanded="open.changes" @click="open.changes = !open.changes">
               <ChevronRight class="gp__caret" :class="{ 'is-open': open.changes }" aria-hidden="true" />
-              <span>Changes</span>
+              <span>{{ t('git.changes') }}</span>
               <span class="gp__count tabular">{{ changes.length }}</span>
             </button>
             <div class="gp__sec-actions">
               <UiIconButton
                 v-if="discardable.length"
                 size="sm"
-                label="Discard all changes…"
+                :label="t('git.panel.discardAllItem')"
                 :active="confirming === 'all'"
                 :disabled="waiting"
                 @click="confirming = confirming === 'all' ? null : 'all'"
               >
                 <Undo2 />
               </UiIconButton>
-              <UiIconButton size="sm" label="Stage all" :disabled="waiting || (conflicts > 0 && !discardable.length)" @click="stageAll"><Plus /></UiIconButton>
+              <UiIconButton size="sm" :label="t('git.panel.stageAll')" :disabled="waiting || (conflicts > 0 && !discardable.length)" @click="stageAll"><Plus /></UiIconButton>
             </div>
           </div>
 
-          <div v-if="confirming === 'all'" class="gp__ask" role="alertdialog" aria-label="Discard all changes" @keydown.esc.stop.prevent="confirming = null">
+          <div v-if="confirming === 'all'" class="gp__ask" role="alertdialog" :aria-label="t('git.panel.discardAllTitle')" @keydown.esc.stop.prevent="confirming = null">
             <p>
-              Discard {{ discardable.length === 1 ? 'the 1 change' : `all ${discardable.length} changes` }}?
-              <template v-if="newFiles">{{ plural(newFiles, 'new file') }} will be deleted.</template>
-              This can't be undone.
+              {{ t('git.panel.discardAsk', discardable.length) }}
+              <template v-if="newFiles">{{ t('git.panel.newFilesDeleted', newFiles) }}</template>
+              {{ t('git.panel.cantUndo') }}
             </p>
             <div class="gp__ask-btns">
-              <UiButton size="sm" variant="ghost" @click="confirming = null">Keep</UiButton>
-              <UiButton size="sm" variant="danger" :disabled="!!git.busy" @click="discardAll">Discard all</UiButton>
+              <UiButton size="sm" variant="ghost" @click="confirming = null">{{ t('git.panel.keep') }}</UiButton>
+              <UiButton size="sm" variant="danger" :disabled="!!git.busy" @click="discardAll">{{ t('git.panel.discardAll') }}</UiButton>
             </div>
           </div>
 
@@ -721,7 +742,7 @@ function onListKey(e: KeyboardEvent) {
           </TransitionGroup>
         </section>
 
-        <p v-if="clean" class="gp__quiet">No changes</p>
+        <p v-if="clean" class="gp__quiet">{{ t('git.panel.noChanges') }}</p>
 
         <section v-if="locks.length" class="gp__sec">
           <div class="gp__sec-head">
@@ -729,11 +750,11 @@ function onListKey(e: KeyboardEvent) {
               type="button"
               class="gp__sec-toggle"
               :aria-expanded="open.locks"
-              :title="`Files locked in ${repositoryName ?? 'the repository'}: ${plural(othersLocks, 'by someone else', 'by others')}, ${locks.length - othersLocks} by you`"
+              :title="t('git.panel.locksTitle', { repo: repositoryName ?? t('git.panel.theRepository'), mine: locks.length - othersLocks }, othersLocks)"
               @click="open.locks = !open.locks"
             >
               <ChevronRight class="gp__caret" :class="{ 'is-open': open.locks }" aria-hidden="true" />
-              <span>Locks</span>
+              <span>{{ t('git.panel.locks') }}</span>
               <span class="gp__count tabular">{{ locks.length }}</span>
             </button>
           </div>
@@ -743,18 +764,18 @@ function onListKey(e: KeyboardEvent) {
               :key="l.path"
               class="gp__lock"
               :class="{ 'is-mine': l.mine }"
-              :title="`${l.path}\n${lockSummary(l)}${l.time ? ` · ${new Date(l.time).toLocaleString()}` : ''}`"
+              :title="`${l.path}\n${lockSummary(l)}${l.time ? ` · ${new Date(l.time).toLocaleString(formatLocale())}` : ''}`"
             >
               <Lock class="gp__lock-icon" aria-hidden="true" />
               <span class="gp__lock-name">{{ fileName(l.path) }}</span>
               <span v-if="fileDir(l.path)" class="gp__lock-dir"><bdi>{{ fileDir(l.path) }}</bdi></span>
-              <span class="gp__lock-who">{{ lockHolder(l) }}<template v-if="l.status === 'retained'"> · kept</template></span>
+              <span class="gp__lock-who">{{ lockHolder(l) }}<template v-if="l.status === 'retained'"> · {{ t('git.panel.kept') }}</template></span>
               <span class="sr-only">{{ lockSummary(l) }}</span>
               <UiIconButton
                 v-if="l.mine"
                 size="sm"
                 class="gp__lock-release"
-                :label="`Release the lock on ${fileName(l.path)}`"
+                :label="t('git.panel.releaseLockOn', { name: fileName(l.path) })"
                 :disabled="!!git.busy"
                 @click="unlockFile(l.path)"
               >
@@ -769,7 +790,7 @@ function onListKey(e: KeyboardEvent) {
           <div class="gp__sec-head">
             <button type="button" class="gp__sec-toggle" :aria-expanded="repo?.historyOpen ?? false" @click="path && git.toggleHistory(path)">
               <ChevronRight class="gp__caret" :class="{ 'is-open': repo?.historyOpen }" aria-hidden="true" />
-              <span>History</span>
+              <span>{{ t('git.panel.history') }}</span>
             </button>
           </div>
           <template v-if="repo?.historyOpen">
@@ -778,50 +799,49 @@ function onListKey(e: KeyboardEvent) {
                 v-for="(c, i) in repo.log"
                 :key="c.hash"
                 class="gp__commit-item"
-                :title="`${c.subject}\n${c.author} · ${new Date(c.time).toLocaleString()}${i < ahead ? '\nNot pushed yet' : ''}`"
+                :title="`${c.subject}\n${c.author} · ${new Date(c.time).toLocaleString(formatLocale())}${i < ahead ? `\n${t('git.panel.notPushed')}` : ''}`"
               >
-                <span class="gp__subject">{{ c.subject || '(no message)' }}</span>
-                <ArrowUp v-if="i < ahead" class="gp__unpushed" aria-label="Not pushed yet" />
+                <span class="gp__subject">{{ c.subject || t('git.noMessage') }}</span>
+                <ArrowUp v-if="i < ahead" class="gp__unpushed" :aria-label="t('git.panel.notPushed')" />
                 <code class="gp__hash">{{ c.shortHash }}</code>
                 <span class="gp__when tabular">{{ shortAgo(c.time, now) }}</span>
               </li>
             </ul>
-            <p v-else class="gp__quiet">{{ repo.logHead === undefined ? 'Reading history…' : `No ${terms.unit}s yet` }}</p>
+            <p v-else class="gp__quiet">{{ repo.logHead === undefined ? t('git.panel.readingHistory') : isUnity ? t('git.panel.noChangesets') : t('git.noCommits') }}</p>
           </template>
         </section>
       </template>
 
       <div v-else-if="status" class="gp__empty">
-        <p><strong>{{ ws.activeProject?.name ?? 'This folder' }}</strong> isn't a git repository yet.</p>
-        <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">Initialize repository</UiButton>
+        <i18n-t keypath="git.panel.notRepo" tag="p" scope="global"><template #name><strong>{{ ws.activeProject?.name ?? t('git.panel.thisFolder') }}</strong></template></i18n-t>
+        <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">{{ t('git.panel.init') }}</UiButton>
       </div>
 
       <div v-else-if="repo?.error" class="gp__empty">
-        <p>Couldn't read this repository.</p>
+        <p>{{ t('git.panel.couldNotRead') }}</p>
         <pre class="gp__error selectable">{{ repo.error }}</pre>
-        <UiButton size="sm" @click="manualRefresh">Try again</UiButton>
+        <UiButton size="sm" @click="manualRefresh">{{ t('common.actions.retry') }}</UiButton>
       </div>
 
-      <p v-else-if="path" class="gp__quiet">Reading repository…</p>
+      <p v-else-if="path" class="gp__quiet">{{ t('git.panel.readingRepo') }}</p>
     </div>
 
-    <UiDialog :open="!!removing" title="Remove worktree" :width="440" :dismissible="!removeBusy" @close="removing = null">
+    <UiDialog :open="!!removing" :title="t('git.panel.removeTitle')" :width="440" :dismissible="!removeBusy" @close="removing = null">
       <template v-if="removing">
         <p class="gp__dlg">
-          Remove the worktree folder <code class="gp__code selectable">{{ removing }}</code>?
-          The branch{{ wtBranch ? ' ' : '' }}<code v-if="wtBranch" class="gp__code">{{ wtBranch }}</code> and its commits stay.
-          <template v-if="removeUsers.length">
-            {{ removeUsers.length === 1 ? 'The chat that worked there' : `The ${removeUsers.length} chats that worked there` }}
-            will work in the project folder from then on.
-          </template>
+          <i18n-t keypath="git.panel.removeAsk" scope="global"><template #folder><code class="gp__code selectable">{{ removing }}</code></template></i18n-t>
+          {{ ' ' }}
+          <i18n-t v-if="wtBranch" keypath="git.panel.branchStays" scope="global"><template #branch><code class="gp__code">{{ wtBranch }}</code></template></i18n-t>
+          <template v-else>{{ t('git.panel.branchStaysUnnamed') }}</template>
+          <template v-if="removeUsers.length">{{ ' ' }}{{ t('git.panel.chatsMove', removeUsers.length) }}</template>
         </p>
         <p v-if="removeError" class="gp__dlg gp__dlg--error selectable" role="alert">
-          {{ removeError }}<template v-if="removeForce"> Removing it anyway throws those changes away.</template>
+          {{ removeError }}<template v-if="removeForce">{{ ' ' }}{{ t('git.panel.removeLoses') }}</template>
         </p>
       </template>
       <template #footer>
-        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">Cancel</UiButton>
-        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : 'Remove worktree' }}</UiButton>
+        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? t('git.panel.removeAnyway') : t('git.panel.removeTitle') }}</UiButton>
       </template>
     </UiDialog>
   </section>

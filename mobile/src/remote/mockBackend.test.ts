@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { parseShared } from './chatSyncCore'
 import { MOCK_ENVS, createMockBackend } from './mockBackend'
 import { validHostKey } from './shareLink'
@@ -51,5 +51,112 @@ describe('mock backend', () => {
     expect(await b.gitState(wt.path)).toMatchObject({ repo: true, branch: 'fix-login', changes: [] })
     expect((await b.gitWorktrees(path)).worktrees.map(w => w.branch)).toEqual(['main', 'fix-login'])
     await expect(b.gitWorktreeAdd(path, 'fix-login')).rejects.toThrow(/already exists/)
+  })
+
+  afterEach(() => { vi.useRealTimers() })
+
+  it('lists releases with Markdown notes, their builds and the build jobs\' logs', async () => {
+    const b = createMockBackend()
+    const path = 'env://mock-forge/dev/home/agent/work/mango'
+    const r = await b.ghReleases(path, 5)
+    expect(r.releases).toHaveLength(5)
+    expect(r.releases.every(x => x.bodyHtml === '')).toBe(true)
+    expect(r.releases[1]!.body).toContain('Simulated')
+    const d = await b.ghTagRun(path, r.releases[1]!.tag)
+    expect(d?.jobs.length).toBeGreaterThan(0)
+    expect((await b.ghJob(path, d!.jobs[0]!.url)).name).toBe(d!.jobs[0]!.name)
+    expect(await b.ghTagRun(path, 'nope')).toBeNull()
+    // The trial build is still going: it cannot be re-run yet.
+    await expect(b.ghRunAction(path, 9002, 'rerun')).rejects.toThrow(/can't re-run it yet/)
+  }, 20_000)
+
+  it('shows pull requests in full: checks, jobs with logs, merging, linking and opening', async () => {
+    // The mock's delays pass at once.
+    vi.useFakeTimers({ now: Date.now() })
+    const settle = async <T>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {})
+      await vi.advanceTimersByTimeAsync(2000)
+      return p
+    }
+    const b = createMockBackend()
+    const shop = 'env://mock-forge/dev/home/agent/work/shop-api'
+    const ref = { kind: 'pr' as const, host: 'github.com', owner: 'acme', repo: 'shop-api', number: 134 }
+    const pr = await settle(b.ghDetail(shop, ref))
+    expect(pr).toMatchObject({ state: 'open', mergeState: 'unstable', canMerge: true, defaultMergeMethod: 'squash' })
+    expect(pr.body).toMatch(/^## Why/)
+    expect(new Set(pr.checkRuns.map(c => c.state))).toEqual(new Set(['success', 'failure', 'pending', 'skipped']))
+    expect(pr.checkRuns.some(c => c.workflow === null && c.description)).toBe(true)
+
+    const failing = await settle(b.ghJob(shop, pr.checkRuns.find(c => c.state === 'failure')!.url!))
+    expect(failing).toMatchObject({ state: 'failure', logReady: true })
+    const lines = failing.steps.flatMap(s => s.lines)
+    expect(lines.some(l => l.startsWith('##[group]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('##[error]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('##[warning]'))).toBe(true)
+    expect(lines.some(l => l.startsWith('[command]'))).toBe(true)
+    expect(lines.some(l => l.includes('\x1b['))).toBe(true)
+    // Every step that ran got its own lines from the split.
+    expect(failing.steps.filter(s => s.state !== 'skipped').every(s => s.lines.length > 0)).toBe(true)
+    const running = await settle(b.ghJob(shop, pr.checkRuns.find(c => c.state === 'pending')!.url!))
+    expect(running).toMatchObject({ state: 'pending', logReady: false })
+    expect(running.steps.some(s => s.state === 'pending') && running.steps.some(s => s.state === 'queued')).toBe(true)
+
+    await expect(settle(b.ghMerge(shop, ref, 'squash', '0'.repeat(40)))).rejects.toThrow(/new commits/)
+    await settle(b.ghMerge(shop, ref, 'squash', pr.headSha!))
+    expect((await settle(b.ghDetail(shop, ref))).state).toBe('merged')
+    expect((await settle(b.ghItem(shop, ref))).state).toBe('merged')
+
+    expect((await settle(b.ghResolve(shop, '#97'))).kind).toBe('issue')
+    expect((await settle(b.ghResolve(shop, 'https://github.com/acme/shop-api/pull/128'))).state).toBe('merged')
+    await expect(settle(b.ghResolve(shop, '#999'))).rejects.toThrow('There is no pull request or issue #999 in acme/shop-api.')
+    await expect(settle(b.ghResolve(shop, 'https://gitlab.com/a/b/pull/1'))).rejects.toThrow(/merge request or issue link/)
+    await expect(settle(b.ghResolve(shop, 'https://ghe.example.com/a/b/pull/1'))).rejects.toThrow(/github\.com/)
+    await expect(settle(b.ghDetail(shop, { ...ref, repo: 'shop-admin', number: 42 }))).rejects.toThrow(/not signed in/)
+
+    const opened = await settle(b.ghPrCreate(shop, null))
+    expect(opened).toMatchObject({ state: 'open', headRef: 'feat/orders', baseRef: 'main', owner: 'acme', repo: 'shop-api' })
+    expect((await settle(b.ghPrCreate(shop, 'main'))).number).toBe(opened.number)
+    await expect(settle(b.ghPrCreate('env://mock-forge/dev/home/agent/work/mango', null))).rejects.toThrow(/no commits/)
+    await expect(settle(b.ghPrCreate(shop, '--force'))).rejects.toThrow(/not a valid branch name/)
+  })
+})
+
+describe('mock backend on GitLab', () => {
+  afterEach(() => { vi.useRealTimers() })
+
+  it('shows the scratch project as a GitLab one: merge request, pipeline job log, merging, releases', async () => {
+    vi.useFakeTimers({ now: Date.now() })
+    const settle = async <T>(p: Promise<T>): Promise<T> => {
+      p.catch(() => {})
+      await vi.advanceTimersByTimeAsync(2000)
+      return p
+    }
+    const b = createMockBackend()
+    const scratch = 'env://mock-forge/sandbox/home/agent/work/scratch'
+    expect(await settle(b.ghRepo(scratch))).toEqual({ provider: 'gitlab', host: 'gitlab.com', owner: 'acme/labs', repo: 'scratch' })
+    expect(await settle(b.ghRepo('env://mock-forge/dev/home/agent/work/shop-api'))).toMatchObject({ provider: 'github' })
+
+    const ref = { provider: 'gitlab' as const, kind: 'pr' as const, host: 'gitlab.com', owner: 'acme/labs', repo: 'scratch', number: 12 }
+    const mr = await settle(b.ghDetail(scratch, ref))
+    expect(mr).toMatchObject({ provider: 'gitlab', state: 'open', mergeMethods: ['merge', 'squash'] })
+    expect((await settle(b.ghItem(scratch, ref))).title).toBe(mr.title)
+    const failing = await settle(b.ghJob(scratch, mr.checkRuns.find(c => c.state === 'failure')!.url!))
+    expect(failing).toMatchObject({ provider: 'gitlab', state: 'failure', logReady: true })
+    expect(failing.steps.map(s => s.name)).toContain('Executing "step_script" stage of the job script')
+    expect(failing.steps.flatMap(s => s.lines)).toContain('##[group]Install dependencies')
+
+    expect((await settle(b.ghResolve(scratch, '#5'))).kind).toBe('issue')
+    expect((await settle(b.ghResolve(scratch, '!12'))).number).toBe(12)
+    await expect(settle(b.ghMerge(scratch, ref, 'rebase', mr.headSha!))).rejects.toThrow(/rebasing/)
+    await settle(b.ghMerge(scratch, ref, 'squash', mr.headSha!))
+    expect((await settle(b.ghDetail(scratch, ref))).state).toBe('merged')
+
+    const rel = await settle(b.ghReleases(scratch, 30))
+    expect(rel).toMatchObject({ provider: 'gitlab', host: 'gitlab.com' })
+    expect(rel.releases[0]!.url).toMatch(/^https:\/\/gitlab\.com\/acme\/labs\/scratch\/-\/releases\//)
+    const run = await settle(b.ghTagRun(scratch, 'v0.4.0'))
+    expect(run?.run.state).toBe('pending')
+    await settle(b.ghRunAction(scratch, run!.run.id, 'cancel'))
+    expect((await settle(b.ghRun(scratch, run!.run.id))).run.state).toBe('cancelled')
   })
 })

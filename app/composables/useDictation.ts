@@ -1,4 +1,5 @@
 import { useVoice } from '~/stores/voice'
+import { t } from '~/i18n'
 
 /**
  * Records the microphone and turns it into text with the voice store.
@@ -28,11 +29,11 @@ let tapUrl: string | null = null
 
 function micError(e: unknown): string {
   const name = e instanceof DOMException ? e.name : ''
-  if (name === 'NotAllowedError' || name === 'SecurityError') return 'Mango is not allowed to use the microphone. Allow it in your system\'s privacy settings, then try again.'
-  if (name === 'NotFoundError' || name === 'OverconstrainedError') return 'No microphone was found. Connect one and try again.'
-  if (name === 'NotReadableError') return 'The microphone is in use by another app or could not be started.'
-  if (!navigator.mediaDevices?.getUserMedia) return 'This window cannot record audio.'
-  return `Could not start recording: ${e instanceof Error ? e.message : String(e)}`
+  if (name === 'NotAllowedError' || name === 'SecurityError') return t('chat.dictation.notAllowed')
+  if (name === 'NotFoundError' || name === 'OverconstrainedError') return t('chat.dictation.notFound')
+  if (name === 'NotReadableError') return t('chat.dictation.inUse')
+  if (!navigator.mediaDevices?.getUserMedia) return t('chat.dictation.unsupported')
+  return t('chat.dictation.failed', { error: e instanceof Error ? e.message : String(e) })
 }
 
 /** How often a running recording is transcribed again to show words as they are said. */
@@ -107,7 +108,7 @@ export function useDictation(onText: (text: string) => void, onLive?: (text: str
     phase.value = 'starting'
     try {
       const s = await openMic(voice.micId)
-      if (mine !== session) { s.getTracks().forEach(t => t.stop()); return }
+      if (mine !== session) { s.getTracks().forEach(track => track.stop()); return }
       stream = s
       ctx = new AudioContext()
       rate = ctx.sampleRate
@@ -152,7 +153,7 @@ export function useDictation(onText: (text: string) => void, onLive?: (text: str
     if (node) node.port.onmessage = null
     node?.disconnect()
     node = null
-    stream?.getTracks().forEach(t => t.stop())
+    stream?.getTracks().forEach(track => track.stop())
     stream = null
     void ctx?.close().catch(() => {})
     ctx = null

@@ -3,7 +3,7 @@ import { View } from 'react-native'
 import { Stack, useRouter } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import { Copy } from 'lucide-react-native'
-import { makeStyles, radius, space } from '@/theme'
+import { makeStyles, space } from '@/theme'
 import { Banner, Button, Text, TextField, haptic } from '@/ui'
 import { ListGround } from '@/ui/List'
 import { useEnvs, type ServerDraft } from '@/state/envs'
@@ -169,7 +169,7 @@ const useStyles = makeStyles(t => ({
   well: {
     alignSelf: 'stretch',
     padding: space[3],
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.line,

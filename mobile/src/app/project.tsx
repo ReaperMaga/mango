@@ -1,21 +1,34 @@
-import { useCallback, useEffect, useState } from 'react'
-import { View } from 'react-native'
+import type { PermissionMode } from '~/agents/types'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Linking, View } from 'react-native'
+import Svg, { Path } from 'react-native-svg'
 import { Stack, useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useShallow } from 'zustand/react/shallow'
-import { ChevronDown, ChevronRight, GitBranch, MessagesSquare, Plus, SquarePen } from 'lucide-react-native'
+import { ChevronDown, ChevronRight, ExternalLink, GitBranch, MessagesSquare, ShieldCheck, Plus, SquarePen, Tag } from 'lucide-react-native'
 import { makeStyles, space, useTheme } from '@/theme'
 import { Button, EmptyState, IconButton, ListRow, ListSection, Text } from '@/ui'
 import { ThreadRow, useNow } from '@/chat'
 import { backend } from '@/remote'
 import { envOf, syncEnv } from '@/remote/chatSync'
+import { LIVE_LIST_MS } from '@/screens/livePoll'
+import { useLiveChats } from '@/screens/useLiveChats'
 import type { GitState } from '@/remote/types'
 import { onFilesChanged } from '@/agents/run'
 import { useEnvs } from '@/state/envs'
 import { useThreads } from '@/state/threads'
+import { useReleases } from '@/state/releases'
+import { releasesSummary } from '@/chat/releases'
+import { sortReleases } from '~/utils/releaseRuns'
+import { usePrefs } from '@/state/prefs'
+import { MODES, modeForProject, modeLabel } from '@/state/prefsModel'
+import { OptionSheet } from '@/screens/OptionSheet'
 import { NewChatSheet } from '@/screens/NewChat'
 import { ScreenScroll } from '@/screens/Screen'
 import { ThreadActions } from '@/screens/ThreadActions'
 import { messageOf, placeOf, projectName } from '@/screens/names'
+import { repoWebUrl } from '@/remote/forge'
+import type { GhRepoLink } from '~/types/ipc'
+import { forgeName, siteName } from '~/utils/forge'
 
 /**
  * A project: its chats in the desktop's list order (archived ones folded away), a new chat with
@@ -26,6 +39,7 @@ export default function ProjectScreen() {
   const s = useStyles()
   const router = useRouter()
   const now = useNow()
+  const elsewhere = useThreads(st => st.elsewhere)
   const { path = '' } = useLocalSearchParams<{ path: string }>()
   const at = envOf(path)
   const env = useEnvs(st => (at ? st.envs.find(e => e.id === at.hostId) ?? null : null))
@@ -34,9 +48,18 @@ export default function ProjectScreen() {
   const [showArchived, setShowArchived] = useState(false)
   const [git, setGit] = useState<GitState | null>(null)
   const [gitError, setGitError] = useState<string | null>(null)
+  const [repo, setRepo] = useState<GhRepoLink | null>(null)
   const [newChat, setNewChat] = useState(false)
+  const [pickingMode, setPickingMode] = useState(false)
+  const ownMode = usePrefs(st => st.projectModes[path])
+  const startMode = usePrefs(st => modeForProject(st, path))
   const [actionsFor, setActionsFor] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const releases = useReleases(st => st.lists[path])
+  const releaseLine = useMemo(() => {
+    const data = releases?.data
+    return data ? releasesSummary(sortReleases(data.releases, data.runs, data.provider), data.releases) : null
+  }, [releases?.data])
 
   const readGit = useCallback(async () => {
     try {
@@ -49,11 +72,17 @@ export default function ProjectScreen() {
 
   const load = useCallback(async () => {
     if (!at || !useEnvs.getState().byId(at.hostId)) return
+    // The repository on GitHub or the project on GitLab, for its row (read from the git remotes, kept for the session).
+    void backend.ghRepo(path).then(setRepo, () => {})
+    // Releases quietly beside it, for the row's line (a read under 30s old is kept).
+    void useReleases.getState().load(path, { quiet: true })
     await Promise.all([readGit(), syncEnv(at).catch(() => {})])
     // `at` is derived from `path`, which is the real dependency.
   }, [path, readGit]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useFocusEffect(useCallback(() => { void load() }, [load]))
+  // Another computer's runs show up on the list's dots without a pull to refresh.
+  useLiveChats(path, LIVE_LIST_MS)
   // A finished turn probably changed files: the count follows.
   useEffect(() => onFilesChanged((p) => { if (p === path || p.startsWith(`${path}/`)) void readGit() }), [path, readGit])
 
@@ -91,13 +120,45 @@ export default function ProjectScreen() {
           detail={git?.repo ? (changeCount ? `${changeCount} changed` : 'Clean') : undefined}
           onPress={() => router.push({ pathname: '/changes', params: { path } })}
         />
+        {git?.repo
+          ? (
+              <ListRow
+                title="Releases"
+                subtitle={releaseLine?.text ?? (releases?.error ? 'Not available' : repo ? `Reading ${forgeName(repo.provider)}…` : 'Reading…')}
+                subtitleTone={releaseLine?.tone ?? 'subtle'}
+                leading={<Tag size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+                onPress={() => router.push({ pathname: '/releases', params: { path } })}
+              />
+            )
+          : null}
+        {git?.repo && repo && repoWebUrl(repo)
+          ? (
+              <ListRow
+                title={siteName(repo.provider, repo.host)}
+                subtitle={`${repo.owner}/${repo.repo}`}
+                subtitleMono
+                leading={repo.provider === 'gitlab' ? <GitlabMark size={20} color={t.colors.fgSubtle} /> : <GithubMark size={20} color={t.colors.fgSubtle} />}
+                accessory="none"
+                trailing={<ExternalLink size={16} strokeWidth={1.75} color={t.colors.fgFaint} />}
+                accessibilityHint={repo.provider === 'gitlab' ? 'Opens the project in the browser' : 'Opens the repository in the browser'}
+                onPress={() => { const url = repoWebUrl(repo); if (url) Linking.openURL(url).catch(() => {}) }}
+              />
+            )
+          : null}
+        <ListRow
+          title="Permissions"
+          subtitle={ownMode ? 'For new chats in this project' : 'The default from Settings'}
+          leading={<ShieldCheck size={20} strokeWidth={1.75} color={t.colors.fgSubtle} />}
+          detail={modeLabel(startMode)}
+          onPress={() => setPickingMode(true)}
+        />
       </ListSection>
 
       {chats.length
         ? (
             <ListSection title="Chats">
               {chats.map(th => (
-                <ThreadRow key={th.id} thread={th} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
+                <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
               ))}
             </ListSection>
           )
@@ -128,7 +189,7 @@ export default function ProjectScreen() {
                 ? (
                     <ListSection>
                       {archived.map(th => (
-                        <ThreadRow key={th.id} thread={th} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
+                        <ThreadRow key={th.id} thread={th} elsewhere={elsewhere[th.id]} now={now} onPress={() => open(th.id)} onLongPress={() => setActionsFor(th.id)} />
                       ))}
                     </ListSection>
                   )
@@ -137,6 +198,21 @@ export default function ProjectScreen() {
           )
         : null}
 
+      <OptionSheet<PermissionMode | 'default'>
+        visible={pickingMode}
+        title="Permissions"
+        options={[{ value: 'default', label: 'Use the default', hint: `Currently ${modeLabel(usePrefs.getState().defaultMode)}, set in Settings > Chats.` }, ...MODES]}
+        value={ownMode ?? 'default'}
+        onChange={(v) => {
+          const { projectModes, set } = usePrefs.getState()
+          const next = { ...projectModes }
+          if (v === 'default') delete next[path]
+          else next[path] = v
+          set('projectModes', next)
+        }}
+        onClose={() => setPickingMode(false)}
+        footer="How new chats in this project start. You can still change it in any chat."
+      />
       <NewChatSheet
         visible={newChat}
         path={path}
@@ -148,7 +224,27 @@ export default function ProjectScreen() {
   )
 }
 
+/** GitHub's mark, drawn as lucide's `github` icon (lucide-react-native leaves brand icons out). */
+function GithubMark({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+      <Path d="M9 18c-4.51 2-5-2-7-2" />
+    </Svg>
+  )
+}
+
+/** GitLab's mark, drawn as lucide's `gitlab` icon (lucide-react-native leaves brand icons out). */
+function GitlabMark({ size, color }: { size: number; color: string }) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="m22 13.29-3.33-10a.42.42 0 0 0-.14-.18.38.38 0 0 0-.22-.11.39.39 0 0 0-.23.07.42.42 0 0 0-.14.18l-2.26 6.67H8.32L6.1 3.26a.42.42 0 0 0-.1-.18.38.38 0 0 0-.26-.08.39.39 0 0 0-.23.07.42.42 0 0 0-.14.18L2 13.29a.74.74 0 0 0 .27.83L12 21l9.69-6.88a.71.71 0 0 0 .31-.83Z" />
+    </Svg>
+  )
+}
+
 const useStyles = makeStyles(() => ({
+
   archived: { gap: space[2] },
   title: { alignItems: 'center', maxWidth: 240 },
 }))

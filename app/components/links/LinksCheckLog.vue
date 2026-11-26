@@ -1,24 +1,30 @@
 <script setup lang="ts">
 import { ChevronDown, ChevronRight, Circle, CircleCheck, CircleDashed, CircleMinus, CircleSlash, CircleX } from 'lucide-vue-next'
 import type { GhJobStep, GhRunState } from '~/types/ipc'
-import { useLinks, type OpenCheck } from '~/stores/links'
+import { jobProvider, useLinks, type OpenCheck } from '~/stores/links'
+import { formatLocale } from '~/i18n'
+import { forgeName } from '~/utils/forge'
 import { parseStepLog, type LogEntry, type LogLine, type LogSpan } from '~/utils/actionsLog'
 import { formatDuration, useNow } from '~/utils/time'
 
 /**
- * A GitHub Actions job's log in the Pull requests tool window, laid out like GitHub's own job page:
- * the job's steps in order, each opening to its log, where `##[group]` sections fold and errors stand
- * out. A failed step opens by itself and the first error scrolls into view. While the job runs, its
- * steps update every few seconds; GitHub hands out the log once the job has finished.
+ * A GitHub Actions job's (or GitLab pipeline job's) log in the Pull requests tool window, laid out
+ * like GitHub's own job page: the job's steps in order (GitLab: its sections), each opening to its
+ * log, where `##[group]` sections fold and errors stand out. A failed step opens by itself and the
+ * first error scrolls into view. While the job runs, its steps update every few seconds; the forge
+ * hands out the log once the job has finished.
  */
-const props = defineProps<{ check: OpenCheck }>()
+const props = defineProps<{ check: OpenCheck; projectPath?: string | null }>()
 
+const { t } = useI18n()
 const links = useLinks()
 const now = useNow(1000)
 const detail = computed(() => links.jobs[props.check.url])
 const job = computed(() => detail.value?.job ?? null)
 const running = (s: GhRunState) => s === 'pending' || s === 'queued'
 const finished = computed(() => !!job.value && !running(job.value.state))
+/** Where the job runs, known from its link before it is read. */
+const forge = computed(() => forgeName(job.value?.provider ?? jobProvider(props.check.url)))
 
 /* ---------- reading, and keeping a running job current ---------- */
 const POLL_MS = 5_000
@@ -40,19 +46,19 @@ function schedule() {
   if (!d || d.loading || !wantsMore()) return
   poller = setTimeout(() => {
     if (document.hidden) { schedule(); return }
-    void links.loadJob(props.check.url)
+    void links.loadJob(props.check.url, props.projectPath)
   }, d.error ? POLL_MS * 3 : POLL_MS)
 }
 onMounted(() => {
   // A finished job's log never changes (a re-run is another job), so what was read stays good.
-  if (!(job.value?.logReady && finished.value)) void links.loadJob(props.check.url)
+  if (!(job.value?.logReady && finished.value)) void links.loadJob(props.check.url, props.projectPath)
 })
 watch(() => [detail.value?.loading, detail.value?.fetchedAt], schedule, { immediate: true })
 onBeforeUnmount(() => clearTimeout(poller))
 
 /* ---------- states and times ---------- */
 const ICON = { failure: CircleX, cancelled: CircleSlash, pending: CircleDashed, queued: Circle, success: CircleCheck, neutral: CircleMinus, skipped: CircleSlash }
-const WORD = { failure: 'Failed', cancelled: 'Cancelled', pending: 'Running', queued: 'Queued', success: 'Passed', neutral: 'Neutral', skipped: 'Skipped' }
+const word = (s: GhRunState) => t(`links.run.${s}`)
 
 function took(from: string | null, to: string | null): string | null {
   if (!from) return null
@@ -102,16 +108,20 @@ watch(() => job.value?.logReady, async (ready) => {
   if (!ready || scrolled) return
   scrolled = true
   await nextTick()
-  root.value?.querySelector('.cl__line.is-error')?.scrollIntoView({ block: 'center' })
+  const line = root.value?.querySelector<HTMLElement>('.cl__line.is-error')
+  // Only the tool window's own scroll area moves: scrollIntoView would also scroll the window's frame.
+  let box = line?.parentElement ?? null
+  while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement
+  if (line && box) box.scrollTop += line.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 2
 }, { immediate: true })
 </script>
 
 <template>
-  <article ref="root" class="cl" :aria-label="`Log of ${check.name}`" :aria-busy="detail?.loading || undefined">
+  <article ref="root" class="cl" :aria-label="t('links.log.label', { name: check.name })" :aria-busy="detail?.loading || undefined">
     <div class="cl__top">
       <span v-if="state" class="cl__state" :class="`is-${state}`">
         <component :is="ICON[state]" class="cl__icon" aria-hidden="true" />
-        <span>{{ WORD[state] }}</span>
+        <span>{{ word(state) }}</span>
       </span>
       <span class="cl__ref">
         <span v-if="job?.workflow ?? check.workflow">{{ job?.workflow ?? check.workflow }}</span>
@@ -121,20 +131,21 @@ watch(() => job.value?.logReady, async (ready) => {
     <h3 class="cl__title selectable">{{ job?.name || check.name }}</h3>
 
     <p v-if="detail?.error" class="cl__error selectable" role="alert">
-      {{ job ? 'Could not refresh: ' : '' }}{{ detail.error }}
+      {{ job ? t('links.couldNotRefresh', { error: detail.error }) : detail.error }}
     </p>
+    <LinksHostingButton :error="detail?.error" />
 
-    <div v-if="!job && detail?.loading !== false && !detail?.error" class="cl__skeleton" aria-label="Reading from GitHub">
+    <div v-if="!job && detail?.loading !== false && !detail?.error" class="cl__skeleton" :aria-label="t('links.reading', { forge })">
       <span v-for="w in [44, 70, 58, 66, 38, 52]" :key="w" :style="{ width: `${w}%` }" />
     </div>
 
     <template v-if="job">
       <p v-if="!finished" class="cl__note">
-        The job is still running. Its steps update here as they go; the log follows once it finishes.
+        {{ t('links.log.running') }}
       </p>
       <p v-else-if="job.logError" class="cl__note">{{ job.logError }}</p>
 
-      <ol class="cl__steps" aria-label="Steps">
+      <ol class="cl__steps" :aria-label="t('links.log.steps')">
         <li v-for="s in job.steps" :key="s.number" class="cl__step-item">
           <button
             type="button"
@@ -146,14 +157,14 @@ watch(() => job.value?.logReady, async (ready) => {
           >
             <component :is="stepOpen(s) ? ChevronDown : ChevronRight" class="cl__chev" :class="{ 'is-hidden': !hasLog(s) }" aria-hidden="true" />
             <component :is="ICON[s.state]" class="cl__icon" :class="`is-${s.state}`" aria-hidden="true" />
-            <span class="sr-only">{{ WORD[s.state] }}:</span>
+            <span class="sr-only">{{ word(s.state) }}:</span>
             <span class="cl__step-name">{{ s.name }}</span>
             <span v-if="s.state !== 'skipped' && took(s.startedAt, s.completedAt)" class="cl__step-took tabular">{{ took(s.startedAt, s.completedAt) }}</span>
           </button>
 
           <div v-if="stepOpen(s)" class="cl__log selectable" :style="{ '--gutter': gutter(s) }">
             <p v-if="s.omitted" class="cl__omitted">
-              {{ s.omitted.toLocaleString() }} earlier line{{ s.omitted === 1 ? ' is' : 's are' }} left out. GitHub has the whole log.
+              {{ t('links.log.omitted', { lines: s.omitted.toLocaleString(formatLocale()), forge }, s.omitted) }}
             </p>
             <template v-for="e in parsed.get(s.number) ?? []" :key="e.kind === 'line' ? e.line.n : e.head.n">
               <div v-if="e.kind === 'line'" class="cl__line" :class="e.line.level && `is-${e.line.level}`">
@@ -180,7 +191,7 @@ watch(() => job.value?.logReady, async (ready) => {
         </li>
       </ol>
 
-      <p v-if="job.logTruncated" class="cl__note">The log was too long to read whole: its end is missing here. GitHub has all of it.</p>
+      <p v-if="job.logTruncated" class="cl__note">{{ t('links.log.truncated', { forge }) }}</p>
     </template>
   </article>
 </template>

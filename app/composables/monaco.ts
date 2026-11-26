@@ -1,5 +1,12 @@
 import type * as Monaco from 'monaco-editor'
 import { tokenHex } from '~/utils/cssColor'
+import { pluginLanguage } from '~/plugin-host/fileHooks'
+import { fileOfUri, routeEditorLinks, uriLabel } from '~/composables/editorDocuments'
+import { guardEdits, previewReadOnly } from '~/composables/editorFeel'
+import { untrusted } from '~/lsp/builtins'
+import { registerBasicCompletion } from '~/composables/editorCompletion'
+import { gateBuiltIns } from '~/lsp/providers'
+import { languageService, startLanguageService } from '~/lsp/service'
 
 /**
  * Monaco, loaded the first time a file is opened (it is a few megabytes and
@@ -20,22 +27,98 @@ export function loadMonaco(): Promise<MonacoApi> {
           case 'json': return new (await import('monaco-editor/language/json/json.worker?worker')).default()
           case 'css': case 'scss': case 'less': return new (await import('monaco-editor/language/css/css.worker?worker')).default()
           case 'html': case 'handlebars': case 'razor': return new (await import('monaco-editor/language/html/html.worker?worker')).default()
-          case 'typescript': case 'javascript': return new (await import('monaco-editor/language/typescript/ts.worker?worker')).default()
+          case 'typescript': case 'javascript': return new (await import('~/lsp/tsWorker?worker')).default()
           default: return new (await import('monaco-editor/editor/editor.worker?worker')).default()
         }
       },
     }
     const monaco = await import('monaco-editor')
-    // There is no project context (tsconfig, node_modules) in the editor, so
-    // semantic errors would flag every import. Keep syntax errors only.
-    for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) {
-      defaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false })
+    const ts = monaco.typescript
+    // Before the first model: the worker registers its providers when its language first shows up.
+    gateBuiltIns(monaco, (model, feature) => !!languageService()?.served(model, feature))
+    for (const defaults of [ts.typescriptDefaults, ts.javascriptDefaults]) {
+      // There is no project context (tsconfig, node_modules) in the editor, so semantic errors and
+      // suggestions would flag every import. Keep syntax errors only.
+      defaults.setDiagnosticsOptions({ noSemanticValidation: true, noSyntaxValidation: false, noSuggestionDiagnostics: true })
+      defaults.setCompilerOptions({
+        allowNonTsExtensions: true,
+        allowJs: true,
+        target: ts.ScriptTarget.Latest,
+        module: ts.ModuleKind.ESNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeJs,
+        jsx: ts.JsxEmit.Preserve,
+        esModuleInterop: true,
+        resolveJsonModule: true,
+        experimentalDecorators: true,
+      })
+      // Monaco's quick fixes write every file's change into the current one, and the worker knows no
+      // other file anyway. Formatting as you type and inlay hints are off in the editor.
+      defaults.setModeConfiguration({ ...defaults.modeConfiguration, codeActions: false, onTypeFormattingEdits: false, inlayHints: false })
     }
+    const json = monaco.json.jsonDefaults
+    // Comments and trailing commas are how tsconfig and editor settings are written.
+    json.setDiagnosticsOptions({ ...json.diagnosticsOptions, allowComments: true, comments: 'ignore', trailingCommas: 'ignore' })
+    await Promise.all([textOnlyMarkdown(), labelByProject(), wordsByProject()])
+    // After its constructor: an editor is announced from inside it.
+    monaco.editor.onDidCreateEditor(editor => queueMicrotask(() => {
+      guardEdits(editor)
+      previewReadOnly(editor)
+    }))
+    routeEditorLinks(monaco)
+    registerBasicCompletion(monaco, model => !!languageService()?.served(model, 'completion'))
+    startLanguageService(monaco)
     applyTheme(monaco)
     new MutationObserver(() => applyTheme(monaco))
       .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-scheme'] })
     return monaco
   })())
+}
+
+/** What markdown in the editor may be made of: nothing that loads a picture, a video or a frame. */
+const MARKDOWN_TAGS = ['a', 'b', 'blockquote', 'br', 'code', 'dd', 'del', 'div', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'kbd',
+  'li', 'ol', 'p', 'pre', 's', 'small', 'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'th', 'thead', 'tr', 'tt', 'ul']
+
+/**
+ * Hovers, completion and parameter docs come from language servers and from the project's own
+ * comments. A picture in them would be fetched from the web (it can carry code out) and Monaco has
+ * no option against that, so its markdown service, through which all of them are drawn, is told here.
+ * Nothing is trusted either: Monaco builds trusted markdown around links found in the file itself,
+ * and their text can smuggle in a command.
+ */
+async function textOnlyMarkdown() {
+  // @ts-expect-error Monaco ships this module without types
+  const { MarkdownRendererService } = await import('monaco-editor/platform/markdown/browser/markdownRenderer')
+  const proto = MarkdownRendererService.prototype
+  const render = proto.render
+  // On the class: the instance is made lazily, behind a proxy that keeps the method it first saw.
+  proto.render = function (markdown: unknown, options?: { sanitizerConfig?: object }, target?: HTMLElement) {
+    return render.call(this, untrusted(markdown as object), { ...options, sanitizerConfig: { ...options?.sanitizerConfig, allowedTags: { override: MARKDOWN_TAGS } } }, target)
+  }
+}
+
+/** A peek's header and lists name files by their path in the project, not by their model's URI. */
+async function labelByProject() {
+  const [{ StandaloneServices }, { ILabelService }] = await Promise.all([
+    // @ts-expect-error Monaco ships this module without types
+    import('monaco-editor/editor/standalone/browser/standaloneServices'),
+    // @ts-expect-error Monaco ships this module without types
+    import('monaco-editor/platform/label/common/label'),
+  ])
+  StandaloneServices.get(ILabelService).getUriLabel = uriLabel
+}
+
+/** Words are suggested from the open files of the same project: the others' are none of this one's. */
+async function wordsByProject() {
+  // @ts-expect-error Monaco ships this module without types
+  const { EditorWorkerClient } = await import('monaco-editor/editor/browser/services/editorWorkerService')
+  const proto = EditorWorkerClient.prototype
+  const suggest = proto.textualSuggest
+  // The file being typed in is always first.
+  proto.textualSuggest = function ([own, ...others]: Monaco.Uri[], ...rest: unknown[]) {
+    const project = own && fileOfUri(own)?.project
+    const same = project ? others.filter(uri => fileOfUri(uri)?.project === project) : []
+    return suggest.call(this, own ? [own, ...same] : [], ...rest)
+  }
 }
 
 const THEME = 'mango'
@@ -53,6 +136,15 @@ function applyTheme(monaco: MonacoApi) {
   const type = c('--term-cyan', dark ? '#78d0c8' : '#11807a')
   const fn = c('--term-blue', dark ? '#7fb2f0' : '#2a64b8')
   const tag = c('--term-red', dark ? '#f0766b' : '#c4362c')
+  const raised = c('--bg-raised', dark ? '#222a26' : '#ffffff')
+  const panel = c('--bg-panel', raised)
+  const inset = c('--bg-inset', dark ? '#0f1311' : '#f6f8f7')
+  const active = c('--bg-active', '#ffffff1a')
+  const hover = c('--bg-hover', '#ffffff0d')
+  const line = c('--line', '#ffffff22')
+  const muted = c('--fg-muted', fg)
+  const subtle = c('--fg-subtle', faint)
+  const accentInk = c('--accent-ink', dark ? '#f4c062' : '#9a5a10')
 
   monaco.editor.defineTheme(THEME, {
     base: dark ? 'vs-dark' : 'vs',
@@ -80,6 +172,11 @@ function applyTheme(monaco: MonacoApi) {
       { token: 'delimiter', foreground: bare(c('--fg-subtle', faint)) },
       { token: 'variable', foreground: bare(fg) },
       { token: 'markup.heading', foreground: bare(fn), fontStyle: 'bold' },
+      // What a language server says names are (`lsp/semanticTokens.ts`); `type`, `constant` and `variable` are above.
+      { token: 'function', foreground: bare(fn) },
+      { token: 'property', foreground: bare(fg) },
+      { token: 'namespace', foreground: bare(fg) },
+      { token: 'macro', foreground: bare(keyword) },
     ],
     colors: {
       'editor.background': c('--bg-canvas', dark ? '#141917' : '#fbfcfb'),
@@ -94,6 +191,7 @@ function applyTheme(monaco: MonacoApi) {
       'editor.inactiveSelectionBackground': c('--bg-active', '#ffffff1a'),
       'editor.selectionHighlightBackground': c('--accent-soft', '#f5a52424'),
       'editor.wordHighlightBackground': c('--bg-active', '#ffffff1a'),
+      'editor.wordHighlightStrongBackground': c('--accent-soft', '#f5a52424'),
       'editor.findMatchBackground': c('--accent-line', '#f5a52473'),
       'editor.findMatchHighlightBackground': c('--accent-soft', '#f5a52424'),
       'editorIndentGuide.background1': c('--line-soft', '#ffffff14'),
@@ -101,23 +199,101 @@ function applyTheme(monaco: MonacoApi) {
       'editorWhitespace.foreground': c('--line-strong', '#ffffff33'),
       'editorBracketMatch.background': c('--bg-active', '#ffffff1a'),
       'editorBracketMatch.border': c('--line-strong', '#ffffff33'),
-      'editorWidget.background': c('--bg-raised', dark ? '#222a26' : '#ffffff'),
-      'editorWidget.border': c('--line', '#ffffff22'),
-      'editorSuggestWidget.background': c('--bg-raised', dark ? '#222a26' : '#ffffff'),
-      'editorSuggestWidget.border': c('--line', '#ffffff22'),
-      'editorSuggestWidget.selectedBackground': c('--bg-active', '#ffffff1a'),
-      'editorHoverWidget.background': c('--bg-raised', dark ? '#222a26' : '#ffffff'),
-      'editorHoverWidget.border': c('--line', '#ffffff22'),
-      'input.background': c('--bg-inset', dark ? '#0f1311' : '#f6f8f7'),
-      'input.border': c('--line', '#ffffff22'),
+      'editorWidget.background': raised,
+      'editorWidget.border': line,
+      'editorSuggestWidget.background': raised,
+      'editorSuggestWidget.border': line,
+      'editorSuggestWidget.selectedBackground': active,
+      'editorHoverWidget.background': raised,
+      'editorHoverWidget.border': line,
+      'input.background': inset,
+      'input.border': line,
+      // Monaco's message at the caret (a rename refused) takes these.
+      'inputValidation.infoBackground': raised,
+      'inputValidation.infoForeground': fg,
+      'inputValidation.infoBorder': line,
       'focusBorder': c('--accent-line', '#f5a52473'),
-      'scrollbarSlider.background': c('--line', '#ffffff22'),
+      'scrollbarSlider.background': line,
       'scrollbarSlider.hoverBackground': c('--line-strong', '#ffffff33'),
       'scrollbarSlider.activeBackground': c('--fg-faint', '#ffffff44'),
       'scrollbar.shadow': '#00000000',
       'editorOverviewRuler.border': '#00000000',
       'editorError.foreground': c('--ripe-error-fg', '#f0766b'),
       'editorWarning.foreground': c('--ripe-running-fg', '#f4c062'),
+      'editorInfo.foreground': fn,
+      'editorHint.foreground': subtle,
+      'editorOverviewRuler.errorForeground': c('--ripe-error', '#e5534b'),
+      'editorOverviewRuler.warningForeground': c('--ripe-running', '#f5a524'),
+      'editorOverviewRuler.infoForeground': fn,
+
+      // Completion, hover, parameter hints and peek: Mango's floating layers.
+      'foreground': fg,
+      'descriptionForeground': subtle,
+      'icon.foreground': muted,
+      'editorWidget.foreground': fg,
+      'editorSuggestWidget.foreground': muted,
+      'editorSuggestWidget.selectedForeground': fg,
+      'editorSuggestWidget.selectedIconForeground': fg,
+      'editorSuggestWidget.highlightForeground': accentInk,
+      'editorSuggestWidget.focusHighlightForeground': accentInk,
+      'editorSuggestWidgetStatus.foreground': subtle,
+      'editorHoverWidget.foreground': fg,
+      'editorHoverWidget.highlightForeground': accentInk,
+      'editorHoverWidget.statusBarBackground': raised,
+      // Their shadow is `--shadow-pop` (FilesEditorPane).
+      'widget.shadow': '#00000000',
+      'list.hoverBackground': hover,
+      'list.hoverForeground': fg,
+      'list.focusBackground': active,
+      'list.focusForeground': fg,
+      'list.focusOutline': '#00000000',
+      'list.activeSelectionBackground': active,
+      'list.activeSelectionForeground': fg,
+      'list.inactiveSelectionBackground': active,
+      'list.highlightForeground': accentInk,
+      'list.focusHighlightForeground': accentInk,
+      'toolbar.hoverBackground': hover,
+      'textLink.foreground': accentInk,
+      'textLink.activeForeground': accentInk,
+      'editorLink.activeForeground': accentInk,
+      'textCodeBlock.background': inset,
+      'textPreformat.foreground': fg,
+      'textPreformat.background': inset,
+      'editor.snippetTabstopHighlightBackground': active,
+      'editor.snippetFinalTabstopHighlightBorder': c('--accent-line', '#f5a52473'),
+      'peekView.border': line,
+      'peekViewTitle.background': panel,
+      'peekViewTitleLabel.foreground': fg,
+      'peekViewTitleDescription.foreground': subtle,
+      'peekViewEditor.background': inset,
+      'peekViewEditorGutter.background': inset,
+      'peekViewEditor.matchHighlightBackground': c('--accent-soft', '#f5a52424'),
+      'peekViewResult.background': panel,
+      'peekViewResult.fileForeground': fg,
+      'peekViewResult.lineForeground': muted,
+      'peekViewResult.selectionBackground': active,
+      'peekViewResult.selectionForeground': fg,
+      'peekViewResult.matchHighlightBackground': c('--accent-soft', '#f5a52424'),
+      'symbolIcon.methodForeground': fn,
+      'symbolIcon.functionForeground': fn,
+      'symbolIcon.constructorForeground': fn,
+      'symbolIcon.classForeground': type,
+      'symbolIcon.interfaceForeground': type,
+      'symbolIcon.structForeground': type,
+      'symbolIcon.enumeratorForeground': type,
+      'symbolIcon.typeParameterForeground': type,
+      'symbolIcon.enumeratorMemberForeground': number,
+      'symbolIcon.constantForeground': number,
+      'symbolIcon.eventForeground': number,
+      'symbolIcon.keywordForeground': keyword,
+      'symbolIcon.snippetForeground': string,
+      'symbolIcon.fieldForeground': muted,
+      'symbolIcon.propertyForeground': muted,
+      'symbolIcon.variableForeground': muted,
+      'symbolIcon.moduleForeground': muted,
+      'symbolIcon.textForeground': subtle,
+      'symbolIcon.fileForeground': subtle,
+      'symbolIcon.folderForeground': subtle,
     },
   })
   monaco.editor.setTheme(THEME)
@@ -137,5 +313,7 @@ export function languageFor(monaco: MonacoApi, file: string): string {
     if (lang.filenames?.some(f => f.toLowerCase() === name)) return lang.id
     if (ext && lang.extensions?.some(e => e.toLowerCase() === ext)) return lang.id
   }
+  const added = pluginLanguage(file)
+  if (added && monaco.languages.getLanguages().some(l => l.id === added)) return added
   return 'plaintext'
 }

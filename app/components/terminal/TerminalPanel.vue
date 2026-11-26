@@ -9,23 +9,31 @@ import { useEnvironments } from '~/stores/environments'
 import { holdOverlay } from '~/composables/useOverlay'
 import { useThreads } from '~/stores/threads'
 import { terminalSlot } from '~/composables/useTerminalDrag'
-import { dragJustEnded, draggedTerminal, pressTerminalTab } from '~/composables/useTabDrag'
+import { dragJustEnded, draggedPanelItem, pressPanelTab, pressTerminalTab } from '~/composables/useTabDrag'
 import { parseTerminalTab } from '~/utils/terminalTabs'
+import { allPanelTabs, findPanelTab, panelTabBadge, type PanelTab } from '~/composables/panelTabs'
+import type { PanelTabContext } from '~/plugin-host/types'
+import { usePluginRuntime } from '~/plugin-host/runtime'
+import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
+import GitLogPanel from '~/components/git/GitLogPanel.vue'
+import { GIT_LOG_TAB } from '~/utils/builtIns'
+import PluginViewHost from '~/components/plugins/PluginViewHost.vue'
 
 /**
- * Docked terminal panel at the bottom of the main column.
- * Height is a fraction of `container` (the column), stored in the workspace.
+ * Docked panel at the bottom of the main column: the terminals, and among them the panel tabs (the Git log,
+ * and plugins' `ui.panelTabs`), which move, dock and close like terminals. Height is a fraction of `container` (the column), stored in the workspace.
  */
 const props = defineProps<{ container: HTMLElement | null }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 
 /** Hover text: the shell and folder, or for a shell in a remote environment, where it runs. */
 function tabTitle(tab: TerminalTab) {
   const place = remotePlace(tab.cwd)
-  const where = place ? `Shell in ${place.where} — ${place.dir}` : [tab.shell, tab.cwd ?? tab.title].filter(Boolean).join(' — ')
-  return tab.exited ? `${where} — (exited)` : where
+  const where = place ? t('terminal.shellInDir', { place: place.where, dir: place.dir }) : [tab.shell, tab.cwd ?? tab.title].filter(Boolean).join(' — ')
+  return tab.exited ? t('terminal.exitedTitle', { where }) : where
 }
 
 const DEFAULT_H = 0.34
@@ -109,24 +117,95 @@ function endDrag(e: PointerEvent) {
   ws.persist()
 }
 
+/* ---------- panel tabs ---------- */
+const runtime = usePluginRuntime()
+/** The panel tab showing instead of a terminal, or null. */
+const showingTab = computed(() => ws.activePanelTab)
+
+/** The strip, in its order: terminals and panel tabs side by side. */
+type StripItem = { kind: 'terminal'; key: string; term: TerminalTab } | { kind: 'tab'; key: string; tab: PanelTab }
+const stripItems = computed<StripItem[]>(() => ws.panelStrip.flatMap((key): StripItem[] => {
+  const term = ws.panelTerminals.find(x => x.id === key)
+  if (term) return [{ kind: 'terminal', key, term }]
+  const tab = findPanelTab(key)
+  return tab ? [{ kind: 'tab', key, tab }] : []
+}))
+const hasPanelTabs = computed(() => stripItems.value.some(i => i.kind === 'tab'))
+
+// The main area holds a tab for each panel tab placed there that is Mango's own or whose plugin runs (after a reload, a plugin coming back...).
+watch(
+  () => [allPanelTabs().map(x => x.fullId).join(' '), JSON.stringify(ws.panelTabPlaces), threads.tabs.length],
+  () => ws.syncPanelEditorTabs(),
+  { immediate: true },
+)
+
+/*
+ * A panel tab's view lives here, like the terminals: it mounts the first time it shows (in the panel or in a
+ * pane, which it is teleported into) and stays mounted until it is closed or its plugin stops, so moving
+ * it or switching tabs keeps its state. `ctx.visible` says when it is in view.
+ */
+const editorTabOf = (ref: string) => (ws.panelTabPlaces[ref]?.at === 'editor' ? ws.panelEditorTab(ref) : null)
+const tabSlot = (ref: string) => (editorTabOf(ref) ? terminalSlot(ref) : null)
+const tabInView = (ref: string) => {
+  const tabId = editorTabOf(ref)
+  return tabId ? threads.panes.some(p => p.threadId === tabId) : ws.terminalOpen && showingTab.value?.fullId === ref
+}
+const seen = ref<string[]>([])
+watchEffect(() => {
+  const live = allPanelTabs().filter(x => ws.panelTabPlaces[x.fullId]?.at !== 'closed').map(x => x.fullId)
+  const keep = seen.value.filter(r => live.includes(r))
+  for (const r of live) if (!keep.includes(r) && (tabSlot(r) || showingTab.value?.fullId === r)) keep.push(r)
+  if (keep.join(' ') !== seen.value.join(' ')) seen.value = keep
+})
+const mountedTabs = computed(() => allPanelTabs().filter(x => seen.value.includes(x.fullId)))
+const ctxs = computed<Record<string, PanelTabContext>>(() => {
+  const projectPath = threads.workdir ?? ws.activeProjectPath
+  const out: Record<string, PanelTabContext> = {}
+  for (const tab of mountedTabs.value) {
+    const ref = tab.fullId
+    out[ref] = {
+      projectPath,
+      visible: tabInView(ref),
+      // In the main area: close its tab. In the panel: hide the panel.
+      close: () => (editorTabOf(ref) ? ws.closePanelTab(ref) : ws.toggleTerminal(false)),
+    }
+  }
+  return out
+})
+
 /* ---------- tabs ---------- */
-// Visible with no tabs (e.g. restored as open on launch): start a shell.
-watch(() => ws.terminalOpen, (open) => {
-  if (open && ws.panelTerminals.length === 0) ws.newTerminal()
-}, { immediate: true })
+/*
+ * Open with no shell and no panel tab showing (restored as open on launch, a plugin tab that went
+ * away): start a shell. A saved plugin tab waits for the plugins to load before giving up on it.
+ */
+watch(
+  () => ws.terminalOpen && !showingTab.value && ws.panelTerminals.length === 0 && (runtime.ready || !ws.panelPluginTab),
+  (need) => {
+    if (!need) return
+    // The chosen plugin tab stays chosen: it shows again once its plugin (or its `when()`) is back.
+    const keep = ws.panelPluginTab
+    ws.newTerminal()
+    ws.panelPluginTab = keep
+  },
+  { immediate: true },
+)
 
 const views = ref<Record<string, { focus: () => void } | null>>({})
 function activate(id: string) {
   if (dragJustEnded()) return // the click that ends a drag is not a click
-  ws.activeTerminalId = id
+  ws.showTerminals(id)
   // Clicking a tab means "I want to type there", also when it was already the active one.
   nextTick(() => views.value[id]?.focus())
 }
+function activateTab(ref: string) {
+  if (dragJustEnded()) return
+  if (ws.panelPluginTab !== ref || !ws.terminalOpen) ws.openPanelTab(ref)
+}
 
 const strip = ref<HTMLElement | null>(null)
-watch(() => ws.activeTerminalId, async (id) => {
+watch(() => showingTab.value?.fullId ?? ws.activeTerminalId, async (id) => {
   await nextTick()
-  strip.value?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  if (id) strip.value?.querySelector<HTMLElement>(`[data-tab-id="${id}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
 })
 
 /** Vertical wheel scrolls the tab strip sideways. */
@@ -137,8 +216,9 @@ function onStripWheel(e: WheelEvent) {
   e.preventDefault()
 }
 
+/** Arrow keys rove over the whole strip, terminals and panel tabs alike. */
 function onTabKey(e: KeyboardEvent, index: number) {
-  const tabs = ws.panelTerminals
+  const tabs = stripItems.value
   let next = -1
   if (e.key === 'ArrowRight') next = (index + 1) % tabs.length
   else if (e.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length
@@ -148,8 +228,9 @@ function onTabKey(e: KeyboardEvent, index: number) {
   e.preventDefault()
   const tab = tabs[next]
   if (!tab) return
-  activate(tab.id)
-  nextTick(() => strip.value?.querySelector<HTMLElement>(`[data-tab-id="${tab.id}"]`)?.focus())
+  if (tab.kind === 'tab') activateTab(tab.key)
+  else activate(tab.key)
+  nextTick(() => strip.value?.querySelector<HTMLElement>(`[data-tab-id="${tab.key}"]`)?.focus())
 }
 
 onBeforeUnmount(() => {
@@ -175,9 +256,9 @@ function placeOf(tab: TerminalTab) {
 const paneTerminal = computed(() => parseTerminalTab(threads.activePane.threadId)?.terminalId ?? null)
 
 const canMoveToEditor = computed(() => !!ws.activeProjectPath)
-const moveLabel = 'Move to editor area'
+const moveLabel = computed(() => t('terminal.moveToEditor'))
 
-/* Right-click on a terminal's tab. */
+/* Right-click on a tab of the strip: a terminal's, or a panel tab's (no shell actions). */
 const tabMenu = ref<{ showAt: (x: number, y: number) => void } | null>(null)
 const menuTermId = ref<string | null>(null)
 async function onTabContext(e: MouseEvent, id: string) {
@@ -188,9 +269,15 @@ async function onTabContext(e: MouseEvent, id: string) {
 const tabMenuItems = computed<MenuItem[]>(() => {
   const id = menuTermId.value
   if (!id) return []
+  if (findPanelTab(id)) {
+    return [
+      { label: moveLabel.value, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.movePanelTabToEditor(id) },
+      { label: t('common.actions.close'), icon: X, divider: true, onSelect: () => ws.closePanelTab(id) },
+    ]
+  }
   return [
-    { label: moveLabel, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.moveTerminalToEditor(id) },
-    { label: 'Close', icon: X, divider: true, onSelect: () => ws.closeTerminal(id) },
+    { label: moveLabel.value, icon: ArrowUpToLine, disabled: !canMoveToEditor.value, onSelect: () => ws.moveTerminalToEditor(id) },
+    { label: t('common.actions.close'), icon: X, divider: true, onSelect: () => ws.closeTerminal(id) },
   ]
 })
 
@@ -199,8 +286,8 @@ const projectEnv = computed(() => parseEnvPath(ws.activeProjectPath))
 
 /** "+" opens a shell where the project runs. */
 const newLabel = computed(() => projectEnv.value
-  ? `New shell in ${projectEnv.value.instance}`
-  : ws.defaultTerminalProfile ? `New ${ws.defaultTerminalProfile.name} terminal` : 'New terminal')
+  ? t('terminal.newShellIn', { place: projectEnv.value.instance })
+  : ws.defaultTerminalProfile ? t('terminal.newNamed', { name: ws.defaultTerminalProfile.name }) : t('terminal.new'))
 
 /**
  * Where a new terminal can run: the project's environment first (when remote), the shells found on this
@@ -212,22 +299,22 @@ const profileItems = computed<MenuItem[]>(() => {
   const env = projectEnv.value
   if (env) {
     items.push({
-      label: `Shell in ${env.instance}`,
+      label: t('terminal.shellIn', { place: env.instance }),
       hint: env.dir,
       icon: Server,
-      kbd: 'Default',
+      kbd: t('terminal.default'),
       onSelect: () => ws.newTerminal(),
     })
   }
   const local: MenuItem[] = ws.terminalProfiles.map((p, i) => ({
-    ...(i === 0 && env ? { group: 'This computer', divider: true } : {}),
+    ...(i === 0 && env ? { group: t('terminal.thisComputer'), divider: true } : {}),
     label: p.name,
     hint: p.path,
     icon: SquareTerminal,
-    kbd: !env && p.id === fallback?.id ? 'Default' : undefined,
+    kbd: !env && p.id === fallback?.id ? t('terminal.default') : undefined,
     onSelect: () => ws.newTerminal(undefined, p.id),
   }))
-  if (!local.length) local.push({ label: ws.terminalProfilesLoading ? 'Looking for shells…' : 'No shells found', disabled: true, divider: !!env })
+  if (!local.length) local.push({ label: ws.terminalProfilesLoading ? t('terminal.looking') : t('terminal.noShells'), disabled: true, divider: !!env })
   items.push(...local)
 
   // Every environment, grouped by server; the last item of whereItems is "Manage environments…".
@@ -236,8 +323,8 @@ const profileItems = computed<MenuItem[]>(() => {
   }, () => useEnvironments().openView())
   items.push(...envItems.slice(1, -1))
   items.push(
-    { label: 'Look for shells again', icon: RefreshCw, divider: true, onSelect: () => ws.loadTerminalProfiles() },
-    { label: 'Terminal settings…', icon: Settings, onSelect: () => ws.openSettings('terminal') },
+    { label: t('terminal.lookAgain'), icon: RefreshCw, divider: true, onSelect: () => ws.loadTerminalProfiles() },
+    { label: t('terminal.settings'), icon: Settings, onSelect: () => ws.openSettings('terminal') },
   )
   return items
 })
@@ -248,7 +335,7 @@ const profileItems = computed<MenuItem[]>(() => {
     class="terminal-panel"
     :class="{ 'is-dragging': dragging, 'is-animating': animating }"
     :style="panelStyle"
-    aria-label="Terminal"
+    :aria-label="hasPanelTabs ? t('terminal.bottomPanel') : t('terminal.label')"
     data-tab-drop="panel"
     @transitionend="onPanelTransitionEnd"
   >
@@ -256,7 +343,7 @@ const profileItems = computed<MenuItem[]>(() => {
       class="terminal-panel__handle"
       role="separator"
       aria-orientation="horizontal"
-      aria-label="Resize terminal"
+      :aria-label="t('terminal.resize')"
       :aria-valuenow="Math.round(ws.terminalHeight * 100)"
       aria-valuemin="14"
       aria-valuemax="80"
@@ -272,56 +359,92 @@ const profileItems = computed<MenuItem[]>(() => {
         ref="strip"
         class="terminal-panel__tabs"
         role="tablist"
-        aria-label="Terminals"
+        :aria-label="hasPanelTabs ? t('terminal.panelTabs') : t('terminal.tabs')"
         data-term-strip
         @wheel="onStripWheel"
       >
-        <div
-          v-for="(tab, i) in ws.panelTerminals"
-          :key="tab.id"
-          class="term-tab"
-          :class="{ 'is-active': tab.id === ws.activeTerminalId, 'is-exited': tab.exited, 'is-dragged': draggedTerminal()?.id === tab.id }"
-          role="tab"
-          :data-tab-id="tab.id"
-          :data-term-id="tab.id"
-          :aria-selected="tab.id === ws.activeTerminalId"
-          :tabindex="tab.id === ws.activeTerminalId ? 0 : -1"
-          :title="tabTitle(tab)"
-          @click="activate(tab.id)"
-          @pointerdown="pressTerminalTab($event, tab.id, 'panel')"
-          @contextmenu.prevent="onTabContext($event, tab.id)"
-          @mousedown.middle.prevent
-          @auxclick.middle.prevent="ws.closeTerminal(tab.id)"
-          @keydown.enter.prevent="activate(tab.id)"
-          @keydown.space.prevent="activate(tab.id)"
-          @keydown="onTabKey($event, i)"
-        >
-          <component :is="isEnvPath(tab.cwd) ? Server : SquareTerminal" class="term-tab__icon" aria-hidden="true" />
-          <span class="term-tab__title">{{ tab.title }}</span>
-          <span v-if="tab.shell" class="term-tab__shell">{{ tab.shell }}</span>
-          <button
-            type="button"
-            class="term-tab__close"
-            tabindex="-1"
-            :aria-label="`Close ${tab.title}`"
-            title="Close"
-            @click.stop="ws.closeTerminal(tab.id)"
+        <template v-for="(item, i) in stripItems" :key="item.key">
+          <!-- A panel tab: moves and closes like a terminal's tab; no shell. -->
+          <div
+            v-if="item.kind === 'tab'"
+            class="term-tab"
+            :class="{ 'is-active': showingTab?.fullId === item.key, 'is-dragged': draggedPanelItem()?.id === item.key }"
+            role="tab"
+            :data-tab-id="item.key"
+            :data-term-id="item.key"
+            :aria-selected="showingTab?.fullId === item.key"
+            :aria-label="panelTabBadge(item.tab) ? `${item.tab.title}, ${panelTabBadge(item.tab)}` : item.tab.title"
+            :tabindex="showingTab?.fullId === item.key ? 0 : -1"
+            :title="item.tab.title"
+            @click="activateTab(item.key)"
+            @pointerdown="pressPanelTab($event, item.key, 'panel')"
+            @contextmenu.prevent="onTabContext($event, item.key)"
+            @mousedown.middle.prevent
+            @auxclick.middle.prevent="ws.closePanelTab(item.key)"
+            @keydown.enter.prevent="activateTab(item.key)"
+            @keydown.space.prevent="activateTab(item.key)"
+            @keydown="onTabKey($event, i)"
           >
-            <X aria-hidden="true" />
-          </button>
-        </div>
+            <PluginIcon :icon="item.tab.icon" class="term-tab__icon" />
+            <span class="term-tab__title">{{ item.tab.title }}</span>
+            <span v-if="panelTabBadge(item.tab)" class="term-tab__badge tabular" aria-hidden="true">{{ panelTabBadge(item.tab) > 99 ? '99+' : panelTabBadge(item.tab) }}</span>
+            <button
+              type="button"
+              class="term-tab__close"
+              tabindex="-1"
+              :aria-label="t('terminal.closeNamed', { title: item.tab.title })"
+              :title="t('common.actions.close')"
+              @click.stop="ws.closePanelTab(item.key)"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+          <div
+            v-else
+            class="term-tab"
+            :class="{ 'is-active': !showingTab && item.key === ws.activeTerminalId, 'is-exited': item.term.exited, 'is-dragged': draggedPanelItem()?.id === item.key }"
+            role="tab"
+            :data-tab-id="item.key"
+            :data-term-id="item.key"
+            :aria-selected="!showingTab && item.key === ws.activeTerminalId"
+            :tabindex="!showingTab && item.key === ws.activeTerminalId ? 0 : -1"
+            :title="tabTitle(item.term)"
+            @click="activate(item.key)"
+            @pointerdown="pressTerminalTab($event, item.key, 'panel')"
+            @contextmenu.prevent="onTabContext($event, item.key)"
+            @mousedown.middle.prevent
+            @auxclick.middle.prevent="ws.closeTerminal(item.key)"
+            @keydown.enter.prevent="activate(item.key)"
+            @keydown.space.prevent="activate(item.key)"
+            @keydown="onTabKey($event, i)"
+          >
+            <component :is="isEnvPath(item.term.cwd) ? Server : SquareTerminal" class="term-tab__icon" aria-hidden="true" />
+            <span class="term-tab__title">{{ item.term.title }}</span>
+            <span v-if="item.term.shell" class="term-tab__shell">{{ item.term.shell }}</span>
+            <button
+              type="button"
+              class="term-tab__close"
+              tabindex="-1"
+              :aria-label="t('terminal.closeNamed', { title: item.term.title })"
+              :title="t('common.actions.close')"
+              @click.stop="ws.closeTerminal(item.key)"
+            >
+              <X aria-hidden="true" />
+            </button>
+          </div>
+        </template>
         <div class="terminal-panel__new">
           <UiIconButton :label="newLabel" size="sm" @click="ws.newTerminal()">
             <Plus />
           </UiIconButton>
-          <UiMenu :items="profileItems" placement="bottom-start" :width="280" label="New terminal with…">
+          <UiMenu :items="profileItems" placement="bottom-start" :width="280" :label="t('terminal.newWith')">
             <template #default="{ toggle, open }">
               <button
                 type="button"
                 class="terminal-panel__pick"
                 :class="{ 'is-open': open }"
-                aria-label="Choose where a new terminal runs"
-                :title="open ? undefined : 'Choose a shell or an environment'"
+                :aria-label="t('terminal.choose')"
+                :title="open ? undefined : t('terminal.chooseTitle')"
                 aria-haspopup="menu"
                 :aria-expanded="open"
                 @click="() => { if (!open) refreshEnvs({ once: true }); toggle() }"
@@ -337,16 +460,16 @@ const profileItems = computed<MenuItem[]>(() => {
         <UiIconButton
           :label="moveLabel"
           size="sm"
-          :disabled="!canMoveToEditor || !ws.activeTerminalId"
-          @click="ws.activeTerminalId && ws.moveTerminalToEditor(ws.activeTerminalId)"
+          :disabled="!canMoveToEditor || (!showingTab && !ws.activeTerminalId)"
+          @click="showingTab ? ws.movePanelTabToEditor(showingTab.fullId) : ws.activeTerminalId && ws.moveTerminalToEditor(ws.activeTerminalId)"
         >
           <ArrowUpToLine />
         </UiIconButton>
-        <UiIconButton :label="isMaximized ? 'Restore panel size' : 'Maximize panel'" size="sm" @click="toggleMaximize">
+        <UiIconButton :label="isMaximized ? t('terminal.restoreSize') : t('terminal.maximize')" size="sm" @click="toggleMaximize">
           <Minimize2 v-if="isMaximized" />
           <Maximize2 v-else />
         </UiIconButton>
-        <UiIconButton label="Hide terminal" size="sm" @click="ws.toggleTerminal(false)">
+        <UiIconButton :label="hasPanelTabs ? t('terminal.hidePanel') : t('terminal.hide')" size="sm" @click="ws.toggleTerminal(false)">
           <ChevronDown />
         </UiIconButton>
       </div>
@@ -355,17 +478,29 @@ const profileItems = computed<MenuItem[]>(() => {
     <div class="terminal-panel__body" data-term-body>
       <Teleport v-for="tab in ws.terminalTabs" :key="tab.id" :to="slotOf(tab) ?? 'body'" :disabled="!slotOf(tab)">
         <TerminalView
-          v-show="slotOf(tab) || (!tab.inEditor && tab.id === ws.activeTerminalId)"
+          v-show="slotOf(tab) || (!tab.inEditor && !showingTab && tab.id === ws.activeTerminalId)"
           :ref="(el: any) => { views[tab.id] = el }"
           :tab="tab"
-          :active="slotOf(tab) ? paneTerminal === tab.id : tab.id === ws.activeTerminalId"
-          :visible="slotOf(tab) ? true : ws.terminalOpen && !tab.inEditor"
+          :active="slotOf(tab) ? paneTerminal === tab.id : !showingTab && tab.id === ws.activeTerminalId"
+          :visible="slotOf(tab) ? true : ws.terminalOpen && !tab.inEditor && !showingTab"
           :place="placeOf(tab)"
         />
       </Teleport>
+      <!-- The panel tabs' views, teleported into their pane while one shows them in the main area. -->
+      <Teleport v-for="pt in mountedTabs" :key="pt.fullId" :to="tabSlot(pt.fullId) ?? 'body'" :disabled="!tabSlot(pt.fullId)">
+        <div
+          v-show="tabSlot(pt.fullId) || (!editorTabOf(pt.fullId) && showingTab?.fullId === pt.fullId)"
+          class="terminal-panel__view"
+          role="tabpanel"
+          :aria-label="pt.title"
+        >
+          <GitLogPanel v-if="pt.fullId === GIT_LOG_TAB" :path="ctxs[pt.fullId]!.projectPath" :visible="ctxs[pt.fullId]!.visible" />
+          <PluginViewHost v-else-if="pt.pluginId !== null" :view="pt.view" :ctx="ctxs[pt.fullId]" :plugin-id="pt.pluginId" />
+        </div>
+      </Teleport>
     </div>
 
-    <UiMenu ref="tabMenu" :items="tabMenuItems" :width="220" label="Terminal actions" />
+    <UiMenu ref="tabMenu" :items="tabMenuItems" :width="220" :label="t('terminal.actions')" />
   </section>
 </template>
 
@@ -547,10 +682,32 @@ const profileItems = computed<MenuItem[]>(() => {
   gap: 2px;
 }
 
+/* A plugin panel tab's count (e.g. unread), after its title. */
+.term-tab__badge {
+  flex: none;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-active);
+  color: var(--fg-muted);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+
 /* ---------- body ---------- */
 .terminal-panel__body {
   flex: 1;
   min-height: 0;
   position: relative;
+}
+.terminal-panel__view {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
 }
 </style>

@@ -8,6 +8,8 @@ import { AgentIcon, Banner, Button, ListRow, ListSection, Sheet, Spinner, TextFi
 import { backend } from '@/remote'
 import { AGENT_HOME, validInstanceDir } from '@/remote/shell'
 import { projectsKey, useEnvs } from '@/state/envs'
+import { usePrefs } from '@/state/prefs'
+import { MODE_SHORT, modeForProject } from '@/state/prefsModel'
 import { useThreads } from '@/state/threads'
 import { messageOf, placeOf, projectName } from './names'
 import { knownProjects, placesOf, type Place } from './places'
@@ -219,7 +221,10 @@ function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) 
     return () => { alive = false }
   }, [path, env])
 
-  const agents = Object.keys(AGENTS) as AgentId[]
+  const defaultAgent = usePrefs(st => st.defaultAgent)
+  const defaultMode = usePrefs(st => modeForProject(st, path))
+  // The agent set in Settings comes first.
+  const agents = (Object.keys(AGENTS) as AgentId[]).sort((a, b) => Number(b === defaultAgent) - Number(a === defaultAgent))
   return (
     <View style={{ gap: space[4] }}>
       <ListSection title="Project">
@@ -255,18 +260,19 @@ function AgentStep({ path, onCreated }: { path: string; onCreated: (id: string) 
         : !installed
             ? <Loading label="Checking the agents" />
             : (
-                <ListSection title="Agent" footer={installed.length ? 'Model and permissions can be changed in the chat.' : 'Install an agent in this environment from Mango on your computer (Settings > Agents).'}>
+                <ListSection title="Agent" footer={installed.length ? 'Model and permissions can be changed in the chat; the defaults are in Settings.' : 'Install an agent in this environment from Mango on your computer (Settings > Agents).'}>
                   {agents.map((a) => {
                     const ok = installed.includes(a)
                     return (
                       <ListRow
                         key={a}
                         title={AGENTS[a].name}
-                        subtitle={ok ? `${AGENTS[a].models[0]!.label} model · asks before edits` : 'Not installed in this environment'}
+                        subtitle={ok ? `${AGENTS[a].models[0]!.label} model · ${MODE_SHORT[defaultMode]}` : 'Not installed in this environment'}
                         subtitleTone={ok ? 'subtle' : 'faint'}
                         leading={<AgentIcon agent={a} size={20} color={t.colors.fgMuted} />}
+                        detail={ok && a === defaultAgent ? 'Default' : undefined}
                         disabled={!ok}
-                        onPress={ok ? () => onCreated(useThreads.getState().create({ projectPath: path, agent: a, inWorktree: inWorktree && repo }).id) : undefined}
+                        onPress={ok ? () => onCreated(useThreads.getState().create({ projectPath: path, agent: a, mode: defaultMode, inWorktree: inWorktree && repo }).id) : undefined}
                       />
                     )
                   })}

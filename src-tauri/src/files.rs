@@ -5,10 +5,14 @@
 //! instance (see `remote` below).
 
 use std::fs;
-use std::path::PathBuf;
+use std::hash::{Hash, Hasher};
+use std::io::{Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use tauri::AppHandle;
 
 use crate::git::{self, blocking, clean_rel, existing_dir, EnvAt, Vcs};
@@ -74,6 +78,9 @@ pub struct FileContent {
     pub bom: bool,
     /// Last modification, ms since the epoch: hand it back on save.
     pub modified_ms: u64,
+    /// SHA-256 of the file's bytes, when it was read whole: hand it back on save too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,6 +99,9 @@ pub struct WriteResult {
     /// False when the file changed on disk since it was read; nothing was written.
     pub saved: bool,
     pub modified_ms: u64,
+    /// SHA-256 of what was saved.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
 }
 
 pub(crate) fn modified_ms(meta: &fs::Metadata) -> u64 {
@@ -162,8 +172,11 @@ fn read_entries(target: &std::path::Path, dir: &str, max: usize) -> Result<(Vec<
     Ok((entries, truncated))
 }
 
-/// Mark what the repository ignores, when the project is a git work tree.
-fn mark_ignored<'a>(root: &str, entries: impl Iterator<Item = &'a mut FsEntry>) -> Result<(), String> {
+/// Mark what the repository ignores among `entries`, which are all below the folder `dir`, when
+/// the project is a git work tree. Git is asked from inside that folder: from the project it
+/// refuses the whole question as soon as one path lies in a submodule or behind a link, and from
+/// inside, a submodule's own rules apply.
+fn mark_ignored<'a>(root: &str, dir: &str, entries: impl Iterator<Item = &'a mut FsEntry>) -> Result<(), String> {
     // Git runs in the folder as given: on Windows the canonical form is a
     // `\\?\` path, which git does not accept as a working directory.
     let project = existing_dir(root)?;
@@ -171,13 +184,29 @@ fn mark_ignored<'a>(root: &str, entries: impl Iterator<Item = &'a mut FsEntry>) 
         return Ok(());
     }
     let mut entries: Vec<&mut FsEntry> = entries.collect();
-    let paths: Vec<String> = entries.iter().map(|e| e.path.clone()).collect();
-    let ignored: std::collections::HashSet<String> =
-        git::ignored_paths(&project, &paths).into_iter().map(|p| p.trim_end_matches('/').to_string()).collect();
-    for e in &mut entries {
-        e.ignored = ignored.contains(&e.path);
+    let prefix = if dir.is_empty() { String::new() } else { join_rel(dir, "") };
+    // `./` keeps a name like `:x` from reading as pathspec magic; git echoes each path as asked.
+    let paths: Vec<String> = entries.iter().map(|e| format!("./{}", e.path.strip_prefix(&prefix).unwrap_or(&e.path))).collect();
+    let cwd = if dir.is_empty() { project.clone() } else { project.join(dir) };
+    let (asked, found) = match git::ignored_paths_known(&cwd, &paths) {
+        Some(found) => (paths, found),
+        // Windows starts no process in a folder with a path over 260 characters: ask from the project.
+        None => {
+            let full: Vec<String> = entries.iter().map(|e| format!("./{}", e.path)).collect();
+            let found = git::ignored_paths(&project, &full);
+            (full, found)
+        }
+    };
+    let ignored: std::collections::HashSet<String> = found.into_iter().collect();
+    for (e, path) in entries.iter_mut().zip(&asked) {
+        e.ignored = ignored.contains(path);
     }
     Ok(())
+}
+
+/// A subfolder git has to be asked from inside of ([`mark_ignored`]): a repository of its own, or a link.
+fn asks_for_itself(folder: &std::path::Path) -> bool {
+    folder.join(".git").exists() || fs::symlink_metadata(folder).is_ok_and(|m| m.file_type().is_symlink())
 }
 
 #[cfg(test)]
@@ -194,7 +223,7 @@ pub(crate) fn list_dir_ahead(root: &str, dir: &str, dirs: usize, budget: usize) 
         return Err(format!("{dir} is not a folder"));
     }
     let (mut entries, truncated) = read_entries(&target, dir, MAX_ENTRIES)?;
-    mark_ignored(root, entries.iter_mut())?;
+    mark_ignored(root, dir, entries.iter_mut())?;
 
     let mut ahead = Vec::new();
     let mut left = budget;
@@ -216,7 +245,12 @@ pub(crate) fn list_dir_ahead(root: &str, dir: &str, dirs: usize, budget: usize) 
         ahead.push(FsAhead { dir: e.path.clone(), entries: sub_entries });
     }
     if !ahead.is_empty() {
-        mark_ignored(root, ahead.iter_mut().flat_map(|a| a.entries.iter_mut()))?;
+        let (apart, together): (Vec<&mut FsAhead>, Vec<&mut FsAhead>) =
+            ahead.iter_mut().partition(|a| asks_for_itself(&project.join(&a.dir)));
+        mark_ignored(root, dir, together.into_iter().flat_map(|a| a.entries.iter_mut()))?;
+        for a in apart {
+            mark_ignored(root, &a.dir, a.entries.iter_mut())?;
+        }
     }
     Ok(FsListing { entries, truncated, ahead })
 }
@@ -238,12 +272,12 @@ pub(crate) fn read_file_within(root: &str, file: &str, limit: u64) -> Result<Fil
     let size = meta.len();
     let modified_ms = modified_ms(&meta);
     if size > limit {
-        return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms });
+        return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms, hash: None });
     }
     let bytes = fs::read(&target).map_err(|e| format!("Could not read {file}: {e}"))?;
     if bytes.len() as u64 > limit {
         // It grew since it was looked at.
-        return Ok(FileContent { text: None, binary: false, too_large: true, size: bytes.len() as u64, bom: false, modified_ms });
+        return Ok(FileContent { text: None, binary: false, too_large: true, size: bytes.len() as u64, bom: false, modified_ms, hash: None });
     }
     Ok(content(bytes, size, modified_ms))
 }
@@ -268,33 +302,78 @@ pub(crate) fn read_bytes(root: &str, file: &str) -> Result<FileBytes, String> {
     })
 }
 
-/// Write `text` over an existing file. With `expected_modified_ms`, refuse
-/// (`saved: false`) when the file changed on disk since it was read: an
-/// agent may have edited it in the meantime.
+/// One save at a time per file, whichever window it comes from: two that expect the same time
+/// must not both find it and write.
+fn write_lock(target: &Path) -> MutexGuard<'static, ()> {
+    static LOCKS: [Mutex<()>; 32] = [const { Mutex::new(()) }; 32];
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    target.hash(&mut hash);
+    LOCKS[hash.finish() as usize % LOCKS.len()].lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Put `bytes` in the place of what `file` holds, without emptying it first, and put the old bytes
+/// back when that fails (a full disk, a locked range). In place on purpose: a temporary file renamed
+/// over it would lose hard links, the owner and some watchers, and Windows refuses that rename while
+/// another program has the file open.
+fn overwrite<F: Write + Seek>(
+    file: &mut F,
+    old: &[u8],
+    bytes: &[u8],
+    set_len: impl Fn(&mut F, u64) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let put = |file: &mut F, bytes: &[u8]| {
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        set_len(file, bytes.len() as u64)
+    };
+    put(file, bytes).inspect_err(|_| {
+        let _ = put(file, old);
+    })
+}
+
+/// Write `text` over an existing file. With `expected_hash` (or, without one,
+/// `expected_modified_ms`), refuse (`saved: false`) when the file changed on disk since it was
+/// read: an agent may have edited it in the meantime. The content decides where it is known:
+/// times can be as coarse as two seconds (FAT, HFS+, `date` without `%N`).
 pub(crate) fn write_file(
     root: &str,
     file: &str,
     text: &str,
     bom: bool,
     expected_modified_ms: Option<u64>,
+    expected_hash: Option<&str>,
 ) -> Result<WriteResult, String> {
     let (_, target) = resolve(root, file)?;
-    let meta = fs::metadata(&target).map_err(|e| format!("Could not save {file}: {e}"))?;
+    let failed = |e: std::io::Error| format!("Could not save {file}: {e}");
+    let _writing = write_lock(&target);
+    let meta = fs::metadata(&target).map_err(failed)?;
     if !meta.is_file() {
         return Err(format!("{file} is not a file"));
     }
     if meta.permissions().readonly() {
         return Err(format!("{file} is read-only"));
     }
-    if let Some(expected) = expected_modified_ms {
-        let now = modified_ms(&meta);
-        if now != expected {
-            return Ok(WriteResult { saved: false, modified_ms: now });
-        }
+    // Never created: a file deleted since it was looked at stays deleted.
+    let mut out = fs::OpenOptions::new().read(true).write(true).open(&target).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => format!("{file} no longer exists"),
+        _ => failed(e),
+    })?;
+    // Checked, written and timed through the one handle, so it is all the same file.
+    let mut old = Vec::new();
+    out.read_to_end(&mut old).map_err(failed)?;
+    let now = modified_ms(&out.metadata().map_err(failed)?);
+    let unchanged = match expected_hash {
+        Some(expected) => expected == hash_of(&old),
+        None => expected_modified_ms.is_none_or(|expected| expected == now),
+    };
+    if !unchanged {
+        return Ok(WriteResult { saved: false, modified_ms: now, hash: None });
     }
-    fs::write(&target, with_bom(text, bom)).map_err(|e| format!("Could not save {file}: {e}"))?;
-    let after = fs::metadata(&target).map(|m| modified_ms(&m)).unwrap_or(0);
-    Ok(WriteResult { saved: true, modified_ms: after })
+    let bytes = with_bom(text, bom);
+    overwrite(&mut out, &old, &bytes, |f, len| f.set_len(len)).map_err(failed)?;
+    let after = out.metadata().map(|m| modified_ms(&m)).unwrap_or(0);
+    Ok(WriteResult { saved: true, modified_ms: after, hash: Some(hash_of(&bytes)) })
 }
 
 /// One file or folder name: not empty, not `.` or `..`, no separators, NUL or line breaks.
@@ -321,6 +400,7 @@ fn split_rel(rel: &str) -> Result<(&str, &str), String> {
 pub(crate) fn create_file(root: &str, file: &str, text: &str) -> Result<WriteResult, String> {
     use std::io::Write as _;
     let (dir, name) = split_rel(file)?;
+    crate::file_ops::new_name(name)?;
     let (_, parent) = resolve(root, dir)?;
     if !parent.is_dir() {
         return Err(format!("{dir} is not a folder"));
@@ -335,7 +415,7 @@ pub(crate) fn create_file(root: &str, file: &str, text: &str) -> Result<WriteRes
     out.write_all(text.as_bytes()).map_err(|e| format!("Could not write {file}: {e}"))?;
     drop(out);
     let after = fs::metadata(&target).map(|m| modified_ms(&m)).unwrap_or(0);
-    Ok(WriteResult { saved: true, modified_ms: after })
+    Ok(WriteResult { saved: true, modified_ms: after, hash: None })
 }
 
 /// Delete one file. A symlink is removed itself (never what it points at); folders are refused.
@@ -383,6 +463,8 @@ pub(crate) mod remote {
     pub(crate) const READ_ONLY: i32 = 14;
     const EXISTS: i32 = 15;
     const IS_DIR: i32 = 16;
+    const CUT_SHORT: i32 = 17;
+    const NOT_RESTORED: i32 = 18;
 
     /// Shared start of every script: `$1` is the path relative to the project (the working
     /// folder), already checked by [`remote_rel`]. Leaves the resolved path in `$t` and defines
@@ -416,6 +498,7 @@ mtime() {
     /// Then an empty record, and per subfolder that fits whole `D<path>\0` and its `d`/`f`
     /// records; last `i\0` and what git ignores among all of those. Subfolders git ignores,
     /// `node_modules`, names with line breaks and links that lead out of the project are skipped.
+    /// Git is asked from inside the folders, as [`super::mark_ignored`] does.
     pub(super) const LIST: &str = concat!(
         prelude!(),
         r#"[ -d "$t" ] || exit 12
@@ -436,8 +519,14 @@ done
 printf 'i\000'
 git=
 command -v git >/dev/null 2>&1 && git=1
+pre=${rel:+$rel/}
+ignored() {
+  (cd "$root/$1" && GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null) | tr '\000' '\n' |
+    while IFS= read -r i; do printf '%s%s\000' "${1:+$1/}" "${i#./}"; done
+}
+apart() { [ -e "$root/$1/.git" ] || [ -L "$root/$1" ]; }
 if [ "$#" -gt 0 ] && [ -n "$git" ]; then
-  for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
+  for p in "$@"; do printf './%s\000' "${p#"$pre"}"; done | ignored "$rel"
 fi
 [ "$ahead" -gt 0 ] || exit 0
 printf '\000'
@@ -451,7 +540,9 @@ for p in "$@"; do
 done
 ign=
 if [ -n "$cand" ] && [ -n "$git" ]; then
-  ign=$(printf '%s' "$cand" | GIT_OPTIONAL_LOCKS=0 git -c core.quotePath=false check-ignore --stdin 2>/dev/null)
+  ign=$(for p in "$@"; do
+    case $nl$cand in *"$nl$p$nl"*) printf './%s\000' "${p#"$pre"}" ;; esac
+  done | ignored "$rel" | tr '\000' '\n')
 fi
 k=0
 set --
@@ -488,7 +579,15 @@ done
 set +f
 printf 'i\000'
 if [ "$#" -gt 0 ] && [ -n "$git" ]; then
-  for p in "$@"; do printf '%s\000' "$p"; done | GIT_OPTIONAL_LOCKS=0 git check-ignore -z --stdin 2>/dev/null
+  for p in "$@"; do apart "${p%/*}" || printf './%s\000' "${p#"$pre"}"; done | ignored "$rel"
+  last=
+  for p in "$@"; do
+    d=${p%/*}
+    [ "$d" = "$last" ] && continue
+    last=$d
+    apart "$d" || continue
+    for q in "$@"; do [ "${q%/*}" = "$d" ] && printf './%s\000' "${q##*/}"; done | ignored "$d"
+  done
 fi
 exit 0
 "#
@@ -506,15 +605,36 @@ exec cat "$t"
 "#
     );
 
-    /// `$2`: the modification time the file must still have (empty: any). Writes stdin over
-    /// the file and prints `saved <mtime>`, or leaves it alone and prints `stale <mtime>`.
+    /// `$2`: the modification time the file must still have (empty: any), `$3`: how many bytes
+    /// stdin brings, `$4`: the SHA-256 of the bytes the file must still have (empty: go by `$2`, as
+    /// where there is no `sha256sum`). Writes them over the file and prints `saved <mtime>`, or leaves
+    /// it alone and prints `stale <mtime>`. The file is touched only once all of them arrived (a
+    /// dropped connection ends stdin early), and gets its old bytes back when writing fails. When
+    /// those can't be put back either, their copy is kept: `kept <path>`, exit 18.
     pub(super) const WRITE: &str = concat!(
         prelude!(),
         r#"[ -f "$t" ] || exit 13
 [ -w "$t" ] || exit 14
+tmp=$(mktemp -d) || exit 1
+trap 'rm -rf "$tmp"' EXIT
+trap 'exit 1' HUP INT TERM
+cat > "$tmp/new" || exit 1
+got=$(wc -c < "$tmp/new") || exit 1
+[ "$got" -eq "$3" ] || exit 17
+[ -f "$t" ] || exit 10
+cat "$t" > "$tmp/old" || exit 1
 mtime "$t"
-if [ -n "$2" ] && [ "$2" != "$m" ]; then printf 'stale %s\n' "$m"; exit 0; fi
-cat > "$t" || exit 1
+now=
+if [ -n "$4" ]; then now=$(sha256sum < "$tmp/old" 2>/dev/null); now=${now%% *}; fi
+if [ -n "$now" ]; then expected=$4; else now=$m; expected=$2; fi
+if [ -n "$expected" ] && [ "$expected" != "$now" ]; then printf 'stale %s\n' "$m"; exit 0; fi
+trap '' HUP INT TERM PIPE
+if ! cat "$tmp/new" > "$t"; then
+  if cat "$tmp/old" > "$t"; then exit 1; fi
+  trap - EXIT
+  printf 'kept %s\n' "$tmp/old"
+  exit 18
+fi
 mtime "$t"
 printf 'saved %s\n' "$m"
 "#
@@ -584,6 +704,7 @@ printf 'deleted\n'
             Some(NOT_DIR) => format!("{shown} is not a folder"),
             Some(NOT_FILE) => format!("{shown} is not a file"),
             Some(READ_ONLY) => format!("{shown} is read-only"),
+            Some(CUT_SHORT) => format!("Could not {verb} {shown}: the connection dropped before all of it arrived. Try again."),
             _ => out.error(&format!("Could not {verb} {shown}")),
         }
     }
@@ -700,7 +821,7 @@ printf 'deleted\n'
         }
         let (size, modified_ms, bytes, too_large) = read_raw(env, &rel, limit.min(MAX_OPEN))?;
         if too_large {
-            return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms });
+            return Ok(FileContent { text: None, binary: false, too_large: true, size, bom: false, modified_ms, hash: None });
         }
         Ok(content(bytes, size, modified_ms))
     }
@@ -724,10 +845,17 @@ printf 'deleted\n'
         let (word, mtime) = text.split_once(' ')?;
         let modified_ms = mtime.parse().ok()?;
         match word {
-            "saved" => Some(WriteResult { saved: true, modified_ms }),
-            "stale" => Some(WriteResult { saved: false, modified_ms }),
+            "saved" => Some(WriteResult { saved: true, modified_ms, hash: None }),
+            "stale" => Some(WriteResult { saved: false, modified_ms, hash: None }),
             _ => None,
         }
+    }
+
+    /// What to say when the old bytes could not be put back ([`WRITE`]'s exit 18). The page knows it
+    /// by "Its text from before is kept" (`keepsBackup` in app/utils/autoSave.ts) and keeps it on show.
+    pub(super) fn not_restored(body: &[u8], rel: &str) -> String {
+        let kept = std::str::from_utf8(body).ok().and_then(|b| b.trim_end().strip_prefix("kept ")).unwrap_or("its temporary folder");
+        format!("Could not save {rel}, and it may be incomplete now. Its text from before is kept in the environment at {kept}.")
     }
 
     pub(super) fn write_file(
@@ -736,18 +864,30 @@ printf 'deleted\n'
         text: &str,
         bom: bool,
         expected_modified_ms: Option<u64>,
+        expected_hash: Option<&str>,
     ) -> Result<WriteResult, String> {
         let rel = remote_rel(file)?;
+        let expected_hash = expected_hash.unwrap_or_default();
+        if !expected_hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(format!("Could not save {rel}: bad checksum"));
+        }
         if rel.is_empty() {
             return Err("The project folder is not a file".into());
         }
         let expected = expected_modified_ms.map(|m| m.to_string()).unwrap_or_default();
-        let out = run(env, WRITE, &[&rel, &expected], Some(with_bom(text, bom)), HEADER)?;
+        let bytes = with_bom(text, bom);
+        let len = bytes.len().to_string();
+        let hash = hash_of(&bytes);
+        let out = run(env, WRITE, &[&rel, &expected, &len, expected_hash], Some(bytes), HEADER)?;
         if !out.ok() {
-            return Err(failure(&out, &rel, "save"));
+            return Err(match out.code {
+                Some(NOT_RESTORED) => not_restored(body(&out.stdout).unwrap_or_default(), &rel),
+                _ => failure(&out, &rel, "save"),
+            });
         }
         body(&out.stdout)
             .and_then(parse_write)
+            .map(|res| if res.saved { WriteResult { hash: Some(hash), ..res } } else { res })
             .ok_or_else(|| format!("Saved {rel}, but the environment's answer was not understood. Reopen the file to check it."))
     }
 
@@ -805,6 +945,7 @@ printf 'deleted\n'
 
 /// The text (and BOM flag) of a file read whole, or binary when it has NUL bytes or is not UTF-8.
 fn content(bytes: Vec<u8>, size: u64, modified_ms: u64) -> FileContent {
+    let hash = Some(hash_of(&bytes));
     let bom = bytes.starts_with(BOM);
     let body = if bom { &bytes[BOM.len()..] } else { &bytes[..] };
     let text = if body[..body.len().min(SNIFF)].contains(&0) {
@@ -812,7 +953,11 @@ fn content(bytes: Vec<u8>, size: u64, modified_ms: u64) -> FileContent {
     } else {
         String::from_utf8(body.to_vec()).ok()
     };
-    FileContent { binary: text.is_none(), text, too_large: false, size, bom, modified_ms }
+    FileContent { binary: text.is_none(), text, too_large: false, size, bom, modified_ms, hash }
+}
+
+fn hash_of(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 fn too_large_image(file: &str, size: u64) -> String {
@@ -875,13 +1020,14 @@ pub async fn fs_write_file(
     text: String,
     bom: bool,
     expected_modified_ms: Option<u64>,
+    expected_hash: Option<String>,
 ) -> Result<WriteResult, String> {
-    let (f, t) = (file.clone(), text.clone());
+    let (f, t, h) = (file.clone(), text.clone(), expected_hash.clone());
     on_root(
         app,
         root,
-        move |r| write_file(r, &file, &text, bom, expected_modified_ms),
-        move |e| remote::write_file(e, &f, &t, bom, expected_modified_ms),
+        move |r| write_file(r, &file, &text, bom, expected_modified_ms, expected_hash.as_deref()),
+        move |e| remote::write_file(e, &f, &t, bom, expected_modified_ms, h.as_deref()),
     )
     .await
 }
@@ -902,6 +1048,113 @@ pub async fn fs_delete_file(app: AppHandle, root: String, file: String) -> Resul
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn saves_in_place() {
+        let dir = scratch();
+        let root = path_of(&dir);
+        fs::write(dir.join("f.txt"), "first\r\nsecond\r\nthird\r\n").unwrap();
+        fs::hard_link(dir.join("f.txt"), dir.join("link.txt")).unwrap();
+        let mut expected = read_file(&root, "f.txt").unwrap().modified_ms;
+        // Shorter, longer, empty: no tail of the old text stays, and the time returned is the file's.
+        for text in ["short\r\n", "much longer than it was\r\nand more\r\n", "", "again"] {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            let saved = write_file(&root, "f.txt", text, false, Some(expected), None).unwrap();
+            assert!(saved.saved);
+            assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), text);
+            assert_eq!(fs::read_to_string(dir.join("link.txt")).unwrap(), text);
+            assert_eq!(read_file(&root, "f.txt").unwrap().modified_ms, saved.modified_ms);
+            expected = saved.modified_ms;
+        }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn saves_hidden_and_open_files() {
+        use std::os::windows::fs::OpenOptionsExt;
+        const HIDDEN: u32 = 0x2;
+        const SHARE_READ_WRITE: u32 = 0x3;
+        let dir = scratch();
+        let root = path_of(&dir);
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true).attributes(HIDDEN);
+        opts.open(dir.join("hidden.txt")).unwrap().write_all(b"old").unwrap();
+        assert!(write_file(&root, "hidden.txt", "new", false, None, None).unwrap().saved);
+        // Another program has it open without letting it be renamed or replaced.
+        let _held = fs::OpenOptions::new().read(true).share_mode(SHARE_READ_WRITE).open(dir.join("hidden.txt")).unwrap();
+        assert!(write_file(&root, "hidden.txt", "newer", false, None, None).unwrap().saved);
+        assert_eq!(fs::read_to_string(dir.join("hidden.txt")).unwrap(), "newer");
+        drop(_held);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn puts_the_old_bytes_back_when_a_save_fails() {
+        use std::io::Cursor;
+        let mut file = Cursor::new(b"the old text".to_vec());
+        let failed_once = std::cell::Cell::new(false);
+        let res = overwrite(&mut file, b"the old text", b"new", |f, len| {
+            if !failed_once.replace(true) {
+                return Err(std::io::Error::other("no space"));
+            }
+            f.get_mut().truncate(len as usize);
+            Ok(())
+        });
+        assert!(res.is_err());
+        assert_eq!(file.into_inner(), b"the old text");
+    }
+
+    #[test]
+    fn an_agents_write_within_the_same_second_is_not_overwritten() {
+        let dir = scratch();
+        let root = path_of(&dir);
+        let path = dir.join("f.txt");
+        let second = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        // As a file system with whole seconds shows it.
+        let coarse = |text: &str| {
+            fs::write(&path, text).unwrap();
+            fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(second).unwrap();
+        };
+        coarse("base");
+        let read = read_file(&root, "f.txt").unwrap();
+        coarse("the agent's");
+        assert_eq!(read_file(&root, "f.txt").unwrap().modified_ms, read.modified_ms, "the time says nothing");
+        let res = write_file(&root, "f.txt", "mine", false, Some(read.modified_ms), read.hash.as_deref()).unwrap();
+        assert!(!res.saved);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "the agent's");
+
+        // Touched with the same bytes: saving loses nothing.
+        let read = read_file(&root, "f.txt").unwrap();
+        fs::write(&path, "the agent's").unwrap();
+        let res = write_file(&root, "f.txt", "\u{feff}", true, Some(read.modified_ms), read.hash.as_deref()).unwrap();
+        assert!(res.saved);
+        assert_eq!(res.hash, read_file(&root, "f.txt").unwrap().hash, "what the next save expects");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn says_where_the_kept_copy_is() {
+        let said = remote::not_restored(b"kept /tmp/tmp.AbC/old\n", "src/a.ts");
+        assert!(said.contains("Its text from before is kept"), "what keepsBackup looks for");
+        assert!(said.contains("src/a.ts") && said.ends_with("at /tmp/tmp.AbC/old."), "{said}");
+    }
+
+    #[test]
+    fn of_two_saves_expecting_the_same_time_one_wins() {
+        let dir = scratch();
+        let root = path_of(&dir);
+        fs::write(dir.join("f.txt"), "base").unwrap();
+        let expected = read_file(&root, "f.txt").unwrap().modified_ms;
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        let saved = std::thread::scope(|s| {
+            let a = s.spawn(|| write_file(&root, "f.txt", "from window a", false, Some(expected), None).unwrap().saved);
+            let b = s.spawn(|| write_file(&root, "f.txt", "from window b", false, Some(expected), None).unwrap().saved);
+            [a.join().unwrap(), b.join().unwrap()]
+        });
+        assert_eq!(saved.iter().filter(|s| **s).count(), 1);
+        fs::remove_dir_all(&dir).ok();
+    }
 
     fn path_of(p: &Path) -> String {
         p.to_string_lossy().into_owned()
@@ -942,7 +1195,7 @@ mod tests {
         assert!(read_file(&root, "../secret.txt").is_err());
         assert!(list_dir(&root, "..").is_err());
         assert!(read_file(&root, &path_of(&dir.join("secret.txt"))).is_err());
-        assert!(write_file(&root, "../secret.txt", "y", false, None).is_err());
+        assert!(write_file(&root, "../secret.txt", "y", false, None, None).is_err());
         assert_eq!(fs::read_to_string(dir.join("secret.txt")).unwrap(), "x");
         fs::remove_dir_all(&dir).ok();
     }
@@ -970,7 +1223,7 @@ mod tests {
         let bom = read_file(&root, "bom.txt").unwrap();
         assert_eq!(bom.text.as_deref(), Some("hi"));
         assert!(bom.bom);
-        write_file(&root, "bom.txt", "hey", true, Some(bom.modified_ms)).unwrap();
+        write_file(&root, "bom.txt", "hey", true, Some(bom.modified_ms), None).unwrap();
         assert_eq!(fs::read(dir.join("bom.txt")).unwrap(), b"\xEF\xBB\xBFhey");
         fs::remove_dir_all(&dir).ok();
     }
@@ -982,17 +1235,17 @@ mod tests {
         let root = path_of(&dir);
         let read = read_file(&root, "f.txt").unwrap();
 
-        let saved = write_file(&root, "f.txt", "two", false, Some(read.modified_ms)).unwrap();
+        let saved = write_file(&root, "f.txt", "two", false, Some(read.modified_ms), None).unwrap();
         assert!(saved.saved);
         assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "two");
 
         // Someone else wrote in between: the old timestamp no longer matches.
-        let stale = write_file(&root, "f.txt", "three", false, Some(saved.modified_ms.wrapping_sub(5000))).unwrap();
+        let stale = write_file(&root, "f.txt", "three", false, Some(saved.modified_ms.wrapping_sub(5000)), None).unwrap();
         assert!(!stale.saved);
         assert_eq!(fs::read_to_string(dir.join("f.txt")).unwrap(), "two");
 
         // Writing never creates files.
-        assert!(write_file(&root, "new.txt", "x", false, None).is_err());
+        assert!(write_file(&root, "new.txt", "x", false, None, None).is_err());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1103,6 +1356,70 @@ mod tests {
             assert!(root.join("link.env").symlink_metadata().is_err());
             assert_eq!(fs::read_to_string(dir.join("outside")).unwrap(), "x");
         }
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A repository with a submodule `sub`, each with its own ignore rules. None without git.
+    fn submodule_project() -> Option<(PathBuf, PathBuf)> {
+        let dir = scratch();
+        let root = dir.join("proj");
+        let sub = root.join("sub");
+        fs::create_dir_all(sub.join("deep")).unwrap();
+        fs::create_dir_all(root.join("a")).unwrap();
+        let git = |at: &Path, args: &[&str]| {
+            let status = std::process::Command::new("git").current_dir(at).args(args).stderr(std::process::Stdio::null()).status();
+            matches!(status, Ok(s) if s.success())
+        };
+        if !git(&root, &["init", "-q"]) || !git(&sub, &["init", "-q"]) {
+            return None;
+        }
+        fs::write(root.join(".gitignore"), "*.log\n").unwrap();
+        fs::write(root.join("a/x.log"), "").unwrap();
+        fs::write(root.join("z.log"), "").unwrap();
+        fs::write(sub.join(".gitignore"), "build/\n*.tmp\n").unwrap();
+        fs::write(sub.join("deep/y.tmp"), "").unwrap();
+        fs::create_dir_all(sub.join("build")).unwrap();
+        assert!(git(&sub, &["add", ".gitignore"]));
+        let commit = ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "init"];
+        assert!(git(&sub, &commit));
+        assert!(git(&root, &["add", "sub"]));
+        Some((dir, root))
+    }
+
+    #[test]
+    fn marks_ignored_entries_around_and_inside_a_submodule() {
+        let Some((dir, root)) = submodule_project() else { return };
+        let r = path_of(&root);
+        let marked = |entries: &[FsEntry]| entries.iter().filter(|e| e.ignored).map(|e| e.path.clone()).collect::<Vec<_>>();
+
+        // Read ahead: the submodule must not cost its neighbours their marks.
+        let top = list_dir_ahead(&r, "", 10, 100).unwrap();
+        assert_eq!(marked(&top.entries), ["z.log"]);
+        let ahead: Vec<_> = top.ahead.iter().flat_map(|a| marked(&a.entries)).collect();
+        assert_eq!(ahead, ["a/x.log", "sub/build"]);
+
+        // Inside it, its own rules apply.
+        let sub = list_dir_ahead(&r, "sub", 10, 100).unwrap();
+        assert_eq!(marked(&sub.entries), ["sub/build"]);
+        assert_eq!(sub.ahead.iter().flat_map(|a| marked(&a.entries)).collect::<Vec<_>>(), ["sub/deep/y.tmp"]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Windows starts no process in a folder whose path is this long: git is still asked.
+    #[test]
+    fn marks_ignored_entries_in_a_very_deep_folder() {
+        let dir = scratch();
+        let ok = std::process::Command::new("git").current_dir(&dir).args(["init", "-q"]).status();
+        if !matches!(ok, Ok(s) if s.success()) {
+            return; // no git on this machine
+        }
+        fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
+        let rel = vec!["a-folder-with-quite-a-long-name"; 10].join("/");
+        let deep = rel.split('/').fold(dir.clone(), |at, part| at.join(part));
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("x.log"), "").unwrap();
+        let listing = list_dir(&path_of(&dir), &rel).unwrap();
+        assert!(listing.entries[0].ignored);
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1247,7 +1564,6 @@ mod tests {
     #[cfg(unix)]
     mod remote_scripts {
         use super::*;
-        use std::io::Write as _;
         use std::process::{Command, Stdio};
 
         fn sh(root: &Path, script: &str, args: &[&str], stdin: &[u8]) -> (Option<i32>, Vec<u8>) {
@@ -1332,6 +1648,21 @@ mod tests {
         }
 
         #[test]
+        fn marks_ignored_entries_like_a_local_folder_around_a_submodule() {
+            let Some((dir, root)) = submodule_project() else { return };
+            std::os::unix::fs::symlink(root.join("a"), root.join("linked")).unwrap();
+            for at in ["", "sub"] {
+                let (code, out) = sh(&root, remote::LIST, &[at, "5000", "10", "100"], b"");
+                assert_eq!(code, Some(0));
+                let listing = remote::parse_listing(remote::body(&out).unwrap(), at);
+                let local = list_dir_ahead(&path_of(&root), at, 10, 100).unwrap();
+                assert_eq!(listing.entries, local.entries);
+                assert_eq!(summary(&listing), summary(&local));
+            }
+            fs::remove_dir_all(&dir).ok();
+        }
+
+        #[test]
         fn marks_ignored_entries() {
             let (dir, root) = project();
             fs::remove_dir_all(root.join(".git")).unwrap();
@@ -1390,27 +1721,41 @@ mod tests {
             assert_eq!(code, Some(13));
 
             let stale = (mtime - 5000).to_string();
-            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &stale], b"nope");
+            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &stale, "4"], b"nope");
             assert_eq!(code, Some(0));
             let res = remote::parse_write(remote::body(&out).unwrap()).unwrap();
             assert!(!res.saved && res.modified_ms == mtime);
             assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}\n");
 
             let text = with_bom("hey \u{e9}", true);
-            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string()], &text);
+            // Cut short on the way: the file is left alone.
+            let len = text.len().to_string();
+            let (code, _) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string(), &len], &text[..3]);
+            assert_eq!(code, Some(17));
+            assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}\n");
+
+            // Same time, other bytes than were read: the content decides.
+            let other = hash_of(b"what was read");
+            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string(), &len, &other], &text);
+            assert_eq!(code, Some(0));
+            assert!(!remote::parse_write(remote::body(&out).unwrap()).unwrap().saved);
+            assert_eq!(fs::read_to_string(root.join("src/main.rs")).unwrap(), "fn main() {}
+");
+
+            let (code, out) = sh(&root, remote::WRITE, &["src/main.rs", &mtime.to_string(), &len], &text);
             assert_eq!(code, Some(0));
             assert!(remote::parse_write(remote::body(&out).unwrap()).unwrap().saved);
             assert_eq!(fs::read(root.join("src/main.rs")).unwrap(), text);
 
             // Without an expected time it always writes; it never creates a file.
-            let (code, _) = sh(&root, remote::WRITE, &["new.txt", ""], b"x");
+            let (code, _) = sh(&root, remote::WRITE, &["new.txt", "", "1"], b"x");
             assert_eq!(code, Some(10));
             assert!(!root.join("new.txt").exists());
 
             let mut perms = fs::metadata(root.join(".env")).unwrap().permissions();
             perms.set_readonly(true);
             fs::set_permissions(root.join(".env"), perms).unwrap();
-            let (code, _) = sh(&root, remote::WRITE, &[".env", ""], b"x");
+            let (code, _) = sh(&root, remote::WRITE, &[".env", "", "1"], b"x");
             // root ignores the write bit; everyone else is refused.
             assert!(code == Some(14) || code == Some(0));
             fs::remove_dir_all(&dir).ok();

@@ -5,6 +5,7 @@
  * Rust structs serialize with #[serde(rename_all = "camelCase")].
  */
 
+import type { TranscriptTail } from '~/agents/types'
 import type { Attachment } from '~/types/chat'
 
 /** A stored attachment as the backend reports it (the preview is made in the webview). */
@@ -61,6 +62,47 @@ export interface AuthStatus {
   detail: string | null
 }
 
+/** A language server Mango knows how to run (`lsp_servers`). The backend owns each one's command line. */
+export type LspServerId = 'typescript' | 'rust' | 'python' | 'go' | 'clangd' | 'csharp'
+
+export interface LspServer {
+  id: LspServerId
+  /** The program's own name, e.g. "rust-analyzer". */
+  name: string
+  /** LSP language ids it serves, e.g. "typescript", "typescriptreact". */
+  languages: string[]
+  installed: boolean
+  /** The executable found; null when it is not installed. */
+  path: string | null
+  /** The installer Mango would run (`lsp_install`), as the user would type it; null when it has none here. */
+  install: string | null
+  helpUrl: string
+}
+
+export interface LspStarted {
+  /** The project folder the server runs in: absolute, no `\\?\` prefix. What file URIs are built from. */
+  root: string
+  /** Mango's own process id, for `initialize`'s processId. */
+  pid: number
+  /** Its folder is watched (it was asked to, and could be): changes on disk come as `lsp://files`. */
+  watching: boolean
+}
+
+/** One JSON-RPC message from a language server, its framing already removed. */
+export interface LspMessageEvent { id: string; message: string }
+
+/** Files changed on disk in a watched server's folder, gathered over a moment. */
+export interface LspFilesEvent {
+  id: string
+  /** Relative to the folder, forward slashes; `type` is LSP's FileChangeType (1 created, 2 changed, 3 deleted). */
+  changes: Array<{ file: string; type: 1 | 2 | 3 }>
+  /** Some changes were not listed: too many at once, or the system lost track. */
+  more: boolean
+}
+
+/** A language server ended; sent once, also after `lsp_stop`. */
+export interface LspExitEvent { id: string; code: number | null; stderr: string }
+
 /** Something Mango needs, offered by the setup dialog (`setup_check`). */
 export type SetupToolId = 'git' | 'claude' | 'codex'
 
@@ -74,6 +116,40 @@ export interface SetupTool {
   /** How Mango would install it on this computer; null when it can't (send the user to `helpUrl`). */
   install: { command: string; via: string } | null
   /** The vendor's own install page. */
+  helpUrl: string
+}
+
+/* ---------- git hosting: the GitHub CLI and the GitLab CLI (Settings > Git hosting) ---------- */
+
+export type HostingToolId = 'gh' | 'glab'
+
+/** One account a forge CLI holds for one host. Tokens never reach the frontend. */
+export interface HostingAccount {
+  host: string
+  /** The user name, when the CLI reports one. */
+  user: string | null
+  /** The CLI could use it just now. */
+  ok: boolean
+  /** The account the CLI uses on this host (gh can hold several per host). */
+  active: boolean
+  /** The token comes from an environment variable (GH_TOKEN, GITLAB_TOKEN): signing out cannot remove it. */
+  fromEnv: boolean
+  /** What went wrong, as the CLI says it (tokens removed). */
+  error: string | null
+}
+
+export interface HostingCli {
+  id: HostingToolId
+  name: string
+  installed: boolean
+  /** The version number, e.g. "2.101.0". */
+  version: string | null
+  path: string | null
+  accounts: HostingAccount[]
+  /** The sign-in state could not be read (accounts are then empty). */
+  error: string | null
+  /** How Mango would install it here (`setup_install`); null when it can't (send the user to `helpUrl`). */
+  install: { command: string; via: string } | null
   helpUrl: string
 }
 
@@ -118,6 +194,76 @@ export interface GitStatus {
   /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */
   behind: number
   files: GitFile[]
+}
+
+/* ---------- history graph (`git_graph`, `git_commit_show`, `git_commit_diff`) ----------
+ * Read-only views of a repository's history for the commit graph (the "Git log" plugin uses them).
+ * Git only: Unity VCS answers with an error a person can read.
+ */
+
+/** A ref pointing at a commit. `head` is a detached HEAD; the checked-out branch is a `branch` with `current`. */
+export interface GitRef {
+  /** Short name: "main", "origin/main", "v1.2.0", "HEAD". */
+  name: string
+  kind: 'branch' | 'remote' | 'tag' | 'head'
+  /** The checked-out branch (or the detached HEAD). */
+  current: boolean
+}
+
+/** One commit of the history graph. */
+export interface GitGraphCommit {
+  hash: string
+  shortHash: string
+  /** Parent hashes, first parent first; empty for a root commit. */
+  parents: string[]
+  subject: string
+  author: string
+  authorEmail: string
+  /** Author date, unix ms. */
+  time: number
+  refs: GitRef[]
+}
+
+export interface GitGraph {
+  /** Full hash of HEAD, null on an unborn branch. */
+  head: string | null
+  /** The checked-out branch, null when detached. */
+  branch: string | null
+  /** Newest first in `--date-order` (a parent never comes before its children). */
+  commits: GitGraphCommit[]
+  /** More commits follow: ask again with `skip` advanced by `commits.length`. */
+  more: boolean
+}
+
+/** One file a commit changed, compared with its first parent (a root commit: with nothing). */
+export interface GitCommitFile {
+  /** Path relative to the repository root, forward slashes (the new path for a rename). */
+  path: string
+  /** The path before a rename or copy, else null. */
+  oldPath: string | null
+  /** 'A' | 'M' | 'D' | 'R' | 'C' | 'T' */
+  status: string
+  /** Null for binary files. */
+  additions: number | null
+  deletions: number | null
+}
+
+export interface GitCommitDetail {
+  hash: string
+  shortHash: string
+  parents: string[]
+  subject: string
+  /** The message after the subject line, trimmed ("" when there is none). */
+  body: string
+  author: string
+  authorEmail: string
+  /** Author date, unix ms. */
+  time: number
+  committer: string
+  /** Committer date, unix ms. */
+  commitTime: number
+  refs: GitRef[]
+  files: GitCommitFile[]
 }
 
 /** How far a folder's branch is ahead of another (`git_ahead`). */
@@ -292,8 +438,47 @@ export interface PlasticReviews {
   more: boolean
 }
 
+/**
+ * The forge a repository lives on. The `gh_*` commands serve both: for a project on GitHub they run `gh`,
+ * for one on a GitLab server (gitlab.com or a self-managed one) `glab`. GitLab merge requests come back as
+ * `kind: 'pr'` and pipelines as runs; on GitLab `owner` is the whole namespace (`group/subgroup`).
+ */
+export type ForgeProvider = 'github' | 'gitlab'
+
+/** One open pull request or issue as `gh_open_items` lists it. */
+export interface GhListItem {
+  kind: 'pr' | 'issue'
+  url: string
+  number: number
+  title: string
+  state: 'open' | 'draft'
+  /** A pull request's branch. */
+  headRef: string | null
+  author: string | null
+  updatedAt: string
+}
+
+/** The GitHub repository a project's git remotes name (`gh_repo_link`): `https://{host}/{owner}/{repo}`. */
+export interface GhRepoLink {
+  provider: ForgeProvider
+  host: string
+  owner: string
+  repo: string
+}
+
+/** The open pull requests and issues of a project's GitHub repository (`gh_open_items`). */
+export interface GhOpenItems {
+  provider: ForgeProvider
+  host: string
+  owner: string
+  repo: string
+  /** Pull requests and issues together, most recently updated first. */
+  items: GhListItem[]
+}
+
 /** One pull request or issue as `gh_item` reads it. */
 export interface GhItem {
+  provider: ForgeProvider
   kind: 'pr' | 'issue'
   url: string
   host: string
@@ -372,6 +557,7 @@ export interface GhJobStep {
 
 /** A GitHub Actions job as `gh_job` reads it. */
 export interface GhJob {
+  provider: ForgeProvider
   id: number
   name: string
   workflow: string | null
@@ -388,6 +574,89 @@ export interface GhJob {
   /** The log was too long and its end is missing. */
   logTruncated: boolean
 }
+
+/* ---------- releases (the Releases tool window) ---------- */
+
+/** A file attached to a release. */
+export interface GhAsset {
+  name: string
+  size: number
+  downloads: number
+  /** Where it downloads from (https). */
+  url: string
+  /** "uploaded", or "starter" while its upload is under way. */
+  state: string
+}
+
+/** One GitHub release as `gh_releases` lists it. */
+export interface GhRelease {
+  id: number
+  tag: string
+  /** Its title; the tag when it has none. */
+  name: string
+  draft: boolean
+  prerelease: boolean
+  url: string
+  author: { login: string; avatarUrl: string | null } | null
+  /** ISO timestamps; a draft has no `publishedAt`. */
+  createdAt: string
+  publishedAt: string | null
+  /** The branch or commit the tag was made from. */
+  target: string
+  /** The notes as GitHub renders them. Untrusted: goes through `safeHtml` before `v-html`. */
+  bodyHtml: string
+  assets: GhAsset[]
+}
+
+/** One GitHub Actions workflow run. */
+export interface GhRun {
+  id: number
+  workflowId: number
+  /** The workflow's name. */
+  workflow: string
+  /** The head commit's subject for a push. */
+  title: string
+  /** "push", "release", "workflow_dispatch", … */
+  event: string
+  /** The branch, or for a tag push the tag. */
+  headBranch: string | null
+  headSha: string
+  state: GhRunState
+  url: string
+  number: number
+  attempt: number
+  createdAt: string
+  startedAt: string | null
+  /** For a finished run, about when it finished. */
+  updatedAt: string
+}
+
+/** One job of a run; `url` is what `gh_job` reads its log from. */
+export interface GhRunJob {
+  id: number
+  name: string
+  state: GhRunState
+  url: string
+  startedAt: string | null
+  completedAt: string | null
+}
+
+export interface GhRunDetail {
+  run: GhRun
+  jobs: GhRunJob[]
+}
+
+/** A repository's releases, newest first, and its recent workflow runs (`gh_releases`). */
+export interface GhReleases {
+  provider: ForgeProvider
+  host: string
+  owner: string
+  repo: string
+  releases: GhRelease[]
+  runs: GhRun[]
+}
+
+export type GhRunAction = 'rerun-failed' | 'rerun' | 'cancel'
 
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
@@ -414,6 +683,11 @@ export interface FsListing {
    * `node_modules` and any that would not fit whole are left out.
    */
   ahead?: FsAhead[]
+}
+
+export interface FsDeleted {
+  deleted: boolean
+  reason: string | null
 }
 
 /** A subfolder's listing read ahead with its parent; never cut short. */
@@ -520,12 +794,16 @@ export interface FileContent {
   bom: boolean
   /** ms since the epoch: hand it back on save so a change on disk is noticed. */
   modifiedMs: number
+  /** SHA-256 of the file's bytes, when read whole: hand it back on save too (times can be as coarse as two seconds). */
+  hash?: string
 }
 
 export interface WriteResult {
-  /** False when the file changed on disk since `expectedModifiedMs`; nothing was written. */
+  /** False when the file changed on disk since `expectedHash` or `expectedModifiedMs`; nothing was written. */
   saved: boolean
   modifiedMs: number
+  /** SHA-256 of what was saved. */
+  hash?: string
 }
 
 /** An env file at a project's root (Project settings > Environment variables). */
@@ -732,7 +1010,7 @@ export interface EnvInstance {
 export type EnvInstanceAction = 'start' | 'stop' | 'restart' | 'delete'
 
 /** What an instance can have installed with one click (and updated the same way). */
-export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'node' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
+export type EnvComponentId = 'base' | 'claude' | 'codex' | 'gh' | 'glab' | 'node' | 'java' | 'chromium' | 'desktop' | 'docker' | 'tailscale'
 
 export interface EnvComponent {
   id: EnvComponentId
@@ -742,6 +1020,27 @@ export interface EnvComponent {
   version: string | null
   /** Installed along with it when missing. */
   requires: EnvComponentId[]
+  /** A version can be picked for it (`env_versions` lists them): Node.js and Java. */
+  versioned: boolean
+}
+
+/** Versions picked for components that take one, by component id; a missing one takes the default. */
+export type EnvVersions = Partial<Record<EnvComponentId, string>>
+
+/** One version a component can install (`env_versions`). */
+export interface EnvVersion {
+  /** What the install takes: `22.11.0`, or an SDKMAN identifier such as `21.0.5-tem`. */
+  id: string
+  /** The version as people read it. */
+  version: string
+  /** The release line (`Node.js 22`) or Java's vendor (`Temurin`). */
+  group: string
+  /** Node.js's LTS name (`LTS Jod`), or a Java build's flavour (`JavaFX`, `CRaC`, `Early access`). */
+  note: string | null
+  /** `2024-10-28`, when known. */
+  date: string | null
+  /** What the install takes when no version is picked. */
+  default: boolean
 }
 
 export interface EnvCreateInput {
@@ -754,6 +1053,8 @@ export interface EnvCreateInput {
   memoryGib: number | null
   diskGib: number | null
   components: EnvComponentId[]
+  /** Versions picked for some of them. */
+  versions?: EnvVersions
 }
 
 /** New limits for an instance (`env_resize`); null leaves that one as it is. A disk only grows. */
@@ -790,7 +1091,7 @@ export interface EnvDesktop { url: string }
 export interface EnvRemote { hostId: string; instance: string }
 
 /** What `env_login` can sign in to inside an instance (each CLI's own flow, in a terminal). */
-export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'tailscale'
+export type EnvLoginTool = 'claude' | 'codex' | 'gh' | 'glab' | 'tailscale'
 
 /** One chat as saved in the chat history (`chats_save`): the chat itself is JSON. */
 export interface ChatRow { id: string; projectPath: string; updatedAt: number; data: string }
@@ -805,6 +1106,169 @@ export interface RemoteChatEntry { id: string; rev: number | null }
 export type RemotePut = 'ok' | 'stale' | 'gone'
 
 /** Commands: name -> [args, result] */
+/* ---------- Plugins (src-tauri/src/plugins.rs, app/plugin-host/) ---------- */
+
+/** One field of a plugin's declarative settings (`settings` in `mango-plugin.json`), shown in Settings > Plugins. */
+export interface PluginSettingField {
+  key: string
+  type: 'boolean' | 'string' | 'text' | 'number' | 'select'
+  label: string
+  description?: string
+  default?: string | number | boolean
+  /** For `select`. */
+  options?: { value: string; label: string }[]
+  placeholder?: string
+  min?: number
+  max?: number
+}
+
+/**
+ * `mango-plugin.json` at the root of a plugin's folder. `main` is one bundled ES module (no relative
+ * or bare imports: Vue and the rest come in through the API object `activate` receives).
+ */
+export interface PluginManifest {
+  /** `[a-z0-9][a-z0-9._-]{0,63}`: unique among installed plugins; also its storage namespace. */
+  id: string
+  name: string
+  version: string
+  description?: string
+  author?: string
+  homepage?: string
+  /** Entry module, relative to the plugin folder. Default `main.js`. */
+  main?: string
+  /** A stylesheet injected while the plugin is active, relative to the plugin folder. */
+  styles?: string
+  /** Oldest Mango version it works with (semver). Older apps refuse to activate it. */
+  minAppVersion?: string
+  settings?: PluginSettingField[]
+}
+
+/**
+ * Where a plugin came from. `git`: a repository (`https://…`, `ssh://…` or `git@host:path`), optionally a
+ * branch/tag/commit and a folder inside it (a repository may hold several plugins). `local`: a folder on
+ * this computer, used in place (for plugin authors: edit, then Reload).
+ */
+export type PluginSource =
+  | { kind: 'git'; url: string; ref: string | null; subpath: string | null }
+  | { kind: 'local'; path: string }
+
+export interface InstalledPlugin {
+  manifest: PluginManifest
+  source: PluginSource
+  /** Absolute folder the plugin runs from (a copy under the app data folder, or the local folder itself). */
+  dir: string
+  enabled: boolean
+  /** Commit it was installed or last updated at (git sources only). */
+  commit: string | null
+  /** Unix ms. */
+  installedAt: number
+  updatedAt: number
+}
+
+/** A plugin found in a repository by `plugins_probe`. */
+export interface PluginCandidate {
+  /** Folder inside the repository ('' for the root), `/`-separated. */
+  subpath: string
+  manifest: PluginManifest
+  /** Already installed with this id (installing again replaces it). */
+  installed: boolean
+}
+
+export interface PluginProbe {
+  /** Hand it back to `plugins_install`; the checkout waits in a staging folder until then (or until the next probe). */
+  probeId: string
+  url: string
+  ref: string | null
+  commit: string
+  /** The plugin at the given subpath, or every plugin found in the repository when none was given. */
+  candidates: PluginCandidate[]
+}
+
+export interface PluginUpdateInfo {
+  id: string
+  current: string | null
+  latest: string | null
+  /** Version in the latest manifest, when it could be read. */
+  latestVersion: string | null
+  hasUpdate: boolean
+  /** Set when the check failed for this plugin (offline, repository gone…). */
+  error: string | null
+}
+
+/** A plugin's saved document (`mango.data`, plugin_data.rs): a `PluginDoc` with its data as JSON text. */
+export interface PluginDataRow {
+  collection: string
+  id: string
+  rev: number
+  seq: number
+  createdAt: number
+  updatedAt: number
+  deleted: boolean
+  /** JSON text; null once deleted. */
+  data: string | null
+}
+
+export type PluginDataWriteOp =
+  | { op: 'put'; collection: string; id: string; data: string; expectedRev?: number }
+  | { op: 'delete'; collection: string; id: string; expectedRev?: number }
+
+export interface PluginDataWritten {
+  /** The document after each operation, in their order, without its data (the operation has it); empty when there are conflicts. */
+  docs: PluginDataRow[]
+  /** Documents not at their `expectedRev`, as they are now (`rev` 0: there is none). Then nothing was written. */
+  conflicts: PluginDataRow[]
+  seq: number
+}
+
+export interface PluginProgress {
+  jobId: string
+  /** A raw line of git's progress output. */
+  line: string
+}
+
+/** A file of a plugin read as bytes (pictures and fonts for its UI). */
+export interface PluginAsset {
+  mime: string
+  /** base64 */
+  data: string
+}
+
+/**
+ * One plugin in the official catalog (`plugins/catalog.json` in Mango's repository). Official plugins
+ * live beside it (`plugins/<id>/`, source url = Mango's repository); community ones point at their own.
+ */
+export interface PluginCatalogEntry {
+  id: string
+  name: string
+  description: string
+  author: string
+  /** Version in the catalog (the installed manifest is the truth once installed). */
+  version: string
+  /** Free tags the browse view filters by ("theme", "git", "chat", "productivity"…). */
+  tags: string[]
+  /** Maintained in Mango's repository. */
+  official: boolean
+  homepage?: string
+  /** A lucide icon name (kebab-case, e.g. `sparkles`) shown in the list. */
+  icon?: string
+  /** Where to install it from (a `plugins_probe` source). */
+  source: { url: string; ref: string | null; subpath: string | null }
+  minAppVersion?: string
+}
+
+export interface PluginCatalog {
+  schema: 1
+  plugins: PluginCatalogEntry[]
+}
+
+export interface PluginCatalogResult {
+  catalog: PluginCatalog
+  /** Unix ms of the copy returned. */
+  fetchedAt: number
+  /** Served from the cached copy because the network fetch failed (the reason). */
+  stale: string | null
+}
+
 export interface Commands {
   /** Recent projects, most recent first. Missing folders are filtered out. */
   recent_projects: [Record<string, never>, ProjectInfo[]]
@@ -838,6 +1302,11 @@ export interface Commands {
   /** Kills the process and everything it started. Unknown ids succeed silently. */
   agent_kill: [{ id: string }, void]
   /**
+   * The last lines of a Claude Code session's transcript on this computer, at most `maxBytes` of it (32 MB
+   * at the very most); null when it has no transcript.
+   */
+  agent_transcript: [{ sessionId: string; maxBytes: number }, TranscriptTail | null]
+  /**
    * The connection to `hostId` (every host when null) is back: remote runs attach again now
    * instead of after their wait, runs stopped while it was gone are stopped there, and the
    * browser tools' way back from the environment is made again.
@@ -852,8 +1321,44 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
+
+  /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
+  hosting_status: [Record<string, never>, HostingCli[]]
+  /**
+   * Run `tool`'s own sign-in for `host` in a PTY (the backend builds the command). Returns the pty id;
+   * output and the exit code arrive as `pty://data` / `pty://exit`.
+   */
+  hosting_login: [{ tool: HostingToolId; host: string; cols: number; rows: number }, string]
+  /** Sign `tool` out of `host`; for gh, of `user` there (it can hold several accounts per host). */
+  hosting_logout: [{ tool: HostingToolId; host: string; user: string | null }, void]
+  /** The self-managed GitLab servers the user listed (gitlab.com is always known and never in it). */
+  gitlab_hosts: [Record<string, never>, string[]]
+  /** Replace that list; every entry must be a server name. Returns it as stored (normalised). */
+  gitlab_hosts_save: [{ hosts: string[] }, string[]]
+
+  /** The language servers Mango knows, and which are installed on this computer. */
+  lsp_servers: [{ roots?: string[] }, LspServer[]]
+  /**
+   * Which folder `project` is now, as an identity that changes when it is deleted and made again
+   * (null: no such folder here). `allowed` is the identity the user allowed language servers for:
+   * the backend starts one in `root` only while `project` still is that folder. Null also when `root`
+   * is neither `project` nor, right now, a linked git worktree of it, or is one that such a yes does
+   * not reach: `worktree` is the identity of the only folder it does.
+   */
+  lsp_folder: [{ root: string; project: string; allowed: string | null; worktree?: string | null }, string | null]
+  /**
+   * Start a server in a local project (remote projects are refused). The caller makes up `id` and
+   * listens for it first. Only after the user allowed language servers for the project. `watch`:
+   * also watch its folder for changes on disk (for servers that leave watching to their client).
+   */
+  lsp_start: [{ id: string; root: string; server: LspServerId; watch?: boolean }, LspStarted]
+  /** Send one JSON-RPC message; the backend adds the framing. Messages arrive in the order they were sent. */
+  lsp_send: [{ id: string; message: string }, void]
+  lsp_stop: [{ id: string }, void]
+  /** Run a server's installer in a PTY (the backend picks the command). Returns the pty id. */
+  lsp_install: [{ server: LspServerId; cols: number; rows: number; roots?: string[] }, string]
 
   /** `path` is any folder inside the repository (normally the project path). */
   git_status: [{ path: string }, GitStatus]
@@ -879,8 +1384,33 @@ export interface Commands {
   git_pull: [{ path: string }, string]
   git_push: [{ path: string }, string]
   git_log: [{ path: string; limit: number }, GitCommit[]]
+  /**
+   * A page of the history graph. `refs` null: every local branch, remote branch, tag and HEAD; else only
+   * those refs (branch names, tags or commit hashes, each checked like any ref from the UI). `text`
+   * keeps commits whose message contains it (case-insensitive, literal), `author` those whose author
+   * name or email contains it, `paths` those touching one of these repository-relative paths (literal).
+   * `limit` is clamped to 1..1000. Unity VCS: refused.
+   */
+  git_graph: [
+    {
+      path: string
+      refs: string[] | null
+      skip: number
+      limit: number
+      text?: string | null
+      author?: string | null
+      paths?: string[] | null
+    },
+    GitGraph,
+  ]
+  /** One commit with its full message and the files it changed against its first parent. `hash`: 4–64 hex digits. */
+  git_commit_show: [{ path: string; hash: string }, GitCommitDetail]
+  /** Unified diff of one file of a commit against its first parent (a root commit: against nothing). `file` as in `GitCommitFile.path`. */
+  git_commit_diff: [{ path: string; hash: string; file: string }, string]
   git_branches: [{ path: string }, GitBranches]
   git_checkout: [{ path: string; branch: string; create: boolean }, void]
+  /** Check out one commit as a detached HEAD (`git switch --detach`); git refuses if uncommitted changes would be overwritten. `hash`: 4–64 hex digits. Unity VCS: refused. */
+  git_checkout_commit: [{ path: string; hash: string }, void]
   /** `git init` in `path`. Does nothing when the folder is already inside a repository. */
   git_init: [{ path: string }, void]
 
@@ -907,8 +1437,11 @@ export interface Commands {
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
    * Unity VCS refuses branches with changesets or children; rebase and remote checkout are git only.
+   * `withWorktree`: a branch checked out in a linked git worktree takes that worktree with it, once git
+   * agrees to delete the branch; one with uncommitted changes is refused. Resolves to the removed
+   * worktree's folder, null when there was none.
    */
-  git_branch_delete: [{ path: string; branch: string; force: boolean }, void]
+  git_branch_delete: [{ path: string; branch: string; force: boolean; withWorktree: boolean }, string | null]
   /** The repository's working trees, the main one first. Empty for Unity VCS or no repository. */
   git_worktrees: [{ path: string }, GitWorktree[]]
   /**
@@ -957,6 +1490,16 @@ export interface Commands {
    */
   gh_item: [{ path: string; reference: string }, GhItem]
   /**
+   * The open pull requests and issues of the GitHub repository of the project at `path` (which may be a
+   * remote project), most recently updated first, up to 30 of each: the list to pick one to link from.
+   */
+  gh_open_items: [{ path: string }, GhOpenItems]
+  /**
+   * The GitHub repository of a project (which may be a remote project), from its git remotes only
+   * (no gh, no network): null when it is no git repository or no remote is on GitHub.
+   */
+  gh_repo_link: [{ path: string }, GhRepoLink | null]
+  /**
    * Merge a pull request on GitHub, only while its branch still points at `headSha` (otherwise it
    * fails and says the branch moved). The local checkout is not touched.
    */
@@ -971,7 +1514,18 @@ export interface Commands {
    * A GitHub Actions job by its link (a check's `url`, `…/actions/runs/<run>/job/<job>`): its steps,
    * and once it finished, its log split into them. Other links are refused.
    */
-  gh_job: [{ url: string }, GhJob]
+  gh_job: [{ url: string; path?: string }, GhJob]
+  /**
+   * The GitHub releases of the project at `path` (which may be a remote project), newest first, up to
+   * `count` (at most 100), with the repository's 50 most recent workflow runs.
+   */
+  gh_releases: [{ path: string; count: number }, GhReleases]
+  /** The newest workflow run for a release's tag (its push, or its publishing), with its jobs; null when none ran. */
+  gh_tag_run: [{ path: string; tag: string }, GhRunDetail | null]
+  /** A workflow run by id, with its jobs. */
+  gh_run: [{ path: string; id: number }, GhRunDetail]
+  /** Re-run a run's failed jobs, the whole run, or cancel it. The error says when GitHub refuses. */
+  gh_run_action: [{ path: string; id: number; action: GhRunAction }, void]
   /**
    * Unity VCS code reviews for the workspace holding `path`: its branch's, and the repository's open
    * ones. Fails for a git folder.
@@ -990,14 +1544,32 @@ export interface Commands {
   /** A file's raw bytes, for the image viewer. Files over 25 MB are refused. */
   fs_read_bytes: [{ root: string; file: string }, FileBytes]
   /**
-   * Overwrite an existing file (never creates one). With `expectedModifiedMs`, a file that
-   * changed on disk since then is left alone and `saved` is false; null writes regardless.
+   * Overwrite an existing file (never creates one). With `expectedHash` (or, without one,
+   * `expectedModifiedMs`), a file that changed on disk since it was read is left alone and `saved`
+   * is false; null for both writes regardless.
    */
-  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null }, WriteResult]
+  fs_write_file: [{ root: string; file: string; text: string; bom: boolean; expectedModifiedMs: number | null; expectedHash?: string | null }, WriteResult]
   /** Create a new file (never overwrites: an existing file is an error). `file` is project-relative. Returns its modifiedMs. */
   fs_create_file: [{ root: string; file: string; text: string }, WriteResult]
   /** Delete one file in the project (never a folder; a symlink is removed itself, not its target). */
   fs_delete_file: [{ root: string; file: string }, void]
+  /*
+   * The Files view's operations (src-tauri/src/file_ops.rs). Each acts on the entry named (a link,
+   * not its target), never replaces anything, and refuses the project itself, .git and .plastic.
+   */
+  fs_create_dir: [{ root: string; dir: string }, void]
+  /** Rename in place: `name` is a name, not a path. A change of case alone works. */
+  fs_rename: [{ root: string; path: string; name: string }, void]
+  /** Copy a file next to itself as `name`. */
+  fs_duplicate: [{ root: string; file: string; name: string }, void]
+  /**
+   * Move to the trash, or delete for good with `permanent`. When the trash cannot take it, nothing is
+   * deleted and `reason` says why; a remote project has no trash. `isDir` is what the user was asked
+   * about (links followed): something else by that name now is refused.
+   */
+  fs_delete: [{ root: string; path: string; isDir: boolean; permanent: boolean }, FsDeleted]
+  /** Show an entry in the system's file manager ("" is the project folder). Not for remote projects. */
+  fs_reveal: [{ root: string; path: string }, void]
   /**
    * Env files at the project root: names that are `.env`, start with `.env.`, or end in `.env`, except
    * example/template files (`.env.example`, `.env.sample`, `.env.template`, `example.env`, `sample.env`,
@@ -1019,6 +1591,12 @@ export interface Commands {
   attachment_import: [{ path: string }, AttachmentInfo]
   /** A stored attachment's bytes as base64. Paths outside the store are refused. */
   attachment_read: [{ path: string }, string]
+  /**
+   * Puts a stored attachment into a remote environment (`~/.local/share/mango/attachments/<id>/<name>`
+   * in the agent user's home, where the phone app puts its own), so the agent there can read it.
+   * Answers its absolute path there.
+   */
+  attachment_put_remote: [EnvRemote & { path: string }, string]
   /**
    * A picture an agent's reply shows (`![alt](path)`): an absolute path anywhere on this computer,
    * or relative to `base`, the chat's project folder. For a remote project (`base` is `env://…`) the
@@ -1096,12 +1674,25 @@ export interface Commands {
    * pointer event's `screenX`/`screenY`), or null: where a dragged chat was let go.
    */
   window_at: [{ x: number; y: number }, string | null]
+  /** Whether no other Mango window is on screen (closing this one ends the app). */
+  window_alone: [Record<string, never>, boolean]
+  /**
+   * The page heard `window://close`; unsaid within a few seconds, the backend decides without it (with
+   * unsaved text, the user does). False: that close is no longer the page's to answer.
+   */
+  window_close_heard: [{ id: number }, boolean]
+  /** Whether this window has unsaved text, said as it changes: what closing a silent page would lose. */
+  window_unsaved: [{ unsaved: boolean }, void]
+  /** The answer to `window://close`: the window may go (the main one hides while others are open), or stays and comes into view. */
+  window_close_answer: [{ id: number; close: boolean }, void]
 
   /** Reads `latest.json` of the latest GitHub release. Null when Mango is up to date. */
   update_check: [Record<string, never>, UpdateInfo | null]
+  /** Downloads and verifies the update from the last check, without installing it. Emits `update://progress`. */
+  update_download: [Record<string, never>, void]
   /**
-   * Downloads, verifies and installs the update from the last check, then restarts Mango
-   * (terminals and agent runs are stopped). Emits `update://progress`. Never resolves on success.
+   * Installs what `update_download` fetched (an error when it has not; it never downloads by itself),
+   * then restarts Mango (terminals and agent runs are stopped). Never resolves on success.
    */
   update_install: [Record<string, never>, void]
 
@@ -1147,12 +1738,18 @@ export interface Commands {
   env_resize: [{ hostId: string; instance: string; input: EnvResizeInput }, string | null]
   /** Which components are installed, with versions (runs a probe inside the instance). */
   env_components: [{ hostId: string; instance: string }, EnvComponent[]]
-  /** Install or update components (with what they require), in a terminal; returns the pty id. */
-  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; cols: number; rows: number }, string]
+  /**
+   * Install or update components (with what they require), in a terminal; returns the pty id. `versions` picks
+   * versions for Node.js and Java; without one they install the default, or keep what is installed on an update.
+   */
+  env_install: [{ hostId: string; instance: string; components: EnvComponentId[]; versions?: EnvVersions; cols: number; rows: number }, string]
+  /** The versions a component can install, newest first (read from nodejs.org or SDKMAN, not from an environment). */
+  env_versions: [{ component: EnvComponentId }, EnvVersion[]]
   /** A login shell as the agent user inside the instance; returns the pty id. */
   env_shell: [{ hostId: string; instance: string; cwd: string | null; cols: number; rows: number }, string]
   /** Run a CLI's own sign-in inside the instance, in a terminal; returns the pty id. */
-  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; cols: number; rows: number }, string]
+  /** `host`: the GitLab server a `glab` sign-in is for (gitlab.com when none; a new one joins `gitlab_hosts`). Other tools ignore it. */
+  env_login: [{ hostId: string; instance: string; tool: EnvLoginTool; host?: string | null; cols: number; rows: number }, string]
   /**
    * Make sure a project folder exists in the instance (cloning `cloneUrl` into it when given, or running
    * `git init` in a new or empty folder when `gitInit`); returns its absolute path.
@@ -1174,6 +1771,50 @@ export interface Commands {
   env_join_preview: [{ link: string }, EnvJoinPreview]
   /** Save the environment from a link (its key is stored in Mango's app data); returns the new direct host. */
   env_join: [{ link: string; name: string | null }, EnvHost]
+
+  /** Every installed plugin, enabled or not. */
+  plugins_list: [Record<string, never>, InstalledPlugin[]]
+  /**
+   * Shallow-clone a git source into a staging folder (streams `plugins://progress` with `jobId`) and read
+   * what it holds: the plugin at `subpath`, or every `mango-plugin.json` found (a few levels deep) when there
+   * is none. Nothing is installed yet.
+   */
+  plugins_probe: [{ source: Extract<PluginSource, { kind: 'git' }>; jobId: string }, PluginProbe]
+  /** Install the chosen candidates of a probe (by subpath); replaces an installed plugin with the same id. */
+  plugins_install: [{ probeId: string; subpaths: string[] }, InstalledPlugin[]]
+  /** Register a local folder holding a `mango-plugin.json` (used in place, never copied). */
+  plugins_add_local: [{ path: string }, InstalledPlugin]
+  plugins_set_enabled: [{ id: string; enabled: boolean }, InstalledPlugin]
+  /** Uninstall: forget it and delete its copy (a local plugin's folder is left alone). */
+  plugins_remove: [{ id: string }, void]
+  /** Fetch each git plugin's source (all when `ids` is null) and say whether a newer commit is there. */
+  plugins_check_updates: [{ ids: string[] | null; jobId: string }, PluginUpdateInfo[]]
+  /** Move a git plugin to the latest commit of its source (re-reads its manifest; a local one is just re-read). */
+  plugins_update: [{ id: string; jobId: string }, InstalledPlugin]
+  /** A text file inside a plugin's folder (its entry module, styles…). `path` is relative; nothing outside the folder is read. */
+  plugins_read: [{ id: string; path: string }, string]
+  /** A binary file inside a plugin's folder, base64. Same confinement as `plugins_read`. */
+  plugins_asset: [{ id: string; path: string }, PluginAsset]
+  /**
+   * The official catalog: `plugins/catalog.json` from Mango's repository on GitHub (main branch), cached in
+   * the app data folder for an hour (`force` skips the cache). Falls back to the cached copy when offline.
+   */
+  plugins_catalog: [{ force: boolean }, PluginCatalogResult]
+  /** Show a plugin's folder (the plugins folder when `id` is null) in the system file manager. */
+  plugins_reveal: [{ id: string | null }, void]
+  /** The folder plugins are installed in (for "Open plugins folder"). */
+  plugins_dir: [Record<string, never>, string]
+  /** A plugin's saved documents (`app/plugin-host/data.ts`): a collection's, without the deleted ones. */
+  plugin_data_list: [{ pluginId: string; collection: string }, PluginDataRow[]]
+  plugin_data_get: [{ pluginId: string; collection: string; id: string }, PluginDataRow | null]
+  /** How many documents a plugin has (removing it asks about them). */
+  plugin_data_count: [{ pluginId: string }, number]
+  /** Everything written after `since`, tombstones included, oldest first. */
+  plugin_data_changes: [{ pluginId: string; since: number }, { seq: number; docs: PluginDataRow[] }]
+  /** All of `ops` or none; `origin` comes back in `plugins://data`. */
+  plugin_data_write: [{ pluginId: string; ops: PluginDataWriteOp[]; origin: string }, PluginDataWritten]
+  /** Delete a plugin's documents for good. While it is not installed, it can save none after this. */
+  plugin_data_clear: [{ pluginId: string }, void]
 }
 
 /** Events emitted by the backend. */
@@ -1185,6 +1826,9 @@ export interface Events {
   'agent://stderr': AgentLineEvent
   'agent://exit': AgentExitEvent
   'agent://connection': AgentConnectionEvent
+  'lsp://message': LspMessageEvent
+  'lsp://files': LspFilesEvent
+  'lsp://exit': LspExitEvent
   'update://progress': UpdateProgress
   'voice://progress': VoiceProgress
   /** A browser's page changed: URL, title, loading. */
@@ -1195,4 +1839,15 @@ export interface Events {
   'envs://join': { link: string }
   /** One of Mango's windows is gone (closed, or crashed): what it held goes back (`stores/windows.ts`). */
   'window://closed': { label: string }
+  /** This window is asked to close (`composables/windowClose.ts`): answer with `window_close_heard`, then `window_close_answer`. */
+  'window://close': { label: string; id: number }
+  /** The main window was closed while others are open: it is hidden and lets go of its projects. */
+  'window://parked': Record<string, never>
+  /** Progress of a plugin clone or fetch (`plugins_probe`, `plugins_check_updates`, `plugins_update`). */
+  'plugins://progress': PluginProgress
+  /**
+   * A plugin's documents were written, by any window (`origin`: the one `plugin_data_write` was given). `docs` is
+   * null when they are too many or too large to send around: they are the `plugin_data_changes` since `since`, up to `seq`.
+   */
+  'plugins://data': { pluginId: string; since: number; seq: number; docs: PluginDataRow[] | null; origin: string }
 }

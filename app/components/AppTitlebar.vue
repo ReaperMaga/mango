@@ -1,16 +1,22 @@
 <script setup lang="ts">
-import { AppWindow, ChevronDown, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, MapPin, Minus, PanelBottom, PanelLeft, PanelRight, Search, Server, Settings, Square, X } from 'lucide-vue-next'
+import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
+import { pluginMenuItems } from '~/plugin-host/menus'
+import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
 import { useUsage } from '~/stores/usage'
 import { useGit } from '~/stores/git'
 import { useWindows } from '~/stores/windows'
-import { appWindow, isTauri } from '~/composables/useBackend'
+import { appWindow, isTauri, openExternal } from '~/composables/useBackend'
 import { openFolderFlow } from '~/composables/useShortcuts'
 import type { MenuItem } from '~/types/ui'
+import type { ProjectInfo } from '~/types/ipc'
+import { useForge } from '~/stores/forge'
+import { siteName } from '~/utils/forge'
 import { isEnvPath } from '~/utils/envPath'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const usage = useUsage()
@@ -31,6 +37,14 @@ onMounted(() => {
   usageTimer = setInterval(() => void usage.refreshReadable(true), USAGE_POLL_MS)
 })
 onBeforeUnmount(() => { clearTimeout(usageFirst); clearInterval(usageTimer) })
+/* A project in another place (this computer, or an environment) has other agents' accounts: read theirs. */
+watch(() => usage.place, (now, before) => { if (before !== undefined && now !== before) void usage.refreshReadable() })
+
+/* The maximize button shows Restore while the window is maximized. */
+const maximized = ref(false)
+let stopWatch: (() => void) | undefined
+onMounted(async () => { stopWatch = await appWindow.watchMaximized(m => { maximized.value = m }) })
+onBeforeUnmount(() => stopWatch?.())
 
 /** A window on one chat (stores/windows.ts): no project menu, a way back to the main window instead. */
 const chatWindow = computed(() => win.spec.kind === 'chat')
@@ -63,6 +77,27 @@ const branch = computed(() => {
 /* A worktree's status is read when it comes into view, so its branch is right from the start. */
 watch(workdir, (at) => { if (at && at !== ws.activeProjectPath && !git.status(at)) git.poll(at) }, { immediate: true })
 
+/*
+ * The project's repository on GitHub or GitLab, read from its git remotes (no network) when the project
+ * comes into view and when the window comes back, so a remote added meanwhile shows up. The forge store
+ * keeps it for the tool windows' words too.
+ */
+const forge = useForge()
+function readRepoLink() {
+  const path = ws.activeProjectPath
+  if (!path || !ws.activeProject?.isGit || document.visibilityState !== 'visible') return
+  void forge.read(path)
+}
+watch(() => [ws.activeProjectPath, ws.activeProject?.isGit], readRepoLink, { immediate: true })
+onMounted(() => window.addEventListener('focus', readRepoLink))
+onBeforeUnmount(() => window.removeEventListener('focus', readRepoLink))
+const repoLink = computed(() => {
+  const link = ws.activeProject?.isGit && ws.activeProjectPath ? forge.links[ws.activeProjectPath] : null
+  if (!link) return null
+  const name = `${link.owner}/${link.repo}`
+  return { url: `https://${link.host}/${name}`, label: t('shell.titlebar.openOn', { name, site: siteName(link.provider, link.host) }), gitlab: link.provider === 'gitlab' }
+})
+
 /* Where Open folder, New project and Clone put a project: chosen from its own menu, opened from the project menu. */
 const envs = useEnvironments()
 const where = computed(() => projectWhere())
@@ -75,61 +110,83 @@ function chooseWhere() {
   void refreshEnvs()
 }
 
-const projectItems = computed<MenuItem[]>(() => [
-  ...ws.openProjects.map(p => ({
+/*
+ * One list of projects: those open in this window first, in their own order (a dot marks them, the check
+ * the one in view), then recent ones by last use, so every window can reach them (a window opened on one
+ * project otherwise lists only that one). One open in another window brings that window forward.
+ */
+const RECENT_IN_MENU = 8
+function projectItem(p: ProjectInfo, here: boolean): MenuItem {
+  const place = remotePlace(p.path)
+  const elsewhere = !here && !!win.projectElsewhere(p.path)
+  // Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead.
+  const blocked = here ? win.moveBlocker(p.path) : null
+  // A window of its own is pointless for a window's only project, unless this is the main window.
+  const ownWindow = !elsewhere && (!here || win.isMain || ws.openProjects.length > 1)
+  return {
     label: p.name,
     // Under the name: the branch, or for a remote project where it runs.
-    hint: remotePlace(p.path)?.where ?? (p.branch || undefined),
-    hintMono: !remotePlace(p.path) && !!p.branch,
+    hint: elsewhere ? t('shell.titlebar.elsewhere') : place?.where ?? (p.branch || undefined),
+    hintIcon: elsewhere ? AppWindow : place ? Server : undefined,
+    hintMono: !elsewhere && !place && !!p.branch,
     icon: projectIcon(p.name, p.path, ws.projectPrefs[p.path]?.color),
-    checked: p.path === ws.activeProjectPath,
-    onSelect: () => ws.setActiveProject(p.path),
-    remove: { label: `Close ${p.name}`, onSelect: () => ws.closeProject(p.path) },
-  })),
-  // The active project in a window of its own (pointless when it is this window's only one).
-  ...(ws.activeProject && (win.isMain || ws.openProjects.length > 1)
-    ? [moveItem(ws.activeProject.path)]
-    : []),
-  { label: 'New window', icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: !(ws.activeProject && (win.isMain || ws.openProjects.length > 1)) && ws.openProjects.length > 0, onSelect: () => win.openInNewWindow(null) },
-  { label: 'Open folder…', icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
-  { label: 'New project…', icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
-  { label: 'Clone repository…', icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
+    checked: here && p.path === ws.activeProjectPath,
+    open: here,
+    onSelect: here
+      ? () => ws.setActiveProject(p.path)
+      : () => void ws.openProjectAsking(p.path).catch((e: unknown) =>
+          ws.notify(t('shell.titlebar.openFailed'), e instanceof Error ? e.message : String(e))),
+    // Open here: close it. A recent one: take it off the list (one open in another window is that window's to close).
+    remove: here
+      ? { label: t('shell.titlebar.closeProject', { name: p.name }), onSelect: () => ws.closeProject(p.path) }
+      : elsewhere ? undefined : { label: t('shell.titlebar.forget', { name: p.name }), onSelect: () => void ws.forgetProject(p.path) },
+    action: ownWindow
+      ? { label: t('shell.titlebar.openInNewWindow'), icon: AppWindow, disabled: !!blocked, reason: blocked?.hint, onSelect: () => win.openInNewWindow(p.path) }
+      : undefined,
+  }
+}
+const listedProjects = computed<MenuItem[]>(() => [
+  ...ws.openProjects.map(p => projectItem(p, true)),
+  ...ws.listedRecent
+    .filter(p => !ws.openProjects.some(o => o.path === p.path))
+    .slice(0, RECENT_IN_MENU)
+    .map(p => projectItem(p, false)),
+])
+/* Another window may have opened a project since this one read the list. */
+function toggleProjects(toggle: () => void, open: boolean) {
+  if (!open) void ws.refreshRecent()
+  toggle()
+}
+
+const projectItems = computed<MenuItem[]>(() => [
+  ...listedProjects.value,
+  { label: t('shell.project.newWindow'), icon: AppWindow, kbd: ws.keyLabel('new-window'), divider: listedProjects.value.length > 0, onSelect: () => win.openInNewWindow(null) },
+  { label: t('shell.project.openFolder'), icon: FolderOpen, kbd: ws.keyLabel('open-folder'), divider: true, onSelect: openFolderFlow },
+  { label: t('shell.project.new'), icon: FolderPlus, onSelect: () => (ws.dialog = 'new') },
+  { label: t('shell.project.clone'), icon: GitFork, onSelect: () => (ws.dialog = 'clone') },
   ...(envs.hosts.length
-    ? [{ label: 'Projects go to…', aside: where.value ? envLabels(where.value.hostId, where.value.instance).where : 'This computer', icon: MapPin, onSelect: chooseWhere }]
+    ? [{ label: t('shell.titlebar.goToItem'), aside: where.value ? envLabels(where.value.hostId, where.value.instance).where : t('shell.titlebar.thisComputer'), icon: MapPin, onSelect: chooseWhere }]
     : []),
   ...(ws.activeProject
     ? [
-        { label: 'Project settings…', icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        { label: t('shell.titlebar.projectSettings'), icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        ...pluginMenuItems('project', { projectPath: ws.activeProject.path }),
       ]
     : []),
 ])
-
-/* Moving a project with a chat at work (or its terminals open here) would cut them off: say why it waits instead. */
-function moveItem(path: string): MenuItem {
-  const blocked = win.moveBlocker(path)
-  return {
-    label: 'Open in new window',
-    icon: AppWindow,
-    divider: true,
-    disabled: !!blocked,
-    hint: blocked?.hint,
-    onSelect: () => win.openInNewWindow(path),
-  }
-}
 
 /* The quiet sync part of the branch widget: commits to push / pull and changed files of the working copy in view. */
 const gitStatus = computed(() => git.status(workdir.value))
 const ahead = computed(() => gitStatus.value?.ahead ?? 0)
 const behind = computed(() => gitStatus.value?.behind ?? 0)
 const changed = computed(() => gitStatus.value?.files.length ?? 0)
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 const branchTitle = computed(() => {
   const bits = [
-    ahead.value ? `${plural(ahead.value, 'commit')} to push` : '',
-    behind.value ? `${plural(behind.value, 'commit')} to pull` : '',
-    changed.value ? `${plural(changed.value, 'changed file')}` : '',
+    ahead.value ? t('shell.titlebar.toPush', ahead.value) : '',
+    behind.value ? t('shell.titlebar.toPull', behind.value) : '',
+    changed.value ? t('shell.titlebar.changed', changed.value) : '',
   ].filter(Boolean)
-  const name = branch.value ? `Branch: ${branch.value}` : 'Branches'
+  const name = branch.value ? t('shell.sidebar.branch', { branch: branch.value }) : t('shell.titlebar.branches')
   return bits.length ? `${name} (${bits.join(', ')})` : name
 })
 </script>
@@ -138,22 +195,32 @@ const branchTitle = computed(() => {
   <header class="tb" :class="{ 'tb--mac': mac }" data-tauri-drag-region @dblclick.self="appWindow.toggleMaximize()">
     <div class="tb__left" data-tauri-drag-region>
       <UiMangoMark :size="18" class="tb__mark" />
+      <!-- The sidebar hides from its own top row; while it is away, it comes back from here. -->
+      <UiIconButton
+        v-if="!chatWindow && ws.hasProject && !ws.sidebarOpen"
+        class="tb__show-sb"
+        :label="t('shell.sidebar.show')"
+        :shortcut="ws.keyLabel('sidebar')"
+        @click="ws.toggleSidebar()"
+      >
+        <PanelLeftOpen />
+      </UiIconButton>
 
       <!-- A chat window: its project, as a plain label, and the way back. -->
       <template v-if="chatWindow">
         <span class="tb__widget tb__project tb__project--still" :title="ws.activeProject?.path">
           <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
-          <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+          <span class="tb__project-name">{{ ws.activeProject?.name ?? t('shell.titlebar.noProject') }}</span>
         </span>
       </template>
-      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" label="Projects">
+      <UiMenu v-else :items="projectItems" :width="280" :max-width="440" :label="t('shell.titlebar.projects')">
         <template #default="{ toggle, open }">
           <!-- The Where list opens from the project menu and hangs from the same button. -->
-          <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" label="Projects go to">
+          <UiMenu ref="whereMenu" :items="whereMenuItems" :width="300" :label="t('shell.titlebar.goTo')">
             <template #default>
-              <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+              <button type="button" class="tb__widget tb__project" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggleProjects(toggle, open)">
                 <UiProjectBadge v-if="ws.activeProject" size="sm" :name="ws.activeProject.name" :path="ws.activeProject.path" :hue="ws.projectPrefs[ws.activeProject.path]?.color" />
-                <span class="tb__project-name">{{ ws.activeProject?.name ?? 'No project' }}</span>
+                <span class="tb__project-name">{{ ws.activeProject?.name ?? t('shell.titlebar.noProject') }}</span>
                 <ChevronDown class="tb__chev" />
               </button>
             </template>
@@ -168,8 +235,8 @@ const branchTitle = computed(() => {
         type="button"
         class="tb__widget tb__remote"
         :class="{ 'is-open': ws.toolPanel === 'env', 'is-compact': ws.activeProject?.isGit }"
-        :title="`Remote environment: ${remote.where}, folder ${remote.dir}`"
-        :aria-label="`Remote environment: ${remote.where}`"
+        :title="t('shell.titlebar.remoteFolder', { where: remote.where, dir: remote.dir })"
+        :aria-label="t('shell.titlebar.remote', { where: remote.where })"
         @click="ws.toggleEnv()"
       >
         <Server aria-hidden="true" />
@@ -188,7 +255,7 @@ const branchTitle = computed(() => {
           >
             <GitBranch class="tb__branch-icon" />
             <!-- Unity VCS branches are paths: when space runs out, keep the end (…/feature/x) in view. -->
-            <span class="tb__branch-name" :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? 'detached' }}</bdi></span>
+            <span class="tb__branch-name" :class="{ 'tb__branch-path': branch?.startsWith('/') }"><bdi>{{ branch ?? t('shell.titlebar.detached') }}</bdi></span>
             <span v-if="ahead || behind || changed" class="tb__sync tabular">
               <span v-if="ahead">↑{{ ahead }}</span>
               <span v-if="behind">↓{{ behind }}</span>
@@ -198,12 +265,25 @@ const branchTitle = computed(() => {
           </button>
         </template>
       </GitBranchPopup>
+      <!-- The project's repository on GitHub or GitLab, when one of its remotes is there. -->
+      <button
+        v-if="repoLink"
+        type="button"
+        class="tb__widget tb__repo"
+        :title="repoLink.label"
+        :aria-label="repoLink.label"
+        @click="openExternal(repoLink.url).catch(() => {})"
+      >
+        <Gitlab v-if="repoLink.gitlab" aria-hidden="true" />
+        <Github v-else aria-hidden="true" />
+      </button>
+      <PluginStatusItems location="project" />
     </div>
 
     <div class="tb__center" data-tauri-drag-region>
-      <button type="button" class="tb__search" aria-label="Search threads or run a command" @click="ws.paletteOpen = true">
+      <button type="button" class="tb__search" :aria-label="t('shell.titlebar.search')" @click="ws.paletteOpen = true">
         <Search />
-        <span class="tb__ph">Search threads or run a command</span>
+        <span class="tb__ph">{{ t('shell.titlebar.search') }}</span>
         <span class="tb__keys"><kbd v-for="k in ws.keyParts('palette')" :key="k">{{ k }}</kbd></span>
       </button>
     </div>
@@ -214,28 +294,20 @@ const branchTitle = computed(() => {
         type="button"
         class="tb__widget tb__return"
         :disabled="ownBusy"
-        aria-label="Return to main window"
-        :title="ownBusy ? 'Still working: it returns once it is done' : 'Close this window and show the chat in the main window again'"
+        :aria-label="t('shell.windows.return')"
+        :title="ownBusy ? t('shell.titlebar.returnBusy') : t('shell.titlebar.returnTitle')"
         @click="win.returnChat()"
       >
-        <Undo2 aria-hidden="true" /><span class="tb__return-label">Return to main window</span>
+        <Undo2 aria-hidden="true" /><span class="tb__return-label">{{ t('shell.windows.return') }}</span>
       </button>
+      <PluginStatusItems location="titlebar" class="tb__grp" />
       <div class="tb__grp"><UpdateIndicator /></div>
       <div class="tb__grp"><AppActivity /></div>
-      <div class="tb__grp tb__usage"><AppUsageMeter /></div>
-      <div v-if="ws.hasProject" class="tb__cluster" role="group" aria-label="Layout">
-        <button v-if="!chatWindow" type="button" :aria-pressed="ws.sidebarOpen" :aria-label="'Toggle sidebar'" :title="ws.withKey('Toggle sidebar', 'sidebar')" @click="ws.toggleSidebar()"><PanelLeft /></button>
-        <button type="button" :aria-pressed="ws.terminalOpen" :aria-label="'Toggle terminal'" :title="ws.withKey('Toggle terminal', 'terminal')" @click="ws.toggleTerminal()"><PanelBottom /></button>
-        <button type="button" :aria-pressed="ws.toolPanel !== null" :aria-label="'Toggle tool panel'" :title="ws.withKey('Toggle tool panel', 'tool-panel')" @click="ws.toggleToolPanel()"><PanelRight /></button>
-      </div>
-      <UiIconButton label="Settings" :shortcut="ws.keyLabel('settings')" :active="!!ws.settings" size="sm" @click="ws.openSettings()">
-        <Settings />
-      </UiIconButton>
 
       <div v-if="native && !mac" class="tb__win">
-        <button type="button" class="tb__win-btn" aria-label="Minimize" @click="appWindow.minimize()"><Minus /></button>
-        <button type="button" class="tb__win-btn" aria-label="Maximize" @click="appWindow.toggleMaximize()"><Square class="tb__sq" /></button>
-        <button type="button" class="tb__win-btn tb__win-btn--close" aria-label="Close" @click="appWindow.close()"><X /></button>
+        <button type="button" class="tb__win-btn" :aria-label="t('shell.titlebar.minimize')" @click="appWindow.minimize()"><Minus /></button>
+        <button type="button" class="tb__win-btn" :aria-label="maximized ? t('shell.titlebar.restore') : t('shell.titlebar.maximize')" @click="appWindow.toggleMaximize()"><Copy v-if="maximized" class="tb__sq" /><Square v-else class="tb__sq" /></button>
+        <button type="button" class="tb__win-btn tb__win-btn--close" :aria-label="t('common.actions.close')" @click="appWindow.close()"><X /></button>
       </div>
     </div>
   </header>
@@ -260,6 +332,7 @@ const branchTitle = computed(() => {
 .tb__right { display: flex; align-items: center; gap: var(--space-4); flex: none; align-self: stretch; }
 .tb__center { flex: 1; display: flex; justify-content: center; min-width: 0; }
 .tb__mark { margin: 0 var(--space-2) 0 var(--space-1); flex: none; }
+.tb__show-sb { margin-right: var(--space-1); }
 /* The project keeps its width; a long branch (Unity VCS paths such as /main/feature/x) is what gets cut short. */
 .tb__left > :deep(.menu) { flex: none; }
 
@@ -305,6 +378,9 @@ const branchTitle = computed(() => {
   white-space: nowrap;
 }
 .tb__branch .tb__branch-path { direction: rtl; text-align: left; }
+.tb__repo { width: 28px; padding: 0; justify-content: center; flex: none; color: var(--fg-subtle); }
+.tb__repo:hover { color: var(--fg); }
+.tb__repo svg { width: 14px; height: 14px; stroke-width: 1.85; }
 .tb__sync { display: flex; gap: 6px; flex: none; color: var(--fg-muted); white-space: nowrap; }
 
 .tb__search {
@@ -327,28 +403,6 @@ const branchTitle = computed(() => {
 .tb__search svg { width: 14px; height: 14px; flex: none; }
 .tb__ph { flex: 1; text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tb__keys { display: flex; align-items: center; gap: 2px; flex: none; }
-
-/* Layout cluster: one connected segmented group of panel toggles. */
-.tb__cluster {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  background: var(--bg-inset);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--radius-md);
-}
-.tb__cluster button {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-  color: var(--fg-subtle);
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.tb__cluster button:hover { background: var(--bg-hover); color: var(--fg); }
-.tb__cluster button[aria-pressed='true'] { background: var(--bg-raised); color: var(--fg); box-shadow: 0 0 0 1px var(--line); }
-.tb__cluster svg { width: 16px; height: 16px; }
 
 .tb__win { display: flex; align-self: stretch; margin-left: var(--space-1); }
 .tb__win-btn {
@@ -376,7 +430,7 @@ const branchTitle = computed(() => {
 }
 /* A chat window may be as small as 640px: the search and the way back keep only their icons. */
 @media (max-width: 820px) {
-  .tb__keys, .tb__return-label, .tb__usage { display: none; }
+  .tb__keys, .tb__return-label { display: none; }
   .tb__search { width: 28px; flex: none; justify-content: center; padding: 0; }
   .tb__return { width: 28px; justify-content: center; padding: 0; }
   .tb__branch-name { max-width: 72px; }

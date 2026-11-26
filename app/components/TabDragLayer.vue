@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { AppWindow, Server, SquareTerminal } from 'lucide-vue-next'
 import { tabDrag, type Box } from '~/composables/useTabDrag'
+import { findPanelTab } from '~/composables/panelTabs'
+import PluginIcon from '~/plugin-host/ui/PluginIcon.vue'
 import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 
@@ -9,11 +11,14 @@ import { useWindows } from '~/stores/windows'
  * line between tabs, or a wash over the pane or panel it would fill). A chat dragged to the window's
  * edge, or past it, says that letting go opens it in a window of its own. Never takes the pointer.
  */
+const { t } = useI18n()
 const threads = useThreads()
 const win = useWindows()
 const at = (b: Box) => ({ left: `${b.left}px`, top: `${b.top}px`, width: `${b.width}px`, height: `${b.height}px` })
 
 const chat = computed(() => (tabDrag.item?.kind === 'chat' ? threads.byId(tabDrag.item.id) : null))
+/** A panel tab being dragged (its icon). */
+const panelTab = computed(() => (tabDrag.item?.kind === 'panelTab' ? findPanelTab(tabDrag.item.id) : null))
 /** The chat window's own chat goes back when it is let go over another window; anything else gets a new window. */
 const own = computed(() => win.spec.kind === 'chat' && !!chat.value && threads.rootOf(chat.value.id)?.id === win.spec.threadId)
 /* A chat at work cannot move: its run stays in this window. */
@@ -22,9 +27,9 @@ const out = computed(() => !!chat.value && !busy.value && tabDrag.place === 'out
 const edge = computed(() => !!chat.value && !busy.value && tabDrag.place === 'edge')
 const hint = computed(() => {
   if (!chat.value || tabDrag.place === 'inside') return ''
-  if (busy.value) return 'Still working: it stays in this window'
-  if (own.value) return out.value ? 'Let go over another Mango window to return it' : 'Drag onto another Mango window to return it'
-  return out.value ? 'Opens in a new window' : 'Drag out of the window to open it on its own'
+  if (busy.value) return t('shell.drag.busy')
+  if (own.value) return out.value ? t('shell.drag.dropToReturn') : t('shell.drag.dragToReturn')
+  return out.value ? t('shell.drag.opens') : t('shell.drag.dragOut')
 })
 
 /*
@@ -64,6 +69,7 @@ const area = computed(() => {
         <span class="tdl__tab">
           <AppWindow v-if="out && !own" class="tdl__icon" />
           <UiRipenessDot v-else-if="chat" :status="chat.archived ? 'archived' : chat.status" :size="11" />
+          <PluginIcon v-else-if="panelTab" :icon="panelTab.icon" class="tdl__icon" />
           <component :is="tabDrag.remote ? Server : SquareTerminal" v-else class="tdl__icon" />
           <span class="tdl__title">{{ tabDrag.title }}</span>
         </span>

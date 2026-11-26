@@ -2,7 +2,7 @@
 import { CircleAlert } from 'lucide-vue-next'
 import type { McpServerConfig } from '~/types/ipc'
 import { AGENTS } from '~/types/chat'
-import { mcpNameProblem } from '~/agents/mcp'
+import { MCP_NAME_MAX, mcpNameProblem } from '~/agents/mcp'
 import { joinCommandLine, splitCommandLine } from '~/utils/mcpServers'
 import SettingsSegmented from './SettingsSegmented.vue'
 import McpPairs from './McpPairs.vue'
@@ -11,6 +11,7 @@ import McpPairs from './McpPairs.vue'
  * Adding or editing one MCP server, in place in the list (not a dialog). Enter in a one-line field
  * saves, Escape cancels. The parent saves; it passes back `busy` and the backend's `error`.
  */
+const { t } = useI18n()
 const props = defineProps<{
   server: McpServerConfig
   /** Names already used in this scope (lower case), the server's own excluded. */
@@ -37,26 +38,35 @@ const touched = reactive({ name: false, command: false, url: false })
 
 const ids = { name: useId(), command: useId(), url: useId(), agents: useId() }
 
+/** What `mcpNameProblem` objects to, in the interface language. */
+function nameProblem(n: string): string {
+  if (!n) return t('settings.mcpForm.nameMissing')
+  if (n.length > MCP_NAME_MAX) return t('settings.mcpForm.nameLong', { max: MCP_NAME_MAX + 1 })
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(n)) return t('settings.mcpForm.nameChars')
+  if (n.includes('__')) return t('settings.mcpForm.nameUnderscores')
+  return t('settings.mcpForm.nameReserved')
+}
 const nameError = computed(() => {
   const n = name.value.trim()
-  return mcpNameProblem(n) ?? (props.taken.includes(n.toLowerCase()) ? `There is already a server named ${n} here.` : null)
+  if (mcpNameProblem(n)) return nameProblem(n)
+  return props.taken.includes(n.toLowerCase()) ? t('settings.mcpForm.nameTaken', { name: n }) : null
 })
-const commandError = computed(() => (splitCommandLine(commandLine.value).length ? null : 'Give the command that starts the server.'))
-const urlError = computed(() => (/^https?:\/\/[^/\s]\S*$/i.test(url.value.trim()) ? null : 'Give the server\'s address, starting with http:// or https://.'))
+const commandError = computed(() => (splitCommandLine(commandLine.value).length ? null : t('settings.mcpForm.commandMissing')))
+const urlError = computed(() => (/^https?:\/\/[^/\s]\S*$/i.test(url.value.trim()) ? null : t('settings.mcpForm.urlBad')))
 
-const transports = [
-  { value: 'stdio' as const, label: 'Command' },
+const transports = computed(() => [
+  { value: 'stdio' as const, label: t('settings.mcpForm.command') },
   { value: 'http' as const, label: 'HTTP' },
-]
-const agentChoices: Array<{ value: AgentsChoice; label: string }> = [
-  { value: 'both', label: 'Both' },
+])
+const agentChoices = computed<Array<{ value: AgentsChoice; label: string }>>(() => [
+  { value: 'both', label: t('settings.mcpForm.both') },
   { value: 'claude', label: AGENTS.claude.name },
   { value: 'codex', label: AGENTS.codex.name },
-]
+])
 
 const commandHint = computed(() => (props.remote
-  ? 'Started inside the environment by the agent\'s CLI, for each chat that uses it. Quotes keep spaces in an argument.'
-  : 'Started by the agent\'s CLI for each chat that uses it, in the project folder. Quotes keep spaces in an argument.'))
+  ? t('settings.mcpForm.commandHintRemote')
+  : t('settings.mcpForm.commandHint')))
 
 const form = ref<HTMLFormElement | null>(null)
 onMounted(() => {
@@ -91,13 +101,13 @@ function submit() {
   <form
     ref="form"
     class="mf"
-    :aria-label="isNew ? 'New MCP server' : `Edit ${server.name}`"
+    :aria-label="isNew ? t('settings.mcpForm.new') : t('settings.mcp.edit', { name: server.name })"
     novalidate
     @submit.prevent="submit"
     @keydown.esc.stop.prevent="emit('cancel')"
   >
     <div class="mf__grid">
-      <UiField label="Name" :for="ids.name" :error="touched.name ? nameError : null" hint="Its tools show up as mcp__name__tool.">
+      <UiField :label="t('settings.mcpForm.name')" :for="ids.name" :error="touched.name ? nameError : null" :hint="t('settings.mcpForm.nameHint')">
         <input
           :id="ids.name"
           v-model="name"
@@ -112,18 +122,18 @@ function submit() {
         >
       </UiField>
       <div class="mf__field">
-        <span :id="ids.agents" class="mf__label">Agents</span>
+        <span :id="ids.agents" class="mf__label">{{ t('settings.nav.agents') }}</span>
         <SettingsSegmented v-model="agents" :options="agentChoices" :labelledby="ids.agents" />
       </div>
     </div>
 
     <div class="mf__field">
-      <span class="mf__label">Transport</span>
-      <SettingsSegmented v-model="transport" :options="transports" label="Transport" />
+      <span class="mf__label">{{ t('settings.mcpForm.transport') }}</span>
+      <SettingsSegmented v-model="transport" :options="transports" :label="t('settings.mcpForm.transport')" />
     </div>
 
     <template v-if="transport === 'stdio'">
-      <UiField label="Command" :for="ids.command" :error="touched.command ? commandError : null" :hint="commandHint">
+      <UiField :label="t('settings.mcpForm.command')" :for="ids.command" :error="touched.command ? commandError : null" :hint="commandHint">
         <input
           :id="ids.command"
           v-model="commandLine"
@@ -138,7 +148,7 @@ function submit() {
         >
       </UiField>
       <div class="mf__field">
-        <span class="mf__label">Environment variables</span>
+        <span class="mf__label">{{ t('settings.mcpPairs.variables') }}</span>
         <McpPairs v-model="env" kind="variable" @invalid="badPairs = $event" />
       </div>
     </template>
@@ -147,7 +157,7 @@ function submit() {
         label="URL"
         :for="ids.url"
         :error="touched.url ? urlError : null"
-        :hint="remote ? 'Reached from inside the environment: localhost there is the environment itself.' : 'A streamable HTTP endpoint.'"
+        :hint="remote ? t('settings.mcpForm.urlHintRemote') : t('settings.mcpForm.urlHint')"
       >
         <input
           :id="ids.url"
@@ -163,21 +173,21 @@ function submit() {
         >
       </UiField>
       <div class="mf__field">
-        <span class="mf__label">Headers</span>
+        <span class="mf__label">{{ t('settings.mcpPairs.headers') }}</span>
         <McpPairs v-model="headers" kind="header" @invalid="badPairs = $event" />
       </div>
     </template>
 
     <p class="mf__note">
-      Values are kept in Mango's settings on this computer, readable only by your user.
-      {{ remote ? 'They go to the environment over SSH with the agent\'s start command.' : 'They reach the agent\'s CLI through its environment, not its command line.' }}
+      {{ t('settings.mcpForm.note') }}
+      {{ remote ? t('settings.mcpForm.noteRemote') : t('settings.mcpForm.noteLocal') }}
     </p>
 
     <p v-if="error" class="mf__error selectable" role="alert"><CircleAlert aria-hidden="true" />{{ error }}</p>
 
     <div class="mf__actions">
-      <UiButton size="sm" variant="ghost" @click="emit('cancel')">Cancel</UiButton>
-      <UiButton size="sm" variant="primary" type="submit" :loading="busy">{{ isNew ? 'Add server' : 'Save' }}</UiButton>
+      <UiButton size="sm" variant="ghost" @click="emit('cancel')">{{ t('common.actions.cancel') }}</UiButton>
+      <UiButton size="sm" variant="primary" type="submit" :loading="busy">{{ isNew ? t('settings.mcp.add') : t('common.actions.save') }}</UiButton>
     </div>
   </form>
 </template>

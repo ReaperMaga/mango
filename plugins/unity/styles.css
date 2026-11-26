@@ -1,0 +1,325 @@
+/* The Unity tool window. Only Mango's design tokens, so it follows the theme and colour scheme. */
+
+.mango-unity {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-width: 0;
+  padding-bottom: var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--text-sm);
+}
+
+.mango-unity--empty {
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+}
+
+.mango-unity__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-4) var(--space-3) var(--space-3);
+}
+
+.mango-unity__section + .mango-unity__section {
+  border-top: 1px solid var(--line-soft);
+}
+
+.mango-unity__product,
+.mango-unity__title,
+.mango-unity__subtitle {
+  display: flex;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--fg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.mango-unity__product {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: var(--text-md);
+}
+
+/* A group inside a section: Mango's group header, not another section's title. */
+.mango-unity__subtitle {
+  color: var(--fg-muted);
+  font-size: var(--text-xs);
+}
+
+.mango-unity__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.mango-unity__ghost {
+  height: 22px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-subtle);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.mango-unity__ghost:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.mango-unity__checks {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.mango-unity__count {
+  color: var(--fg-subtle);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.mango-unity__facts,
+.mango-unity__packages {
+  display: grid;
+  gap: var(--space-1) var(--space-3);
+  min-width: 0;
+  margin: 0;
+}
+
+.mango-unity__facts {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.mango-unity__packages {
+  grid-template-columns: minmax(0, 1fr) auto;
+  font-size: var(--text-xs);
+}
+
+.mango-unity__facts dt {
+  color: var(--fg-subtle);
+}
+
+.mango-unity__facts dd,
+.mango-unity__packages dd {
+  margin: 0;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.mango-unity__packages dd {
+  max-width: 12ch;
+  color: var(--fg-subtle);
+  text-align: right;
+}
+
+.mango-unity__facts dd,
+.mango-unity__packages dt,
+.mango-unity__packages dd,
+.mango-unity__subject {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Package ids are code. */
+.mango-unity__packages dt {
+  font-family: var(--font-mono);
+}
+
+.mango-unity__subject {
+  margin: 0;
+  color: var(--fg);
+}
+
+.mango-unity__note {
+  margin: 0;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+  line-height: var(--leading-normal);
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.mango-unity__note.is-error {
+  color: var(--ripe-error-fg);
+}
+
+.mango-unity__note.is-good {
+  color: var(--ripe-done-fg);
+}
+
+.mango-unity__problem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin-bottom: var(--space-3);
+}
+
+.mango-unity__group + .mango-unity__group {
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--line-soft);
+}
+
+.mango-unity__line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.mango-unity__actions {
+  display: flex;
+}
+
+/* Rows reach past the text's edge, so their hover wash has room around the words. */
+.mango-unity__list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0;
+  list-style: none;
+}
+
+.mango-unity__row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  line-height: 26px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.mango-unity__row:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.mango-unity__name,
+.mango-unity__dir {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The name keeps its room; the folder is what gets cut short. */
+.mango-unity__name {
+  flex: 0 0 auto;
+  max-width: 70%;
+}
+
+.mango-unity__dir {
+  flex: 1;
+  color: var(--fg-subtle);
+  font-size: var(--text-xs);
+}
+
+.mango-unity__row.is-off .mango-unity__name {
+  color: var(--fg-faint);
+}
+
+.mango-unity__button {
+  flex: none;
+  height: 26px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.mango-unity__button:hover:not(:disabled) {
+  border-color: var(--line-strong);
+  background: var(--bg-raised);
+}
+
+.mango-unity__button:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.mango-unity__button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mango-unity__more {
+  color: var(--accent-ink);
+  font-size: var(--text-xs);
+}
+
+.mango-unity__pick {
+  flex: none;
+  height: 32px;
+  min-width: 0;
+  margin: var(--space-3) var(--space-3) 0;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  color: var(--fg);
+  font: inherit;
+}
+
+.mango-unity__pick option {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.mango-unity__check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 26px;
+  cursor: pointer;
+}
+
+.mango-unity__check input {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.mango-unity__pick:focus-visible {
+  border-color: var(--accent-line);
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.mango-unity__row:focus-visible,
+.mango-unity__button:focus-visible,
+.mango-unity__ghost:focus-visible,
+.mango-unity__check input:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}

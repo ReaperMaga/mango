@@ -1,6 +1,7 @@
-import type { Part } from '~/types/chat'
+import type { AgentId, ContextUsage, Part } from '~/types/chat'
 import { approvalWaiters, stopFlags, type useThreads } from '~/stores/threads'
 import { simulatedTasks } from '~/agents'
+import { formatTokens } from '~/agents/context'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -26,6 +27,18 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
   store._setStatus(threadId, 'running')
   const msg = store._pushAgentMessage(threadId)
   if (!msg) return
+  if (/^\/compact(\s|$)/.test(prompt.trim())) {
+    const before = thread()?.context?.used ?? 0
+    await sleep(2500)
+    const t = thread()
+    if (stopped() || !t) return
+    t.context = { ...mockContext(t.agent), used: 38_000, max: t.context?.max ?? 200_000, parts: undefined }
+    delete t.cache
+    store._pushPart(threadId, msg, { type: 'notice', level: 'info', text: before > 38_000 ? `Compacted: ${formatTokens(before)} to ${formatTokens(38_000)} tokens.` : 'Compacted.' })
+    store._clearLive(threadId)
+    store._setStatus(threadId, 'working', 'done')
+    return
+  }
 
   const think = store._pushPart(threadId, msg, { type: 'thinking', text: '', seconds: 0 }) as Extract<Part, { type: 'thinking' }>
   const thoughts = `The request is “${prompt.trim().slice(0, 80)}”. I'll look at how the project is laid out first, find the code this touches, then make the smallest change that does it and run the checks.`
@@ -194,6 +207,34 @@ export async function runMockAgent(store: Store, threadId: string, prompt: strin
       }
     }
   }
+  const t = thread()
+  if (t) t.context = mockContext(t.agent, t.context?.used)
   store._clearLive(threadId)
   store._setStatus(threadId, 'working', 'done')
+}
+
+/** A plausible context window after one more turn: Claude Code's breakdown, or Codex's plain total. */
+function mockContext(agent: AgentId, before = 0): ContextUsage {
+  const used = Math.min(before ? before + 18_400 : 46_200, 186_000)
+  if (agent === 'codex') return { used, max: 258_400, at: Date.now() }
+  const max = 200_000
+  const fixed = { system_prompt: 2_600, system_tools: 8_900, memory_files: 2_100, skills: 7_100 }
+  const messages = used - Object.values(fixed).reduce((a, b) => a + b, 0)
+  const buffer = 33_000
+  return {
+    used,
+    max,
+    compactAt: max - buffer,
+    model: 'claude-sonnet-5-5',
+    parts: [
+      { id: 'system_prompt', label: 'System prompt', tokens: fixed.system_prompt, kind: 'used' },
+      { id: 'system_tools', label: 'System tools', tokens: fixed.system_tools, kind: 'used' },
+      { id: 'memory_files', label: 'Memory files', tokens: fixed.memory_files, kind: 'used' },
+      { id: 'skills', label: 'Skills', tokens: fixed.skills, kind: 'used' },
+      { id: 'messages', label: 'Messages', tokens: messages, kind: 'used' },
+      { id: 'autocompact_buffer', label: 'Autocompact buffer', tokens: buffer, kind: 'buffer' },
+      { id: 'free_space', label: 'Free space', tokens: Math.max(0, max - used - buffer), kind: 'free' },
+    ],
+    at: Date.now(),
+  }
 }

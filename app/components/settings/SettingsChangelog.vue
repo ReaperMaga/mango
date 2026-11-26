@@ -13,8 +13,13 @@ import SettingsSection from './SettingsSection.vue'
  * docs site (`docs/changelog.md`, baked into the build). The version you run is marked; the
  * newest entry starts open, the rest fold away.
  */
+const { t } = useI18n()
 const build = useBuildInfo()
 const releases = parseChangelog(changelogSource)
+
+/* Opening the changelog, from anywhere, clears the "What's new" dot in the sidebar footer. */
+const { markSeen } = useWhatsNew()
+onMounted(markSeen)
 
 /** The file is ours, but the text still goes through the allow-list before `v-html`. */
 const md = new Marked({ gfm: true, renderer: { html: ({ text }) => text } })
@@ -37,23 +42,23 @@ function onClick(e: MouseEvent) {
 </script>
 
 <template>
-  <SettingsSection title="Changelog" description="What changed in each version of Mango.">
+  <SettingsSection :title="t('settings.nav.changelog')" :description="t('settings.changelog.description')">
     <ol class="log" role="list" @click="onClick">
       <li v-for="r in releases" :key="r.version" class="log__release">
         <h3 class="log__head">
           <button type="button" class="log__toggle" :aria-expanded="open.has(r.version)" @click="toggle(r.version)">
             <ChevronRight class="log__caret" :class="{ 'is-open': open.has(r.version) }" aria-hidden="true" />
             <span class="log__version tabular">{{ r.version }}</span>
-            <span v-if="isCurrent(r.version)" class="log__tag is-current">Installed</span>
+            <span v-if="isCurrent(r.version)" class="log__tag is-current">{{ t('settings.changelog.installed') }}</span>
           </button>
           <button
             v-if="isReleased(r.version)"
             type="button"
             class="log__link"
-            :title="`Release ${r.version} on GitHub`"
+            :title="t('settings.changelog.release', { version: r.version })"
             @click="openExternal(releaseUrl(r.version))"
           >
-            <ExternalLink aria-hidden="true" /><span class="sr-only">Release {{ r.version }} on GitHub</span>
+            <ExternalLink aria-hidden="true" /><span class="sr-only">{{ t('settings.changelog.release', { version: r.version }) }}</span>
           </button>
         </h3>
 
@@ -68,10 +73,9 @@ function onClick(e: MouseEvent) {
         </div>
       </li>
     </ol>
-    <p class="log__all">
-      Installers for every version are on
-      <a :href="RELEASES_URL" class="log__a" @click.prevent="openExternal(RELEASES_URL)">GitHub releases</a>.
-    </p>
+    <i18n-t keypath="settings.changelog.all" tag="p" scope="global" class="log__all">
+      <template #link><a :href="RELEASES_URL" class="log__a" @click.prevent="openExternal(RELEASES_URL)">{{ t('settings.updates.githubReleases') }}</a></template>
+    </i18n-t>
   </SettingsSection>
 </template>
 

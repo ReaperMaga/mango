@@ -1,4 +1,5 @@
 mod agent_proc;
+mod agent_sessions;
 mod attachments;
 mod agents;
 mod auth;
@@ -10,17 +11,27 @@ mod chats;
 mod chats_remote;
 mod env_files;
 mod envs;
+mod file_ops;
 mod files;
 mod git;
 mod github;
+mod gitlab;
+mod gitlab_items;
+mod hosting;
+mod gitlab_releases;
 mod images;
+mod lsp;
 mod mcp;
 mod notify;
 mod plastic;
+mod plugin_data;
+mod plugins;
 mod projects;
+mod releases;
 mod pty;
 mod setup;
 mod shells;
+mod trash_bin;
 mod updater;
 mod vcs;
 mod voice;
@@ -31,7 +42,10 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = windows::with_quit_item(builder);
+    builder
         // First: a second Mango (started by a mango:// link on Windows and Linux) hands its
         // arguments to this one (through the deep-link plugin, see `envs::join`) and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| envs::join::focus_main(app)))
@@ -58,14 +72,25 @@ pub fn run() {
         .manage(envs::join::JoinLinkState::default())
         .manage(browser::BrowserState::default())
         .manage(chats::ChatsState::default())
+        .manage(lsp::LspState::default())
+        .manage(windows::CloseState::default())
         .manage(mcp::McpState::default())
+        .manage(plugins::PluginsState::default())
+        .manage(plugin_data::PluginDataState::default())
         .manage(browser_remote::RemoteBrowserState::default())
         .setup(|app| {
             envs::join::setup_deep_link(app.handle());
             Ok(())
         })
-        .on_window_event(windows::on_event)
+        .on_window_event(|window, event| {
+            lsp::on_window_event(window, event);
+            windows::on_event(window, event);
+        })
         .on_page_load(|webview, payload| {
+            if payload.event() == PageLoadEvent::Started {
+                lsp::on_page_started(webview);
+                windows::on_page_started(webview);
+            }
             if payload.event() == PageLoadEvent::Finished && webview.label() == "main" {
                 envs::join::page_loaded(webview.app_handle());
             }
@@ -77,6 +102,25 @@ pub fn run() {
             projects::create_project,
             projects::git_clone,
             projects::default_projects_dir,
+            plugins::plugins_list,
+            plugins::plugins_probe,
+            plugins::plugins_install,
+            plugins::plugins_add_local,
+            plugins::plugins_set_enabled,
+            plugins::plugins_remove,
+            plugins::plugins_check_updates,
+            plugins::plugins_update,
+            plugins::plugins_read,
+            plugins::plugins_asset,
+            plugins::plugins_catalog,
+            plugins::plugins_dir,
+            plugins::plugins_reveal,
+            plugin_data::plugin_data_list,
+            plugin_data::plugin_data_get,
+            plugin_data::plugin_data_count,
+            plugin_data::plugin_data_changes,
+            plugin_data::plugin_data_write,
+            plugin_data::plugin_data_clear,
             agents::detect_agents,
             pty::pty_spawn,
             pty::pty_write,
@@ -88,9 +132,11 @@ pub fn run() {
             agent_proc::agent_close_stdin,
             agent_proc::agent_kill,
             agent_proc::agent_reconnect_now,
+            agent_sessions::agent_transcript,
             attachments::attachment_save,
             attachments::attachment_import,
             attachments::attachment_read,
+            attachments::attachment_put_remote,
             images::chat_image,
             notify::notify,
             chats::chats_load,
@@ -103,6 +149,12 @@ pub fn run() {
             auth::agent_logout,
             setup::setup_check,
             setup::setup_install,
+            lsp::lsp_servers,
+            lsp::lsp_folder,
+            lsp::lsp_start,
+            lsp::lsp_send,
+            lsp::lsp_stop,
+            lsp::lsp_install,
             vcs::git_status,
             vcs::git_diff,
             vcs::git_base,
@@ -114,8 +166,12 @@ pub fn run() {
             vcs::git_pull,
             vcs::git_push,
             vcs::git_log,
+            vcs::git_graph,
+            vcs::git_commit_show,
+            vcs::git_commit_diff,
             vcs::git_branches,
             vcs::git_checkout,
+            vcs::git_checkout_commit,
             vcs::git_init,
             vcs::git_branch_list,
             vcs::git_branch_create,
@@ -139,18 +195,35 @@ pub fn run() {
             plastic::shelves::vcs_shelve_apply,
             plastic::shelves::vcs_shelve_delete,
             github::gh_item,
+            github::gh_open_items,
+            github::gh_repo_link,
             github::gh_merge,
             github::gh_pr_create,
             github::gh_job,
+            gitlab::gitlab_hosts,
+            gitlab::gitlab_hosts_save,
+            hosting::hosting_status,
+            hosting::hosting_login,
+            hosting::hosting_logout,
+            releases::gh_releases,
+            releases::gh_tag_run,
+            releases::gh_run,
+            releases::gh_run_action,
             files::fs_list_dir,
             files::fs_read_file,
             files::fs_read_bytes,
             files::fs_write_file,
             files::fs_create_file,
             files::fs_delete_file,
+            file_ops::fs_create_dir,
+            file_ops::fs_rename,
+            file_ops::fs_duplicate,
+            file_ops::fs_delete,
+            file_ops::fs_reveal,
             env_files::env_files,
             env_files::env_gitignore_add,
             updater::update_check,
+            updater::update_download,
             updater::update_install,
             voice::voice_models,
             voice::voice_download,
@@ -170,6 +243,7 @@ pub fn run() {
             envs::server::env_server_setup,
             envs::recipes::env_components,
             envs::recipes::env_install,
+            envs::recipes::env_versions,
             envs::remote::env_shell,
             envs::remote::env_login,
             envs::remote::env_prepare_dir,
@@ -196,6 +270,10 @@ pub fn run() {
             windows::window_focus,
             windows::window_list,
             windows::window_at,
+            windows::window_alone,
+            windows::window_close_heard,
+            windows::window_close_answer,
+            windows::window_unsaved,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Mango")
@@ -203,6 +281,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 app.state::<pty::PtyState>().kill_all();
                 app.state::<agent_proc::AgentProcState>().kill_all();
+                app.state::<lsp::LspState>().kill_all();
                 app.state::<envs::remote::DesktopState>().kill_all();
                 app.state::<browser_remote::RemoteBrowserState>().kill_all();
             }

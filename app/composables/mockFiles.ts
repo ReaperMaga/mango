@@ -1,4 +1,4 @@
-import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsEntry, FsListing, WriteResult } from '~/types/ipc'
+import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsDeleted, FsEntry, FsListing, WriteResult } from '~/types/ipc'
 
 /**
  * In-memory project files for the browser preview (no Tauri). Implements the
@@ -9,6 +9,13 @@ import type { ChatImage, EnvFile, FileBytes, FileContent, FsAhead, FsEntry, FsLi
  */
 
 interface MockFile { text: string | null; modifiedMs: number; size?: number }
+
+/** Stands in for the backend's SHA-256. */
+function hashOf(text: string) {
+  let h = 2166136261
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619)
+  return `${text.length}-${(h >>> 0).toString(16)}`
+}
 
 const MIN = 60_000
 const wait = (ms: number) => new Promise(r => setTimeout(r, ms))
@@ -29,6 +36,7 @@ const SEED: Record<string, string | null> = {
   'app/utils/paths.ts': "/** Last segment of a path, either separator. */\nexport const baseName = (p: string) => p.replace(/[\\\\/]+$/, '').split(/[\\\\/]/).pop() || p\n",
   'app/assets/css/tokens.css': ':root {\n  --font-ui: \'Inter Variable\', ui-sans-serif, system-ui, sans-serif;\n  --font-mono: \'JetBrains Mono Variable\', ui-monospace, monospace;\n  --radius-sm: 6px;\n}\n',
   'app/components/AppWorkspace.vue': '<template>\n  <div class="workspace">\n    <AppSidebar />\n    <ChatArea />\n  </div>\n</template>\n\n<style scoped>\n.workspace { display: flex; flex: 1; min-height: 0; }\n</style>\n',
+  'mobile/modules/mango-ssh/index.ts': "export { default } from './src/MangoSshModule'\n",
   'public/icon.svg': '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">\n  <rect width="64" height="64" rx="14" fill="#f5a524"/>\n  <path d="M18 46V20l14 16 14-16v26" fill="none" stroke="#1d1a14" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>\n  <circle cx="48" cy="16" r="5" fill="#7fb24a"/>\n</svg>\n',
   'public/changes-panel.png': null,
   'scripts/try-agent.ts': "// Drive an agent adapter against the real CLI, outside the app.\nconst [agent, cwd, prompt] = process.argv.slice(2)\nconsole.log({ agent, cwd, prompt })\n",
@@ -40,14 +48,77 @@ const SEED: Record<string, string | null> = {
   '.nuxt/nuxt.d.ts': '/// <reference types="nuxt" />\n',
 }
 
+const metaText = (guid: number) => `fileFormatVersion: 2\nguid: ${guid.toString(16).padStart(32, '0')}\n`
+
+/** The `fruit-stand` project: a Unity project (see mockGit.ts), with one .meta that lost its asset and one asset without. */
+const UNITY_SEED: Record<string, string | null> = (() => {
+  const files: Record<string, string | null> = {
+    'Assets/Scenes/Farm.unity': '%YAML 1.1\n%TAG !u! tag:unity3d.com,2011:\n--- !u!1 &100\nGameObject:\n  m_Name: Well\n',
+    'Assets/Scenes/Menu.unity': '%YAML 1.1\n--- !u!1 &100\nGameObject:\n  m_Name: Menu\n',
+    'Assets/Prefabs/Crate.prefab': `%YAML 1.1\n--- !u!23 &200\nMeshRenderer:\n  m_Materials:\n  - {fileID: 2100000, guid: ${(1).toString(16).padStart(32, '0')}, type: 2}\n`,
+    'Assets/Materials/Wood.mat': '%YAML 1.1\n--- !u!21 &2100000\nMaterial:\n  m_Name: Wood\n',
+    'Assets/Scripts/Inventory/InventoryGrid.cs': 'using UnityEngine;\n\npublic class InventoryGrid : MonoBehaviour\n{\n}\n',
+    'Assets/Scripts/FruitStand.asmdef': '{\n  "name": "FruitStand"\n}\n',
+    'Assets/Editor/CropBaker.cs': 'using UnityEditor;\n',
+    'Assets/Resources/Crops.asset': '%YAML 1.1\n--- !u!114 &11400000\nMonoBehaviour:\n  m_Name: Crops\n',
+    'Assets/Plugins/Native.dll': null,
+    'Assets/StreamingAssets/levels.json': '{}\n',
+    'Assets/Art/Crate.fbx': null,
+    'Assets/Art/Crate.png': null,
+    'Assets/Art/Leaves.shadergraph': '{}\n',
+    'Assets/Art/Water.shader': 'Shader "Fruit/Water"\n{\n}\n',
+    'Assets/Art/Pickup.vfx': '%YAML 1.1\n',
+    'Assets/Animation/Walk.anim': '%YAML 1.1\n',
+    'Assets/Animation/Farmer.controller': '%YAML 1.1\n',
+    'Assets/Audio/Birds.wav': null,
+    'Assets/Audio/Main.mixer': '%YAML 1.1\n',
+    'Assets/UI/Hud.uxml': '<UXML />\n',
+    'Assets/UI/Hud.uss': '.hud {\n  flex-grow: 1;\n}\n',
+    'Assets/UI/Controls.inputactions': '{}\n',
+    'Assets/UI/Inter.ttf': null,
+  }
+  // Every entry and folder below Assets has its .meta; the first gets guid 1, the crate's reference.
+  const entries = new Set<string>(['Assets/Materials/Wood.mat'])
+  for (const path of Object.keys(files)) {
+    const parts = path.split('/')
+    for (let i = 2; i <= parts.length; i++) entries.add(parts.slice(0, i).join('/'))
+  }
+  ;[...entries].forEach((path, i) => { files[`${path}.meta`] = metaText(i + 1) })
+  return {
+    ...files,
+    'Assets/Scripts/OldShop.cs.meta': metaText(900),
+    'Assets/Scripts/NewShop.cs': 'public class NewShop {}\n',
+    'Packages/manifest.json': '{\n  "dependencies": {\n    "com.unity.inputsystem": "1.20.0",\n    "com.unity.render-pipelines.universal": "17.5.0",\n    "com.cysharp.unitask": "https://github.com/Cysharp/UniTask.git"\n  }\n}\n',
+    'ProjectSettings/ProjectVersion.txt': 'm_EditorVersion: 6000.5.8f1\n',
+    'ProjectSettings/ProjectSettings.asset': 'PlayerSettings:\n  companyName: Orchard Studio\n  productName: Fruit Stand\n  bundleVersion: 0.3.0\n  activeInputHandler: 1\n',
+    'ProjectSettings/GraphicsSettings.asset': 'GraphicsSettings:\n  m_CustomRenderPipeline: {fileID: 11400000, guid: 000000000000000000000000000000aa, type: 2}\n',
+    'ProjectSettings/EditorBuildSettings.asset': 'EditorBuildSettings:\n  m_Scenes:\n  - enabled: 1\n    path: Assets/Scenes/Farm.unity\n  - enabled: 0\n    path: Assets/Scenes/Menu.unity\n',
+    'Library/ArtifactDB': null,
+    'Temp/UnityLockfile': null,
+    'Assembly-CSharp.csproj': '<Project />\n',
+    'fruit-stand.sln': '\n',
+    'README.md': '# Fruit Stand\n',
+  }
+})()
+
+const seedOf = (root: string) => (/(^|\/)fruit-stand(\/|$)/.test(root) ? UNITY_SEED : SEED)
+
 const projects = new Map<string, Map<string, MockFile>>()
+/** Folders that exist without a file in them: made here, or emptied here. */
+const folders = new Map<string, Set<string>>()
+
+function foldersOf(root: string) {
+  let dirs = folders.get(root)
+  if (!dirs) folders.set(root, (dirs = new Set()))
+  return dirs
+}
 
 function filesOf(root: string) {
   let files = projects.get(root)
   if (!files) {
     files = new Map()
     let i = 0
-    for (const [path, text] of Object.entries(SEED)) {
+    for (const [path, text] of Object.entries(seedOf(root))) {
       files.set(path, { text, modifiedMs: Date.now() - (++i * 7 + 3) * MIN, size: text === null ? 184_320 : undefined })
     }
     projects.set(root, files)
@@ -84,7 +155,12 @@ function listDir(root: string, dir: string): FsListing {
     const full = prefix + name
     if (!seen.has(name)) seen.set(name, { name, path: full, isDir: rest.includes('/'), ignored: isIgnored(root, full) })
   }
-  if (dir && !seen.size) throw new Error(`${dir} no longer exists`)
+  for (const path of foldersOf(root)) {
+    if (!path.startsWith(prefix) || path === prefix) continue
+    const name = path.slice(prefix.length).split('/')[0]!
+    if (name) seen.set(name, { name, path: prefix + name, isDir: true, ignored: isIgnored(root, prefix + name) })
+  }
+  if (dir && !seen.size && !foldersOf(root).has(dir)) throw new Error(`${dir} no longer exists`)
   const entries = [...seen.values()].sort((a, b) =>
     a.isDir === b.isDir ? a.name.toLowerCase().localeCompare(b.name.toLowerCase()) : a.isDir ? -1 : 1)
   return { entries, truncated: false }
@@ -110,7 +186,7 @@ function readFile(root: string, file: string, limit?: number): FileContent {
   if (!f) throw new Error(`${file} no longer exists`)
   const size = f.size ?? new TextEncoder().encode(f.text ?? '').length
   if (limit !== undefined && size > limit) return { text: null, binary: false, tooLarge: true, size, bom: false, modifiedMs: f.modifiedMs }
-  return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs }
+  return { text: f.text, binary: f.text === null, tooLarge: false, size, bom: false, modifiedMs: f.modifiedMs, hash: f.text === null ? undefined : hashOf(f.text) }
 }
 
 /** A picture for a binary image in the seed tree, drawn once per file. */
@@ -150,16 +226,18 @@ function readBytes(root: string, file: string): FileBytes {
   return { data, size: Math.floor(data.length * 3 / 4), modifiedMs: f.modifiedMs }
 }
 
-function writeFile(root: string, file: string, text: string, expected: number | null): WriteResult {
+function writeFile(root: string, file: string, text: string, expected: number | null, expectedHash?: string | null): WriteResult {
   const f = filesOf(root).get(clean(file))
   if (!f) throw new Error(`Could not save ${file}: it no longer exists`)
-  if (expected !== null && f.modifiedMs !== expected) return { saved: false, modifiedMs: f.modifiedMs }
+  const changed = expectedHash ? hashOf(f.text ?? '') !== expectedHash : expected !== null && f.modifiedMs !== expected
+  if (changed) return { saved: false, modifiedMs: f.modifiedMs }
   f.text = text
   f.modifiedMs = Date.now()
-  return { saved: true, modifiedMs: f.modifiedMs }
+  return { saved: true, modifiedMs: f.modifiedMs, hash: hashOf(text) }
 }
 
-const isFolder = (files: Map<string, MockFile>, rel: string) => [...files.keys()].some(p => p.startsWith(`${rel}/`))
+const isFolder = (root: string, rel: string) =>
+  foldersOf(root).has(rel) || [...filesOf(root).keys(), ...foldersOf(root)].some(p => p.startsWith(`${rel}/`))
 
 /** The file part of a project-relative path, refused when it is not a file name. */
 function fileRel(file: string) {
@@ -174,10 +252,10 @@ function fileRel(file: string) {
 function createFile(root: string, file: string, text: string): WriteResult {
   const rel = fileRel(file)
   const files = filesOf(root)
-  if (files.has(rel) || isFolder(files, rel)) throw new Error(`${rel} already exists`)
+  if (files.has(rel) || isFolder(root, rel)) throw new Error(`${rel} already exists`)
   const dir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
   if (dir && files.has(dir)) throw new Error(`${dir} is not a folder`)
-  if (dir && !isFolder(files, dir)) throw new Error(`${dir} no longer exists`)
+  if (dir && !isFolder(root, dir)) throw new Error(`${dir} no longer exists`)
   const modifiedMs = Date.now()
   files.set(rel, { text, modifiedMs })
   return { saved: true, modifiedMs }
@@ -187,9 +265,58 @@ function deleteFile(root: string, file: string) {
   const rel = fileRel(file)
   const files = filesOf(root)
   if (!files.has(rel)) {
-    throw new Error(isFolder(files, rel) ? `${rel} is a folder; only files can be deleted here` : `${rel} no longer exists`)
+    throw new Error(isFolder(root, rel) ? `${rel} is a folder; only files can be deleted here` : `${rel} no longer exists`)
   }
   files.delete(rel)
+}
+
+const beside = (rel: string, name: string) => rel.slice(0, rel.lastIndexOf('/') + 1) + plainName(name)
+
+function createDir(root: string, dir: string) {
+  const rel = fileRel(dir)
+  if (filesOf(root).has(rel) || isFolder(root, rel)) throw new Error(`${rel} already exists`)
+  foldersOf(root).add(rel)
+}
+
+function rename(root: string, path: string, name: string) {
+  const from = fileRel(path)
+  const to = beside(from, name)
+  const files = filesOf(root)
+  if (!files.has(from) && !isFolder(root, from)) throw new Error(`${from} no longer exists`)
+  if (to === from) return
+  if (files.has(to) || isFolder(root, to)) throw new Error(`${to} already exists`)
+  const inside = (p: string) => p === from || p.startsWith(`${from}/`)
+  for (const [p, f] of [...files]) if (inside(p)) { files.delete(p); files.set(to + p.slice(from.length), f) }
+  const dirs = foldersOf(root)
+  for (const p of [...dirs]) if (inside(p)) { dirs.delete(p); dirs.add(to + p.slice(from.length)) }
+}
+
+function duplicate(root: string, file: string, name: string) {
+  const from = fileRel(file)
+  const files = filesOf(root)
+  const f = files.get(from)
+  if (!f) throw new Error(`${from} is not a file`)
+  const to = beside(from, name)
+  if (files.has(to) || isFolder(root, to)) throw new Error(`${to} already exists`)
+  files.set(to, { ...f, modifiedMs: Date.now() })
+}
+
+/** node_modules plays what a real Recycle Bin refuses: it is too deep. */
+function deleteEntry(root: string, path: string, isDir: boolean, permanent: boolean): FsDeleted {
+  const rel = fileRel(path)
+  const files = filesOf(root)
+  if (!files.has(rel) && !isFolder(root, rel)) throw new Error(`${rel} no longer exists`)
+  if (files.has(rel) === isDir) throw new Error(`${rel} has changed since you were asked. Refresh and try again.`)
+  if (!permanent && (root.startsWith('env://') || rel === 'node_modules')) {
+    return { deleted: false, reason: 'The Recycle Bin cannot take it: the drive has none, or it is too large or its path too long.' }
+  }
+  const inside = (p: string) => p === rel || p.startsWith(`${rel}/`)
+  for (const p of [...files.keys()]) if (inside(p)) files.delete(p)
+  const dirs = foldersOf(root)
+  for (const p of [...dirs]) if (inside(p)) dirs.delete(p)
+  // The folder it was in stays, empty or not.
+  if (rel.includes('/')) dirs.add(rel.slice(0, rel.lastIndexOf('/')))
+  return { deleted: true, reason: null }
 }
 
 function plainName(name: string) {
@@ -242,9 +369,14 @@ export async function mockFiles(cmd: string, args: any): Promise<any> {
     }
     case 'fs_read_file': return readFile(args.root, args.file, args.limit)
     case 'fs_read_bytes': return readBytes(args.root, args.file)
-    case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs)
+    case 'fs_write_file': return writeFile(args.root, args.file, args.text, args.expectedModifiedMs, args.expectedHash)
     case 'fs_create_file': return createFile(args.root, args.file, args.text)
     case 'fs_delete_file': return deleteFile(args.root, args.file)
+    case 'fs_create_dir': return createDir(args.root, args.dir)
+    case 'fs_rename': return rename(args.root, args.path, args.name)
+    case 'fs_duplicate': return duplicate(args.root, args.file, args.name)
+    case 'fs_delete': return deleteEntry(args.root, args.path, args.isDir, args.permanent)
+    case 'fs_reveal': throw new Error('The browser preview has no file manager to open.')
     case 'env_files': return envFiles(args.root, args.extra ?? [])
     case 'env_gitignore_add': return gitignoreAdd(args.root, args.name)
   }

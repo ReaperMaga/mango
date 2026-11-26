@@ -14,6 +14,7 @@ import { shortAgo, useNow } from '~/utils/time'
 
 const props = defineProps<{ path: string }>()
 
+const { t } = useI18n()
 const reviews = useReviews()
 const state = computed(() => reviews.byPath[props.path])
 const data = computed(() => state.value?.data ?? null)
@@ -24,11 +25,12 @@ watch(() => props.path, (path) => { void reviews.load(path) }, { immediate: true
 function refresh() { void reviews.load(props.path, true) }
 
 /* A review's status in the ripening scale: under review is ripening, rework needs the owner, reviewed is ripe. */
-const STATUS: Record<PlasticReviewStatus, { word: string; tone: 'running' | 'waiting' | 'done'; icon: Component }> = {
-  underReview: { word: 'Under review', tone: 'running', icon: Eye },
-  reworkRequired: { word: 'Rework required', tone: 'waiting', icon: RotateCcw },
-  reviewed: { word: 'Reviewed', tone: 'done', icon: CircleCheck },
+const STATUS: Record<PlasticReviewStatus, { tone: 'running' | 'waiting' | 'done'; icon: Component }> = {
+  underReview: { tone: 'running', icon: Eye },
+  reworkRequired: { tone: 'waiting', icon: RotateCcw },
+  reviewed: { tone: 'done', icon: CircleCheck },
 }
+const statusWord = (s: PlasticReviewStatus) => t(`links.reviews.status.${s}`)
 /** Reviewers, or the single assignee older reviews have. */
 const people = (r: PlasticReview) =>
   r.reviewers.length ? r.reviewers : r.assignee ? [{ name: r.assignee, status: r.status }] : []
@@ -36,10 +38,10 @@ const people = (r: PlasticReview) =>
 const short = (name: string) => (name.includes('@') ? name.slice(0, name.indexOf('@')) : name)
 const when = (r: PlasticReview) => r.modified ?? r.created
 const tooltip = (r: PlasticReview) => [
-  `${r.title || 'Untitled review'} (#${r.id})`,
-  `${STATUS[r.status].word}, asked by ${r.owner || 'unknown'}`,
-  r.target ? `For ${r.target}` : null,
-  ...people(r).map(p => `${p.name}: ${STATUS[p.status].word}`),
+  `${r.title || t('links.reviews.untitled')} (#${r.id})`,
+  t('links.reviews.askedBy', { status: statusWord(r.status), owner: r.owner || t('links.reviews.unknown') }),
+  r.target ? t('links.reviews.forTarget', { target: r.target }) : null,
+  ...people(r).map(p => `${p.name}: ${statusWord(p.status)}`),
 ].filter(Boolean).join('\n')
 
 /* ---------- requesting a review ---------- */
@@ -89,17 +91,17 @@ watch(() => props.path, cancelAsk)
 </script>
 
 <template>
-  <section class="lr" aria-label="Code reviews">
+  <section class="lr" :aria-label="t('links.reviews.title')">
     <header class="lr__head">
-      <h2 class="lr__title" :title="data?.repository ?? undefined">Code reviews</h2>
+      <h2 class="lr__title" :title="data?.repository ?? undefined">{{ t('links.reviews.title') }}</h2>
       <div class="lr__tools">
-        <UiIconButton label="Refresh" :disabled="state?.loading || undefined" @click="refresh"><RefreshCw :class="{ 'is-spinning': refreshing }" /></UiIconButton>
-        <UiIconButton v-if="data?.branch" label="Request a review of this branch" :active="asking" @click="startAsk"><MessageSquarePlus /></UiIconButton>
+        <UiIconButton :label="t('common.actions.refresh')" :disabled="state?.loading || undefined" @click="refresh"><RefreshCw :class="{ 'is-spinning': refreshing }" /></UiIconButton>
+        <UiIconButton v-if="data?.branch" :label="t('links.reviews.requestBranch')" :active="asking" @click="startAsk"><MessageSquarePlus /></UiIconButton>
       </div>
     </header>
 
     <form v-if="asking && data?.branch" class="lr__ask" @submit.prevent="submitAsk">
-      <label class="lr__label" for="lr-title">Title</label>
+      <label class="lr__label" for="lr-title">{{ t('links.reviews.titleField') }}</label>
       <input
         id="lr-title"
         ref="titleInput"
@@ -109,7 +111,7 @@ watch(() => props.path, cancelAsk)
         autocomplete="off"
         @keydown.esc.prevent="cancelAsk"
       >
-      <label class="lr__label" for="lr-who">Reviewers <span class="lr__optional">optional</span></label>
+      <label class="lr__label" for="lr-who">{{ t('links.reviews.reviewers') }} <span class="lr__optional">{{ t('links.reviews.optional') }}</span></label>
       <input
         id="lr-who"
         v-model="who"
@@ -123,45 +125,47 @@ watch(() => props.path, cancelAsk)
         @keydown.esc.prevent="cancelAsk"
       >
       <p v-if="askError" id="lr-ask-error" class="lr__ask-error selectable" role="alert">{{ askError }}</p>
-      <p v-else id="lr-ask-hint" class="lr__ask-hint">Unity VCS users or groups, separated by commas. The review is for <code>{{ data.branch }}</code>.</p>
+      <i18n-t v-else id="lr-ask-hint" keypath="links.reviews.hint" tag="p" scope="global" class="lr__ask-hint">
+        <template #branch><code>{{ data.branch }}</code></template>
+      </i18n-t>
       <div class="lr__ask-row">
-        <UiButton type="submit" variant="primary" size="sm" :loading="askBusy" :disabled="!title.trim() || undefined">Request review</UiButton>
-        <UiButton size="sm" variant="ghost" @click="cancelAsk">Cancel</UiButton>
+        <UiButton type="submit" variant="primary" size="sm" :loading="askBusy" :disabled="!title.trim() || undefined">{{ t('links.reviews.submit') }}</UiButton>
+        <UiButton size="sm" variant="ghost" @click="cancelAsk">{{ t('common.actions.cancel') }}</UiButton>
       </div>
     </form>
 
     <div class="lr__scroll">
       <p v-if="state?.error" class="lr__error selectable" role="alert">{{ state.error }}</p>
 
-      <div v-if="!data && state?.loading" class="lr__skeleton" aria-busy="true" aria-label="Reading code reviews from Unity VCS">
+      <div v-if="!data && state?.loading" class="lr__skeleton" aria-busy="true" :aria-label="t('links.reviews.reading')">
         <span style="width: 70%" /><span style="width: 45%" /><span style="width: 80%" /><span style="width: 55%" />
       </div>
 
       <template v-else-if="data">
         <section class="lr__group" aria-labelledby="lr-branch">
           <h3 id="lr-branch" class="lr__group-title">
-            This branch
+            {{ t('links.reviews.thisBranch') }}
             <code v-if="data.branch" class="lr__branch" :title="data.branch">{{ data.branch }}</code>
           </h3>
-          <p v-if="!data.branch" class="lr__empty">The workspace is on a changeset or label, not a branch.</p>
+          <p v-if="!data.branch" class="lr__empty">{{ t('links.reviews.noBranch') }}</p>
           <div v-else-if="!data.branchReviews.length" class="lr__empty">
-            <p>No review of this branch yet. When the work is ready, ask for one and it shows up here.</p>
-            <UiButton v-if="!asking" size="sm" @click="startAsk"><MessageSquarePlus aria-hidden="true" />Request a review</UiButton>
+            <p>{{ t('links.reviews.noReview') }}</p>
+            <UiButton v-if="!asking" size="sm" @click="startAsk"><MessageSquarePlus aria-hidden="true" />{{ t('links.reviews.request') }}</UiButton>
           </div>
           <ul v-else class="lr__list">
             <li v-for="r in data.branchReviews" :key="r.id" class="lr__row" :title="tooltip(r)">
               <component :is="STATUS[r.status].icon" class="lr__icon" :class="`is-${STATUS[r.status].tone}`" aria-hidden="true" />
               <div class="lr__text">
-                <span class="lr__name selectable">{{ r.title || 'Untitled review' }}</span>
+                <span class="lr__name selectable">{{ r.title || t('links.reviews.untitled') }}</span>
                 <span class="lr__sub">
-                  <span class="lr__state" :class="`is-${STATUS[r.status].tone}`">{{ STATUS[r.status].word }}</span>
+                  <span class="lr__state" :class="`is-${STATUS[r.status].tone}`">{{ statusWord(r.status) }}</span>
                   <span class="tabular">#{{ r.id }}</span>
                   <span v-if="r.targetType === 'changeset' && r.target"><code>{{ r.target }}</code></span>
                   <span v-if="when(r)" class="tabular">{{ shortAgo(when(r), now) }}</span>
-                  <span v-if="r.unresolved" class="lr__count tabular" :title="`${r.unresolved} open change requests or questions`"><MessagesSquare aria-hidden="true" />{{ r.unresolved }} unresolved</span>
+                  <span v-if="r.unresolved" class="lr__count tabular" :title="t('links.reviews.openRequests', { n: r.unresolved })"><MessagesSquare aria-hidden="true" />{{ t('links.reviews.unresolved', { n: r.unresolved }) }}</span>
                 </span>
                 <span v-if="people(r).length" class="lr__people">
-                  <span v-for="p in people(r)" :key="p.name" class="lr__person" :title="`${p.name}: ${STATUS[p.status].word}`">
+                  <span v-for="p in people(r)" :key="p.name" class="lr__person" :title="`${p.name}: ${statusWord(p.status)}`">
                     <component :is="STATUS[p.status].icon" :class="`is-${STATUS[p.status].tone}`" aria-hidden="true" />{{ short(p.name) }}
                   </span>
                 </span>
@@ -172,31 +176,31 @@ watch(() => props.path, cancelAsk)
 
         <section class="lr__group" aria-labelledby="lr-open">
           <h3 id="lr-open" class="lr__group-title">
-            Open in the repository
+            {{ t('links.reviews.open') }}
             <span v-if="data.open.length" class="lr__group-count tabular">{{ data.open.length }}{{ data.more ? '+' : '' }}</span>
           </h3>
-          <p v-if="!data.open.length" class="lr__empty">Nothing else is under review or waiting for rework{{ data.repository ? ` in ${data.repository}` : '' }}.</p>
+          <p v-if="!data.open.length" class="lr__empty">{{ data.repository ? t('links.reviews.nothingElseIn', { repo: data.repository }) : t('links.reviews.nothingElse') }}</p>
           <ul v-else class="lr__list">
             <li v-for="r in data.open" :key="r.id" class="lr__row" :title="tooltip(r)">
               <component :is="STATUS[r.status].icon" class="lr__icon" :class="`is-${STATUS[r.status].tone}`" aria-hidden="true" />
               <div class="lr__text">
-                <span class="lr__name selectable">{{ r.title || 'Untitled review' }}</span>
+                <span class="lr__name selectable">{{ r.title || t('links.reviews.untitled') }}</span>
                 <span class="lr__sub">
-                  <span class="lr__state" :class="`is-${STATUS[r.status].tone}`">{{ STATUS[r.status].word }}</span>
+                  <span class="lr__state" :class="`is-${STATUS[r.status].tone}`">{{ statusWord(r.status) }}</span>
                   <span class="tabular">#{{ r.id }}</span>
                   <span class="lr__by">{{ short(r.owner) }}</span>
                   <span v-if="when(r)" class="tabular">{{ shortAgo(when(r), now) }}</span>
                 </span>
                 <span v-if="r.target" class="lr__target"><code>{{ r.target }}</code></span>
                 <span v-if="people(r).length" class="lr__people">
-                  <span v-for="p in people(r)" :key="p.name" class="lr__person" :title="`${p.name}: ${STATUS[p.status].word}`">
+                  <span v-for="p in people(r)" :key="p.name" class="lr__person" :title="`${p.name}: ${statusWord(p.status)}`">
                     <component :is="STATUS[p.status].icon" :class="`is-${STATUS[p.status].tone}`" aria-hidden="true" />{{ short(p.name) }}
                   </span>
                 </span>
               </div>
             </li>
           </ul>
-          <p v-if="data.more" class="lr__empty">Showing the newest {{ data.open.length }}. Unity VCS lists the rest.</p>
+          <p v-if="data.more" class="lr__empty">{{ t('links.reviews.more', { n: data.open.length }) }}</p>
         </section>
       </template>
     </div>

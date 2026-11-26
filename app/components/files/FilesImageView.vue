@@ -18,6 +18,8 @@ const props = defineProps<{
   intrinsic?: { width: number; height: number } | null
 }>()
 
+const { t } = useI18n()
+
 const STEPS = [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24, 32]
 
 const stage = ref<HTMLElement | null>(null)
@@ -94,11 +96,11 @@ function onKey(e: KeyboardEvent) {
       ref="stage"
       class="iview__stage"
       tabindex="0"
-      :aria-label="`${name}, ${percent}. Plus and minus zoom, 0 fits, 1 shows actual size.`"
+      :aria-label="t('files.image.stage', { name, percent })"
       @wheel="onWheel"
       @keydown="onKey"
     >
-      <p v-if="failed" class="iview__note">{{ vector ? `${name} is not valid SVG, so it cannot be drawn. Its code shows what is wrong.` : `${name} could not be shown as an image.` }}</p>
+      <p v-if="failed" class="iview__note">{{ vector ? t('files.image.badSvg', { name }) : t('files.image.badImage', { name }) }}</p>
       <img
         v-show="!failed && natural"
         class="iview__img"
@@ -116,10 +118,10 @@ function onKey(e: KeyboardEvent) {
       <span v-if="natural && !failed" class="iview__meta tabular">{{ Math.round(natural.width) }} × {{ Math.round(natural.height) }}</span>
       <span class="iview__meta tabular">{{ formatSize(size) }}</span>
       <span class="iview__spacer" />
-      <UiIconButton size="sm" label="Zoom out" shortcut="-" :disabled="scale <= STEPS[0]!" @click="zoomBy(-1)"><Minus /></UiIconButton>
-      <button type="button" class="iview__pct tabular" :title="zoom === 'fit' ? 'Show actual size (1)' : 'Fit to the pane (0)'" @click="toggleFit">{{ percent }}</button>
-      <UiIconButton size="sm" label="Zoom in" shortcut="+" :disabled="scale >= STEPS[STEPS.length - 1]!" @click="zoomBy(1)"><Plus /></UiIconButton>
-      <UiIconButton size="sm" label="Fit to the pane" shortcut="0" :active="zoom === 'fit'" @click="zoom = 'fit'"><Maximize /></UiIconButton>
+      <UiIconButton size="sm" :label="t('files.image.zoomOut')" shortcut="-" :disabled="scale <= STEPS[0]!" @click="zoomBy(-1)"><Minus /></UiIconButton>
+      <button type="button" class="iview__pct tabular" :title="zoom === 'fit' ? t('files.image.actualTitle') : t('files.image.fitTitle')" @click="toggleFit">{{ percent }}</button>
+      <UiIconButton size="sm" :label="t('files.image.zoomIn')" shortcut="+" :disabled="scale >= STEPS[STEPS.length - 1]!" @click="zoomBy(1)"><Plus /></UiIconButton>
+      <UiIconButton size="sm" :label="t('files.image.fit')" shortcut="0" :active="zoom === 'fit'" @click="zoom = 'fit'"><Maximize /></UiIconButton>
     </footer>
   </div>
 </template>

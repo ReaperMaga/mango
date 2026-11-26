@@ -16,6 +16,7 @@ import EnvQr from './EnvQr.vue'
 const props = defineProps<{ open: boolean; hostId: string; instance: string }>()
 const emit = defineEmits<{ close: [] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const host = computed(() => envs.host(props.hostId))
 const inst = computed(() => envs.instance(props.hostId, props.instance))
@@ -73,31 +74,31 @@ watch(() => props.open, (o) => {
 /** Where a share over the internet points: the server's public address, else its SSH host. */
 const publicHost = computed(() => {
   const h = host.value
-  if (!h) return 'the server'
+  if (!h) return t('envs.share.theServer')
   return h.publicAddress?.trim() || sshHostName(h.ssh)
 })
 
 const viaOptions = computed(() => [
-  { value: 'public' as const, label: 'Over the internet' },
+  { value: 'public' as const, label: t('envs.common.overInternet') },
   {
     value: 'tailscale' as const,
     label: 'Tailscale',
     disabled: !tailnetIp.value,
-    title: tailnetIp.value ? undefined : `${props.instance} isn't on a tailnet. Install Tailscale on it and sign it in first.`,
+    title: tailnetIp.value ? undefined : t('envs.share.notOnTailnet', { name: props.instance }),
   },
 ])
-const DAY_OPTIONS: Array<{ value: Days; label: string }> = [
-  { value: '1', label: '1 day' },
-  { value: '7', label: '7 days' },
-  { value: '30', label: '30 days' },
-  { value: 'never', label: 'Never' },
-]
+const dayOptions = computed<Array<{ value: Days; label: string }>>(() => [
+  { value: '1', label: t('envs.share.days', 1) },
+  { value: '7', label: t('envs.share.days', 7) },
+  { value: '30', label: t('envs.share.days', 30) },
+  { value: 'never', label: t('envs.share.never') },
+])
 
 const labelError = computed(() => {
   if (!touched.value) return null
   const l = label.value.trim()
-  if (!l) return 'Say who it is for, so you know whose access to revoke later.'
-  if (l.length > 60) return 'Keep it under 60 characters.'
+  if (!l) return t('envs.share.labelEmpty')
+  if (l.length > 60) return t('envs.share.labelLong')
   return null
 })
 
@@ -152,7 +153,7 @@ function close() {
   if (step.value !== 'creating') emit('close')
 }
 
-const title = computed(() => (step.value === 'done' && result.value ? `Link for ${result.value.share.label}` : `Share ${props.instance}`))
+const title = computed(() => (step.value === 'done' && result.value ? t('envs.share.linkFor', { name: result.value.share.label }) : t('envs.share.title', { name: props.instance })))
 const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed.value % 60).padStart(2, '0')}`)
 </script>
 
@@ -161,14 +162,13 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
     <!-- 1. who, how, how long -->
     <form v-if="step !== 'done'" id="env-share-form" class="sh" novalidate @submit.prevent="submit">
       <p class="sh__lede">
-        A one-line link that gives one person full access to {{ instance }}, and nothing else on {{ host?.name ?? 'the server' }}.
-        They need no server of their own: their Mango connects straight into it.
+        {{ host ? t('envs.share.lede', { name: instance, host: host.name }) : t('envs.share.ledeServer', { name: instance }) }}
       </p>
 
       <UiField
-        label="Who it's for"
+        :label="t('envs.share.who')"
         for="sh-label"
-        hint="Shown in your list of shares, so you know whose access to revoke."
+        :hint="t('envs.share.whoHint')"
         :error="labelError"
       >
         <input
@@ -186,38 +186,38 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
       </UiField>
 
       <fieldset class="sh__group" :disabled="step === 'creating'">
-        <legend id="sh-via-label" class="sh__label">How they reach it</legend>
+        <legend id="sh-via-label" class="sh__label">{{ t('envs.share.how') }}</legend>
         <SettingsSegmented v-model="via" :options="viaOptions" labelledby="sh-via-label" describedby="sh-via-hint" />
         <p id="sh-via-hint" class="sh__hint">
-          <template v-if="via === 'public'">
-            They connect to <span class="sh__mono selectable">{{ publicHost }}</span>, on a port that leads only into {{ instance }}.
-            Only the key in the link gets in.
-          </template>
-          <template v-else>
-            They connect to {{ instance }}'s tailnet address, <span class="sh__mono selectable">{{ tailnetIp }}</span>, so they must be
-            on your tailnet. Nothing is opened on the server.
-          </template>
+          <i18n-t v-if="via === 'public'" keypath="envs.share.publicHint" scope="global">
+            <template #host><span class="sh__mono selectable">{{ publicHost }}</span></template>
+            <template #name>{{ instance }}</template>
+          </i18n-t>
+          <i18n-t v-else keypath="envs.share.tailscaleHint" scope="global">
+            <template #name>{{ instance }}</template>
+            <template #ip><span class="sh__mono selectable">{{ tailnetIp }}</span></template>
+          </i18n-t>
         </p>
         <p v-if="via === 'public' && !host?.publicAddress" class="sh__hint sh__hint--quiet">
-          People reach the server by another name? Set its public address in the server's settings.
+          {{ t('envs.share.publicQuiet') }}
         </p>
       </fieldset>
 
       <fieldset class="sh__group" :disabled="step === 'creating'">
-        <legend id="sh-days-label" class="sh__label">Access ends</legend>
-        <SettingsSegmented v-model="days" :options="DAY_OPTIONS" labelledby="sh-days-label" />
+        <legend id="sh-days-label" class="sh__label">{{ t('envs.common.accessEnds') }}</legend>
+        <SettingsSegmented v-model="days" :options="dayOptions" labelledby="sh-days-label" />
         <p class="sh__hint">
-          <template v-if="days === 'never'">Until you revoke it.</template>
-          <template v-else>After {{ days === '1' ? 'a day' : `${days} days` }} the key stops working. You can revoke it before then.</template>
+          <template v-if="days === 'never'">{{ t('envs.share.untilRevoked') }}</template>
+          <template v-else>{{ t('envs.share.after', Number(days)) }}</template>
         </p>
       </fieldset>
 
       <div v-if="step === 'creating'" class="sh__progress" role="status">
         <span class="ring" aria-hidden="true" />
         <span class="sh__progress-text">
-          <span class="sh__progress-title">Setting up access to {{ instance }}…</span>
+          <span class="sh__progress-title">{{ t('envs.share.settingUp', { name: instance }) }}</span>
           <span class="sh__progress-note">
-            The first link for an environment installs an SSH server in it, which can take a few minutes. Later links are quick.
+            {{ t('envs.share.settingUpNote') }}
           </span>
         </span>
         <span class="sh__clock tabular" aria-hidden="true">{{ clock }}</span>
@@ -225,19 +225,19 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
 
       <p v-if="error" class="sh__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't create the link. {{ error }}.</span>
+        <span class="selectable">{{ t('envs.share.failed', { error }) }}</span>
       </p>
       <UiButton v-if="error && /public address/i.test(error)" size="sm" class="sh__fix" @click="editServer">
-        Edit {{ host?.name ?? 'server' }}…
+        {{ host ? t('envs.share.editServer', { name: host.name }) : t('envs.share.editServerUnnamed') }}
       </UiButton>
     </form>
 
     <!-- 2. the link, once -->
     <div v-else-if="result" class="done">
       <div class="done__grid">
-        <EnvQr class="done__qr" :value="result.url" :label="`QR code of the link for ${result.share.label}`" />
+        <EnvQr class="done__qr" :value="result.url" :label="t('envs.share.qr', { name: result.share.label })" />
         <div class="done__info">
-          <label class="sh__label" for="sh-link">Link</label>
+          <label class="sh__label" for="sh-link">{{ t('envs.join.link') }}</label>
           <div class="done__link">
             <input
               id="sh-link"
@@ -251,24 +251,24 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
               @focus="selectAll"
             >
             <UiButton @click="copy">
-              <Check v-if="copied" /><Copy v-else />{{ copied ? 'Copied' : 'Copy' }}
+              <Check v-if="copied" /><Copy v-else />{{ copied ? t('common.actions.copied') : t('common.actions.copy') }}
             </UiButton>
           </div>
           <dl class="done__facts">
             <div class="done__fact">
-              <dt>Reaches it</dt>
+              <dt>{{ t('envs.share.reaches') }}</dt>
               <dd>
-                {{ result.share.via === 'public' ? 'Over the internet' : 'Over Tailscale' }},
+                {{ result.share.via === 'public' ? t('envs.common.overInternet') : t('envs.share.overTailscale') }},
                 <span class="sh__mono selectable">{{ result.share.endpoint }}</span>
               </dd>
             </div>
             <div class="done__fact">
-              <dt>Access ends</dt>
-              <dd class="tabular">{{ result.share.expiresAt ? shareDay(result.share.expiresAt) : 'When you revoke it' }}</dd>
+              <dt>{{ t('envs.common.accessEnds') }}</dt>
+              <dd class="tabular">{{ result.share.expiresAt ? shareDay(result.share.expiresAt) : t('envs.share.whenRevoked') }}</dd>
             </div>
           </dl>
           <p class="sh__hint">
-            They open the link in Mango, or paste it under Settings › Environments › Join with a link. Or they scan the code.
+            {{ t('envs.share.openHint') }}
           </p>
         </div>
       </div>
@@ -280,7 +280,7 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
           <span class="selectable">{{ todo.text }}</span>
           <span v-if="todo.command" class="done__cmd">
             <code class="done__cmd-text selectable">{{ todo.command }}</code>
-            <UiIconButton :label="cmdCopied ? 'Copied' : 'Copy command'" size="sm" @click="copyCommand">
+            <UiIconButton :label="cmdCopied ? t('common.actions.copied') : t('envs.share.copyCommand')" size="sm" @click="copyCommand">
               <Check v-if="cmdCopied" /><Copy v-else />
             </UiIconButton>
           </span>
@@ -290,19 +290,18 @@ const clock = computed(() => `${Math.floor(elapsed.value / 60)}:${String(elapsed
       <p id="sh-note" class="done__note">
         <KeyRound class="done__note-icon" aria-hidden="true" />
         <span>
-          Anyone with this link has full access to {{ instance }} (root inside it), but not to the server. Send it privately.
-          This is the only time Mango shows it; revoke it here any time.
+          {{ t('envs.share.note', { name: instance }) }}
         </span>
       </p>
     </div>
 
     <template #footer>
       <template v-if="step === 'done'">
-        <UiButton variant="primary" @click="emit('close')">Done</UiButton>
+        <UiButton variant="primary" @click="emit('close')">{{ t('common.actions.done') }}</UiButton>
       </template>
       <template v-else>
-        <UiButton variant="ghost" :disabled="step === 'creating'" @click="close">Cancel</UiButton>
-        <UiButton variant="primary" type="submit" form="env-share-form" :loading="step === 'creating'">Create link</UiButton>
+        <UiButton variant="ghost" :disabled="step === 'creating'" @click="close">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="primary" type="submit" form="env-share-form" :loading="step === 'creating'">{{ t('envs.share.create') }}</UiButton>
       </template>
     </template>
   </UiDialog>

@@ -14,6 +14,7 @@ import McpServerForm from './McpServerForm.vue'
  * Adding and editing happen in place; removing asks first.
  */
 const props = defineProps<{ project: string | null }>()
+const { t } = useI18n()
 const mcp = useMcp()
 const ws = useWorkspace()
 
@@ -99,20 +100,20 @@ function keep() {
 /* ---------- how a row reads ---------- */
 
 const agentsLabel = (s: McpServerConfig) =>
-  s.agents.length > 1 ? 'Claude Code and Codex' : s.agents[0] === 'claude' ? 'Claude Code only' : 'Codex only'
+  s.agents.length > 1 ? t('settings.mcp.bothAgents') : t('settings.mcp.onlyAgent', { agent: s.agents[0] === 'claude' ? 'Claude Code' : 'Codex' })
 const target = (s: McpServerConfig) => (s.transport === 'stdio' ? joinCommandLine(s.command, s.args) : s.url)
 /** How many secrets it holds; their values are never shown in the list. */
 function secrets(s: McpServerConfig) {
   const n = s.transport === 'stdio' ? s.env.length : s.headers.length
   if (!n) return ''
-  return s.transport === 'stdio' ? `${n} ${n === 1 ? 'variable' : 'variables'}` : `${n} ${n === 1 ? 'header' : 'headers'}`
+  return s.transport === 'stdio' ? t('settings.mcp.variables', n) : t('settings.mcp.headers', n)
 }
-const meta = (s: McpServerConfig) => [s.transport === 'stdio' ? 'Command' : 'HTTP', agentsLabel(s), secrets(s)].filter(Boolean).join(' · ')
+const meta = (s: McpServerConfig) => [s.transport === 'stdio' ? t('settings.mcpForm.command') : 'HTTP', agentsLabel(s), secrets(s)].filter(Boolean).join(' · ')
 
 function inheritedState(e: { server: McpServerConfig; skipped?: 'replaced' | 'remote' }) {
-  if (e.skipped === 'replaced') return 'Replaced by this project\'s own'
-  if (e.skipped === 'remote') return 'Not used in an environment'
-  return e.server.enabled ? 'Used here' : 'Off'
+  if (e.skipped === 'replaced') return t('settings.mcp.replaced')
+  if (e.skipped === 'remote') return t('settings.mcp.notRemote')
+  return e.server.enabled ? t('settings.mcp.used') : t('settings.mcp.off')
 }
 
 const rowId = (s: McpServerConfig) => `mcp-row-${s.id}`
@@ -121,7 +122,7 @@ const rowId = (s: McpServerConfig) => `mcp-row-${s.id}`
 <template>
   <div ref="listEl" class="mcp">
     <p v-if="mcp.loadError" class="mcp__error selectable" role="alert">
-      <CircleAlert aria-hidden="true" />The servers could not be read. {{ mcp.loadError }}
+      <CircleAlert aria-hidden="true" />{{ t('settings.mcp.loadError') }} {{ mcp.loadError }}
     </p>
 
     <div v-if="own.length || editing === 'new'" class="mcp__card">
@@ -134,7 +135,7 @@ const rowId = (s: McpServerConfig) => `mcp-row-${s.id}`
             <SettingsSwitch
               :model-value="s.enabled"
               :labelledby="rowId(s)"
-              :title="s.enabled ? `Turn ${s.name} off` : `Turn ${s.name} on`"
+              :title="s.enabled ? t('settings.mcp.turnOff', { name: s.name }) : t('settings.mcp.turnOn', { name: s.name })"
               @update:model-value="v => toggle(s, v)"
             />
             <div class="mcp__text">
@@ -145,22 +146,22 @@ const rowId = (s: McpServerConfig) => `mcp-row-${s.id}`
               <div class="mcp__target selectable" :title="target(s)">{{ target(s) }}</div>
             </div>
             <div class="mcp__actions">
-              <UiIconButton size="sm" :label="`Edit ${s.name}`" :data-edit="s.id" @click="startEdit(s)"><Pencil /></UiIconButton>
-              <UiIconButton size="sm" :label="`Remove ${s.name}`" :data-remove="s.id" @click="askRemove(s)"><Trash2 /></UiIconButton>
+              <UiIconButton size="sm" :label="t('settings.mcp.edit', { name: s.name })" :data-edit="s.id" @click="startEdit(s)"><Pencil /></UiIconButton>
+              <UiIconButton size="sm" :label="t('settings.mcp.remove', { name: s.name })" :data-remove="s.id" @click="askRemove(s)"><Trash2 /></UiIconButton>
             </div>
           </div>
           <div
             v-if="removing === s.id"
             class="mcp__ask"
             role="alertdialog"
-            :aria-label="`Remove ${s.name}`"
+            :aria-label="t('settings.mcp.remove', { name: s.name })"
             @keydown.esc.stop.prevent="keep"
           >
-            <p class="mcp__ask-text">
-              Remove <strong>{{ s.name }}</strong> and its settings? A chat that is answering keeps it until the answer ends.
-            </p>
-            <UiButton size="sm" variant="ghost" data-autofocus @click="keep">Keep</UiButton>
-            <UiButton size="sm" variant="danger" :loading="busy" @click="remove(s)">Remove server</UiButton>
+            <i18n-t keypath="settings.mcp.removeAsk" tag="p" scope="global" class="mcp__ask-text">
+              <template #name><strong>{{ s.name }}</strong></template>
+            </i18n-t>
+            <UiButton size="sm" variant="ghost" data-autofocus @click="keep">{{ t('settings.mcp.keep') }}</UiButton>
+            <UiButton size="sm" variant="danger" :loading="busy" @click="remove(s)">{{ t('settings.mcp.removeServer') }}</UiButton>
           </div>
         </div>
       </template>
@@ -171,23 +172,22 @@ const rowId = (s: McpServerConfig) => `mcp-row-${s.id}`
 
     <p v-else-if="mcp.loaded" class="mcp__empty">
       <template v-if="project === null">
-        No servers yet. A server added here is offered to chats in every project on this computer;
-        a project can add its own under Projects.
+        {{ t('settings.mcp.emptyGlobal') }}
       </template>
       <template v-else-if="remote">
-        This project has no servers of its own. Its agents run inside the environment, so its servers start there too.
+        {{ t('settings.mcp.emptyRemote') }}
       </template>
-      <template v-else>This project has no servers of its own.</template>
+      <template v-else>{{ t('settings.mcp.emptyProject') }}</template>
     </p>
 
     <p v-if="error && !editing" class="mcp__error selectable" role="alert"><CircleAlert aria-hidden="true" />{{ error }}</p>
 
-    <UiButton v-if="editing !== 'new'" size="sm" class="mcp__add" @click="startAdd"><Plus />Add server</UiButton>
+    <UiButton v-if="editing !== 'new'" size="sm" class="mcp__add" @click="startAdd"><Plus />{{ t('settings.mcp.add') }}</UiButton>
 
     <div v-if="project !== null && inherited.length" class="mcp__inherited">
       <div class="mcp__sub">
-        <h4 class="mcp__sub-title">For all projects</h4>
-        <UiButton size="sm" variant="ghost" @click="ws.openSettings('mcp')">Manage</UiButton>
+        <h4 class="mcp__sub-title">{{ t('settings.mcp.forAll') }}</h4>
+        <UiButton size="sm" variant="ghost" @click="ws.openSettings('mcp')">{{ t('settings.mcp.manage') }}</UiButton>
       </div>
       <ul class="mcp__plain">
         <li v-for="e in inherited" :key="e.server.id" class="mcp__plain-row" :class="{ 'is-off': e.skipped || !e.server.enabled }">

@@ -22,6 +22,8 @@ const props = withDefaults(defineProps<{
   rows?: number
 }>(), { rows: 14 })
 
+const { t } = useI18n()
+
 /** What to call the program in an error line. */
 const programName = computed(() => props.command?.join(' ') || props.label)
 
@@ -85,11 +87,11 @@ function toHex(value: string, fallback: string): string {
   return `#${hex2(r)}${hex2(g)}${hex2(b)}${a < 255 ? hex2(a) : ''}`
 }
 
-function shade(hex: string, t: number): string {
+function shade(hex: string, by: number): string {
   const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(hex)
-  if (!m || t === 0) return hex
-  const target = t > 0 ? 255 : 0
-  const k = Math.abs(t)
+  if (!m || by === 0) return hex
+  const target = by > 0 ? 255 : 0
+  const k = Math.abs(by)
   return `#${[m[1], m[2], m[3]].map(c => hex2(parseInt(c!, 16) + (target - parseInt(c!, 16)) * k)).join('')}`
 }
 
@@ -274,7 +276,7 @@ function handleExit(e: PtyExitEvent) {
   }
   if (e.id !== ptyId || exited) return
   exited = true
-  const what = e.code == null ? 'process ended' : `process exited with code ${e.code}`
+  const what = e.code == null ? t('agents.terminal.ended') : t('agents.terminal.exited', { code: e.code })
   // Nothing left to type into: hide the cursor.
   term?.write(`\r\n\x1b[2m[${what}]\x1b[0m\x1b[?25l`)
   emit('exit', e.code)
@@ -305,7 +307,7 @@ async function spawn() {
     backlog = null
     exited = true
     const msg = err instanceof Error ? err.message : String(err)
-    term?.write(`\x1b[31mCould not start ${programName.value}:\x1b[0m ${msg}\r\n\x1b[?25l`)
+    term?.write(`\x1b[31m${t('agents.terminal.cantStart', { program: programName.value })}\x1b[0m ${msg}\r\n\x1b[?25l`)
     emit('failed', msg)
   } finally {
     backlog = null

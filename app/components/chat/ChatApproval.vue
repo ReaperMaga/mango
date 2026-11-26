@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { ShieldQuestion, Check, Ban } from 'lucide-vue-next'
 import type { Part } from '~/types/chat'
+import { approvalReason, askTitle } from '~/utils/chatTexts'
 
 type ApprovalPart = Extract<Part, { type: 'approval' }>
 defineProps<{ part: ApprovalPart; agentName: string }>()
+const { t } = useI18n()
 const emit = defineEmits<{ resolve: [allow: boolean] }>()
 </script>
 
@@ -11,22 +13,22 @@ const emit = defineEmits<{ resolve: [allow: boolean] }>()
   <!-- Pending: a card that asks. Settled: one quiet line, the tool row above tells the rest.
        Answering folds the card away and the line opens in its place. -->
   <UiReveal mode="out-in">
-    <div v-if="part.state === 'pending'" class="ap ap--pending" role="group" :aria-label="part.title ?? `${agentName} needs your approval`">
+    <div v-if="part.state === 'pending'" class="ap ap--pending" role="group" :aria-label="part.title ? askTitle(part.title) : t('chat.approval.label', { agent: agentName })">
       <div class="ap__head">
         <ShieldQuestion class="ap__icon" />
-        <span>{{ part.title ?? `${agentName} wants to run a command` }}</span>
+        <span>{{ part.title ? askTitle(part.title) : t('chat.approval.wants.run', { agent: agentName }) }}</span>
       </div>
       <pre v-if="part.command" class="ap__cmd selectable">{{ part.command }}</pre>
-      <p v-if="part.reason" class="ap__reason">{{ part.reason }}</p>
+      <p v-if="part.reason" class="ap__reason">{{ approvalReason(part.reason) }}</p>
       <div class="ap__actions">
-        <UiButton variant="primary" size="sm" @click="emit('resolve', true)">Allow once</UiButton>
-        <UiButton variant="ghost" size="sm" @click="emit('resolve', false)">Deny</UiButton>
+        <UiButton variant="primary" size="sm" @click="emit('resolve', true)">{{ t('chat.approval.allow') }}</UiButton>
+        <UiButton variant="ghost" size="sm" @click="emit('resolve', false)">{{ t('chat.approval.deny') }}</UiButton>
       </div>
     </div>
     <p v-else class="ap-done" :class="`ap-done--${part.state}`">
       <Check v-if="part.state === 'allowed'" />
       <Ban v-else />
-      <span>{{ part.state === 'allowed' ? 'You allowed this' : part.state === 'denied' ? 'You denied this' : 'Not answered' }}</span>
+      <span>{{ part.state === 'allowed' ? t('chat.approval.allowed') : part.state === 'denied' ? t('chat.approval.denied') : t('chat.notAnswered') }}</span>
     </p>
   </UiReveal>
 </template>

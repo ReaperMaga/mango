@@ -215,7 +215,7 @@ export function explainSyncFailure(detail: string): string {
   const lower = detail.toLowerCase()
   let lead: string
   if (lower.includes('terminal prompts disabled') || lower.includes('authentication failed') || lower.includes('permission denied (publickey')) {
-    lead = "The remote asked for credentials Mango can't enter. Sign in from a terminal first (a credential helper, `gh auth login`, or an SSH key), then try again."
+    lead = "The remote asked for credentials Mango can't enter. Sign in in the environment first (`gh auth login` for GitHub, `glab auth login` for GitLab, a credential helper, or an SSH key), then try again."
   } else if (lower.includes('non-fast-forward') || lower.includes('fetch first')) {
     lead = "The remote has commits you don't have yet. Pull, then push again."
   } else if (lower.includes('could not resolve host') || lower.includes('could not read from remote')) {

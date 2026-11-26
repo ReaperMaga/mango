@@ -17,9 +17,13 @@ const props = withDefaults(defineProps<{
   maxHeight?: number
   /** Grow past `width` to fit the longest row, up to this many pixels (and the window). Without it the width is fixed. */
   maxWidth?: number
-}>(), { placement: 'bottom-start', width: 240, label: 'Menu' })
+}>(), { placement: 'bottom-start', width: 240 })
 
+const emit = defineEmits<{ closed: [] }>()
+
+const { t } = useI18n()
 const open = ref(false)
+watch(open, (v) => { if (!v) emit('closed') })
 /* An open menu hides the browsers' native pages, which would cover it. */
 useOverlay(() => open.value)
 const root = ref<HTMLElement | null>(null)
@@ -34,6 +38,8 @@ const enabled = computed(() => props.items.map((it, i) => (it.disabled ? -1 : i)
 
 /** Set while the menu is open as a context menu: the pointer position to open at. */
 let point: { x: number; y: number } | null = null
+/** What had focus when it opened: Escape gives it back where the menu has no button of its own. */
+let opener: HTMLElement | null = null
 
 const GAP = 6
 const MARGIN = 8
@@ -63,6 +69,12 @@ function place() {
   left = Math.max(MARGIN, Math.min(left, vw - width - MARGIN))
   const room = Math.max(120, top ? spaceAbove : spaceBelow)
   const maxHeight = props.maxHeight ? Math.min(props.maxHeight, room) : room
+  // A context menu too tall for either side of the pointer slides along the window instead of scrolling.
+  const tall = point ? Math.min(list.value?.scrollHeight ?? 0, cap) + 2 : 0
+  if (tall && tall > room && tall <= vh - MARGIN * 2) {
+    pos.value = { left, top: Math.max(MARGIN, Math.min(r.bottom, vh - MARGIN - tall)), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight: tall }
+    return
+  }
   pos.value = top
     ? { left, bottom: vh - r.top + (point ? 0 : GAP), origin: `bottom ${alignRight ? 'right' : 'left'}`, maxHeight }
     : { left, top: r.bottom + (point ? 0 : GAP), origin: `top ${alignRight ? 'right' : 'left'}`, maxHeight }
@@ -77,6 +89,7 @@ function showAt(x: number, y: number) {
 }
 async function show(at: { x: number; y: number } | null = null) {
   point = at
+  if (!open.value) opener = document.activeElement as HTMLElement | null
   keyed.value = false
   place()
   open.value = true
@@ -95,13 +108,20 @@ function revealActive() {
 function close(refocus = false) {
   if (!open.value) return
   open.value = false
-  if (refocus) root.value?.querySelector<HTMLElement>('button, [tabindex]')?.focus()
+  if (refocus) (root.value?.querySelector<HTMLElement>('button, [tabindex]') ?? opener)?.focus()
 }
 function select(i: number) {
   const it = props.items[i]
   if (!it || it.disabled) return
   close()
   it.onSelect?.()
+}
+/** The row's other action (`action`): like choosing the row, it closes the menu. */
+function runAction(i: number) {
+  const a = props.items[i]?.action
+  if (!a || a.disabled || props.items[i]?.disabled) return
+  close()
+  a.onSelect()
 }
 /** The row's own second action (UiMenu keeps the menu open so several can be run in a row). */
 function runRemove(i: number) {
@@ -122,6 +142,7 @@ function onKey(e: KeyboardEvent) {
   else if (e.key === 'ArrowUp') { e.preventDefault(); active.value = enabled.value[(at - 1 + enabled.value.length) % enabled.value.length] ?? -1 }
   else if (e.key === 'Home') { e.preventDefault(); active.value = enabled.value[0] ?? -1 }
   else if (e.key === 'End') { e.preventDefault(); active.value = enabled.value[enabled.value.length - 1] ?? -1 }
+  else if (e.key === 'Enter' && e.shiftKey && props.items[active.value]?.action) { e.preventDefault(); runAction(active.value) }
   else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(active.value) }
   else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true) }
   else if (e.key === 'Tab') { e.preventDefault(); close(true) }
@@ -130,8 +151,8 @@ function onKey(e: KeyboardEvent) {
 
 function onDocDown(e: MouseEvent) {
   if (!open.value) return
-  const t = e.target as Node
-  if (root.value?.contains(t) || list.value?.contains(t)) return
+  const el = e.target as Node
+  if (root.value?.contains(el) || list.value?.contains(el)) return
   close()
 }
 /** Scrolling or resizing moves the trigger: keep it simple and close. */
@@ -178,7 +199,7 @@ defineExpose({ show: () => show(), showAt, close, toggle })
             transformOrigin: pos.origin,
           }"
           role="menu"
-          :aria-label="label"
+          :aria-label="label ?? t('shell.menu.label')"
           tabindex="-1"
           @keydown="onKey"
         >
@@ -189,7 +210,8 @@ defineExpose({ show: () => show(), showAt, close, toggle })
               type="button"
               class="menu__item"
               :class="{ 'is-active': i === active, 'is-danger': it.danger }"
-              role="menuitem"
+              :role="it.check ? `menuitem${it.check}` : 'menuitem'"
+              :aria-checked="it.check ? !!it.checked : undefined"
               :disabled="it.disabled"
               @mouseenter="!it.disabled && (active = i)"
               @click="select(i)"
@@ -198,16 +220,31 @@ defineExpose({ show: () => show(), showAt, close, toggle })
                 <component :is="it.icon" v-if="it.icon" />
               </span>
               <span class="menu__text">
-                <span class="menu__label">{{ it.label }}</span>
-                <span v-if="it.hint" class="menu__hint" :class="{ 'is-mono': it.hintMono }">{{ it.hint }}</span>
+                <span class="menu__label" :class="{ 'is-mono': it.labelMono }">{{ it.label }}</span>
+                <span v-if="it.hint" class="menu__hint" :class="{ 'is-mono': it.hintMono }">
+                  <component :is="it.hintIcon" v-if="it.hintIcon" class="menu__hint-icon" aria-hidden="true" />
+                  <span class="menu__hint-text">{{ it.hint }}</span>
+                </span>
               </span>
               <span v-if="it.aside" class="menu__aside" :class="{ 'is-mono': it.asideMono }">{{ it.aside }}</span>
-              <!-- A row that can be removed keeps one slot at its end: the check, which gives way to the remove
-                   button while the row is hovered or focused. Not a nested <button> (invalid inside the row);
-                   the keyboard reaches it with Delete. -->
-              <span v-if="it.remove" class="menu__end">
+              <!-- The row's other action, shown while the row is hovered or focused; the keyboard runs it with Shift+Enter. -->
+              <span
+                v-if="it.action"
+                class="menu__act"
+                :class="{ 'is-disabled': it.action.disabled }"
+                :title="it.action.disabled ? `${it.action.label}: ${it.action.reason ?? t('shell.menu.notNow')}` : `${it.action.label} (Shift+Enter)`"
+                :aria-label="it.action.label"
+                :aria-disabled="it.action.disabled || undefined"
+                @click.stop="runAction(i)"
+              ><component :is="it.action.icon" /></span>
+              <!-- A row that can be removed keeps one slot at its end: the check (or the open dot), which gives
+                   way to the remove button while the row is hovered or focused. Not a nested <button> (invalid
+                   inside the row); the keyboard reaches it with Delete. -->
+              <span v-if="it.remove || it.open" class="menu__end" :class="{ 'has-remove': it.remove }">
                 <Check v-if="it.checked" class="menu__check" />
+                <span v-else-if="it.open" class="menu__dot" />
                 <span
+                  v-if="it.remove"
                   class="menu__remove"
                   :title="`${it.remove.label} (Delete)`"
                   :aria-label="it.remove.label"
@@ -276,9 +313,12 @@ defineExpose({ show: () => show(), showAt, close, toggle })
 .menu__item.is-danger .menu__icon { color: inherit; }
 .menu__text { flex: 1; min-width: 0; display: grid; }
 .menu__label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.menu__hint { font-size: var(--text-xs); color: var(--fg-subtle); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu__hint { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: var(--text-xs); color: var(--fg-subtle); white-space: nowrap; }
+.menu__hint-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.menu__hint-icon { width: 11px; height: 11px; flex: none; stroke-width: 2; color: var(--fg-faint); }
 .menu__aside { flex: 0 1 auto; text-align: right; max-width: 50%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-xs); color: var(--fg-subtle); }
-.menu__aside.is-mono, .menu__hint.is-mono { font-family: var(--font-mono); }
+.menu__label.is-mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+.menu__aside.is-mono, .menu__hint.is-mono .menu__hint-text { font-family: var(--font-mono); }
 /* A menu that fits its rows gives the label its full length; the aside gives way first when the cap is reached. */
 .is-fit .menu__text { flex: 1 1 auto; }
 .is-fit .menu__aside { max-width: none; flex-shrink: 1000; min-width: 64px; }
@@ -295,8 +335,27 @@ defineExpose({ show: () => show(), showAt, close, toggle })
 }
 .menu__remove svg { width: 13px; height: 13px; stroke-width: 2; }
 .menu__item:hover .menu__remove, .is-keyed .menu__item.is-active .menu__remove { visibility: visible; }
-.menu__item:hover .menu__end .menu__check, .is-keyed .menu__item.is-active .menu__end .menu__check { visibility: hidden; }
+.menu__item:hover .menu__end.has-remove > :not(.menu__remove), .is-keyed .menu__item.is-active .menu__end.has-remove > :not(.menu__remove) { visibility: hidden; }
 .menu__remove:hover { background: var(--bg-active); color: var(--fg); }
+/* The open dot: quieter than the check, the same slot. */
+.menu__dot { width: 6px; height: 6px; border-radius: 50%; background: var(--fg-faint); }
+/* The row's other action keeps its place while hidden, so the row does not shift when it shows. */
+.menu__act {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin: -1px 0;
+  border-radius: var(--radius-xs);
+  color: var(--fg-subtle);
+  visibility: hidden;
+}
+.menu__act svg { width: 13px; height: 13px; stroke-width: 2; }
+.menu__item:hover .menu__act, .is-keyed .menu__item.is-active .menu__act { visibility: visible; }
+.menu__act:hover:not(.is-disabled) { background: var(--bg-active); color: var(--fg); }
+.menu__act.is-disabled { color: var(--fg-faint); opacity: 0.6; }
+.menu__item:disabled .menu__act { visibility: hidden; }
 .menu__check { width: 14px; height: 14px; color: var(--accent-ink); flex: none; }
 .menu__kbd { font-size: var(--text-xs); color: var(--fg-faint); flex: none; }
 

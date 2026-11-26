@@ -8,6 +8,8 @@
  * An empty string is a binding the user cleared.
  */
 
+import { t } from '../i18n/index.ts'
+
 export type ShortcutGroup = 'General' | 'Layout' | 'Tabs'
 
 /**
@@ -20,42 +22,46 @@ export type ShortcutScope = 'always' | 'app' | 'workspace'
 export interface ShortcutDef {
   id: string
   label: string
-  group: ShortcutGroup
+  /** A built-in group, or a plugin's name for the keys a plugin registered. */
+  group: ShortcutGroup | (string & {})
   scope: ShortcutScope
   /** The key out of the box. */
   key: string
 }
 
 export const SHORTCUTS: readonly ShortcutDef[] = [
-  { id: 'palette', label: 'Command palette', group: 'General', scope: 'always', key: 'Mod+K' },
-  { id: 'settings', label: 'Open settings', group: 'General', scope: 'app', key: 'Mod+,' },
-  { id: 'usage', label: 'Usage limits', group: 'General', scope: 'app', key: 'Mod+Shift+U' },
-  { id: 'new-chat', label: 'New chat', group: 'General', scope: 'workspace', key: 'Mod+N' },
-  { id: 'new-chat-worktree', label: 'New chat in a worktree', group: 'General', scope: 'workspace', key: 'Mod+Shift+N' },
-  { id: 'open-folder', label: 'Open folder', group: 'General', scope: 'workspace', key: 'Mod+O' },
-  { id: 'new-window', label: 'New window', group: 'General', scope: 'workspace', key: 'Mod+Alt+N' },
+  { id: 'palette', get label() { return t('shell.shortcuts.labels.palette') }, group: 'General', scope: 'always', key: 'Mod+K' },
+  { id: 'settings', get label() { return t('shell.shortcuts.labels.settings') }, group: 'General', scope: 'app', key: 'Mod+,' },
+  { id: 'usage', get label() { return t('shell.shortcuts.labels.usage') }, group: 'General', scope: 'app', key: 'Mod+Shift+U' },
+  { id: 'new-chat', get label() { return t('shell.shortcuts.labels.new-chat') }, group: 'General', scope: 'workspace', key: 'Mod+N' },
+  { id: 'new-chat-worktree', get label() { return t('shell.shortcuts.labels.new-chat-worktree') }, group: 'General', scope: 'workspace', key: 'Mod+Shift+N' },
+  { id: 'open-folder', get label() { return t('shell.shortcuts.labels.open-folder') }, group: 'General', scope: 'workspace', key: 'Mod+O' },
+  { id: 'new-window', get label() { return t('shell.shortcuts.labels.new-window') }, group: 'General', scope: 'workspace', key: 'Mod+Alt+N' },
 
-  { id: 'sidebar', label: 'Toggle sidebar', group: 'Layout', scope: 'workspace', key: 'Mod+B' },
-  { id: 'tool-panel', label: 'Toggle tool window', group: 'Layout', scope: 'workspace', key: 'Mod+Alt+B' },
-  { id: 'terminal', label: 'Toggle terminal', group: 'Layout', scope: 'always', key: 'Mod+`' },
-  { id: 'split', label: 'Split chat or close the split', group: 'Layout', scope: 'workspace', key: 'Mod+\\' },
-  { id: 'changes', label: 'Changes', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+G' },
-  { id: 'files', label: 'Files', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+E' },
-  { id: 'links', label: 'Pull requests', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+P' },
-  { id: 'env', label: 'Environment', group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
+  { id: 'sidebar', get label() { return t('shell.shortcuts.labels.sidebar') }, group: 'Layout', scope: 'workspace', key: 'Mod+B' },
+  { id: 'tool-panel', get label() { return t('shell.shortcuts.labels.tool-panel') }, group: 'Layout', scope: 'workspace', key: 'Mod+Alt+B' },
+  { id: 'terminal', get label() { return t('shell.shortcuts.labels.terminal') }, group: 'Layout', scope: 'always', key: 'Mod+`' },
+  { id: 'split', get label() { return t('shell.shortcuts.labels.split') }, group: 'Layout', scope: 'workspace', key: 'Mod+\\' },
+  { id: 'changes', get label() { return t('shell.shortcuts.labels.changes') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+G' },
+  { id: 'files', get label() { return t('shell.shortcuts.labels.files') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+E' },
+  { id: 'links', get label() { return t('shell.shortcuts.labels.links') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+P' },
+  { id: 'releases', get label() { return t('shell.shortcuts.labels.releases') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+R' },
+  { id: 'git-log', get label() { return t('shell.shortcuts.labels.git-log') }, group: 'Layout', scope: 'workspace', key: 'Mod+Alt+9' },
+  { id: 'env', get label() { return t('shell.shortcuts.labels.env') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
 
-  { id: 'close-tab', label: 'Close tab', group: 'Tabs', scope: 'workspace', key: 'Mod+W' },
-  { id: 'new-terminal', label: 'New terminal', group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+T' },
-  { id: 'new-browser', label: 'New browser tab', group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+B' },
-  { id: 'save-file', label: 'Save file', group: 'Tabs', scope: 'workspace', key: 'Mod+S' },
+  { id: 'find-chat', get label() { return t('shell.shortcuts.labels.find-chat') }, group: 'Tabs', scope: 'workspace', key: 'Mod+F' },
+  { id: 'close-tab', get label() { return t('shell.shortcuts.labels.close-tab') }, group: 'Tabs', scope: 'workspace', key: 'Mod+W' },
+  { id: 'new-terminal', get label() { return t('shell.shortcuts.labels.new-terminal') }, group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+T' },
+  { id: 'new-browser', get label() { return t('shell.shortcuts.labels.new-browser') }, group: 'Tabs', scope: 'workspace', key: 'Mod+Shift+B' },
+  { id: 'save-file', get label() { return t('shell.shortcuts.labels.save-file') }, group: 'Tabs', scope: 'workspace', key: 'Mod+S' },
 ]
 
 export const SHORTCUT_GROUPS: readonly ShortcutGroup[] = ['General', 'Layout', 'Tabs']
 
 /** Keys that stay as they are: shown in Settings, but not rebindable. */
 export const FIXED_SHORTCUTS: ReadonlyArray<{ label: string; key: string }> = [
-  { label: 'Switch to a tab by its number', key: 'Mod+1 to 9' },
-  { label: 'Toggle terminal, as well', key: 'Mod+J' },
+  { get label() { return t('shell.shortcuts.switchTab') }, get key() { return `Mod+${t('shell.shortcuts.oneToNine')}` } },
+  { get label() { return t('shell.shortcuts.terminalToo') }, key: 'Mod+J' },
 ]
 
 /** What the operating system or the editors in Mango already use: not offered for rebinding. */
@@ -101,6 +107,9 @@ export function eventCombo(e: KeyboardEvent): string | null {
   return ['Mod', e.altKey ? 'Alt' : '', e.shiftKey ? 'Shift' : '', upper].filter(Boolean).join('+')
 }
 
+/** Whether one of the `data-own-keys` around the focus (`"Mod+B Mod+K"`, innermost first) has this key for itself. */
+export const ownsKey = (claims: readonly string[], combo: string): boolean => claims.some(c => c.split(/\s+/).includes(combo))
+
 /** Binding parts as the platform names them: `['Ctrl', 'Shift', 'G']`, or `['⌘', '⇧', 'G']` on a Mac. */
 export function comboParts(combo: string): string[] {
   const mac = isMac()
@@ -117,20 +126,38 @@ export function comboLabel(combo: string): string {
   return comboParts(combo).join(isMac() ? '' : '+')
 }
 
-/** Why a binding can't be used, or null. `owner` is the label of the action that has the key. */
-export function refuse(combo: string, forId: string, bindings: Record<string, string>): string | null {
-  if (!combo.startsWith('Mod+')) return 'A shortcut needs Ctrl (⌘ on a Mac) held down.'
-  if (/^Mod\+[1-9]$/.test(combo)) return 'Ctrl+1 to 9 switch tabs.'
-  if (RESERVED.has(combo)) return `${comboLabel(combo)} is used by the system and the text fields.`
-  const other = SHORTCUTS.find(s => s.id !== forId && bindings[s.id] === combo)
-  if (other) return `${comboLabel(combo)} already runs “${other.label}”.`
+/** Keys of plugins that became part of Mango: the action a rebinding of theirs now belongs to. */
+const MOVED_SHORTCUTS = new Map([['plugin:git-log.show', 'git-log']])
+
+/** Plugins' shortcuts are kept under `plugin:<pluginId>.<id>` (see `plugin-host/`). */
+export const isPluginShortcut = (id: string) => id.startsWith('plugin:')
+
+/** Why a binding can't be used, or null. `defs`: every action that may own a key (plugins' too). */
+export function refuse(combo: string, forId: string, bindings: Record<string, string>, defs: readonly ShortcutDef[] = SHORTCUTS): string | null {
+  if (!combo.startsWith('Mod+')) return t('shell.shortcuts.needsMod')
+  if (/^Mod\+[1-9]$/.test(combo)) return t('shell.shortcuts.digits')
+  if (RESERVED.has(combo)) return t('shell.shortcuts.reserved', { key: comboLabel(combo) })
+  const other = defs.find(s => s.id !== forId && bindings[s.id] === combo)
+  if (other) return t('shell.shortcuts.taken', { key: comboLabel(combo), label: other.label })
   return null
 }
 
-/** The bindings in force: each action's default, unless the user chose another key (or cleared it). */
-export function resolveBindings(overrides: Record<string, string>): Record<string, string> {
+/**
+ * The bindings in force: each action's default, unless the user chose another key (or cleared it). A key
+ * the user gave to one action is no other's default: a default added later never takes it over.
+ * `extra`: plugins' shortcuts; a plugin's default that a built-in key already has is left unbound.
+ */
+export function resolveBindings(overrides: Record<string, string>, extra: readonly ShortcutDef[] = []): Record<string, string> {
   const out: Record<string, string> = {}
-  for (const s of SHORTCUTS) out[s.id] = overrides[s.id] ?? s.key
+  const chosen = new Set([...SHORTCUTS, ...extra].map(s => overrides[s.id]))
+  for (const s of SHORTCUTS) out[s.id] = overrides[s.id] ?? (chosen.has(s.key) ? '' : s.key)
+  const taken = new Set(Object.values(out).filter(Boolean))
+  for (const s of extra) {
+    const own = overrides[s.id]
+    const key = own ?? (taken.has(s.key) || RESERVED.has(s.key) || !s.key.startsWith('Mod+') ? '' : s.key)
+    out[s.id] = key
+    if (key) taken.add(key)
+  }
   return out
 }
 
@@ -141,6 +168,15 @@ export function cleanOverrides(raw: unknown): Record<string, string> {
   for (const s of SHORTCUTS) {
     const v = (raw as Record<string, unknown>)[s.id]
     if (typeof v === 'string' && v !== s.key) out[s.id] = v
+  }
+  for (const [old, id] of MOVED_SHORTCUTS) {
+    if (id in raw) continue
+    const v = (raw as Record<string, unknown>)[old]
+    if (typeof v === 'string' && v !== SHORTCUTS.find(s => s.id === id)?.key) out[id] = v
+  }
+  // A plugin's keys are kept even while it is not loaded (plugins start after the prefs are read).
+  for (const [id, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (isPluginShortcut(id) && !MOVED_SHORTCUTS.has(id) && id.length < 200 && typeof v === 'string') out[id] = v
   }
   return out
 }

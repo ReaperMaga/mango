@@ -60,7 +60,9 @@ export default defineConfigWithTheme<ThemeConfig>({
         items: [
           { text: 'Building from source', link: '/development/building' },
           { text: 'Architecture', link: '/development/architecture' },
+          { text: 'Writing plugins', link: '/plugins' },
           { text: 'Releasing', link: '/development/releasing' },
+          { text: 'Shipping the iOS app', link: '/development/mobile-release' },
         ],
       },
       { text: 'Changelog', link: '/changelog' },

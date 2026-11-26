@@ -5,6 +5,8 @@ import { closeImage, imageViewer } from '~/utils/imageViewer'
 import { formatSize } from '~/utils/attachments'
 import { useOverlay } from '~/composables/useOverlay'
 
+const { t } = useI18n()
+
 /**
  * Full-size view of an attached or agent-produced image. Opens on the small preview
  * at once and swaps in the full picture from the attachment store when it arrives.
@@ -75,7 +77,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
           @mousedown.self="closeImage()"
         >
           <img v-if="src" class="iv__img" :src="src" :alt="current.name">
-          <p v-else-if="failed" class="iv__missing">This image is no longer on disk.</p>
+          <p v-else-if="failed" class="iv__missing">{{ t('shell.image.gone') }}</p>
           <figcaption class="iv__cap">
             <span class="iv__name" :title="current.path">{{ current.name }}</span>
             <span v-if="current.size" class="iv__meta tabular">{{ formatSize(current.size) }}</span>
@@ -83,10 +85,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey, true))
           </figcaption>
         </figure>
         <template v-if="imageViewer.images.length > 1">
-          <button type="button" class="iv__nav iv__nav--prev" aria-label="Previous image" title="Previous (←)" @click="step(-1)"><ChevronLeft /></button>
-          <button type="button" class="iv__nav iv__nav--next" aria-label="Next image" title="Next (→)" @click="step(1)"><ChevronRight /></button>
+          <button type="button" class="iv__nav iv__nav--prev" :aria-label="t('shell.image.previous')" :title="t('shell.image.previousKey')" @click="step(-1)"><ChevronLeft /></button>
+          <button type="button" class="iv__nav iv__nav--next" :aria-label="t('shell.image.next')" :title="t('shell.image.nextKey')" @click="step(1)"><ChevronRight /></button>
         </template>
-        <button type="button" class="iv__close" aria-label="Close" title="Close (Esc)" @click="closeImage()"><X /></button>
+        <button type="button" class="iv__close" :aria-label="t('common.actions.close')" :title="t('shell.image.closeKey')" @click="closeImage()"><X /></button>
       </div>
     </Transition>
   </Teleport>

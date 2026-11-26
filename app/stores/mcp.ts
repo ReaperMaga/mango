@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { McpServerConfig } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { t } from '~/i18n'
 import { mcpInEffect } from '~/utils/mcpServers'
 
 /**
@@ -38,7 +39,7 @@ export const useMcp = defineStore('mcp', {
     /** Saves `next` as the whole list. Rejects with the backend's message (it names the server, never a value). */
     async save(next: McpServerConfig[]) {
       // The whole list is written: never from one that was not read, or the saved servers would be lost.
-      if (!this.loaded) throw new Error('The saved servers could not be read, so nothing was changed. Reopen Settings to try again.')
+      if (!this.loaded) throw new Error(t('settings.mcp.notLoaded'))
       this.servers = await call('mcp_servers_save', { servers: next })
     },
     /** Adds `server` (no id yet) or replaces the one with its id; resolves to it as saved. */

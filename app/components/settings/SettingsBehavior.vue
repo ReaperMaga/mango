@@ -1,8 +1,12 @@
 <script setup lang="ts">
 import { useWorkspace, type FollowUp, type SendKey, type ToolCalls } from '~/stores/workspace'
+import { THRESHOLDS, type IdleCompaction } from '~/utils/idleCompaction'
+import { formatTokens } from '~/agents/context'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSelect from './SettingsSelect.vue'
+
+const { t } = useI18n()
 
 /** Settings > Behaviour: how the composer sends, what happens to messages written mid-run, and what a chat shows. */
 const ws = useWorkspace()
@@ -12,40 +16,46 @@ const sendKeys: Array<{ value: SendKey; label: string }> = [
   { value: 'enter', label: 'Enter' },
   { value: 'mod-enter', label: `${mod} + Enter` },
 ]
-const followUps: Array<{ value: FollowUp; label: string }> = [
-  { value: 'queue', label: 'Queue' },
-  { value: 'steer', label: 'Steer' },
-]
-const toolCalls: Array<{ value: ToolCalls; label: string }> = [
-  { value: 'all', label: 'Show all' },
-  { value: 'hide-ok', label: 'Hide successful' },
-  { value: 'hide', label: 'Hide all' },
-  { value: 'zen', label: 'Zen' },
-]
+const followUps = computed<Array<{ value: FollowUp; label: string }>>(() => [
+  { value: 'queue', label: t('behavior.followUp.queue') },
+  { value: 'steer', label: t('behavior.followUp.steer') },
+])
+const toolCalls = computed<Array<{ value: ToolCalls; label: string }>>(() => [
+  { value: 'all', label: t('behavior.toolCalls.all') },
+  { value: 'hide-ok', label: t('behavior.toolCalls.hide-ok') },
+  { value: 'hide', label: t('behavior.toolCalls.hide') },
+  { value: 'zen', label: t('behavior.toolCalls.zen') },
+])
+const breaks = computed<Array<{ value: IdleCompaction; label: string }>>(() => [
+  { value: 'ask', label: t('behavior.breaks.ask') },
+  { value: 'auto', label: t('behavior.breaks.auto') },
+  { value: 'off', label: t('behavior.breaks.off') },
+])
+const thresholds = THRESHOLDS.map(n => ({ value: String(n), label: formatTokens(n) }))
 const opposite = computed(() => (ws.sendKey === 'enter' ? `${mod} + Enter` : `${mod} + Shift + Enter`))
 
-function persist<K extends 'sendKey' | 'followUp' | 'toolCalls'>(key: K, value: (typeof ws)[K]) {
+function persist<K extends 'sendKey' | 'followUp' | 'toolCalls' | 'idleCompaction' | 'idleTokens'>(key: K, value: (typeof ws)[K]) {
   ws[key] = value
   ws.persist()
 }
 </script>
 
 <template>
-  <SettingsSection title="Behaviour" description="How the composer sends, and what a chat shows while the agent works.">
-    <h3 class="head">Composer</h3>
+  <SettingsSection :title="t('settings.nav.behavior')" :description="t('behavior.description')">
+    <h3 class="head">{{ t('behavior.composer') }}</h3>
     <div class="card">
-      <SettingsRow label="Send shortcut" hint="Choose when Enter sends a message or inserts a new line.">
+      <SettingsRow :label="t('behavior.sendKey.label')" :hint="t('behavior.sendKey.hint')">
         <template #default="{ labelId }">
           <SettingsSelect :model-value="ws.sendKey" :options="sendKeys" :labelledby="labelId" @update:model-value="v => persist('sendKey', v)" />
         </template>
       </SettingsRow>
     </div>
 
-    <h3 class="head">Follow-ups</h3>
+    <h3 class="head">{{ t('behavior.followUps') }}</h3>
     <div class="card">
       <SettingsRow
-        label="Follow-up behavior"
-        :hint="`Queue messages written while the agent works, or steer the current run. Press ${opposite} to do the opposite for one message.`"
+        :label="t('behavior.followUp.label')"
+        :hint="t('behavior.followUp.hint', { shortcut: opposite })"
       >
         <template #default="{ labelId }">
           <SettingsSelect :model-value="ws.followUp" :options="followUps" :labelledby="labelId" @update:model-value="v => persist('followUp', v)" />
@@ -53,11 +63,25 @@ function persist<K extends 'sendKey' | 'followUp' | 'toolCalls'>(key: K, value: 
       </SettingsRow>
     </div>
 
-    <h3 class="head">Activity</h3>
+    <h3 class="head">{{ t('behavior.breaks.title') }}</h3>
+    <div class="card">
+      <SettingsRow :label="t('behavior.breaks.label')" :hint="t('behavior.breaks.hint', { tokens: formatTokens(ws.idleTokens) })">
+        <template #default="{ labelId }">
+          <SettingsSelect :model-value="ws.idleCompaction" :options="breaks" :labelledby="labelId" @update:model-value="v => persist('idleCompaction', v)" />
+        </template>
+      </SettingsRow>
+      <SettingsRow v-if="ws.idleCompaction !== 'off'" :label="t('behavior.breaks.above')" :hint="t('behavior.breaks.aboveHint')">
+        <template #default="{ labelId }">
+          <SettingsSelect :model-value="String(ws.idleTokens)" :options="thresholds" :labelledby="labelId" :label="t('behavior.breaks.above')" @update:model-value="v => persist('idleTokens', Number(v))" />
+        </template>
+      </SettingsRow>
+    </div>
+
+    <h3 class="head">{{ t('behavior.activity') }}</h3>
     <div class="card">
       <SettingsRow
-        label="Tool calls in chat"
-        hint="Hide the commands, edits and searches agents run. Hide successful keeps failures. Zen shows only final answers. Approvals, questions and errors always show."
+        :label="t('behavior.toolCalls.label')"
+        :hint="t('behavior.toolCalls.hint')"
       >
         <template #default="{ labelId }">
           <SettingsSelect :model-value="ws.toolCalls" :options="toolCalls" :labelledby="labelId" @update:model-value="v => persist('toolCalls', v)" />

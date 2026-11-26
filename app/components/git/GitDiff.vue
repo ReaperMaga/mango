@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { formatLocale } from '~/i18n'
+
 /** One file's unified diff, as returned by `git_diff`. */
 const props = defineProps<{
   /** null until the first load finishes */
@@ -19,6 +21,8 @@ interface Line {
   o: number | null
   w: number | null
 }
+
+const { t } = useI18n()
 
 /** Rows drawn before the reader asks for the rest. */
 const PAGE = 1200
@@ -88,14 +92,14 @@ const hidden = computed(() => parsed.value.lines.length - visible.value.length)
 /** What to say when there are no lines to draw. */
 const empty = computed(() => {
   const p = parsed.value
-  if (props.text === null) return props.error ? null : 'Reading diff…'
-  if (p.binary) return 'Binary file. Nothing to show as text.'
+  if (props.text === null) return props.error ? null : t('git.diff.reading')
+  if (p.binary) return t('git.diff.binary')
   if (p.lines.length) return null
   if (p.truncated) return null
-  if (p.renamedFrom) return 'Moved without changes to its content.'
-  if (p.created) return 'Empty file.'
-  if (p.modeChanged) return 'Only the file mode changed.'
-  return 'No changes to show.'
+  if (p.renamedFrom) return t('git.diff.moved')
+  if (p.created) return t('git.diff.emptyFile')
+  if (p.modeChanged) return t('git.diff.modeOnly')
+  return t('git.diff.nothing')
 })
 
 const sign = { add: '+', del: '−', ctx: ' ', hunk: ' ', meta: ' ' } as const
@@ -137,14 +141,16 @@ const sideBySide = computed(() => {
 <template>
   <div class="gd" :class="{ 'gd--fill': fill }">
     <p v-if="error" class="gd__note gd__note--error selectable" role="alert">{{ error }}</p>
-    <p v-if="parsed.renamedFrom" class="gd__note selectable">Renamed from <code>{{ parsed.renamedFrom }}</code></p>
+    <p v-if="parsed.renamedFrom" class="gd__note selectable">
+      <i18n-t keypath="git.renamedFrom" scope="global"><template #path><code>{{ parsed.renamedFrom }}</code></template></i18n-t>
+    </p>
     <p v-if="empty" class="gd__note">{{ empty }}</p>
 
     <div
       v-if="visible.length && sideBySide"
       class="gd__scroll gd__scroll--split selectable"
       role="table"
-      aria-label="Diff, old on the left and new on the right"
+      :aria-label="t('git.diff.splitLabel')"
       tabindex="0"
       :style="{ '--gd-digits': parsed.digits }"
     >
@@ -167,7 +173,7 @@ const sideBySide = computed(() => {
       v-else-if="visible.length"
       class="gd__scroll selectable"
       role="table"
-      aria-label="Diff"
+      :aria-label="t('git.diff.label')"
       tabindex="0"
       :style="{ '--gd-digits': parsed.digits }"
     >
@@ -182,9 +188,9 @@ const sideBySide = computed(() => {
     </div>
 
     <button v-if="hidden > 0" type="button" class="gd__more" @click="showAll = true">
-      Show {{ hidden.toLocaleString() }} more lines
+      {{ t('git.diff.more', { n: hidden.toLocaleString(formatLocale()) }, hidden) }}
     </button>
-    <p v-if="parsed.truncated" class="gd__note">Too large to show in full. The diff stops at 400 KB.</p>
+    <p v-if="parsed.truncated" class="gd__note">{{ t('git.diff.truncated') }}</p>
   </div>
 </template>
 

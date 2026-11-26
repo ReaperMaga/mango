@@ -11,6 +11,7 @@ import EnvStatus from './EnvStatus.vue'
  * the user ("Shared with you"), each a row straight to its page. Adding a
  * server, creating an environment or joining one with a link opens its dialog.
  */
+const { t } = useI18n()
 const envs = useEnvironments()
 const now = useNow()
 
@@ -25,7 +26,7 @@ const stateOf = (id: string) => {
 const accessLine = (h: EnvHost) => {
   const at = h.direct?.expiresAt
   if (!at) return null
-  return shareExpired(at, now.value) ? `access ended ${shareDay(at, now.value)}` : `until ${shareDay(at, now.value)}`
+  return shareExpired(at, now.value) ? t('envs.home.accessEnded', { day: shareDay(at, now.value) }) : t('envs.home.until', { day: shareDay(at, now.value) })
 }
 const ready = (id: string) => envs.probes[id]?.ok === true
 const instancesOf = (id: string) => envs.instances[id] ?? null
@@ -47,44 +48,40 @@ function openSetup(id: string) {
   <div class="eh" :class="{ 'eh--joined-only': onlyJoined }">
     <header class="eh__head">
       <div class="eh__intro">
-        <h2 class="eh__title" data-page-title tabindex="-1">Environments</h2>
+        <h2 class="eh__title" data-page-title tabindex="-1">{{ t('envs.common.title') }}</h2>
         <p class="eh__desc">
-          Containers and VMs on your own servers, reached over SSH, and environments others share with you. A project opened
-          in one runs its chats' agent there.
+          {{ t('envs.home.description') }}
         </p>
       </div>
       <span v-if="envs.hosts.length" class="eh__head-actions">
-        <UiButton variant="ghost" size="sm" @click="envs.openJoin()"><Link2 />Join with a link</UiButton>
-        <UiButton v-if="envs.servers.length" size="sm" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+        <UiButton variant="ghost" size="sm" @click="envs.openJoin()"><Link2 />{{ t('envs.home.join') }}</UiButton>
+        <UiButton v-if="envs.servers.length" size="sm" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />{{ t('envs.common.addServer') }}</UiButton>
       </span>
     </header>
 
     <!-- no servers yet (with nothing joined either, or after what was shared) -->
     <div v-if="envs.loaded && !envs.servers.length" class="eh__empty">
-      <h3 class="eh__empty-title">Run agents on your own server</h3>
-      <p class="eh__empty-text">
-        Add a Linux server you can reach with <code>ssh</code>. Mango installs Incus there if it isn't yet, creates
-        containers and VMs with Claude Code, Codex and the GitHub CLI in them, and opens projects inside, so chats run
-        the agent on the server.
-      </p>
+      <h3 class="eh__empty-title">{{ t('envs.home.emptyTitle') }}</h3>
+      <i18n-t keypath="envs.home.emptyText" tag="p" class="eh__empty-text" scope="global">
+        <template #ssh><code>ssh</code></template>
+      </i18n-t>
       <p class="eh__empty-text eh__empty-text--quiet">
-        All it needs is SSH access with your own keys, and sudo for the one-time Incus setup. Nothing of Mango's keeps
-        running on the server.
+        {{ t('envs.home.emptyNeeds') }}
       </p>
-      <UiButton :variant="onlyJoined ? 'secondary' : 'primary'" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />Add server</UiButton>
+      <UiButton :variant="onlyJoined ? 'secondary' : 'primary'" @click="envs.dialog = { kind: 'host', id: '' }"><Plus />{{ t('envs.common.addServer') }}</UiButton>
       <p v-if="!envs.hosts.length" class="eh__empty-join">
-        Have a link?
-        <button type="button" class="eh__link" @click="envs.openJoin()">Join a shared environment</button>
+        {{ t('envs.home.haveLink') }}
+        <button type="button" class="eh__link" @click="envs.openJoin()">{{ t('envs.home.joinShared') }}</button>
       </p>
     </div>
 
-    <div v-else-if="!envs.loaded" class="eh__list" aria-busy="true" aria-label="Loading servers">
+    <div v-else-if="!envs.loaded" class="eh__list" aria-busy="true" :aria-label="t('envs.home.loadingServers')">
       <div v-for="n in 2" :key="n" class="host" aria-hidden="true">
         <span class="row row--host row--skeleton"><span class="bone bone--icon" /><span class="bone bone--name" /></span>
       </div>
     </div>
 
-    <ul v-else class="eh__list" aria-label="Your servers">
+    <ul v-else class="eh__list" :aria-label="t('envs.home.yourServers')">
       <li v-for="h in envs.servers" :key="h.id" class="host">
         <button type="button" class="row row--host" :data-row="h.id" @click="envs.select(h.id)">
           <Server class="row__icon" aria-hidden="true" />
@@ -108,33 +105,33 @@ function openSetup(id: string) {
 
         <!-- Incus needs setting up: say so where the server is listed, and lead to its page. -->
         <div v-if="stateOf(h.id).tone === 'setup' && envs.probes[h.id]?.canSetup" class="host__note">
-          <span>Mango can {{ envs.probes[h.id]?.incus === 'missing' ? 'install' : 'set up' }} Incus on this server for you.</span>
+          <span>{{ envs.probes[h.id]?.incus === 'missing' ? t('envs.home.canInstall') : t('envs.home.canSetUp') }}</span>
           <UiButton size="sm" @click="openSetup(h.id)">
-            {{ envs.probes[h.id]?.incus === 'missing' ? 'Install Incus…' : 'Set up Incus…' }}
+            {{ envs.probes[h.id]?.incus === 'missing' ? t('envs.common.installIncus') : t('envs.common.setUpIncus') }}
           </UiButton>
         </div>
         <p v-else-if="stateOf(h.id).tone === 'setup'" class="host__note host__note--quiet">
-          {{ envs.probes[h.id]?.setupNote ?? 'Incus isn\'t ready on this server.' }}
+          {{ envs.probes[h.id]?.setupNote ?? t('envs.home.notReady') }}
         </p>
 
         <template v-if="ready(h.id)">
           <p v-if="envs.errors[h.id]" class="host__error" role="alert">
-            Couldn't list its environments. <span class="selectable">{{ envs.errors[h.id] }}</span>
+            {{ t('envs.home.listFailed') }} <span class="selectable">{{ envs.errors[h.id] }}</span>
           </p>
-          <ul v-if="instancesOf(h.id)?.length" class="insts" :aria-label="`Environments on ${h.name}`">
+          <ul v-if="instancesOf(h.id)?.length" class="insts" :aria-label="t('envs.home.environmentsOn', { name: h.name })">
             <li v-for="i in instancesOf(h.id)" :key="i.name">
               <button type="button" class="row row--inst" :data-row="instanceKey(h.id, i.name)" @click="envs.select(h.id, i.name)">
                 <span class="row__name row__name--inst">{{ i.name }}</span>
                 <EnvStatus class="row__status" :status="i.status" :busy="envs.busy[instanceKey(h.id, i.name)]" word />
                 <span class="row__addr selectable" :title="addresses(i)">{{ addresses(i) || '–' }}</span>
-                <span class="row__kind">{{ i.kind === 'vm' ? 'VM' : 'Container' }}</span>
+                <span class="row__kind">{{ i.kind === 'vm' ? t('envs.common.vmShort') : t('envs.common.container') }}</span>
                 <ChevronRight class="row__go" aria-hidden="true" />
               </button>
             </li>
           </ul>
-          <p v-else-if="instancesOf(h.id) && !envs.loadingInstances[h.id]" class="host__none">No environments on it yet.</p>
+          <p v-else-if="instancesOf(h.id) && !envs.loadingInstances[h.id]" class="host__none">{{ t('envs.home.none') }}</p>
           <button type="button" class="host__add" @click="envs.dialog = { kind: 'create', hostId: h.id }">
-            <Plus aria-hidden="true" />New environment
+            <Plus aria-hidden="true" />{{ t('envs.common.newEnvironment') }}
           </button>
         </template>
       </li>
@@ -143,7 +140,7 @@ function openSetup(id: string) {
     <!-- environments joined from someone's link: no server, no Incus; each is its own page -->
     <section v-if="envs.joined.length" class="eh__shared" aria-labelledby="eh-shared">
       <h3 id="eh-shared" class="eh__h3">
-        Shared with you
+        {{ t('envs.common.sharedWithYou') }}
         <span class="eh__count tabular">{{ envs.joined.length }}</span>
       </h3>
       <ul class="eh__list">
@@ -153,7 +150,9 @@ function openSetup(id: string) {
             <span class="row__main">
               <span class="row__name">{{ h.name }}</span>
               <span class="row__meta">
-                <span class="row__clip">from <span class="row__mono">{{ h.direct!.sharedFrom }}</span></span>
+                <i18n-t keypath="envs.home.from" tag="span" class="row__clip" scope="global">
+                  <template #name><span class="row__mono">{{ h.direct!.sharedFrom }}</span></template>
+                </i18n-t>
                 <template v-if="accessLine(h)">
                   <span aria-hidden="true">·</span>
                   <span class="row__access tabular" :class="{ 'is-ended': shareExpired(h.direct!.expiresAt, now) }">{{ accessLine(h) }}</span>

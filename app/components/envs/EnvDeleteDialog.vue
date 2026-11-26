@@ -10,6 +10,7 @@ import type { EnvKind } from '~/types/ipc'
 const props = defineProps<{ open: boolean; hostId: string; name: string; kind: EnvKind }>()
 const emit = defineEmits<{ close: []; deleted: [] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const typed = ref('')
 const busy = ref(false)
@@ -23,7 +24,6 @@ watch(() => props.open, (o) => {
 })
 
 const matches = computed(() => typed.value.trim() === props.name)
-const what = computed(() => (props.kind === 'vm' ? 'virtual machine' : 'container'))
 
 async function submit() {
   if (!matches.value || busy.value) return
@@ -45,13 +45,12 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="`Delete ${name}?`" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('envs.delete.title', { name })" :dismissible="!busy" @close="close">
     <form id="env-delete-form" class="del" novalidate @submit.prevent="submit">
       <p class="del__lede">
-        This deletes the {{ what }} and everything inside it: projects that were not pushed, sign-ins and installed tools.
-        It can't be undone.
+        {{ kind === 'vm' ? t('envs.delete.ledeVm') : t('envs.delete.ledeContainer') }}
       </p>
-      <UiField :label="`Type ${name} to confirm`" for="del-name">
+      <UiField :label="t('envs.delete.confirm', { name })" for="del-name">
         <input
           id="del-name"
           v-model="typed"
@@ -65,13 +64,13 @@ function close() {
       </UiField>
       <p v-if="error" class="del__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't delete it. {{ error }}.</span>
+        <span class="selectable">{{ t('envs.delete.failed', { error }) }}</span>
       </p>
     </form>
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton variant="danger" type="submit" form="env-delete-form" :disabled="!matches" :loading="busy">
-        Delete {{ what }}
+        {{ kind === 'vm' ? t('envs.delete.vm') : t('envs.delete.container') }}
       </UiButton>
     </template>
   </UiDialog>

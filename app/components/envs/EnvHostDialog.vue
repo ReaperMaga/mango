@@ -11,6 +11,7 @@ import type { EnvHost } from '~/types/ipc'
  * state of Incus shows. The server needs only SSH (and sudo): Mango can install
  * Incus from the server's page, where adding a server that needs it leads.
  */
+const { t } = useI18n()
 const envs = useEnvironments()
 
 const open = computed(() => envs.dialog?.kind === 'host')
@@ -46,7 +47,7 @@ const probing = computed(() => !!hostId.value && !!envs.probing[hostId.value])
 const setupNext = computed(() => {
   const p = probe.value
   if (!adding.value || !p?.reachable || p.ok || !p.canSetup) return null
-  return p.incus === 'missing' ? 'Install Incus…' : 'Set up Incus…'
+  return p.incus === 'missing' ? t('envs.common.installIncus') : t('envs.common.setUpIncus')
 })
 
 /** What the check found about Incus, when the server answered but Incus isn't ready. */
@@ -54,13 +55,14 @@ const incusNote = computed(() => {
   const p = probe.value
   if (!p?.reachable || p.ok) return null
   // "Save and check" has saved it already: the next page is the server's.
-  const later = adding.value ? 'on the next page' : "from the server's page"
-  if (!p.canSetup) return p.setupNote ?? "Incus isn't ready there, and Mango can't set it up on this system."
+  const where = adding.value ? t('envs.host.nextPage') : t('envs.host.serverPage')
+  const user = sshUser(ssh.value.trim())
+  if (!p.canSetup) return p.setupNote ?? t('envs.host.cantSetUp')
   switch (p.incus) {
-    case 'missing': return `Incus isn't installed. Mango can install it ${later}.`
-    case 'uninitialised': return `Incus is installed but not set up. Mango can set it up ${later}.`
-    case 'no-access': return `${sshUser(ssh.value.trim()) ? `The SSH user “${sshUser(ssh.value.trim())}”` : 'Your SSH user'} may not use Incus yet. Mango can add them to incus-admin ${later}.`
-    default: return "Incus isn't ready there yet."
+    case 'missing': return t('envs.host.missing', { where })
+    case 'uninitialised': return t('envs.host.uninitialised', { where })
+    case 'no-access': return user ? t('envs.host.noAccessUser', { user, where }) : t('envs.host.noAccess', { where })
+    default: return t('envs.host.notReady')
   }
 })
 
@@ -86,39 +88,39 @@ watch(open, (isOpen) => {
 
 /* ---------- checks the backend also makes, so most mistakes show before a round trip ---------- */
 
-const tags = computed(() => tsTags.value.split(/[\s,]+/).map(t => t.trim()).filter(Boolean))
+const tags = computed(() => tsTags.value.split(/[\s,]+/).map(tag => tag.trim()).filter(Boolean))
 
 const sshError = computed(() => {
   const s = ssh.value.trim()
-  if (!s) return 'Enter user@host, or a host name from ~/.ssh/config.'
-  if (s.startsWith('-') || !/^[\w.@%+:-]+$/.test(s)) return 'Use user@host or a name from ~/.ssh/config, without spaces.'
+  if (!s) return t('envs.host.sshEmpty')
+  if (s.startsWith('-') || !/^[\w.@%+:-]+$/.test(s)) return t('envs.host.sshInvalid')
   return null
 })
 const portError = computed(() => {
   const p = port.value.trim()
   if (!p) return null
   const n = Number(p)
-  return Number.isInteger(n) && n > 0 && n < 65536 ? null : 'A port is a number from 1 to 65535.'
+  return Number.isInteger(n) && n > 0 && n < 65536 ? null : t('envs.host.portInvalid')
 })
 const tagsError = computed(() => {
   if (!tsOn.value) return null
-  const bad = tags.value.find(t => !/^tag:[a-z0-9][a-z0-9-]{0,59}$/.test(t))
-  return bad ? `"${bad}" is not a Tailscale tag. Tags look like tag:mango (lower case, digits and dashes).` : null
+  const bad = tags.value.find(tag => !/^tag:[a-z0-9][a-z0-9-]{0,59}$/.test(tag))
+  return bad ? t('envs.host.tagInvalid', { tag: bad }) : null
 })
 const keyFileError = computed(() => {
   const p = tsKeyFile.value.trim()
   if (!tsOn.value || !p) return null
-  return /^(\/|~\/)/.test(p) && !p.split('/').includes('..') ? null : 'Use a path on the server: /abs/path or ~/path.'
+  return /^(\/|~\/)/.test(p) && !p.split('/').includes('..') ? null : t('envs.host.keyFileInvalid')
 })
 
 const publicError = computed(() => {
   const a = publicAddress.value.trim()
   if (!a) return null
-  return /^[\w.:-]+$/.test(a) && !a.startsWith('-') ? null : 'Enter a host name or an IP address, without spaces.'
+  return /^[\w.:-]+$/.test(a) && !a.startsWith('-') ? null : t('envs.host.publicInvalid')
 })
 /** What a share over the internet uses when no public address is set. */
 const publicPlaceholder = computed(() => (ssh.value.trim() ? sshHostName(ssh.value.trim()) : 'build-box.example.com'))
-const nameError = computed(() => (direct.value && touched.value && !name.value.trim() ? 'Give it a name.' : null))
+const nameError = computed(() => (direct.value && touched.value && !name.value.trim() ? t('envs.host.nameEmpty') : null))
 
 const clientError = computed(() => (direct.value
   ? nameError.value
@@ -206,7 +208,7 @@ async function check() {
 }
 
 async function browseKey() {
-  const [file] = await pickFiles('Choose an SSH private key')
+  const [file] = await pickFiles(t('envs.host.chooseKey'))
   if (file) identityFile.value = file
 }
 
@@ -217,12 +219,12 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="direct ? 'Rename' : adding ? 'Add server' : 'Edit server'" :width="direct ? 420 : 520" @close="close">
+  <UiDialog :open="open" :title="direct ? t('common.actions.rename') : adding ? t('envs.common.addServer') : t('envs.host.titleEdit')" :width="direct ? 420 : 520" @close="close">
     <form v-if="direct" id="env-host-form" class="hf" novalidate @submit.prevent="submit">
       <UiField
-        label="Name"
+        :label="t('envs.common.name')"
         for="hf-name"
-        :hint="`How it's listed in Mango. Shared from ${direct.sharedFrom}; the owner's name for it stays ${direct.instance}.`"
+        :hint="t('envs.host.joinedHint', { from: direct.sharedFrom, name: direct.instance })"
         :error="errorFor('name')"
       >
         <input id="hf-name" v-model="name" class="input" type="text" :placeholder="direct.instance" autocomplete="off" spellcheck="false">
@@ -233,13 +235,13 @@ function close() {
       </p>
     </form>
     <form v-else id="env-host-form" class="hf" novalidate @submit.prevent="submit">
-      <p class="hf__lede">
-        A Linux server you can reach with <code>ssh</code>, where you can use <code>sudo</code>. Mango installs Incus there if
-        it isn't yet, and runs each action as one SSH command with your own keys; nothing of Mango's keeps running there.
-      </p>
+      <i18n-t keypath="envs.host.lede" tag="p" class="hf__lede" scope="global">
+        <template #ssh><code>ssh</code></template>
+        <template #sudo><code>sudo</code></template>
+      </i18n-t>
 
       <div class="hf__pair">
-        <UiField label="SSH destination" for="hf-ssh" :error="errorFor('ssh')">
+        <UiField :label="t('envs.host.ssh')" for="hf-ssh" :error="errorFor('ssh')">
           <input
             id="hf-ssh"
             v-model="ssh"
@@ -253,7 +255,7 @@ function close() {
             @blur="ssh && (touched = true)"
           >
         </UiField>
-        <UiField label="Port" for="hf-port" :error="errorFor('port')">
+        <UiField :label="t('envs.host.port')" for="hf-port" :error="errorFor('port')">
           <input
             id="hf-port"
             v-model="port"
@@ -266,16 +268,18 @@ function close() {
           >
         </UiField>
       </div>
-      <p class="hf__hint">user@host, or a host name from <code>~/.ssh/config</code> (its settings apply).</p>
+      <i18n-t keypath="envs.host.sshHint" tag="p" class="hf__hint" scope="global">
+        <template #config><code>~/.ssh/config</code></template>
+      </i18n-t>
 
-      <UiField label="Name" for="hf-name" hint="How the server is listed. Defaults to the host name." :error="errorFor('name')">
-        <input id="hf-name" v-model="name" class="input" type="text" placeholder="Build box" autocomplete="off" spellcheck="false">
+      <UiField :label="t('envs.common.name')" for="hf-name" :hint="t('envs.host.nameHint')" :error="errorFor('name')">
+        <input id="hf-name" v-model="name" class="input" type="text" :placeholder="t('envs.host.namePlaceholder')" autocomplete="off" spellcheck="false">
       </UiField>
 
       <UiField
-        label="Key file"
+        :label="t('envs.host.keyFile')"
         for="hf-key"
-        hint="Optional. Leave empty to use your SSH agent and ~/.ssh/config."
+        :hint="t('envs.host.keyFileHint')"
         :error="errorFor('identityFile')"
       >
         <div class="hf__picker">
@@ -288,14 +292,14 @@ function close() {
             autocomplete="off"
             spellcheck="false"
           >
-          <UiButton v-if="canBrowse" @click="browseKey">Browse…</UiButton>
+          <UiButton v-if="canBrowse" @click="browseKey">{{ t('envs.host.browse') }}</UiButton>
         </div>
       </UiField>
 
       <UiField
-        label="Incus remote"
+        :label="t('envs.host.remote')"
         for="hf-remote"
-        hint="Optional. The remote on the server that holds the instances, such as an IncusOS host. Empty uses its default."
+        :hint="t('envs.host.remoteHint')"
         :error="errorFor('incusRemote')"
       >
         <input
@@ -303,16 +307,16 @@ function close() {
           v-model="incusRemote"
           class="input hf__mono"
           type="text"
-          placeholder="Default"
+          :placeholder="t('envs.common.default')"
           autocomplete="off"
           spellcheck="false"
         >
       </UiField>
 
       <UiField
-        label="Public address"
+        :label="t('envs.common.publicAddress')"
         for="hf-public"
-        hint="Optional. Where people you share an environment with reach this server over the internet. Defaults to the SSH host."
+        :hint="t('envs.host.publicHint')"
         :error="errorFor('publicAddress')"
       >
         <input
@@ -332,13 +336,13 @@ function close() {
         <template v-if="probe.reachable">
           <p class="hf__probe-line">
             <CircleCheck class="hf__probe-icon hf__probe-icon--ok" aria-hidden="true" />
-            <span class="hf__probe-word hf__probe-word--ok">Connected</span>
+            <span class="hf__probe-word hf__probe-word--ok">{{ t('envs.state.connected') }}</span>
             <span v-if="probe.os" class="hf__probe-more">{{ probe.os }}</span>
             <span v-if="probe.ok && probe.incusVersion" class="hf__probe-more">· Incus {{ probe.incusVersion }}</span>
           </p>
           <p v-if="incusNote" class="hf__probe-note">{{ incusNote }}</p>
-          <div v-if="probe.ok && probe.remotes.length" class="hf__remotes" role="group" aria-label="Remotes on this server">
-            <span class="hf__remotes-label">Remotes on this server</span>
+          <div v-if="probe.ok && probe.remotes.length" class="hf__remotes" role="group" :aria-label="t('envs.host.remotes')">
+            <span class="hf__remotes-label">{{ t('envs.host.remotes') }}</span>
             <button
               v-for="r in probe.remotes"
               :key="r"
@@ -353,7 +357,7 @@ function close() {
         </template>
         <p v-else class="hf__probe-line hf__probe-line--bad">
           <TriangleAlert class="hf__probe-icon hf__probe-icon--bad" aria-hidden="true" />
-          <span class="selectable">{{ probe.error ?? 'The server did not answer.' }}</span>
+          <span class="selectable">{{ probe.error ?? t('envs.common.noAnswer') }}</span>
         </p>
       </div>
 
@@ -361,7 +365,7 @@ function close() {
         <div class="hf__switch-row">
           <span class="hf__switch-text">
             <span id="hf-ts-label" class="hf__switch-label">Tailscale</span>
-            <span class="hf__switch-hint">Instances with the Tailscale component join your tailnet with these tags.</span>
+            <span class="hf__switch-hint">{{ t('envs.host.tailscaleHint') }}</span>
           </span>
           <button
             type="button"
@@ -376,13 +380,13 @@ function close() {
         </div>
 
         <template v-if="tsOn">
-          <UiField label="Tags" for="hf-tags" hint="Separate with spaces. Your tailnet's ACLs decide what tagged devices may reach." :error="errorFor('tags')">
+          <UiField :label="t('envs.host.tags')" for="hf-tags" :hint="t('envs.host.tagsHint')" :error="errorFor('tags')">
             <input id="hf-tags" v-model="tsTags" class="input hf__mono" type="text" placeholder="tag:mango" autocomplete="off" spellcheck="false">
           </UiField>
           <UiField
-            label="Auth key file on the server"
+            :label="t('envs.host.authKey')"
             for="hf-tskey"
-            hint="Optional. A file on the server holding a Tailscale auth key. It is read there, during install; Mango never reads or stores the key. Leave empty to sign in with a link instead."
+            :hint="t('envs.host.authKeyHint')"
             :error="errorFor('authKeyFile')"
           >
             <input
@@ -410,14 +414,14 @@ function close() {
         class="hf__check"
         :loading="busy === 'check' || probing"
         :disabled="!!busy"
-        title="Save the server and test the connection: the state of Incus and its remotes show above"
+        :title="t('envs.host.checkTitle')"
         @click="check"
       >
-        Save and check
+        {{ t('envs.host.check') }}
       </UiButton>
-      <UiButton variant="ghost" :disabled="!!busy" @click="close">{{ adding && editing ? 'Close' : 'Cancel' }}</UiButton>
+      <UiButton variant="ghost" :disabled="!!busy" @click="close">{{ adding && editing ? t('common.actions.close') : t('common.actions.cancel') }}</UiButton>
       <UiButton variant="primary" type="submit" form="env-host-form" :loading="busy === 'save'" :disabled="busy === 'check'">
-        {{ adding ? (editing ? (setupNext ?? 'Done') : 'Add server') : 'Save' }}
+        {{ adding ? (editing ? (setupNext ?? t('common.actions.done')) : t('envs.common.addServer')) : t('common.actions.save') }}
       </UiButton>
     </template>
   </UiDialog>

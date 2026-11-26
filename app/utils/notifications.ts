@@ -1,5 +1,36 @@
 import type { Message, Part } from '~/types/chat'
-import type { NotifyPrefs } from '~/stores/workspace'
+
+export interface NotifyPrefs {
+  /** Master switch. */
+  enabled: boolean
+  /** A chat finished its turn. */
+  done: boolean
+  /** A chat needs an approval or an answer. */
+  needsYou: boolean
+  /** A chat's run failed. */
+  failed: boolean
+  /** Only while Mango's window is in the background or minimised. */
+  backgroundOnly: boolean
+  /** Name the chat and quote the reply; off, the notification only says what happened. */
+  preview: boolean
+  /** The system's notification sound. */
+  sound: boolean
+}
+
+/** Preferences from whatever was saved: every switch has a default, so older data loads. */
+export const notifyPrefsOf = (raw: unknown): NotifyPrefs => {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
+  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
+  return {
+    enabled: on(o.enabled, true),
+    done: on(o.done, true),
+    needsYou: on(o.needsYou, true),
+    failed: on(o.failed, true),
+    backgroundOnly: on(o.backgroundOnly, true),
+    preview: on(o.preview, true),
+    sound: on(o.sound, false),
+  }
+}
 
 /**
  * What is worth a desktop notification, and what it says (pure: `composables/notify.ts` sends it).
@@ -49,10 +80,15 @@ function lastProblem(messages: Message[]): string {
   return note ? plainExcerpt(note.text, 140) : ''
 }
 
-const PLAIN: Record<NotifyKind, string> = {
-  done: 'A chat finished.',
-  needsYou: 'A chat is waiting for you.',
-  failed: 'A chat failed.',
+/** What a notification says in its own words: alone (`plain`), or before the chat's (`lead`). */
+export interface NotifyWords {
+  plain: Record<NotifyKind, string>
+  lead: Record<NotifyKind, string>
+}
+
+const ENGLISH: NotifyWords = {
+  plain: { done: 'A chat finished.', needsYou: 'A chat is waiting for you.', failed: 'A chat failed.' },
+  lead: { done: 'Finished', needsYou: 'Needs your approval', failed: 'Failed' },
 }
 
 /**
@@ -64,11 +100,12 @@ export function notificationFor(
   thread: { title: string; messages: Message[] },
   prefs: NotifyPrefs,
   ctx: NotifyContext,
+  words: NotifyWords = ENGLISH,
 ): { title: string; body: string } | null {
   if (!prefs.enabled || !prefs[kind]) return null
   if (ctx.windowFocused && (prefs.backgroundOnly || ctx.chatVisible)) return null
-  if (!prefs.preview) return { title: 'Mango', body: PLAIN[kind] }
+  if (!prefs.preview) return { title: 'Mango', body: words.plain[kind] }
   const detail = kind === 'done' ? lastReply(thread.messages) : kind === 'needsYou' ? pendingAsk(thread.messages) : lastProblem(thread.messages)
-  const lead = kind === 'done' ? 'Finished' : kind === 'needsYou' ? 'Needs your approval' : 'Failed'
+  const lead = words.lead[kind]
   return { title: thread.title, body: detail ? `${lead}: ${detail}` : `${lead}.` }
 }

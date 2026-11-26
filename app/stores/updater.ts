@@ -1,6 +1,8 @@
 import { defineStore } from 'pinia'
+import { t } from '~/i18n'
 import type { UpdateInfo, UpdateProgress } from '~/types/ipc'
 import { call, on } from '~/composables/useBackend'
+import { useWindows } from '~/stores/windows'
 
 /**
  * Self-update from GitHub releases. Checks shortly after launch and then every
@@ -111,14 +113,21 @@ export const useUpdater = defineStore('updater', {
       this.phase = 'downloading'
       this.progress = { downloaded: 0, total: null }
       this.error = null
+      // Installing ends Mango without asking any window.
+      if (!await this._allSaved()) return
       unlisten?.()
       unlisten = await on('update://progress', p => {
         this.progress = p
         if (p.total && p.downloaded >= p.total) this.phase = 'restarting'
       })
       try {
-        await call('update_install')
+        await call('update_download')
         this.phase = 'restarting'
+        // Before the files: saving those is the last thing before the restart.
+        await useWindows().pluginsEverywhere()
+        // What was typed while it downloaded.
+        if (!await this._allSaved()) return
+        await call('update_install')
       } catch (e) {
         this.error = message(e)
         this.installFailed = true
@@ -127,6 +136,16 @@ export const useUpdater = defineStore('updater', {
         unlisten?.()
         unlisten = undefined
       }
+    },
+
+    /** Every window's files are saved. Otherwise the update waits, saying which file isn't. */
+    async _allSaved(): Promise<boolean> {
+      const unsaved = await useWindows().saveEverywhere()
+      if (!unsaved.length) return true
+      this.error = t('shell.update.saveFirst', { file: unsaved[0]! })
+      this.installFailed = true
+      this.phase = 'error'
+      return false
     },
   },
 })

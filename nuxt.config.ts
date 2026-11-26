@@ -20,6 +20,7 @@ export default defineNuxtConfig({
   ssr: false,
   devtools: { enabled: false },
   modules: ['@pinia/nuxt'],
+  imports: { presets: [{ from: 'vue-i18n', imports: ['useI18n'] }] },
   css: [
     '@fontsource-variable/inter',
     '@fontsource-variable/jetbrains-mono',
@@ -58,6 +59,15 @@ export default defineNuxtConfig({
         '@xterm/xterm',
         'lucide-vue-next',
         'marked',
+        'vue-i18n',
+        // Loaded when the first file opens: found then, Vite would reload the page under it.
+        'monaco-editor',
+        'monaco-editor/editor/browser/services/editorWorkerService',
+        'monaco-editor/editor/standalone/browser/standaloneServices',
+        'monaco-editor/internal/common/initialize',
+        'monaco-editor/languages/features/typescript/tsWorker',
+        'monaco-editor/platform/label/common/label',
+        'monaco-editor/platform/markdown/browser/markdownRenderer',
       ],
     },
   },

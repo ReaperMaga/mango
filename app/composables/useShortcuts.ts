@@ -1,12 +1,15 @@
+import { t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
 import { useBrowser } from '~/stores/browser'
+import { useGitLog } from '~/stores/gitLog'
 import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
-import { SHORTCUTS, eventCombo } from '~/utils/shortcuts'
+import { SHORTCUTS, eventCombo, ownsKey } from '~/utils/shortcuts'
+import { reg as pluginReg, report as reportPlugin } from '~/plugin-host/registry'
 
 /** True when the platform's primary modifier is held (Cmd on macOS, Ctrl elsewhere). */
 export const isMod = (e: KeyboardEvent | MouseEvent) =>
@@ -30,8 +33,17 @@ export async function openFolderFlow() {
 /** The system's folder picker, then open what was picked. */
 export async function openLocalFolder() {
   const ws = useWorkspace()
-  const path = await pickFolder('Open folder')
-  if (path) await ws.openProject(path)
+  const path = await pickFolder(t('shell.shortcuts.labels.open-folder'))
+  if (path) await ws.openProjectAsking(path)
+}
+
+/** The keys an editor claims for itself while the focus is in it (`data-own-keys`). */
+function keyClaims(target: EventTarget | null): string[] {
+  const claims: string[] = []
+  for (let el = target instanceof Element ? target.closest('[data-own-keys]') : null; el; el = el.parentElement?.closest('[data-own-keys]') ?? null) {
+    claims.push(el.getAttribute('data-own-keys') ?? '')
+  }
+  return claims
 }
 
 /**
@@ -67,12 +79,15 @@ export function useShortcuts() {
     changes: () => { if (ws.hasProject) ws.toggleGit() },
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject) ws.toggleLinks() },
+    releases: () => { if (ws.hasProject && ws.activeProject?.vcs !== 'plastic') ws.toggleReleases() },
+    'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.
     'save-file': () => {
       const id = threads.activePane.threadId
       if (isFileTab(id)) void useFiles().save(id)
     },
+    'find-chat': () => { findRequest.value++ },
     'new-terminal': () => ws.newTerminal(),
     'close-tab': () => {
       const id = threads.activePane.threadId
@@ -85,12 +100,27 @@ export function useShortcuts() {
     if (!isMod(e) || ws.recordingShortcut) return
     const combo = eventCombo(e)
     if (!combo) return
+    if (ownsKey(keyClaims(e.target), combo)) return
     const inTerminal = (e.target as HTMLElement | null)?.closest?.('.xterm')
 
-    const id = SHORTCUTS.find(s => ws.bindings[s.id] === combo)?.id
+    const builtin = SHORTCUTS.find(s => ws.bindings[s.id] === combo)?.id
       // Mod+J has always toggled the terminal too; unless the user gave it away.
       ?? (combo === 'Mod+J' ? 'terminal' : undefined)
-    const scope = id ? scopeOf.get(id) : undefined
+    // A plugin's shortcut (`plugin:<pluginId>.<id>`): bindings never give it a key a built-in has.
+    const plugin = builtin ? undefined : pluginReg.shortcuts.find(s => ws.bindings[s.fullId] === combo)
+    const id = builtin ?? plugin?.fullId
+    const scope = builtin ? scopeOf.get(builtin) : plugin ? plugin.scope ?? 'workspace' : undefined
+    if (plugin) {
+      const run = () => {
+        try { plugin.run() } catch (err) { reportPlugin(plugin.pluginId, err, `shortcut ${plugin.id}`) }
+      }
+      if (scope === 'always') { e.preventDefault(); e.stopPropagation(); run(); return }
+      if (inTerminal) return
+      if (scope === 'workspace' && ws.settings) return
+      e.preventDefault()
+      run()
+      return
+    }
 
     // 'always' works everywhere, including inside the terminal (xterm stops key events from
     // bubbling, hence the capture-phase listener below).
@@ -103,6 +133,8 @@ export function useShortcuts() {
     if (id) {
       // Close tab only claims the key when there is a tab to close.
       if (id === 'close-tab' && !threads.activePane.threadId) return
+      // Find in chat only claims the key in front of a chat: an editor, or a view with a search of its own, keeps its find.
+      if (id === 'find-chat' && (!threads.byId(threads.activePane.threadId) || (e.target as HTMLElement | null)?.closest?.('[data-own-find]'))) return
       e.preventDefault()
       actions[id]?.()
       return

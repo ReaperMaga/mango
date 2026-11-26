@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, ChevronDown, FileText, Mic, Paperclip, Square, ShieldCheck, X, Zap, Map as MapIcon, FilePen } from 'lucide-vue-next'
+import { ArrowUp, ChevronDown, FileText, Mic, Paperclip, Square, X } from 'lucide-vue-next'
 import type { UnlistenFn } from '@tauri-apps/api/event'
 import { useWorkspace } from '~/stores/workspace'
 import { useVoice } from '~/stores/voice'
@@ -7,13 +7,14 @@ import { useModels } from '~/stores/models'
 import { useCommands } from '~/stores/commands'
 import { useDictation } from '~/composables/useDictation'
 import { isMod, modLabel } from '~/composables/useShortcuts'
-import { AGENTS, effortLabel, type AgentId, type Attachment, type Thread } from '~/types/chat'
+import { AGENTS, EFFORT_LABELS, type AgentId, type Attachment, type ContextUsage, type Thread } from '~/types/chat'
 import { call, isTauri, pickFiles } from '~/composables/useBackend'
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, blobToBase64, formatSize, makeThumb, pastedName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { openImage } from '~/utils/imageViewer'
-import type { MenuItem } from '~/types/ui'
 import ChatCommandMenu, { type CommandMatch } from '~/components/chat/ChatCommandMenu.vue'
+import ChatRunMenu from '~/components/chat/ChatRunMenu.vue'
+import AgentIcon from '~/components/ui/AgentIcon.vue'
 
 /**
  * Message composer. With a thread it sends to that thread; without one
@@ -29,17 +30,30 @@ const props = withDefaults(defineProps<{
   autofocus?: boolean
   placeholder?: string
   large?: boolean
-}>(), { effort: null, busy: false, autofocus: false, large: false })
+  /** The chat's context window at its last reading (null: none yet). Left out: no meter (no chat yet). */
+  context?: ContextUsage | null
+  /** The context window is being read from the CLI. */
+  contextPending?: boolean
+  /** The chat already has messages (switching agent starts a new conversation). */
+  started?: boolean
+  /** What was written in this chat, newest first: Arrow Up in an empty field brings it back. */
+  history?: string[]
+}>(), { effort: null, busy: false, autofocus: false, large: false, started: false, history: () => [] })
 
 const emit = defineEmits<{
   /** `opposite`: the other follow-up behaviour, for this message only. */
   send: [text: string, attachments: Attachment[], opposite: boolean]
   stop: []
+  /** Compact the conversation (`/compact`), from the context meter. */
+  compact: []
   'update:model': [model: string]
+  /** A model of another agent: the chat (or the draft) moves to that agent. */
+  'update:agent': [agent: AgentId, model: string]
   'update:effort': [effort: string | null]
   'update:mode': [mode: Thread['mode']]
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const text = defineModel<string>('text', { default: '' })
 const ta = ref<HTMLTextAreaElement | null>(null)
@@ -63,8 +77,25 @@ function submit(opposite = false) {
   armFiles()
 }
 
+/* Arrow Up in an empty field recalls what you sent before, and Arrow Down goes back; typing anything leaves it. */
+let recall = -1
+let recalled = ''
+let unsent = ''
+function onHistoryKey(e: KeyboardEvent): boolean {
+  if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || e.isComposing || !props.history.length) return false
+  if (recall >= 0 && text.value !== recalled) recall = -1 // edited since: it is a draft again
+  if (recall < 0 && (e.key === 'ArrowDown' || text.value.trim() || attachments.value.length)) return false
+  e.preventDefault()
+  if (recall < 0) unsent = text.value
+  recall = Math.max(-1, Math.min(props.history.length - 1, recall + (e.key === 'ArrowUp' ? 1 : -1)))
+  recalled = recall < 0 ? unsent : props.history[recall]!
+  text.value = recalled
+  return true
+}
+
 function onKey(e: KeyboardEvent) {
   if (menuOpen.value && onMenuKey(e)) return
+  if (onHistoryKey(e)) return
   if (e.code === 'Space' && e.shiftKey && isMod(e)) {
     e.preventDefault()
     toggleDictation()
@@ -198,7 +229,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
   if (!jobs.length) return
   attachError.value = null
   const room = Math.max(0, MAX_ATTACHMENTS - attachments.value.length - pending.value.length)
-  if (jobs.length > room) attachError.value = `A message can carry up to ${MAX_ATTACHMENTS} attachments.`
+  if (jobs.length > room) attachError.value = t('chat.composer.tooMany', { n: MAX_ATTACHMENTS })
   await Promise.all(jobs.slice(0, room).map(async (job) => {
     const key = ++pendingKey
     pending.value = [...pending.value, { key, name: job.name }]
@@ -207,7 +238,7 @@ async function attach(jobs: { name: string; store: () => Promise<Attachment> }[]
       const a = await job.store()
       attachments.value = [...attachments.value, a]
     } catch (e) {
-      attachError.value = `Could not attach ${job.name}. ${errText(e)}`
+      attachError.value = t('chat.composer.attachFailed', { name: job.name, error: errText(e) })
     } finally {
       pending.value = pending.value.filter(p => p.key !== key)
       armFiles()
@@ -222,7 +253,7 @@ const fromFile = (file: File, index: number) => {
   return {
     name,
     store: async (): Promise<Attachment> => {
-      if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(`It is ${formatSize(file.size)}; the limit is ${formatSize(MAX_ATTACHMENT_BYTES)}.`)
+      if (file.size > MAX_ATTACHMENT_BYTES) throw new Error(t('chat.composer.tooBig', { size: formatSize(file.size), limit: formatSize(MAX_ATTACHMENT_BYTES) }))
       const data = await blobToBase64(file)
       const info = await call('attachment_save', { name, data })
       return { ...info, thumb: await makeThumb(info.mime, data) }
@@ -420,16 +451,16 @@ const { phase: dictationPhase, error: dictationError } = dictation
 const listening = computed(() => dictationPhase.value === 'recording' || dictationPhase.value === 'starting')
 const dictationShortcut = computed(() => `${modLabel()}+Shift+Space`)
 const micLabel = computed(() => {
-  if (listening.value) return 'Stop and transcribe'
-  if (dictationPhase.value === 'transcribing') return 'Transcribing…'
-  return voice.ready ? 'Dictate' : 'Set up voice input'
+  if (listening.value) return t('chat.composer.stopTranscribe')
+  if (dictationPhase.value === 'transcribing') return t('chat.composer.transcribing')
+  return voice.ready ? t('chat.composer.dictate') : t('chat.composer.setUpVoice')
 })
 const elapsed = computed(() => {
   const s = dictation.seconds.value
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 })
 /** Five bars, each lit once the level passes its step. */
-const bars = computed(() => [0.08, 0.2, 0.35, 0.55, 0.75].map(t => dictation.level.value > t))
+const bars = computed(() => [0.08, 0.2, 0.35, 0.55, 0.75].map(step => dictation.level.value > step))
 
 async function toggleDictation() {
   if (dictationPhase.value === 'idle') {
@@ -460,73 +491,55 @@ defineExpose({ focus: () => ta.value?.focus() })
 /* ---------- model and effort: the lists come from the CLI itself (stores/models.ts) ---------- */
 
 const models = useModels()
-const refreshModels = () => void models.refresh(props.agent, ws.activeProjectPath)
-watch(() => props.agent, refreshModels, { immediate: true })
+/** Where the chat's agent runs decides its models: a remote project's CLI may offer others than this computer's. */
+const where = computed(() => ws.activeProjectPath)
+watch(() => [props.agent, where.value] as const, ([agent, cwd]) => void models.refresh(agent, cwd), { immediate: true })
 watch(() => [props.agent, ws.activeProjectPath] as const, ([agent, cwd]) => void commands.refresh(agent, cwd), { immediate: true })
 
-const modelItems = computed<MenuItem[]>(() => {
-  const list = models.list(props.agent)
-  // Claude Code lists its aliases first, then pinned versions: set those apart.
-  const firstPinned = list.findIndex(m => m.id.startsWith('claude-'))
-  return list.map((m, i) => ({
-    label: m.label,
-    hint: m.hint,
-    checked: props.model === m.id,
-    divider: i > 0 && i === firstPinned,
-    onSelect: () => {
-      emit('update:model', m.id)
-      if (props.effort && !(m.efforts ?? []).includes(props.effort)) emit('update:effort', null)
-    },
-  }))
-})
+/** A model picked in the run menu: the chat's own agent keeps its effort if the new model takes it. */
+function pickModel(agent: AgentId, id: string) {
+  if (agent !== props.agent) {
+    emit('update:agent', agent, id)
+    return
+  }
+  emit('update:model', id)
+  if (props.effort && !models.efforts(agent, id, where.value).includes(props.effort)) emit('update:effort', null)
+}
 
-const efforts = computed(() => models.efforts(props.agent, props.model))
+const efforts = computed(() => models.efforts(props.agent, props.model, where.value))
 /** The level the CLI picks when none is chosen, when it says (both report it with their model lists). */
-const fallbackEffort = computed(() => models.find(props.agent, props.model)?.defaultEffort)
-/** How full the meter is: the level the chat runs at (chosen, else the CLI's default), else empty. */
-const effortMeter = computed(() => {
-  const level = props.effort ?? fallbackEffort.value
-  return { value: level ? efforts.value.indexOf(level) + 1 : 0, max: efforts.value.length }
-})
+const fallbackEffort = computed(() => models.find(props.agent, props.model, where.value)?.defaultEffort)
 /**
  * The level the chat runs at: the chosen one, else the CLI's default.
  * Until the CLI has answered (or for a model it gives no default for) that reads "Default".
  */
 const effortText = computed(() => {
   const level = props.effort ?? fallbackEffort.value
-  return level ? effortLabel(level) : 'Default'
+  if (!level) return t('chat.effort.default')
+  return EFFORT_LABELS[level] ? t(`chat.effort.levels.${level}`) : level
 })
 const effortTitle = computed(() => {
-  if (props.effort) return `Effort: ${effortText.value}`
-  const usual = `${AGENTS[props.agent].name}'s default`
-  return fallbackEffort.value ? `Effort: ${effortText.value} (${usual})` : `Effort: ${usual}`
+  if (props.effort) return t('chat.effort.is', { level: effortText.value })
+  const agent = AGENTS[props.agent].name
+  return fallbackEffort.value ? t('chat.effort.isDefaultLevel', { level: effortText.value, agent }) : t('chat.effort.isDefault', { agent })
 })
-
-const modes = {
-  plan: { label: 'Plan', hint: 'Read-only: explores and proposes a plan', icon: MapIcon },
-  ask: { label: 'Ask first', hint: 'Asks before edits and commands', icon: ShieldCheck },
-  edits: { label: 'Accept edits', hint: 'Edits files freely, asks before commands', icon: FilePen },
-  auto: { label: 'Full auto', hint: 'Never asks. Use with care.', icon: Zap },
-} as const
-const modeItems = computed<MenuItem[]>(() => (Object.keys(modes) as Thread['mode'][]).map(k => ({
-  label: modes[k].label,
-  hint: modes[k].hint,
-  icon: modes[k].icon,
-  checked: props.mode === k,
-  onSelect: () => emit('update:mode', k),
-})))
+const runTitle = computed(() => [
+  `${AGENTS[props.agent].name}: ${models.label(props.agent, props.model, where.value)}`,
+  ...(efforts.value.length ? [effortTitle.value] : []),
+  t('chat.composer.permissions', { mode: t(`general.modes.${props.mode}.label`) }),
+].join('\n'))
 
 const ph = computed(() => props.placeholder ?? (props.busy
   ? ws.followUp === 'steer'
-    ? `Steer ${AGENTS[props.agent].name}: it reads your message at its next step…`
-    : `Write the next message: it is sent when ${AGENTS[props.agent].name} is done…`
-  : `Ask ${AGENTS[props.agent].name} to build, fix or explain, or type / for commands…`))
+    ? t('chat.composer.steerPlaceholder', { agent: AGENTS[props.agent].name })
+    : t('chat.composer.queuePlaceholder', { agent: AGENTS[props.agent].name })
+  : t('chat.composer.placeholder', { agent: AGENTS[props.agent].name })))
 const sendKeyName = computed(() => (ws.sendKey === 'enter' ? 'Enter' : `${modLabel()}+Enter`))
 const sendTitle = computed(() => (props.busy
   ? ws.followUp === 'steer'
-    ? `Steer: ${AGENTS[props.agent].name} reads it at its next step (${sendKeyName.value})`
-    : `Queue it: sent when ${AGENTS[props.agent].name} is done (${sendKeyName.value})`
-  : `Send (${sendKeyName.value})`))
+    ? t('chat.composer.steerTitle', { agent: AGENTS[props.agent].name, key: sendKeyName.value })
+    : t('chat.composer.queueTitle', { agent: AGENTS[props.agent].name, key: sendKeyName.value })
+  : t('chat.composer.sendTitle', { key: sendKeyName.value })))
 </script>
 
 <template>
@@ -538,7 +551,7 @@ const sendTitle = computed(() => (props.busy
     @click.self="ta?.focus()"
   >
     <Transition :css="false" @enter="(el, done) => slideFiles(el, true, done)" @leave="(el, done) => slideFiles(el, false, done)">
-      <ul v-if="attachments.length || pending.length" class="cp__files" aria-label="Attachments">
+      <ul v-if="attachments.length || pending.length" class="cp__files" :aria-label="t('chat.attachments')">
         <li
           v-for="a in attachments"
           :key="a.id"
@@ -546,7 +559,7 @@ const sendTitle = computed(() => (props.busy
           :class="{ 'cp__file--image': a.thumb }"
           :title="`${a.name} · ${formatSize(a.size)}`"
         >
-          <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="`View ${a.name}`" @click="viewAttachment(a.id)">
+          <button v-if="a.thumb" type="button" class="cp__thumb-btn" :aria-label="t('chat.view', { name: a.name })" @click="viewAttachment(a.id)">
             <img class="cp__thumb" :src="a.thumb" alt="">
           </button>
           <template v-else>
@@ -556,20 +569,20 @@ const sendTitle = computed(() => (props.busy
               <span class="cp__file-size tabular">{{ formatSize(a.size) }}</span>
             </span>
           </template>
-          <button type="button" class="cp__file-x" :aria-label="`Remove ${a.name}`" @click="removeAttachment(a.id)">
+          <button type="button" class="cp__file-x" :aria-label="t('chat.composer.remove', { name: a.name })" @click="removeAttachment(a.id)">
             <X />
           </button>
         </li>
-        <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="`Attaching ${p.name}…`">
+        <li v-for="p in pending" :key="p.key" class="cp__file is-pending" :title="t('chat.composer.attachingName', { name: p.name })">
           <span class="cp__spin" aria-hidden="true" />
           <span class="cp__file-meta">
             <span class="cp__file-name">{{ p.name }}</span>
-            <span class="cp__file-size">Attaching…</span>
+            <span class="cp__file-size">{{ t('chat.composer.attaching') }}</span>
           </span>
         </li>
       </ul>
     </Transition>
-    <p v-if="dropping" class="cp__drop" aria-hidden="true">Drop files to attach</p>
+    <p v-if="dropping" class="cp__drop" aria-hidden="true">{{ t('chat.composer.drop') }}</p>
     <input ref="fileInput" type="file" multiple hidden @change="onFileInput">
     <textarea
       ref="ta"
@@ -601,57 +614,44 @@ const sendTitle = computed(() => (props.busy
       @pick="i => pickCommand(i, true)"
     />
     <div class="cp__bar">
-      <UiMenu :items="modelItems" placement="top-start" :width="270" :max-height="360" label="Model">
-        <template #default="{ toggle, open }">
-          <button type="button" class="cp__chip" :class="{ 'is-open': open }" @click="() => { toggle(); refreshModels() }">
-            <span class="cp__chip-text">{{ models.label(agent, model) }}</span>
-            <ChevronDown />
-          </button>
-        </template>
-      </UiMenu>
-      <ChatEffort
-        v-if="efforts.length"
+      <ChatRunMenu
+        :agent="agent"
+        :model="model"
+        :mode="mode"
+        :effort="effort"
         :efforts="efforts"
-        :model-value="effort"
-        :fallback="fallbackEffort"
-        :agent-name="AGENTS[agent].name"
-        @update:model-value="e => emit('update:effort', e)"
+        :fallback-effort="fallbackEffort"
+        :effort-text="effortText"
+        :busy="busy"
+        :started="started"
+        @pick="pickModel"
+        @update:effort="e => emit('update:effort', e)"
+        @update:mode="m => emit('update:mode', m)"
       >
         <template #default="{ toggle, open }">
-          <button
-            type="button"
-            class="cp__chip"
-            :class="{ 'is-open': open, 'is-default': !effort }"
-            :title="effortTitle"
-            @click="toggle"
-          >
-            <UiLevel class="cp__effort" size="sm" :value="effortMeter.value" :max="effortMeter.max" />
-            <span class="cp__chip-text cp__mode-text">{{ effortText }}</span>
+          <button type="button" class="cp__chip cp__run" :class="{ 'is-open': open }" :title="runTitle" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
+            <AgentIcon :agent="agent" class="cp__agent" />
+            <span class="cp__chip-text">{{ models.label(agent, model, where) }}</span>
+            <span class="cp__run-more cp__mode-text">
+              <template v-if="efforts.length && (effort || fallbackEffort)"><span class="cp__dot" aria-hidden="true">·</span>{{ effortText }}</template>
+              <span class="cp__dot" aria-hidden="true">·</span><span :class="{ 'cp__auto': mode === 'auto' }">{{ t(`general.modes.${mode}.label`) }}</span>
+            </span>
             <ChevronDown />
           </button>
         </template>
-      </ChatEffort>
-      <UiMenu :items="modeItems" placement="top-start" :width="290" label="Permissions">
-        <template #default="{ toggle, open }">
-          <button type="button" class="cp__chip" :class="[{ 'is-open': open }, `cp__chip--mode-${mode}`]" :title="`Permissions: ${modes[mode].label}`" @click="toggle">
-            <component :is="modes[mode].icon" />
-            <span class="cp__chip-text cp__mode-text">{{ modes[mode].label }}</span>
-            <ChevronDown />
-          </button>
-        </template>
-      </UiMenu>
+      </ChatRunMenu>
 
       <span class="cp__spacer" />
       <div class="cp__voice" role="status" aria-live="polite">
         <template v-if="listening">
           <span class="cp__rec" aria-hidden="true" />
-          <span class="cp__time tabular" aria-label="Recording">{{ elapsed }}</span>
+          <span class="cp__time tabular" :aria-label="t('chat.composer.recording')">{{ elapsed }}</span>
           <span class="cp__meter" aria-hidden="true">
             <span v-for="(on, i) in bars" :key="i" class="cp__level" :class="{ 'is-on': on }" />
           </span>
         </template>
         <span v-else-if="dictationPhase === 'transcribing'" class="cp__voice-text">
-          <span class="cp__spin" aria-hidden="true" />Transcribing…
+          <span class="cp__spin" aria-hidden="true" />{{ t('chat.composer.transcribing') }}
         </span>
         <span v-else-if="dictationError" class="cp__voice-text cp__voice-text--error" :title="dictationError">
           {{ dictationError }}
@@ -660,17 +660,25 @@ const sendTitle = computed(() => (props.busy
           {{ attachError }}
         </span>
       </div>
+      <ChatContext
+        v-if="context !== undefined && !listening"
+        :usage="context"
+        :pending="contextPending"
+        :agent-name="AGENTS[agent].name"
+        :busy="busy"
+        @compact="emit('compact')"
+      />
       <UiIconButton
         v-if="listening"
         class="cp__keep"
         size="sm"
-        label="Discard recording"
+        :label="t('chat.composer.discard')"
         shortcut="Esc"
         @click="dictation.cancel()"
       >
         <X />
       </UiIconButton>
-      <UiIconButton v-else size="sm" label="Attach files or paste an image" @click="pick"><Paperclip /></UiIconButton>
+      <UiIconButton v-else size="sm" :label="t('chat.composer.attach')" @click="pick"><Paperclip /></UiIconButton>
       <button
         type="button"
         class="cp__mic"
@@ -688,8 +696,8 @@ const sendTitle = computed(() => (props.busy
         v-if="busy"
         type="button"
         class="cp__send cp__send--stop"
-        aria-label="Stop"
-        title="Stop (Esc)"
+        :aria-label="t('chat.stop')"
+        :title="t('chat.composer.stopTitle')"
         @click="emit('stop')"
       >
         <Square />
@@ -699,7 +707,7 @@ const sendTitle = computed(() => (props.busy
         type="submit"
         class="cp__send"
         :disabled="!canSend"
-        :aria-label="busy ? 'Add to the queue' : 'Send'"
+        :aria-label="busy ? t('chat.composer.queue') : t('chat.composer.send')"
         :title="sendTitle"
       >
         <ArrowUp />
@@ -823,7 +831,7 @@ const sendTitle = computed(() => (props.busy
   transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 .cp__chip-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.cp__bar :deep(.menu), .cp__bar :deep(.ef-anchor) { flex: 0 1 auto; }
+.cp__bar :deep(.run-anchor) { flex: 0 1 auto; }
 .cp__chip { min-width: 0; max-width: 100%; }
 .cp__chip svg { flex: none; }
 /* Narrow panes (split view at small window sizes): keep the model, drop the rest to icons. */
@@ -834,8 +842,10 @@ const sendTitle = computed(() => (props.busy
 }
 .cp__chip:hover, .cp__chip.is-open { background: var(--bg-hover); color: var(--fg); }
 .cp__chip svg { width: 12px; height: 12px; stroke-width: 2; opacity: 0.7; }
-.cp__effort { margin-right: 1px; }
-.cp__chip--mode-auto svg:first-child { color: var(--accent-ink); opacity: 1; }
+.cp__chip .cp__agent { width: 13px; height: 13px; opacity: 1; }
+.cp__run-more { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; overflow: hidden; white-space: nowrap; font-weight: 450; }
+.cp__dot { color: var(--fg-faint); }
+.cp__auto { color: var(--accent-ink); font-weight: 540; }
 
 .cp__voice {
   display: flex;

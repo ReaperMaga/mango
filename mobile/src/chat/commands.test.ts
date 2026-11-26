@@ -28,7 +28,7 @@ describe('commandsFor', () => {
   it("uses the CLI's list when there is one, and a Mango name stays Mango's", () => {
     const live: AgentCommand[] = [{ name: 'clear', description: 'CLI clear' }, { name: 'deploy' }]
     const list = commandsFor('claude', live)
-    expect(list.map(c => c.name)).toEqual(['clear', 'create-pr', 'deploy'])
+    expect(list.map(c => c.name)).toEqual(['clear', 'create-pr', 'create-release', 'deploy'])
     expect(list[0]!.mango).toBe(true)
   })
 })

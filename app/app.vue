@@ -6,13 +6,18 @@ import { useEnvironments } from '~/stores/environments'
 import { useBrowser } from '~/stores/browser'
 import { useWindows } from '~/stores/windows'
 import { useConnectivity } from '~/stores/connectivity'
-import { on } from '~/composables/useBackend'
+import { on, appWindow } from '~/composables/useBackend'
+import { usePluginRuntime } from '~/plugin-host/runtime'
+import PluginLayers from '~/plugin-host/ui/PluginLayers.vue'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const updater = useUpdater()
 const win = useWindows()
 const ready = ref(false)
+const nuxtApp = useNuxtApp()
+const buildVersion = useBuildInfo().version
 // Remote projects' chats, kept in their environments: looked at once the chats and projects are loaded.
 useRemoteChatSync(ready)
 // Which environments' servers are reachable; what a dropped connection broke picks up when one is back.
@@ -32,14 +37,23 @@ onMounted(async () => {
   if (win.isMain) updater.start()
   // Drops the webviews a reloaded UI left behind, then listens for pages and agents.
   void useBrowser().init()
+  // Plugins start once the chats and projects they may look at are there.
+  void usePluginRuntime().start({ app: nuxtApp.vueApp, version: buildVersion })
 })
 
 useShortcuts()
+useAutoSave()
+useIdleCompaction()
+
+/* The window's title is the project it shows (the taskbar, Alt+Tab and window previews read it). */
+watch(() => ws.activeProject?.name, (name) => {
+  void appWindow.setTitle(name || 'Mango').catch(() => {})
+}, { immediate: true })
 
 /* Something this window could not take over (a chat still running in another window). */
 watch(() => win.refused, (reason) => {
   if (!reason) return
-  ws.notify('Opened in another window', reason)
+  ws.notify(t('shell.windows.openedElsewhere'), reason)
   win.refused = null
 })
 
@@ -83,9 +97,11 @@ onBeforeUnmount(() => unlistenJoin?.())
     <SetupGettingStarted />
     <UsageDialog />
     <ConfirmDialog />
+    <OpenWhereDialog />
     <SettingsView />
     <CommandPalette />
     <UiImageViewer />
+    <PluginLayers />
   </div>
 </template>
 

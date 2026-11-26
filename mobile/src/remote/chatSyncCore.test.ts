@@ -146,6 +146,49 @@ describe('mirroring', () => {
     expect(phone.threads.has('a')).toBe(false)
   })
 
+  it('keeps sending a running chat after another device saved it, and keeps its messages when the run ends', async () => {
+    const { files, backend } = environment()
+    const phone = device('phone-1', backend)
+    const desk = device('6f1c-22', backend)
+    await phone.sync.attachRemoteChats(phone.source)
+    await desk.sync.attachRemoteChats(desk.source)
+    const say = (t: Thread, n: number): Thread => ({
+      ...t, updatedAt: t.updatedAt + 1,
+      messages: [...t.messages, { id: `r${n}`, role: 'agent', createdAt: n, parts: [{ type: 'text', text: `reply ${n}` }] }],
+    })
+
+    // The desktop runs a chat and streams its first reply into the environment.
+    let run = say({ ...chat('r', desk.path('/home/agent/shop')), seen: false }, 1)
+    desk.busy.add('r')
+    desk.threads.set('r', run)
+    desk.sync.noteSaved([run], [])
+    await vi.advanceTimersByTimeAsync(3000)
+
+    // The phone opens it, which marks it seen: a new revision from the phone.
+    await phone.sync.syncEnv(phone.at)
+    const seen = { ...phone.threads.get('r')!, seen: true }
+    phone.threads.set('r', seen)
+    phone.sync.noteSaved([seen], [])
+    await vi.advanceTimersByTimeAsync(3000)
+
+    // The run goes on: its sends are refused once, then win.
+    for (const n of [2, 3]) {
+      run = say(desk.threads.get('r')!, n)
+      desk.threads.set('r', run)
+      desk.sync.noteSaved([run], [])
+      await vi.advanceTimersByTimeAsync(3000)
+      await vi.advanceTimersByTimeAsync(3000)
+    }
+    expect((files.get('r') as { json: string }).json).toContain('reply 3')
+    await phone.sync.syncEnv(phone.at)
+    expect(phone.threads.get('r')?.messages.map(m => m.id)).toEqual(['r-m', 'r1', 'r2', 'r3'])
+
+    // The run ends: the desktop keeps its own messages rather than taking the phone's older copy back.
+    desk.busy.delete('r')
+    await desk.sync.syncEnv(desk.at)
+    expect(desk.threads.get('r')?.messages.map(m => m.id)).toEqual(['r-m', 'r1', 'r2', 'r3'])
+  })
+
   it('sends what the environment lacks, and keeps pending work across a restart', async () => {
     const { files, backend } = environment()
     const storage = memory()

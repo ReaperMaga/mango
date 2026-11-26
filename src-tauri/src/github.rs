@@ -11,14 +11,16 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::git::{blocking, run_process, At, Output};
+use crate::gitlab::{self, Forge, GlabAt, Provider};
+use crate::gitlab_items::{self, Route};
 
-const TIMEOUT: Duration = Duration::from_secs(45);
+pub(crate) const TIMEOUT: Duration = Duration::from_secs(45);
 /// A pull request with a long description and many images is still far below this.
-const STDOUT_CAP: usize = 8 * 1024 * 1024;
+pub(crate) const STDOUT_CAP: usize = 8 * 1024 * 1024;
 
-const MISSING: &str = "The GitHub CLI (gh) is not installed. Install it from https://cli.github.com, \
-     then sign in with `gh auth login` in the terminal.";
-const SIGNED_OUT: &str = "The GitHub CLI is not signed in. Run `gh auth login` in the terminal, then try again.";
+pub(crate) const MISSING: &str = "The GitHub CLI (gh) is not installed. Install it from Settings > Git hosting \
+     (or https://cli.github.com), then sign in there.";
+const SIGNED_OUT: &str = "The GitHub CLI is not signed in. Sign in from Settings > Git hosting, then try again.";
 const BAD_REFERENCE: &str =
     "Paste a pull request or issue link (https://github.com/owner/repo/pull/12) or its number (#12).";
 
@@ -59,7 +61,9 @@ pub struct GhCheck {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GhItem {
-    /// "pr" or "issue".
+    /// "github" or "gitlab" (`Provider::id`).
+    pub provider: &'static str,
+    /// "pr" or "issue" (a GitLab merge request is a "pr").
     pub kind: &'static str,
     pub url: String,
     pub host: String,
@@ -187,7 +191,7 @@ fn gh_bin() -> PathBuf {
 }
 
 /// A `gh` invocation that never prompts and never prints colour or update notices.
-fn gh(dir: Option<&Path>) -> Command {
+pub(crate) fn gh(dir: Option<&Path>) -> Command {
     let bin = gh_bin();
     let mut cmd = Command::new(&bin);
     crate::bin::hide_console(&mut cmd);
@@ -234,11 +238,22 @@ fn run(cmd: Command, target: Option<&Target>) -> Result<Value, String> {
     serde_json::from_slice(&out.stdout).map_err(|e| format!("The GitHub CLI answered with something unexpected: {e}"))
 }
 
-const NO_REPO: &str = "Could not tell which GitHub repository this project belongs to; paste the full link instead.";
+/// A `gh api` call whose answer is JSON, for the other GitHub modules (releases).
+pub(crate) fn run_json(cmd: Command) -> Result<Value, String> {
+    run(cmd, None)
+}
+
+/// A `gh api` call that answers with nothing worth reading (a POST that starts something).
+pub(crate) fn run_ok(cmd: Command) -> Result<(), String> {
+    let out = run_process(cmd, None, STDOUT_CAP, TIMEOUT, "gh", MISSING)?;
+    if out.ok() { Ok(()) } else { Err(gh_error(&out, None)) }
+}
+
+pub(crate) const NO_REPO: &str = "Could not tell which GitHub repository this project belongs to; paste the full link instead.";
 
 /// The GitHub repository the project belongs to: for a folder on this computer as `gh` picks it,
 /// for a remote project from the git remotes inside its environment.
-fn project_repo(app: &AppHandle, path: &str) -> Result<(String, String, String), String> {
+pub(crate) fn project_repo(app: &AppHandle, path: &str) -> Result<(String, String, String), String> {
     if let Some(env) = crate::vcs::env_at(app, path) {
         return env_repo(&At::Env(Box::new(env?)));
     }
@@ -280,7 +295,7 @@ fn env_repo(at: &At) -> Result<(String, String, String), String> {
 }
 
 /// `git remote -v` as (name, url) pairs, fetch URLs only.
-fn parse_remotes(list: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_remotes(list: &str) -> Vec<(String, String)> {
     list.lines()
         .filter_map(|line| {
             let mut parts = line.split_whitespace();
@@ -390,7 +405,7 @@ fn fetch(target: &Target) -> Result<GhItem, String> {
     item_from_json(&v, target)
 }
 
-fn text(v: &Value) -> String {
+pub(crate) fn text(v: &Value) -> String {
     v.as_str().unwrap_or_default().to_string()
 }
 
@@ -398,7 +413,7 @@ fn lower(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_ascii_lowercase)
 }
 
-fn some_text(v: &Value) -> Option<String> {
+pub(crate) fn some_text(v: &Value) -> Option<String> {
     v.as_str().filter(|s| !s.is_empty()).map(str::to_string)
 }
 
@@ -499,6 +514,7 @@ fn item_from_json(v: &Value, target: &Target) -> Result<GhItem, String> {
         format!("https://{}/{}/{}/{kind}/{}", target.host, target.owner, target.repo, target.number)
     });
     Ok(GhItem {
+        provider: "github",
         kind: if is_pr { "pr" } else { "issue" },
         url,
         host: target.host.clone(),
@@ -546,7 +562,7 @@ fn item(reference: &str, repo: impl FnOnce() -> Result<(String, String, String),
     fetch(&target_of(reference, repo)?)
 }
 
-fn is_sha(s: &str) -> bool {
+pub(crate) fn is_sha(s: &str) -> bool {
     matches!(s.len(), 40 | 64) && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
@@ -607,14 +623,189 @@ pub async fn gh_merge(
     method: String,
     head_sha: String,
 ) -> Result<(), String> {
-    blocking(move || merge(&reference, &method, &head_sha, || project_repo(&app, &path))).await
+    blocking(move || match routed(&app, &path, &reference)? {
+        (Route::GitLab(target), _) => gitlab_items::merge(&GlabAt::of(&app, &path)?, &target, &method, &head_sha),
+        (Route::GitHub, forge) => merge(&reference, &method, &head_sha, || repo_of(&app, &path, forge.as_ref())),
+    })
+    .await
 }
 
 /// A pull request or issue by link, `owner/repo#12`, or number (`#12`, in the repository of the
-/// project at `path`, which may be a remote project).
+/// project at `path`, which may be a remote project). On GitLab also a merge request (`!12`,
+/// `group/project!12`) and `group/sub/project#12`; see `gitlab_items::route`.
 #[tauri::command]
 pub async fn gh_item(app: AppHandle, path: String, reference: String) -> Result<GhItem, String> {
-    blocking(move || item(&reference, || project_repo(&app, &path))).await
+    blocking(move || match routed(&app, &path, &reference)? {
+        (Route::GitLab(target), _) => gitlab_items::fetch(&GlabAt::of(&app, &path)?, &target),
+        (Route::GitHub, forge) => item(&reference, || repo_of(&app, &path, forge.as_ref())),
+    })
+    .await
+}
+
+/// The forge the project at `path` belongs to, from its git remotes; None when they name none or
+/// cannot be read (the GitHub path then says why, as before).
+fn forge_of(app: &AppHandle, path: &str) -> Option<Forge> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    gitlab::project_forge(app, path).ok().flatten()
+}
+
+/// The GitHub repository for a project, as `project_repo` finds it; a remote project's GitHub forge
+/// already read from its remotes is the same answer without another round trip.
+fn repo_of(app: &AppHandle, path: &str, forge: Option<&Forge>) -> Result<(String, String, String), String> {
+    if let Some(f) = forge.filter(|f| f.provider == Provider::GitHub) {
+        if crate::vcs::env_at(app, path).is_some() {
+            return Ok((f.host.clone(), f.owner.clone(), f.repo.clone()));
+        }
+    }
+    project_repo(app, path)
+}
+
+/// Who answers `reference` (GitHub or a GitLab server), and the project's forge if it was read.
+fn routed(app: &AppHandle, path: &str, reference: &str) -> Result<(Route, Option<Forge>), String> {
+    let mut read = None;
+    let route = gitlab_items::route(reference, |h| gitlab::is_gitlab_host(app, h), || {
+        let f = forge_of(app, path);
+        read = Some(f.clone());
+        f
+    })?;
+    Ok((route, read.flatten()))
+}
+
+// ---------------------------------------------------------------------------
+// The project's open pull requests and issues, to pick one to link
+// ---------------------------------------------------------------------------
+
+/// How many of each kind are read, most recently updated first; the picker filters them as the user types.
+const OPEN_LIMIT: u32 = 30;
+
+const OPEN_QUERY: &str = r#"query($owner: String!, $name: String!, $first: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url isDraft headRefName updatedAt author { login } }
+    }
+    issues(states: OPEN, first: $first, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      nodes { number title url updatedAt author { login } }
+    }
+  }
+}"#;
+
+/// One open pull request or issue, as the picker lists it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhListItem {
+    /// "pr" or "issue".
+    pub kind: &'static str,
+    pub url: String,
+    pub number: u64,
+    pub title: String,
+    /// "open" or "draft".
+    pub state: &'static str,
+    /// A pull request's branch.
+    pub head_ref: Option<String>,
+    pub author: Option<String>,
+    pub updated_at: String,
+}
+
+/// The open pull requests and issues of the project's GitHub repository.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhOpenItems {
+    pub provider: &'static str,
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    /// Pull requests and issues together, most recently updated first.
+    pub items: Vec<GhListItem>,
+}
+
+fn list_item(n: &Value, kind: &'static str) -> Option<GhListItem> {
+    let number = n["number"].as_u64().filter(|n| *n > 0)?;
+    let url = n["url"].as_str().filter(|u| u.starts_with("https://"))?.to_string();
+    let state = if kind == "pr" && n["isDraft"].as_bool() == Some(true) { "draft" } else { "open" };
+    Some(GhListItem {
+        kind,
+        url,
+        number,
+        title: text(&n["title"]),
+        state,
+        head_ref: some_text(&n["headRefName"]),
+        author: some_text(&n["author"]["login"]),
+        updated_at: text(&n["updatedAt"]),
+    })
+}
+
+fn open_items_from_json(v: &Value, host: String, owner: String, repo: String) -> Result<GhOpenItems, String> {
+    let node = &v["data"]["repository"];
+    if node.is_null() {
+        return Err(match v["errors"][0]["message"].as_str() {
+            Some(msg) => format!("GitHub: {msg}"),
+            None => format!("GitHub has no repository {owner}/{repo}, or the account gh is signed in with cannot see it."),
+        });
+    }
+    let nodes = |field: &str, kind: &'static str| -> Vec<GhListItem> {
+        node[field]["nodes"].as_array().map(|a| a.iter().filter_map(|n| list_item(n, kind)).collect()).unwrap_or_default()
+    };
+    let mut items = nodes("pullRequests", "pr");
+    items.extend(nodes("issues", "issue"));
+    // ISO 8601 stamps from one source sort as text.
+    items.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(GhOpenItems { provider: "github", host, owner, repo, items })
+}
+
+fn open_items((host, owner, repo): (String, String, String)) -> Result<GhOpenItems, String> {
+    let target = Target { host: host.clone(), owner: owner.clone(), repo: repo.clone(), number: 0 };
+    let mut cmd = gh(None);
+    cmd.args(["api", "graphql"]);
+    if host != "github.com" {
+        cmd.args(["--hostname", &host]);
+    }
+    cmd.arg("-f")
+        .arg(format!("owner={owner}"))
+        .arg("-f")
+        .arg(format!("name={repo}"))
+        .arg("-F")
+        .arg(format!("first={OPEN_LIMIT}"))
+        .arg("-f")
+        .arg(format!("query={OPEN_QUERY}"));
+    let v = run(cmd, Some(&target))?;
+    open_items_from_json(&v, host, owner, repo)
+}
+
+/// The open pull requests and issues of the GitHub repository of the project at `path` (which may
+/// be a remote project), most recently updated first, up to 30 of each.
+#[tauri::command]
+pub async fn gh_open_items(app: AppHandle, path: String) -> Result<GhOpenItems, String> {
+    blocking(move || match forge_of(&app, &path) {
+        Some(f) if f.provider == Provider::GitLab => gitlab_items::open_items(&GlabAt::of(&app, &path)?, &f),
+        forge => open_items(repo_of(&app, &path, forge.as_ref())?),
+    })
+    .await
+}
+
+/// The repository a project's git remotes name, for the link to it on GitHub or GitLab:
+/// `https://{host}/{owner}/{repo}` (on GitLab `owner` is the whole namespace).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRepoLink {
+    /// "github" or "gitlab".
+    pub provider: &'static str,
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+}
+
+fn repo_link(f: Forge) -> GhRepoLink {
+    GhRepoLink { provider: f.provider.id(), host: f.host, owner: f.owner, repo: f.repo }
+}
+
+/// The repository of the project at `path` (which may be a remote project) on GitHub (github.com
+/// or GHE.com) or a GitLab server, read from its git remotes only: no CLI, no network. None when it
+/// is no git repository or none of its remotes is on either (`gitlab::choose_forge` picks).
+#[tauri::command]
+pub async fn gh_repo_link(app: AppHandle, path: String) -> Result<Option<GhRepoLink>, String> {
+    blocking(move || Ok(gitlab::project_forge(&app, &path)?.map(repo_link))).await
 }
 
 /// The pull request a `gh pr create` printed: its link on success, or the one that already
@@ -674,7 +865,11 @@ fn pr_create(app: &AppHandle, path: &str, base: &str) -> Result<GhItem, String> 
 /// the one that is already open for it, and read it. `path` may be a remote project.
 #[tauri::command]
 pub async fn gh_pr_create(app: AppHandle, path: String, base: String) -> Result<GhItem, String> {
-    blocking(move || pr_create(&app, &path, &base)).await
+    blocking(move || match forge_of(&app, &path) {
+        Some(f) if f.provider == Provider::GitLab => gitlab_items::mr_create(&app, &path, &base, &f),
+        _ => pr_create(&app, &path, &base),
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -682,9 +877,9 @@ pub async fn gh_pr_create(app: AppHandle, path: String, base: String) -> Result<
 // ---------------------------------------------------------------------------
 
 /// A whole job log is rarely more than a few megabytes; past this the rest is dropped.
-const LOG_CAP: usize = 24 * 1024 * 1024;
+pub(crate) const LOG_CAP: usize = 24 * 1024 * 1024;
 /// Lines kept per step: a step that printed more keeps its end, where a failure is.
-const STEP_LINES: usize = 5_000;
+pub(crate) const STEP_LINES: usize = 5_000;
 
 /// One step of a job, with its share of the log.
 #[derive(Debug, Clone, Serialize)]
@@ -706,6 +901,7 @@ pub struct GhJobStep {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GhJob {
+    pub provider: &'static str,
     pub id: u64,
     pub name: String,
     pub workflow: Option<String>,
@@ -764,7 +960,7 @@ fn parse_job_url(url: &str) -> Result<JobTarget, String> {
 }
 
 /// A job's or step's `status` and `conclusion` in the words the window uses.
-fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
+pub(crate) fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
     match status {
         Some("completed") => match conclusion.unwrap_or_default() {
             "success" => "success",
@@ -780,7 +976,7 @@ fn run_state(status: Option<&str>, conclusion: Option<&str>) -> &'static str {
 
 /// Seconds since the epoch of an ISO 8601 UTC timestamp (`2026-11-16T20:29:33Z`, fractions
 /// allowed); only ever compared with others, so any consistent count does.
-fn epoch_seconds(s: &str) -> Option<i64> {
+pub(crate) fn epoch_seconds(s: &str) -> Option<i64> {
     let b = s.as_bytes();
     if b.len() < 19 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' {
         return None;
@@ -890,6 +1086,7 @@ fn job_from_json(v: &Value) -> GhJob {
         })
         .unwrap_or_default();
     GhJob {
+        provider: "github",
         id: v["id"].as_u64().unwrap_or(0),
         name: text(&v["name"]),
         workflow: some_text(&v["workflow_name"]),
@@ -966,16 +1163,51 @@ fn job(url: &str) -> Result<GhJob, String> {
 }
 
 /// A GitHub Actions job by its link (a check's details link): its steps, and once it finished,
-/// its log split into them.
+/// its log split into them. A GitLab CI job link (`…/-/jobs/<id>`) on a GitLab server Mango knows
+/// comes back the same way, its log split by its sections, read by the glab of the project at
+/// `path` (inside its environment when it is a remote project).
 #[tauri::command]
-pub async fn gh_job(url: String) -> Result<GhJob, String> {
-    blocking(move || job(&url)).await
+pub async fn gh_job(app: AppHandle, url: String, path: Option<String>) -> Result<GhJob, String> {
+    blocking(move || {
+        if gitlab_items::is_job_url(&url) {
+            let at = GlabAt::of(&app, path.as_deref().unwrap_or_default())?;
+            gitlab_items::job(&at, &url, |h| gitlab::is_gitlab_host(&app, h))
+        } else {
+            job(&url)
+        }
+    })
+    .await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn lists_open_items_newest_first() {
+        let v = json!({ "data": { "repository": {
+            "pullRequests": { "nodes": [
+                { "number": 75, "title": "feat: a", "url": "https://github.com/acme/app/pull/75", "isDraft": false,
+                  "headRefName": "feat/a", "updatedAt": "2026-11-20T10:00:00Z", "author": { "login": "ann" } },
+                { "number": 76, "title": "fix: b", "url": "https://github.com/acme/app/pull/76", "isDraft": true,
+                  "headRefName": "fix/b", "updatedAt": "2026-11-21T09:00:00Z", "author": null },
+                { "number": 77, "title": "no link", "url": "javascript:alert(1)", "updatedAt": "2026-11-21T11:00:00Z" }
+            ] },
+            "issues": { "nodes": [
+                { "number": 70, "title": "Crash", "url": "https://github.com/acme/app/issues/70",
+                  "updatedAt": "2026-11-20T12:00:00Z", "author": { "login": "bo" } }
+            ] }
+        } } });
+        let list = open_items_from_json(&v, "github.com".into(), "acme".into(), "app".into()).unwrap();
+        let got: Vec<_> = list.items.iter().map(|i| (i.number, i.kind, i.state)).collect();
+        assert_eq!(got, [(76, "pr", "draft"), (70, "issue", "open"), (75, "pr", "open")]);
+        assert_eq!(list.items[2].head_ref.as_deref(), Some("feat/a"));
+        assert_eq!(list.items[0].author, None);
+
+        let missing = json!({ "data": { "repository": null }, "errors": [{ "message": "Could not resolve to a Repository" }] });
+        assert!(open_items_from_json(&missing, "github.com".into(), "acme".into(), "gone".into()).unwrap_err().starts_with("GitHub: "));
+    }
 
     #[test]
     fn finds_the_pull_request_gh_created() {
@@ -993,6 +1225,31 @@ mod tests {
 
     fn repo(host: &str, owner: &str, name: &str) -> Option<(String, String, String)> {
         Some((host.into(), owner.into(), name.into()))
+    }
+
+    #[test]
+    fn links_remotes_on_github_and_gitlab() {
+        let link_of = |list: &str| gitlab::choose_forge(list, &[]).map(repo_link);
+        let link = |provider: &'static str, host: &str, owner: &str, repo: &str| GhRepoLink {
+            provider,
+            host: host.into(),
+            owner: owner.into(),
+            repo: repo.into(),
+        };
+        assert_eq!(
+            link_of("origin\tgit@github.com:acme/app.git (fetch)\norigin\tgit@github.com:acme/app.git (push)\n"),
+            Some(link("github", "github.com", "acme", "app"))
+        );
+        assert_eq!(
+            link_of("mirror\thttps://gitlab.com/acme/app.git (fetch)\nupstream\thttps://acme.ghe.com/team/app (fetch)\n"),
+            Some(link("github", "acme.ghe.com", "team", "app"))
+        );
+        assert_eq!(
+            link_of("origin\thttps://gitlab.com/acme/sub/app.git (fetch)\n"),
+            Some(link("gitlab", "gitlab.com", "acme/sub", "app"))
+        );
+        assert_eq!(link_of("origin\thttps://bitbucket.org/acme/app.git (fetch)\n"), None);
+        assert_eq!(link_of(""), None);
     }
 
     #[test]

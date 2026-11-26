@@ -11,6 +11,7 @@ import ProjectEnvFolders from '~/components/project/ProjectEnvFolders.vue'
  * browses its folders instead. Opens the selected folder, or the one being shown, or a typed path.
  * Choosing "This computer" under Where hands over to the system's picker.
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const envs = useEnvironments()
 
@@ -51,8 +52,8 @@ async function changeWhere(w: EnvRemote | null) {
 const target = computed(() => path.value.trim().replace(/(.)\/+$/, '$1'))
 const pathError = computed(() => {
   const p = target.value
-  if (!p) return 'Pick a folder, or type its path.'
-  if (!p.startsWith('/') && p !== '~' && !p.startsWith('~/')) return 'Use an absolute path, starting with / or ~.'
+  if (!p) return t('project.openEnv.pathMissing')
+  if (!p.startsWith('/') && p !== '~' && !p.startsWith('~/')) return t('project.openEnv.pathBad')
   return null
 })
 
@@ -93,10 +94,10 @@ const leaf = computed(() => {
 </script>
 
 <template>
-  <UiDialog :open="open" title="Open folder" :width="560" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('project.openEnv.title')" :width="560" :dismissible="!busy" @close="close">
     <form id="open-env-form" class="oe" novalidate @submit.prevent="submit">
-      <UiField label="Where" for="oe-where">
-        <ProjectWhere id="oe-where" :model-value="where" placeholder="Choose an environment" :disabled="busy" @update:model-value="changeWhere" />
+      <UiField :label="t('project.where')" for="oe-where">
+        <ProjectWhere id="oe-where" :model-value="where" :placeholder="t('project.openEnv.choose')" :disabled="busy" @update:model-value="changeWhere" />
       </UiField>
 
       <div v-if="where" class="oe__browse">
@@ -111,13 +112,13 @@ const leaf = computed(() => {
           @choose="p => { path = p; submit() }"
         />
       </div>
-      <p v-else class="oe__pick">Choose an environment under Where to browse its folders.</p>
+      <p v-else class="oe__pick">{{ t('project.openEnv.pick') }}</p>
 
       <UiField
         v-if="where"
-        label="Folder"
+        :label="t('project.folder')"
         for="oe-path"
-        :hint="place ? `Opens as a project in ${place.where}. Agents and terminals run there.` : undefined"
+        :hint="place ? t('project.openEnv.hint', { place: place.where }) : undefined"
       >
         <input
           id="oe-path"
@@ -134,13 +135,13 @@ const leaf = computed(() => {
 
       <p v-if="error" class="oe__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't open it. {{ error }}.</span>
+        <span class="selectable">{{ t('project.openEnv.failed') }} {{ error }}.</span>
       </p>
     </form>
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton variant="primary" type="submit" form="open-env-form" :loading="busy" :disabled="!where">
-        {{ busy ? 'Opening…' : where && target && !pathError ? `Open ${leaf}` : 'Open' }}
+        {{ busy ? t('project.openEnv.opening') : where && target && !pathError ? t('project.openEnv.openNamed', { name: leaf }) : t('common.actions.open') }}
       </UiButton>
     </template>
   </UiDialog>

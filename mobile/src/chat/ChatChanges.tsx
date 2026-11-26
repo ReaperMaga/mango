@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router'
 import { ChevronRight, ChevronsDownUp, ChevronsUpDown, FileText, Folder, FolderOpen, GitCompareArrows } from 'lucide-react-native'
 import type { Message, Thread } from '~/types/chat'
 import { baseName } from '~/utils/paths'
-import { makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Banner, Button, IconButton, Sheet, Spinner, Text } from '@/ui'
 import { backend } from '@/remote'
 import { useThreads } from '@/state/threads'
@@ -98,7 +98,7 @@ export function ChatChanges({ message, thread }: ChatChangesProps) {
           variant="ghost"
           size="sm"
           accessibilityHint="Opens Changes for this chat's folder"
-          onPress={() => router.push({ pathname: '/changes', params: { path: workdir } })}
+          onPress={() => router.push({ pathname: '/changes', params: { path: workdir, chat: thread.id } })}
           style={s.review}
         />
       </View>
@@ -185,7 +185,7 @@ const useStyles = makeStyles(t => ({
     marginBottom: space[1],
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     backgroundColor: t.colors.bgPanel,
     overflow: 'hidden',

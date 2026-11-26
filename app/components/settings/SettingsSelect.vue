@@ -15,6 +15,7 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ 'update:modelValue': [value: T] }>()
 
+const { t } = useI18n()
 const items = computed<MenuItem[]>(() => props.options.map(o => ({
   label: o.label,
   checked: o.value === props.modelValue,
@@ -24,7 +25,7 @@ const current = computed(() => props.options.find(o => o.value === props.modelVa
 </script>
 
 <template>
-  <UiMenu :items="items" placement="bottom-end" :width="220" :label="label ?? 'Choose'">
+  <UiMenu :items="items" placement="bottom-end" :width="220" :label="label ?? t('common.actions.choose')">
     <template #default="{ toggle, open }">
       <UiButton size="sm" :class="{ 'is-open': open }" :aria-labelledby="labelledby" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
         {{ current }}<ChevronDown />

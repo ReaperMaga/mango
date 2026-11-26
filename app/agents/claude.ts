@@ -1,14 +1,17 @@
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, PermissionMode, SpawnFn, SteerInput, TaskKind, ToolImage, UsageWindow } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers, AgentRunOptions, AgentTransport, AgentUsage, ContextUsage, KeptProcess, PermissionMode, SpawnFn, SpawnHandlers, SteerInput, TaskKind, ToolImage, TranscriptTail, TurnUsage, UsageWindow } from '~/agents/types'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
+import { addClaudeUsage, claudeCacheTtl, claudeContext, claudeRequestTokens } from './context.ts'
+import { movedFrom, resumedFolder } from './workdir.ts'
 
 /**
  * Claude Code adapter.
  *
  * Protocol: `claude -p` with stream-json on both stdin and stdout, the same
- * wire format the Agent SDK uses. One process per turn; the conversation is
- * carried across turns with `--resume <session id>`.
+ * wire format the Agent SDK uses. A process takes one turn after another while the
+ * run's `keeper` holds it in between; a new one (a chat's first turn, changed settings,
+ * no keeper) carries the conversation on with `--resume <session id>`.
  *
  *   stdin   {"type":"user","message":{…}}                        the prompt (image blocks, then text)
  *           {"type":"control_response",…}                        answers to permission requests
@@ -30,7 +33,8 @@ import { BROWSER_SERVER, claudeMcp } from './mcp.ts'
  * Either is reported as a `workdir` event. Claude Code relocates the session's transcript to the
  * new folder's project, yet `--resume` still finds it from the old one and restores the
  * session's folder: the `cwd` of system/init then differs from the one we spawned in, which is
- * reported as `workdir` too.
+ * reported as `workdir` too. That `cwd` also follows the Bash tool's `cd`, so only a worktree
+ * counts (`resumedFolder` in workdir.ts), never a plain folder of the project.
  *
  * Permission modes: plan → plan, ask → default, edits → acceptEdits,
  * auto → bypassPermissions. With `--permission-prompt-tool stdio` the CLI asks
@@ -45,22 +49,6 @@ const MODES: Record<PermissionMode, string> = {
 }
 
 const MAX_OUTPUT = 20_000
-
-/** A path to compare: no trailing separator; a Windows path also in one case and with one kind of separator. */
-const comparable = (p: string) => {
-  const t = p.replace(/(?<=.)[\\/]+$/, '')
-  return /^[a-z]:/i.test(t) ? t.replace(/\//g, '\\').toLowerCase() : t
-}
-
-/**
- * Whether Claude Code's `cwd` is another folder than `spawned`, not just another spelling of it
- * (a trailing separator, a Windows drive letter's case, or macOS's /private/tmp for /tmp).
- */
-function movedFrom(spawned: string, cwd: string): boolean {
-  const a = comparable(spawned)
-  const b = comparable(cwd)
-  return a !== b && b !== `/private${a}`
-}
 
 interface ToolShape { tool: ToolKind; label?: string; target: string; summary?: string; diff?: DiffLine[] }
 
@@ -184,7 +172,7 @@ function parseQuestions(input: any): AgentQuestion[] {
       .map((o: any) => ({ label: typeof o?.label === 'string' ? o.label : '', description: typeof o?.description === 'string' ? o.description : undefined }))
       .filter((o: { label: string }) => o.label)
     if (!question || !options.length) return []
-    return [{ question, header: typeof q.header === 'string' && q.header ? q.header : undefined, options, multiSelect: q.multiSelect === true }]
+    return [{ question, header: typeof q.header === 'string' && q.header ? q.header : undefined, options, multiSelect: q.multiSelect === true, freeText: true }]
   })
 }
 
@@ -301,6 +289,9 @@ function approvalFor(toolName: string, input: any, cwd: string): { title: string
 /** A message that is a slash command (`/compact`, `/review 12`, a skill): the CLI runs it itself. */
 const isSlash = (prompt: string) => /^\/[\w.:-]+(\s|$)/.test(prompt.trim())
 
+/** Replaces the conversation with a summary. */
+const isCompact = (prompt: string) => /^\/compact(\s|$)/.test(prompt.trim())
+
 /** The prompt as message content: attached images first, then the text (an empty text block is refused). */
 function userContent(options: SteerInput): unknown[] {
   const content: unknown[] = (options.images ?? []).map(img => ({
@@ -309,6 +300,136 @@ function userContent(options: SteerInput): unknown[] {
   }))
   if (options.prompt.trim() || !content.length) content.push({ type: 'text', text: options.prompt })
   return content
+}
+
+/** What a request failed on that has nothing to do with the process: the next one may well go through. */
+const PASSING_ERRORS = new Set(['server_error', 'overloaded', 'rate_limit'])
+
+/** A command that changes the session's own settings: it must not reach further than its turn. */
+const changesSession = (prompt: string) => isSlash(prompt) && HIDDEN_COMMANDS.has(prompt.trim().slice(1).split(/\s/)[0]!)
+
+/** An output line that belongs to a turn: a process between turns that prints one started it by itself. */
+function startsTurn(line: string): boolean {
+  let m: any
+  try { m = JSON.parse(line) } catch { return false }
+  return ['assistant', 'user', 'stream_event', 'control_request', 'result'].includes(m?.type) || (m?.type === 'system' && m.subtype === 'init')
+}
+
+/** A command Claude Code ran without the model, and what it said. */
+const LOCAL_COMMAND = /^<(command-name|local-command-)/
+
+/** What comes after a process's last message is short bookkeeping; the larger read is for a transcript that surprises. */
+const TAIL_BYTES = [256 * 1024, 16 * 1024 * 1024]
+
+/**
+ * The transcript's last message and when it was written, null when these lines hold none. Not a message: Claude Code's
+ * bookkeeping, what it adds around one (`isMeta`), sub-agents', and a command it ran without the model, which
+ * a process writes down but does not print.
+ */
+export function lastMessage(lines: string[]): { uuid: string; at: number } | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let m: any
+    try { m = JSON.parse(lines[i]!) } catch { continue }
+    if ((m?.type !== 'user' && m?.type !== 'assistant') || typeof m.uuid !== 'string' || m.isMeta || m.isSidechain) continue
+    const content = m.message?.content
+    if (typeof content === 'string' && LOCAL_COMMAND.test(content)) continue
+    return { uuid: m.uuid, at: Date.parse(m.timestamp) || 0 }
+  }
+  return null
+}
+
+/**
+ * Whether the session went on without a process kept for it (`claude --resume` in a terminal): the last
+ * message in its transcript is not one the process printed. A transcript without any message counts too,
+ * there is no telling what it holds. One that is missing or cannot be read does not: a new process would
+ * have to resume from that same file, while this one has the conversation.
+ */
+async function missedMessages(p: KeptProcess, read: (maxBytes: number) => Promise<TranscriptTail | null>): Promise<boolean> {
+  for (const maxBytes of TAIL_BYTES) {
+    const tail = await read(maxBytes).catch(() => null)
+    if (!tail) return false
+    const last = lastMessage(tail.lines)
+    if (last) return !p.seen.has(last.uuid)
+    if (tail.whole) break
+  }
+  return true
+}
+
+/** How long a kept process may take to be ready before a new one is started instead. */
+const WAKE_MS = 3000
+
+/** What a turn wants of the process it goes to. */
+interface Wanted { mode: string; model: string; effort: string | null; readDirs: string[] }
+
+/**
+ * Whether a process can be asked to go on at another model or effort. Not back to what Claude Code would pick
+ * by itself: what a running process is given then is not what a new one starts with.
+ */
+const canSwitch = (p: KeptProcess, model: string, effort: string | null) =>
+  (p.model === model || model !== 'default') && (p.effort === effort || effort !== null)
+
+/**
+ * Make a kept process ready for a turn. The session may have left the mode it was started in (a plan
+ * that was approved, a plan mode the agent entered), so it is always put back. Another model or effort counts
+ * only once the process says it runs at it: an effort it does not know is accepted, and ignored. The same goes
+ * for the folders the turn reads from, always sent with the earlier ones: a new list takes the place of the last.
+ * False: use another process (also when `missed` says the session went on without this one).
+ */
+function wake(p: KeptProcess, to: Wanted, missed: () => Promise<boolean>): Promise<boolean> {
+  return new Promise((resolve) => {
+    const asked = new Map<string, (answer: any) => void>()
+    let over = false
+    const done = (ok: boolean) => {
+      if (over) return
+      over = true
+      clearTimeout(timer)
+      p.handlers = { onLine: () => {} }
+      resolve(ok)
+    }
+    const timer = setTimeout(() => done(false), WAKE_MS)
+    p.handlers = {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        // Its note that the model was set, as the user's own `/model` leaves one. Anything else like a turn is one.
+        if (m?.type === 'user' && m.isReplay && asked.size && LOCAL_COMMAND.test(String(m.message?.content))) return
+        if (startsTurn(line)) return done(false)
+        if (m?.type !== 'control_response') return
+        const answer = asked.get(m.response?.request_id)
+        // Refused: nothing more is asked.
+        if (answer && m.response.subtype !== 'success') done(false)
+        else answer?.(m.response.response ?? {})
+      },
+      onExit: () => done(false),
+    }
+    /** The process's answer; a refusal, or none, ends it all. */
+    const ask = (request: Record<string, unknown>) => new Promise<any>((answered) => {
+      const id = `mango-wake-${asked.size}`
+      asked.set(id, answered)
+      p.transport.write(JSON.stringify({ type: 'control_request', request_id: id, request })).catch(() => done(false))
+    })
+    void (async () => {
+      if (((await ask({ subtype: 'set_permission_mode', mode: to.mode })).mode ?? to.mode) !== to.mode) return done(false)
+      if (p.model !== to.model || p.effort !== to.effort) {
+        const named = p.model === to.model ? null : (await ask({ subtype: 'set_model', model: to.model })).model ?? ''
+        if (p.effort !== to.effort) await ask({ subtype: 'apply_flag_settings', settings: { effortLevel: to.effort } })
+        const { applied } = await ask({ subtype: 'get_settings' })
+        if (named !== null && (!named || applied?.model !== named)) return done(false)
+        if (to.effort !== null && applied?.effort !== to.effort) return done(false)
+        p.model = to.model
+        p.effort = to.effort
+      }
+      const dirs = [...new Set([...p.readDirs, ...to.readDirs])]
+      if (dirs.length > p.readDirs.length) {
+        await ask({ subtype: 'apply_flag_settings', settings: { permissions: { additionalDirectories: dirs } } })
+        const granted = (await ask({ subtype: 'get_settings' })).effective?.permissions?.additionalDirectories
+        if (!Array.isArray(granted) || !dirs.every(d => granted.includes(d))) return done(false)
+        p.readDirs = dirs
+      }
+      // Last, as close to the prompt as can be.
+      done(!(await missed()))
+    })()
+  })
 }
 
 function run(options: AgentRunOptions): AgentRun {
@@ -321,8 +442,20 @@ function run(options: AgentRunOptions): AgentRun {
     emit({ type: 'workdir', path, branch })
   }
   let transport: AgentTransport | null = null
+  /** The CLI process of this run, for the keeper once the turn is over. */
+  let proc: KeptProcess | null = null
+  /**
+   * The process's running cost total from before this run: a kept process counts on, and one that resumes
+   * takes over what its session had spent. Null until the CLI said (`askSpent`).
+   */
+  let spentBefore: number | null = options.sessionId ? null : 0
+  /** The model has answered something: the running total may hold part of this run. */
+  let spending = false
+  let sessionId = options.sessionId
   let ended = false
   let interrupted = false
+  /** What this run has used, summed over its results. */
+  let runUsage: TurnUsage | null = null
   let lastStderr = ''
   let seq = 0
   let killTimer: ReturnType<typeof setTimeout> | undefined
@@ -364,6 +497,18 @@ function run(options: AgentRunOptions): AgentRun {
 
   /** Control requests this adapter sent and waits on (`get_task_output`). */
   const requests = new Map<string, (response: any) => void>()
+  /**
+   * The turn is over and the run ends as soon as the context window has been read: nothing
+   * new goes in meanwhile (a message sent now becomes the next turn).
+   */
+  let closing = false
+  /** Claude Code started another turn while the run was closing: not a process to keep. */
+  let wentOn = false
+  /** The turn was stopped, or failed on a passing error, and the CLI is done with it. */
+  let cutShort = false
+  /** What the last answer says its request failed on. */
+  let failedOn: unknown
+  let exited = false
 
   const end = (status: 'done' | 'error' | 'stopped', error?: string) => {
     if (ended) return
@@ -375,7 +520,11 @@ function run(options: AgentRunOptions): AgentRun {
     for (const resolve of requests.values()) resolve(null)
     requests.clear()
     emit({ type: 'turn-end', status, error })
-    transport?.closeStdin().catch(() => {})
+    // Only a turn the CLI is done with, in the folder it was started for, leaves a process worth keeping.
+    const worthKeeping = (cutShort || (status === 'done' && closing)) && !exited && !wentOn && !runningTasks()
+      && !movedFrom(cwd, workdir) && !changesSession(options.prompt)
+    if (worthKeeping && options.keeper && proc && sessionId) options.keeper.keep(processKey(sessionId), proc)
+    else transport?.closeStdin().catch(() => {})
   }
 
   const send = (obj: unknown) => transport?.write(JSON.stringify(obj)).catch(() => {})
@@ -393,12 +542,13 @@ function run(options: AgentRunOptions): AgentRun {
   /** Nothing is left running: end now, or give Claude Code a moment to answer a task that just finished. */
   const settle = () => {
     clearTimeout(settleTimer)
-    settleTimer = setTimeout(() => { if (idle && !runningTasks()) end('done') }, RESUME_GRACE_MS)
+    settleTimer = setTimeout(() => { if (idle && !runningTasks()) finishTurn() }, RESUME_GRACE_MS)
   }
 
   /** Claude Code started a turn: after `result`, that is it answering a finished background task. */
   const onTurnActivity = () => {
     requestStartedAt = Date.now()
+    if (closing) wentOn = true
     if (!idle) return
     idle = false
     clearTimeout(settleTimer)
@@ -450,12 +600,21 @@ function run(options: AgentRunOptions): AgentRun {
 
   function onStreamEvent(e: any) {
     switch (e.type) {
-      case 'message_start':
+      case 'message_start': {
         onTurnActivity()
+        // Every request carries the whole conversation: its prompt size is the context in use now.
+        const used = claudeRequestTokens(e.message?.usage)
+        if (used !== null) {
+          const at = Date.now()
+          emit({ type: 'context', usage: { used, max: 0, at } })
+          const ttlMs = claudeCacheTtl(e.message?.usage)
+          emit({ type: 'cache', at, ...(ttlMs ? { ttlMs } : {}) })
+        }
         messageId = e.message?.id ?? `m${++seq}`
         streamedMessages.add(messageId)
         blocks.clear()
         break
+      }
       case 'content_block_start': {
         const b = e.content_block ?? {}
         if (b.type === 'text') {
@@ -497,6 +656,7 @@ function run(options: AgentRunOptions): AgentRun {
   /** Full assistant message. With partial streaming on it mostly repeats what the deltas built. */
   function onAssistant(m: any) {
     const msg = m.message ?? {}
+    failedOn = m.error
     const streamed = streamedMessages.has(msg.id)
     if (!streamed) onTurnActivity()
     const content: any[] = Array.isArray(msg.content) ? msg.content : []
@@ -608,10 +768,18 @@ function run(options: AgentRunOptions): AgentRun {
   function onSystem(m: any) {
     switch (m.subtype) {
       case 'init':
-        if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        if (m.session_id) { sessionId = m.session_id; emit({ type: 'session', sessionId: m.session_id }) }
         // A resumed session that had moved into a worktree goes on there, wherever it was started.
-        if (options.sessionId && typeof m.cwd === 'string') moveTo(m.cwd, null)
+        // Its `cwd` also follows a `cd` of its shell: a plain folder inside the project is no worktree.
+        if (options.sessionId && typeof m.cwd === 'string') {
+          const folder = resumedFolder(workdir, m.cwd)
+          if (folder) moveTo(folder, null)
+        }
         onTurnActivity()
+        break
+      case 'compact_boundary':
+        // One the CLI makes by itself mid-turn is part of that turn.
+        if (m.compact_metadata?.trigger === 'manual') emit({ type: 'compacted' })
         break
       case 'task_started': {
         const id = typeof m.task_id === 'string' ? m.task_id : ''
@@ -754,6 +922,19 @@ function run(options: AgentRunOptions): AgentRun {
     })
   }
 
+  /** What `/context` shows, read without a turn; the reading goes out as a `context` event. */
+  const readContext = () => controlRequest({ subtype: 'get_context_usage' }, 5000).then((r) => {
+    const usage = r && claudeContext(r)
+    if (usage && !ended) emit({ type: 'context', usage })
+  })
+
+  /** The turn finished while the CLI still runs: read the context window, then end. */
+  const finishTurn = () => {
+    if (ended || closing) return
+    closing = true
+    void readContext().finally(() => end('done'))
+  }
+
   const stopTaskById = (taskId: string) =>
     send({ type: 'control_request', request_id: `mango-stop-${++seq}`, request: { subtype: 'stop_task', task_id: taskId } })
 
@@ -767,6 +948,8 @@ function run(options: AgentRunOptions): AgentRun {
       if (resolve) { requests.delete(id); resolve(m.response?.subtype === 'success' ? (m.response.response ?? {}) : null) }
       return
     }
+    if (m.type === 'assistant' || m.type === 'result' || (m.type === 'stream_event' && m.event?.type === 'message_delta')) spending = true
+    if (proc && (m.type === 'user' || m.type === 'assistant') && typeof m.uuid === 'string') proc.seen.add(m.uuid)
     // Sub-agent internals: whole messages whose parent is the Agent call that started the sub-agent.
     if (m.parent_tool_use_id) {
       if (announced.has(m.parent_tool_use_id)) onSubagentMessage(m, m.parent_tool_use_id)
@@ -785,7 +968,16 @@ function run(options: AgentRunOptions): AgentRun {
         break
       }
       case 'result': {
-        if (m.session_id) emit({ type: 'session', sessionId: m.session_id })
+        if (m.session_id) { sessionId = m.session_id; emit({ type: 'session', sessionId: m.session_id }) }
+        // The CLI's total covers every turn its process took: this run's part is what came on top.
+        const total = m.total_cost_usd
+        if (proc && typeof total === 'number') proc.costUsd = total
+        // Where it started is not known: no cost rather than the whole session's.
+        const cost = typeof total === 'number' && spentBefore !== null ? Math.max(0, total - spentBefore) : undefined
+        const spent = addClaudeUsage(runUsage, { ...m, total_cost_usd: cost })
+        if (spent && spent !== runUsage) { runUsage = spent; emit({ type: 'usage', usage: spent }) }
+        // A message it has not read yet would be answered next, unseen.
+        cutShort = (interrupted || (!!m.is_error && PASSING_ERRORS.has(String(failedOn)))) && readMessages >= sentMessages && !isSlash(options.prompt)
         if (interrupted) end('stopped')
         // A steering message came too late for this answer: the CLI answers it next, in the same process.
         else if (readMessages < sentMessages && !m.is_error && (!m.subtype || m.subtype === 'success')) break
@@ -796,12 +988,13 @@ function run(options: AgentRunOptions): AgentRun {
           // Background work goes on, and Claude Code will answer it: stay open.
           idle = true
           emit({ type: 'answered' })
+          void readContext()
         } else if ([...tasks.values()].some(t => t.shown && (t.endedAt ?? 0) >= requestStartedAt)) {
           // A task finished while this answer was being written: Claude Code may take it up next.
           idle = true
           finishedWhileIdle = []
           settle()
-        } else end('done')
+        } else finishTurn()
         break
       }
     }
@@ -817,46 +1010,107 @@ function run(options: AgentRunOptions): AgentRun {
     '--permission-prompt-tool', 'stdio',
     '--permission-mode', MODES[options.mode] ?? 'default',
   ]
-  if (options.model && options.model !== 'default') args.push('--model', options.model)
-  if (options.effort) args.push('--effort', options.effort)
-  if (options.sessionId) args.push('--resume', options.sessionId)
-  // Attachments live outside the project: let Claude Code read them without asking.
-  for (const dir of options.readDirs ?? []) args.push('--add-dir', dir)
+  const model = options.model || 'default'
+  const effort = options.effort || null
   // Mango's browser for this chat (tools that only read the page run without asking) and the user's
   // MCP servers, for this session only. Their secrets travel in the environment, not in `args`.
   const mcp = claudeMcp(options.mcpServers ?? [], options.browserMcp)
   args.push(...mcp.args)
+  if (options.appendSystemPrompt) args.push('--append-system-prompt', options.appendSystemPrompt)
+  /**
+   * What a process was started with, and the conversation it holds: a later turn must share all of it. Not the
+   * model and the effort, which a process can be asked to change (`canSwitch`), nor the folders it can read (`wake`).
+   */
+  const processKey = (session: string | null) => JSON.stringify([cwd, args, mcp.env, session])
+  const readDirs = options.readDirs ?? []
+  const startArgs = [
+    ...args,
+    ...(model !== 'default' ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
+    ...(options.sessionId ? ['--resume', options.sessionId] : []),
+    // Attachments live outside the project: let Claude Code read them without asking.
+    ...readDirs.flatMap(dir => ['--add-dir', dir]),
+  ]
 
-  options.spawn(args, {
+  const handlers: SpawnHandlers = {
     onLine,
     onStderr: (l) => { if (l.trim()) lastStderr = l },
     onExit: (code) => {
+      exited = true
       if (ended) return
       if (interrupted) end('stopped')
+      else if (closing) end('done')
       else if (idle && code === 0) end('done')
       else end('error', friendlyError(lastStderr || `Claude Code exited with code ${code ?? 'unknown'} before finishing.`))
     },
-  }, Object.keys(mcp.env).length ? mcp.env : undefined).then((t) => {
-    transport = t
-    if (ended) { t.kill().catch(() => {}); return }
-    // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
-    // the option ignores it (and the answer is not waited for).
-    send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
+  }
+
+  /**
+   * What the session a new process resumes had spent. Asked along with the prompt, so nothing waits for it
+   * (the CLI looks up the plan's limits first, over the network): the total is the one from before this run
+   * only while the model has answered nothing.
+   */
+  const askSpent = () => {
+    requests.set('mango-spent', (r) => {
+      const total = r?.session?.total_cost_usd
+      if (!spending && typeof total === 'number') spentBefore = total
+    })
+    send({ type: 'control_request', request_id: 'mango-spent', request: { subtype: 'get_usage', skip_behaviors: true } })
+  }
+
+  const sendPrompt = () => {
     // A slash command is not echoed back when the CLI reads it: counting it would wait forever.
     if (!isSlash(options.prompt)) sentMessages++
     send({ type: 'user', message: { role: 'user', content: userContent(options) } })
-  }).catch((err) => {
-    end('error', err instanceof Error ? err.message : String(err))
-  })
+  }
 
-  const grantedDirs = new Set(options.readDirs ?? [])
+  const start = () => {
+    // Its output goes through `handlers`, which the keeper and then the next run put their own in.
+    const p = { handlers, readDirs, model, effort, seen: new Set<string>(), costUsd: 0, wakes: startsTurn }
+    options.spawn(startArgs, {
+      onLine: line => p.handlers.onLine(line),
+      onStderr: line => p.handlers.onStderr?.(line),
+      onExit: code => p.handlers.onExit?.(code),
+    }, Object.keys(mcp.env).length ? mcp.env : undefined).then((t) => {
+      transport = t
+      if (ended) { t.kill().catch(() => {}); return }
+      proc = Object.assign(p, { transport: t })
+      // Ask for sub-agents' text and thinking, not only their tool calls. A CLI that does not know
+      // the option ignores it (and the answer is not waited for).
+      send({ type: 'control_request', request_id: 'mango-init', request: { subtype: 'initialize', forwardSubagentText: true } })
+      if (options.sessionId) askSpent()
+      sendPrompt()
+    }).catch((err) => {
+      end('error', err instanceof Error ? err.message : String(err))
+    })
+  }
+
+  let grantedDirs = new Set(readDirs)
+  const kept = options.keeper?.take(processKey(options.sessionId), p => canSwitch(p, model, effort))
+  if (!kept) start()
+  else {
+    const { readTranscript, sessionId: session } = options
+    const missed = async () => !!readTranscript && !!session && missedMessages(kept, maxBytes => readTranscript(session, maxBytes))
+    void wake(kept, { mode: MODES[options.mode] ?? 'default', model, effort, readDirs }, missed).then((awake) => {
+      if (!awake || ended || interrupted) kept.transport.kill().catch(() => {})
+      if (ended) return
+      if (interrupted) return end('stopped')
+      if (!awake) return start()
+      kept.handlers = handlers
+      proc = kept
+      transport = kept.transport
+      spentBefore = kept.costUsd
+      grantedDirs = new Set(kept.readDirs)
+      sendPrompt()
+    })
+  }
 
   return {
     async steer(input) {
-      // --add-dir is fixed at launch: a message reading files from another folder waits for the next turn.
-      if (ended || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
-      // A command runs as a turn of its own, not in the middle of this one.
-      if (isSlash(input.prompt)) return false
+      // A message reading files from a folder not opened yet waits for the next turn, which opens it.
+      if (ended || closing || interrupted || !transport || (input.readDirs ?? []).some(d => !grantedDirs.has(d))) return false
+      // A command runs as a turn of its own, not in the middle of this one; nothing is read while the conversation is compacted.
+      if (isSlash(input.prompt) || isCompact(options.prompt)) return false
       // Waiting on background tasks: the message starts the next turn, which the caller already shows as one.
       if (idle) { idle = false; finishedWhileIdle = []; clearTimeout(settleTimer) }
       sentMessages++
@@ -870,7 +1124,8 @@ function run(options: AgentRunOptions): AgentRun {
       decide(id, answers)
     },
     interrupt() {
-      if (ended || interrupted) return
+      // A run that is closing has finished its turn: it ends in a moment by itself.
+      if (ended || closing || interrupted) return
       interrupted = true
       for (const [id, pending] of pendingApprovals) {
         send({ type: 'control_response', response: { subtype: 'success', request_id: id, response: pending.stopped } })
@@ -1132,5 +1387,42 @@ function readUsage(spawn: SpawnFn): Promise<AgentUsage> {
   })
 }
 
-export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage, listCommands }
+/**
+ * What `/context` shows for a conversation, without a turn: Claude Code resumes the session,
+ * answers `get_context_usage` and is stopped. No message is sent, so nothing is added to the
+ * conversation (Claude Code may note its own bookkeeping in the session file).
+ */
+function readContext(spawn: SpawnFn, sessionId: string, model: string): Promise<ContextUsage> {
+  return new Promise((resolve, reject) => {
+    let transport: AgentTransport | null = null
+    let done = false
+    const finish = (usage: ContextUsage | null, why?: string) => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      transport?.kill().catch(() => {})
+      if (usage) resolve(usage)
+      else reject(new Error(why ?? 'Claude Code did not report the context window.'))
+    }
+    const timer = setTimeout(() => finish(null, 'Claude Code took too long to report the context window.'), 30_000)
+    const args = ['-p', '--output-format', 'stream-json', '--input-format', 'stream-json', '--verbose', '--resume', sessionId]
+    if (model && model !== 'default') args.push('--model', model)
+    spawn(args, {
+      onLine(line) {
+        let m: any
+        try { m = JSON.parse(line) } catch { return }
+        if (m?.type !== 'control_response' || m.response?.request_id !== 'mango-context') return
+        if (m.response.subtype !== 'success') return finish(null, String(m.response.error || 'Claude Code did not report the context window.'))
+        finish(claudeContext(m.response.response), 'Claude Code reported no context window.')
+      },
+      onExit: () => finish(null, 'Claude Code exited before reporting the context window.'),
+    }).then((t) => {
+      transport = t
+      if (done) { t.kill().catch(() => {}); return }
+      t.write(JSON.stringify({ type: 'control_request', request_id: 'mango-context', request: { subtype: 'get_context_usage' } })).catch(() => {})
+    }).catch(err => finish(null, err instanceof Error ? err.message : String(err)))
+  })
+}
+
+export const claudeAdapter: AgentAdapter = { id: 'claude', run, listModels, readUsage, readContext, listCommands }
 export default claudeAdapter

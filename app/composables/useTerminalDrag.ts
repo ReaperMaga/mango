@@ -3,6 +3,9 @@
  * one xterm per terminal and teleports it into whichever main-area pane registered a slot for it.
  *
  * Moving one by hand is a tab drag (`useTabDrag.ts`).
+ *
+ * Panel tabs (the Git log, plugins' `ui.panelTabs`) move the same way, their views keyed by ref (`<pluginId>.<id>`,
+ * which never collides with a terminal id): see TerminalPanel and PanelTabPane.
  */
 
 /* ---------- where main-area terminals are drawn ---------- */

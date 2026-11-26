@@ -1,4 +1,7 @@
+import { t } from '~/i18n'
+import { localePrefOf, type LocalePref } from '~/i18n/locales'
 import { defineStore } from 'pinia'
+import { toRaw } from 'vue'
 import type { AgentInfo, EnvRemote, ProjectInfo, TerminalProfile } from '~/types/ipc'
 import type { PermissionMode } from '~/agents/types'
 import type { AgentId } from '~/types/chat'
@@ -8,14 +11,29 @@ import { shortVersion } from '~/utils/agentCli'
 import { envPath, isEnvPath, movedEnvPath, parseEnvPath, type EnvLocation } from '~/utils/envPath'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
+import { useLanguageServers } from '~/lsp/store'
 import { useWindows } from '~/stores/windows'
 import { editorTabOf, parseTerminalTab, placeBefore, terminalTabId } from '~/utils/terminalTabs'
+import { notifyPrefsOf, type NotifyPrefs } from '~/utils/notifications'
+import { DEFAULT_THRESHOLD, thresholdOf, type IdleCompaction } from '~/utils/idleCompaction'
 import { cleanOverrides, comboLabel, comboParts, resolveBindings } from '~/utils/shortcuts'
+import { openProjectInOf, whereToOpen, type OpenProjectIn } from '~/utils/openWhere'
+import { filesViewOf, type FilesView } from '~/utils/fileTree'
+import {
+  effectiveScheme, isPanelTabRef, isPluginRef, normalizePanelOrder, normalizePanelPlaces, panelEditorTabId, panelStrip,
+  parsePanelEditorTab, type PanelTabPlace, type PluginRef,
+} from '~/plugin-host/ids'
+import { isPluginSchemeRegistered, pluginShortcutDefs } from '~/plugin-host/registry'
+import { allPanelTabs, findPanelTab, panelTabOffered, type PanelTab } from '~/composables/panelTabs'
+import { BUILT_IN_TABS, seedBuiltInTabs } from '~/utils/builtIns'
 
 export type Theme = 'dark' | 'light' | 'system'
 /** Colour scheme: the tint of the grounds and the accent family (see tokens.css). */
-export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite'] as const
+export const COLOR_SCHEMES = ['mango', 'blue', 'teal', 'green', 'purple', 'pink', 'red', 'slate', 'uchiha', 'graphite', 'ink', 'cocoa', 'neon', 'solar'] as const
 export type ColorScheme = typeof COLOR_SCHEMES[number]
+/** A built-in scheme, or one a plugin registered (`plugin:<pluginId>.<id>`; Mango's own applies while it is not there). */
+export type SchemeId = ColorScheme | PluginRef
 /** Interface text size, corner roundness and animation (scales in tokens.css). */
 export const TEXT_SIZES = ['small', 'default', 'large', 'xlarge'] as const
 export type TextSize = typeof TEXT_SIZES[number]
@@ -53,7 +71,7 @@ export interface TerminalPlacement {
  * The tool windows that open on the right: where the project runs (this computer or an environment),
  * the project's files, source control, and the chat's pull requests and issues.
  */
-export type ToolView = 'env' | 'files' | 'changes' | 'links'
+export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases' | PluginRef
 /** Enter sends (Shift+Enter breaks the line), or Ctrl/Cmd+Enter sends (Enter breaks the line). */
 /** Interface and code fonts (see tokens.css). */
 export const UI_FONTS = ['inter', 'geist', 'dm-sans', 'manrope', 'system'] as const
@@ -67,35 +85,9 @@ export type FollowUp = 'queue' | 'steer'
 export type ToolCalls = 'all' | 'hide-ok' | 'hide' | 'zen'
 export type CursorStyle = 'bar' | 'block' | 'underline'
 /** What Mango tells you about while you are elsewhere (Settings > Notifications). */
-export interface NotifyPrefs {
-  /** Master switch. */
-  enabled: boolean
-  /** A chat finished its turn. */
-  done: boolean
-  /** A chat needs an approval or an answer. */
-  needsYou: boolean
-  /** A chat's run failed. */
-  failed: boolean
-  /** Only while Mango's window is in the background or minimised. */
-  backgroundOnly: boolean
-  /** Name the chat and quote the reply; off, the notification only says what happened. */
-  preview: boolean
-  /** The system's notification sound. */
-  sound: boolean
-}
-const notifyOf = (raw: unknown): NotifyPrefs => {
-  const o = (raw && typeof raw === 'object' ? raw : {}) as Partial<NotifyPrefs>
-  const on = (v: unknown, fallback: boolean) => (typeof v === 'boolean' ? v : fallback)
-  return {
-    enabled: on(o.enabled, true),
-    done: on(o.done, true),
-    needsYou: on(o.needsYou, true),
-    failed: on(o.failed, true),
-    backgroundOnly: on(o.backgroundOnly, true),
-    preview: on(o.preview, true),
-    sound: on(o.sound, false),
-  }
-}
+/** Notification preferences: the type and the loader live in `utils/notifications.ts` (the phone shares them). */
+export type { NotifyPrefs }
+const notifyOf = notifyPrefsOf
 /** What one project overrides (Settings > Projects). Anything missing follows the global default. */
 export interface ProjectPrefs {
   /** Shown instead of the folder name. */
@@ -107,10 +99,27 @@ export interface ProjectPrefs {
   mode?: PermissionMode
   /** The model new chats start with (for the agent they start with). */
   model?: string
+  /** From how many tokens its chats are compacted after a break, or asked about. */
+  idleTokens?: number
   /** A hue (0 to 360) for the project's badge; automatic when missing. */
   color?: number
   /** Hidden from the Recent list; its chats are kept. Opening the project again brings it back. */
   archived?: boolean
+  /** Files and folders excluded in the Files view, relative to the project (forward slashes); its worktrees share them. */
+  excluded?: string[]
+  /**
+   * Language servers may run in this project (they can run its code: build scripts, plugins).
+   * Missing: not answered yet, so none starts. Its linked git worktrees share a no, and those bound
+   * to it (`languageServersWorktree`) a yes.
+   */
+  languageServers?: boolean
+  /** The folder that answer was given for (`lsp_folder`): one made again at the same path asks again. */
+  languageServersFolder?: string
+  /**
+   * A worktree's folder as Mango made it, or as it was when the user said yes there: only that folder
+   * takes its project's yes, not another put at its path.
+   */
+  languageServersWorktree?: string
 }
 const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPrefs ?? {}
 
@@ -118,8 +127,11 @@ const projectPrefsOf = (): Record<string, ProjectPrefs> => loadPrefs().projectPr
 export interface ConfirmAsk { title: string; body: string; label: string; danger?: boolean; run: () => void
   /** Only something to read: one button, no Cancel. */
   info?: boolean }
+/** "Open project: this window or a new one?" waiting for its answer (null: cancelled). */
+export interface OpenWhereAsk { name: string; answer: (choice: 'this' | 'new' | null) => void }
 export type AgentsTab = 'agents' | 'subscription' | 'usage'
-export type SettingsSection = 'agents' | 'environments' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog'
+/** Built-in sections, plus `plugin:<pluginId>.<pageId>` for a settings page a plugin registered (Settings > Plugins when it is gone). */
+export type SettingsSection = 'agents' | 'environments' | 'hosting' | 'terminal' | 'mcp' | 'voice' | 'appearance' | 'general' | 'editor' | 'projects' | 'behavior' | 'notifications' | 'shortcuts' | 'maintenance' | 'archive' | 'changelog' | 'plugins' | `plugin:${string}`
 /** How Settings > Projects > Environment variables edits a file: as key/value rows or as plain text. */
 export type EnvEditMode = 'fields' | 'raw'
 
@@ -151,6 +163,8 @@ const MAX_ENV_PROJECTS = 30
 
 /** A remote project's name when none is given: its folder, or the instance for `/`. */
 export const envProjectName = (loc: EnvLocation) => (loc.dir === '/' ? loc.instance : baseName(loc.dir))
+/** A project's own name before it has one: its folder's (or its instance's). */
+const folderName = (path: string) => { const loc = parseEnvPath(path); return loc ? envProjectName(loc) : baseName(path) }
 
 const envInfo = (loc: EnvLocation, name: string, lastOpened: number): ProjectInfo =>
   ({ path: envPath(loc), name, isGit: false, vcs: null, branch: null, lastOpened })
@@ -215,7 +229,8 @@ function envExtraOf(v: unknown): Record<string, string[]> {
   return out
 }
 
-const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' ? v : null)
+/** A plugin's tool window (`plugin:<pluginId>.<id>`) is kept while it is not loaded: the panel shows it once the plugin is back. */
+const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' || isPluginRef(v) ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
 const whereOf = (v: unknown): EnvRemote | null => {
@@ -232,9 +247,21 @@ let tabSeq = 0
  * storage; another window (`stores/windows.ts`) keeps its own in memory and leaves the stored ones
  * alone. Every other pref is shared: a change in one window reaches the others (`syncShared`).
  */
-const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
-const SHARED_KEYS = ['theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
-  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where'] as const
+const WINDOW_KEYS = ['openProjects', 'activeProjectPath', 'sidebarOpen', 'sidebarWidth', 'terminalOpen', 'terminalHeight', 'panelPluginTab', 'panelOrder', 'panelTabPlaces', 'toolPanel', 'toolWidth', 'lastToolPanel'] as const
+const SHARED_KEYS = ['locale', 'theme', 'scheme', 'textSize', 'corners', 'motion', 'fontUi', 'fontMono', 'diffView', 'filesView', 'terminalProfileId', 'terminalFontSize', 'terminalCursorStyle',
+  'terminalCursorBlink', 'defaultMode', 'envEditMode', 'envExtraFiles', 'projectPrefs', 'sendKey', 'followUp', 'toolCalls', 'idleCompaction', 'idleTokens', 'confirmArchive', 'confirmDelete', 'setupSeen', 'where',
+  'openProjectIn', 'gitLogWidth', 'editorAutoSave', 'editorSmoothCaret', 'editorLanguageServers'] as const
+/** Saved beside `panelTabPlaces` and, like it, per window: the built-in panel tabs those places know of. */
+const KNOWN_TABS_KEY = 'builtInTabs'
+
+/** The Git log's details width. Until one is saved here, the one the Git log plugin had kept. */
+function gitLogWidthOf(v: unknown): number {
+  let width = v
+  if (width === undefined) {
+    try { width = JSON.parse(localStorage.getItem('mango.plugin.git-log.split-width') ?? 'null') } catch { /* none kept */ }
+  }
+  return typeof width === 'number' && width > 0 ? width : 380
+}
 
 const initialState = () => {
     const prefs = loadPrefs()
@@ -251,8 +278,9 @@ const initialState = () => {
       activeProjectPath: null as string | null,
       agents: [] as AgentInfo[],
 
+      locale: localePrefOf(prefs.locale),
       theme: (prefs.theme ?? 'dark') as Theme,
-      scheme: (COLOR_SCHEMES.includes(prefs.scheme) ? prefs.scheme : 'mango') as ColorScheme,
+      scheme: (COLOR_SCHEMES.includes(prefs.scheme) || isPluginRef(prefs.scheme) ? prefs.scheme : 'mango') as SchemeId,
       textSize: (TEXT_SIZES.includes(prefs.textSize) ? prefs.textSize : 'default') as TextSize,
       corners: (CORNERS.includes(prefs.corners) ? prefs.corners : 'default') as Corners,
       fontUi: (UI_FONTS.includes(prefs.fontUi) ? prefs.fontUi : 'inter') as UiFont,
@@ -264,8 +292,27 @@ const initialState = () => {
       terminalOpen: prefs.terminalOpen ?? false,
       /** fraction of the main column height */
       terminalHeight: (prefs.terminalHeight ?? 0.34) as number,
+      /** Width of the commit details beside the Git log's list. */
+      gitLogWidth: gitLogWidthOf(prefs.gitLogWidth),
       terminalTabs: [] as TerminalTab[],
       activeTerminalId: null as string | null,
+      /**
+       * The panel tab (a plugin's `<pluginId>.<id>`, or one of Mango's own) chosen in the bottom panel instead of a terminal, or null.
+       * Kept while its plugin is not loaded yet or its `when()` is false: the panel shows the terminals then
+       * (`activePanelTab`), and the tab again once it is back. A plugin that stops clears it (`plugin-host/api.ts`).
+       */
+      panelPluginTab: (isPanelTabRef(prefs.panelPluginTab) ? prefs.panelPluginTab : null) as string | null,
+      /**
+       * The panel strip's hand-made order: terminal ids and panel tab refs (see `panelStrip` in plugin-host/ids).
+       * Empty until something is moved: then the terminals keep their own order. Only the refs are saved.
+       */
+      panelOrder: normalizePanelOrder(prefs.panelOrder) as string[],
+      /** Where each panel tab is when not in the panel (the main area, or closed), by ref; kept while its plugin is away. */
+      panelTabPlaces: seedBuiltInTabs(normalizePanelPlaces(prefs.panelTabPlaces), {
+        known: prefs[KNOWN_TABS_KEY],
+        chosen: prefs.panelPluginTab,
+        order: normalizePanelOrder(prefs.panelOrder),
+      }) as Record<string, PanelTabPlace>,
       /** Shells found on this machine. */
       terminalProfiles: [] as TerminalProfile[],
       terminalProfilesLoading: false,
@@ -274,9 +321,17 @@ const initialState = () => {
       terminalFontSize: (prefs.terminalFontSize ?? 12.5) as number,
       terminalCursorStyle: (prefs.terminalCursorStyle ?? 'bar') as CursorStyle,
       terminalCursorBlink: (prefs.terminalCursorBlink ?? true) as boolean,
+      /** Settings > Editor: files save themselves. On unless turned off. */
+      editorAutoSave: prefs.editorAutoSave !== false,
+      /** Settings > Editor: the caret glides between positions. On unless turned off. */
+      editorSmoothCaret: prefs.editorSmoothCaret !== false,
+      /** Settings > Editor: offer language servers at all; each project still has to allow them (`ProjectPrefs.languageServers`). */
+      editorLanguageServers: prefs.editorLanguageServers !== false,
 
       /** How diffs in the main pane are laid out. */
       diffView: (prefs.diffView === 'unified' ? 'unified' : 'split') as 'unified' | 'split',
+      /** What the Files tree shows and how (its View options menu). */
+      filesView: filesViewOf(prefs.filesView),
       /**
        * The tool window open on the right, or null. Older builds kept these views
        * in the left sidebar (`sidebarView`); one that was showing there opens here.
@@ -296,6 +351,9 @@ const initialState = () => {
       sendKey: (prefs.sendKey === 'mod-enter' ? 'mod-enter' : 'enter') as SendKey,
       followUp: (prefs.followUp === 'steer' ? 'steer' : 'queue') as FollowUp,
       toolCalls: (['all', 'hide-ok', 'hide', 'zen'].includes(prefs.toolCalls) ? prefs.toolCalls : 'all') as ToolCalls,
+      idleCompaction: (['ask', 'auto', 'off'].includes(prefs.idleCompaction) ? prefs.idleCompaction : 'ask') as IdleCompaction,
+      /** How large a chat has to be for that, in tokens; a project can have its own. */
+      idleTokens: thresholdOf(prefs.idleTokens) ?? DEFAULT_THRESHOLD,
       notify: notifyOf(prefs.notify),
       /** Keys the user changed, by action id (Settings > Shortcuts); `''` is a cleared key. Defaults live in utils/shortcuts. */
       shortcuts: cleanOverrides(prefs.shortcuts),
@@ -308,6 +366,10 @@ const initialState = () => {
       confirmDelete: (prefs.confirmDelete ?? true) as boolean,
       /** The question on screen (ConfirmDialog); null when none. Not persisted. */
       confirm: null as null | ConfirmAsk,
+      /** Opening a project in a window that holds others: this window or a new one (Settings > Preferences). */
+      openProjectIn: openProjectInOf(prefs.openProjectIn),
+      /** The "This window or New window" question on screen (OpenWhereDialog); null when none. Not persisted. */
+      openWhere: null as null | OpenWhereAsk,
 
       /** Settings view; the value is the section to show. */
       settings: null as null | SettingsSection,
@@ -340,11 +402,13 @@ export const useWorkspace = defineStore('workspace', {
 
   getters: {
     /** The recent projects the lists show: archived ones are left out. */
+    /** From how many tokens a chat of the project is compacted after a break, or asked about. */
+    idleTokensFor: s => (projectPath: string): number => thresholdOf(s.projectPrefs[projectPath]?.idleTokens) ?? s.idleTokens,
     listedRecent: s => s.recent.filter(p => !s.projectPrefs[p.path]?.archived),
     activeProject: s => s.openProjects.find(p => p.path === s.activeProjectPath) ?? null,
     hasProject: s => s.openProjects.length > 0,
     /** Every action's key in force. */
-    bindings: s => resolveBindings(s.shortcuts),
+    bindings: s => resolveBindings(s.shortcuts, pluginShortcutDefs()),
     /** The shell a plain "new terminal" starts: the user's choice if it still exists, else the system default. */
     defaultTerminalProfile: s =>
       s.terminalProfiles.find(p => p.id === s.terminalProfileId)
@@ -353,6 +417,17 @@ export const useWorkspace = defineStore('workspace', {
       ?? null,
     /** The terminals in the docked panel, in order (the rest are tabs in the main area). */
     panelTerminals: s => s.terminalTabs.filter(t => !t.inEditor),
+    /** The panel tab the bottom panel shows (one that is offered), or null: it shows a terminal. */
+    activePanelTab: (s): PanelTab | null => {
+      const t = findPanelTab(s.panelPluginTab)
+      return t && panelTabOffered(t) && !s.panelTabPlaces[t.fullId] ? t : null
+    },
+    /** The panel tabs in the panel's strip now (offered, not moved out or closed). */
+    dockedPanelTabs: (s): string[] => allPanelTabs().filter(t => !s.panelTabPlaces[t.fullId] && panelTabOffered(t)).map(t => t.fullId),
+    /** The panel's strip, in order: terminal ids and panel tab refs. */
+    panelStrip(): string[] {
+      return panelStrip(this.panelOrder, this.panelTerminals.map(t => t.id), this.dockedPanelTabs)
+    },
   },
 
   actions: {
@@ -375,6 +450,7 @@ export const useWorkspace = defineStore('workspace', {
     persist() {
       try {
         const all: Record<string, unknown> = {
+          locale: this.locale,
           theme: this.theme,
           scheme: this.scheme,
           textSize: this.textSize,
@@ -386,14 +462,23 @@ export const useWorkspace = defineStore('workspace', {
           sidebarWidth: this.sidebarWidth,
           terminalOpen: this.terminalOpen,
           terminalHeight: this.terminalHeight,
+          panelPluginTab: this.panelPluginTab,
+          panelOrder: normalizePanelOrder(this.panelOrder),
+          panelTabPlaces: this.panelTabPlaces,
+          [KNOWN_TABS_KEY]: BUILT_IN_TABS,
+          gitLogWidth: this.gitLogWidth,
           toolPanel: this.toolPanel,
           toolWidth: this.toolWidth,
           lastToolPanel: this.lastToolPanel,
           diffView: this.diffView,
+          filesView: this.filesView,
           terminalProfileId: this.terminalProfileId,
           terminalFontSize: this.terminalFontSize,
           terminalCursorStyle: this.terminalCursorStyle,
           terminalCursorBlink: this.terminalCursorBlink,
+          editorAutoSave: this.editorAutoSave,
+          editorSmoothCaret: this.editorSmoothCaret,
+          editorLanguageServers: this.editorLanguageServers,
           defaultMode: this.defaultMode,
           envEditMode: this.envEditMode,
           envExtraFiles: this.envExtraFiles,
@@ -401,19 +486,24 @@ export const useWorkspace = defineStore('workspace', {
           sendKey: this.sendKey,
           followUp: this.followUp,
           toolCalls: this.toolCalls,
+          idleCompaction: this.idleCompaction,
+          idleTokens: this.idleTokens,
           notify: this.notify,
           shortcuts: this.shortcuts,
           confirmArchive: this.confirmArchive,
           confirmDelete: this.confirmDelete,
           setupSeen: this.setupSeen,
           where: this.where,
+          openProjectIn: this.openProjectIn,
           openProjects: [...this.openProjects, ...this.lent].map(p => p.path),
           activeProjectPath: this.activeProjectPath,
         }
         // Another window writes the shared prefs only; the main window's layout and projects stay.
-        if (!useWindows().isMain) {
+        // Nor does a parked main one: what is stored is the session of the windows on screen.
+        const win = useWindows()
+        if (!win.isMain || win.parked) {
           const stored = loadPrefs()
-          for (const k of WINDOW_KEYS) {
+          for (const k of [...WINDOW_KEYS, KNOWN_TABS_KEY]) {
             if (k in stored) all[k] = stored[k]
             else delete all[k]
           }
@@ -434,6 +524,7 @@ export const useWorkspace = defineStore('workspace', {
 
     async init() {
       this.applyTheme()
+      useLanguageServers().follow()
       // "System" follows the OS while the app is open.
       window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => this.applyTheme())
       window.matchMedia?.('(prefers-reduced-motion: reduce)').addEventListener?.('change', () => this.applyTheme())
@@ -509,6 +600,45 @@ export const useWorkspace = defineStore('workspace', {
       this.persist()
     },
 
+    /**
+     * The main window was closed while others are open (it is hidden, see `stores/windows.ts`):
+     * it lets go of its projects, so the other windows may open them, and of the ones it lent.
+     */
+    park() {
+      this.openProjects = []
+      this.lent = []
+      this.activeProjectPath = null
+      this.settings = null
+      this.persist()
+    },
+
+    /**
+     * The main window is being parked: what it had open is not next time's session. Left alone when
+     * the last window on screen already handed its own over.
+     */
+    forgetSession() {
+      try {
+        const stored = loadPrefs()
+        const own = [...this.openProjects, ...this.lent].map(p => p.path)
+        if (JSON.stringify(stored.openProjects ?? []) !== JSON.stringify(own)) return
+        stored.openProjects = []
+        stored.activeProjectPath = null
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to forget */ }
+    },
+    /**
+     * The last window on screen is closing while the main window is parked: its projects become
+     * the ones the main window reopens next time Mango starts.
+     */
+    handOverSession() {
+      try {
+        const stored = loadPrefs()
+        stored.openProjects = this.openProjects.map(p => p.path)
+        stored.activeProjectPath = this.activeProjectPath
+        localStorage.setItem(LS_KEY, JSON.stringify(stored))
+      } catch { /* storage unavailable: nothing to reopen */ }
+    },
+
     async refreshRecent() {
       this.recent = mergeRecent(await call('recent_projects').catch(() => this.recent))
     },
@@ -550,19 +680,104 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /**
+     * `openProject` for the user's own Open (recent list, palette, Open folder): in a window that
+     * already holds other projects, it goes where the user says (`chooseWhere`).
+     */
+    async openProjectAsking(path: string) {
+      const where = await this.chooseWhere(path, this.recent.find(r => r.path === path)?.name ?? folderName(path))
+      if (where === 'this') return this.openProject(path)
+      if (where === 'new') await this.openInWindow(path)
+      return null
+    },
+
+    /**
+     * Where the project the user is opening goes: this window, a new one, or nowhere (null: the
+     * question was cancelled). Asks only when there is a choice (`whereToOpen`) and none was remembered.
+     */
+    async chooseWhere(path: string, name: string): Promise<'this' | 'new' | null> {
+      const win = useWindows()
+      const decided = whereToOpen({
+        pref: this.openProjectIn,
+        windowKind: win.spec.kind,
+        openHere: this.openProjects.map(p => p.path),
+        path,
+        elsewhere: !!win.projectElsewhere(path),
+      })
+      if (decided !== 'ask') return decided
+      this.openWhere?.answer(null)
+      return new Promise((resolve) => {
+        const ask: OpenWhereAsk = {
+          name,
+          answer: (choice) => {
+            // The store holds it behind a reactive proxy: compare the object itself.
+            if (this.openWhere && toRaw(this.openWhere) === ask) this.openWhere = null
+            resolve(choice)
+          },
+        }
+        this.openWhere = ask
+        this.paletteOpen = false
+      })
+    },
+
+    /** The question's answer; `remember` keeps it for next time (Settings > Preferences sets it back). */
+    answerWhere(choice: 'this' | 'new' | null, remember = false) {
+      if (choice && remember) {
+        this.openProjectIn = choice
+        this.persist()
+      }
+      this.openWhere?.answer(choice)
+    },
+
+    /** A project the user chose to open in a new window; when it cannot move now, they are told why. */
+    async openInWindow(path: string) {
+      this.dialog = null
+      try {
+        await useWindows().openProjectWindow(path)
+      } catch (e) {
+        this.notify(t('shell.windows.notOpened'), e instanceof Error ? e.message : String(e))
+      }
+    },
+
+    /** A project just created or cloned (`info` from the backend): open it where the user says. */
+    async placeProject(info: ProjectInfo): Promise<'this' | 'new' | null> {
+      this.dialog = null
+      this.forgetConsent(info.path)
+      const where = await this.chooseWhere(info.path, info.name)
+      if (where === 'this') this.adopt(info)
+      else if (where === 'new') await this.openInWindow(info.path)
+      else await this.refreshRecent()
+      return where
+    },
+
+    /**
      * Open (or switch to) a folder inside a remote environment as a project. Nothing on this
      * computer's disk is involved: chats run their agent in the instance, terminals open a shell there.
      * `name` defaults to the folder's name (the instance's for `/`), or the name it was opened with before.
+     * In a window that holds other projects it goes where the user says (`chooseWhere`); the result
+     * says where it went (null: nowhere, the question was cancelled).
      */
-    async openEnvProject(loc: EnvLocation, name?: string): Promise<void> {
-      const elsewhere = useWindows().projectElsewhere(envPath(loc))
+    async openEnvProject(loc: EnvLocation, name?: string): Promise<'this' | 'new' | null> {
+      const path = envPath(loc)
+      const elsewhere = useWindows().projectElsewhere(path)
       if (elsewhere) {
         this.settings = null
-        return useWindows().focus(elsewhere)
+        await useWindows().focus(elsewhere)
+        return 'new'
+      }
+      const known = this.recent.find(r => r.path === path)
+      const where = await this.chooseWhere(path, name?.trim() || known?.name || envProjectName(loc))
+      if (!where) return null
+      if (where === 'new') {
+        // The new window opens it by its path alone: the name it was given travels in the saved list.
+        const info = envInfo(loc, name?.trim() || known?.name || envProjectName(loc), Date.now())
+        saveEnvProjects([info, ...loadEnvProjects().filter(r => r.path !== path)])
+        await this.openInWindow(path)
+        return 'new'
       }
       this._openEnv(loc, name)
       // Opened from Settings > Environments: show the project.
       this.settings = null
+      return 'this'
     },
 
     _openEnv(loc: EnvLocation, name?: string): ProjectInfo {
@@ -654,6 +869,15 @@ export const useWorkspace = defineStore('workspace', {
       if (isEnvPath(path)) saveEnvProjects(loadEnvProjects().filter(r => r.path !== path))
       else await call('forget_project', { path }).catch(() => {})
       this.recent = this.recent.filter(r => r.path !== path)
+      this.forgetConsent(path)
+    },
+
+    /** What ends with a project (removed, or another created or cloned at its path): its answer about language servers. */
+    forgetConsent(path: string) {
+      const prefs = this.projectPrefs[path]
+      if (prefs?.languageServers !== undefined || prefs?.languageServersFolder) {
+        this.setProjectPref(path, { languageServers: null, languageServersFolder: null })
+      }
     },
 
     setActiveProject(path: string) {
@@ -662,12 +886,16 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /* ---------- theme ---------- */
+    setLocale(locale: LocalePref) {
+      this.locale = locale
+      this.persist()
+    },
     setTheme(theme: Theme) {
       this.theme = theme
       this.applyTheme()
       this.persist()
     },
-    setScheme(scheme: ColorScheme) {
+    setScheme(scheme: SchemeId) {
       this.scheme = scheme
       this.applyTheme()
       this.persist()
@@ -703,7 +931,7 @@ export const useWorkspace = defineStore('workspace', {
     applyTheme() {
       const root = document.documentElement.dataset
       root.theme = this.resolvedTheme()
-      root.scheme = this.scheme
+      root.scheme = effectiveScheme(this.scheme, isPluginSchemeRegistered)
       root.textSize = this.textSize
       root.corners = this.corners
       root.fontUi = this.fontUi === 'inter' ? '' : this.fontUi
@@ -711,6 +939,12 @@ export const useWorkspace = defineStore('workspace', {
       root.motion = this.motion === 'system'
         ? (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'reduced' : 'full')
         : this.motion
+    },
+
+    /** Settings > Editor. */
+    setEditor(patch: Partial<Record<'editorAutoSave' | 'editorSmoothCaret' | 'editorLanguageServers', boolean>>) {
+      Object.assign(this, patch)
+      this.persist()
     },
 
     /* ---------- layout ---------- */
@@ -757,9 +991,25 @@ export const useWorkspace = defineStore('workspace', {
     toggleLinks(force?: boolean) {
       this.toggleTool('links', force)
     },
+    /** Show the project's GitHub releases and the runs that build them on the right; again to close it. */
+    toggleReleases(force?: boolean) {
+      this.toggleTool('releases', force)
+    },
     /** Show where the project runs (this computer or an environment) on the right; again to close it. */
     toggleEnv(force?: boolean) {
       this.toggleTool('env', force)
+    },
+    setFilesView(patch: Partial<FilesView>) {
+      this.filesView = { ...this.filesView, ...patch }
+      this.persist()
+    },
+    /** Show or hide what a plugin's file filter covers. Hiding is meant: a file that only showed because it was asked for goes too. */
+    setFileFilterShown(id: string, shown: boolean) {
+      const rest = this.filesView.shown.filter(x => x !== id)
+      if (!shown) {
+        for (const tree of Object.values(useFiles().trees)) tree.revealed = null
+      }
+      this.setFilesView({ shown: shown ? [...rest, id] : rest })
     },
     /** Show the project's files on the right; again to close it. */
     toggleFiles(force?: boolean) {
@@ -771,7 +1021,11 @@ export const useWorkspace = defineStore('workspace', {
      */
     setProjectPref(path: string, patch: Partial<Record<keyof ProjectPrefs, ProjectPrefs[keyof ProjectPrefs] | null>>) {
       const next: Record<string, unknown> = { ...this.projectPrefs[path], ...patch }
-      for (const k of Object.keys(next)) if (next[k] === null || next[k] === undefined || next[k] === '' || next[k] === false) delete next[k]
+      for (const k of Object.keys(next)) {
+        const v = next[k]
+        // False means "no override", except for language servers, where a no is an answer to remember.
+        if (v === null || v === undefined || v === '' || (v === false && k !== 'languageServers')) delete next[k]
+      }
       if (Object.keys(next).length) this.projectPrefs[path] = next as ProjectPrefs
       else delete this.projectPrefs[path]
       this.persist()
@@ -788,7 +1042,7 @@ export const useWorkspace = defineStore('workspace', {
     },
     /** Tell the user something that did not happen and why (one OK button). */
     notify(title: string, body: string) {
-      this.confirm = { title, body, label: 'OK', info: true, run: () => {} }
+      this.confirm = { title, body, label: t('shell.ok'), info: true, run: () => {} }
     },
     openSettings(section: SettingsSection = 'general', tab?: AgentsTab) {
       this.settings = section
@@ -826,9 +1080,18 @@ export const useWorkspace = defineStore('workspace', {
     },
 
     /* ---------- terminal ---------- */
+    /**
+     * Show or hide the bottom panel. Without `force` it is about the terminals (the Terminal button, its
+     * shortcut): it hides the panel while they show, and otherwise shows them, also over a plugin tab.
+     */
     toggleTerminal(force?: boolean) {
+      if (force === undefined && this.activePanelTab) {
+        this.panelPluginTab = null
+        this.terminalOpen = false
+        force = true
+      }
       this.terminalOpen = force ?? !this.terminalOpen
-      if (this.terminalOpen) {
+      if (this.terminalOpen && !this.activePanelTab) {
         // A remote project's terminal is a shell in its environment: show one (open it when there is none yet).
         const path = this.activeProjectPath
         if (isEnvPath(path)) {
@@ -838,6 +1101,107 @@ export const useWorkspace = defineStore('workspace', {
         } else if (this.panelTerminals.length === 0) this.newTerminal()
       }
       this.persist()
+    },
+    /**
+     * Bring a panel tab (the Git log, or a plugin's) into view: its tab in the main area when it is there,
+     * else the panel at it (a closed one comes back into the panel). No shell is started for it.
+     */
+    openPanelTab(ref: string) {
+      const place = this.panelTabPlaces[ref]
+      if (place?.at === 'editor') {
+        this._addPanelEditorTab(ref)
+        const tabId = this.panelEditorTab(ref)
+        if (tabId) useThreads().show(tabId)
+        return
+      }
+      if (place) delete this.panelTabPlaces[ref]
+      this.panelPluginTab = ref
+      this.terminalOpen = true
+      this.persist()
+    },
+    /** A panel tab's tab in the main area, if it has one. */
+    panelEditorTab(ref: string): string | null {
+      return useThreads().tabs.find(id => parsePanelEditorTab(id)?.ref === ref) ?? null
+    },
+    /** Put a panel tab placed in the main area back into its pane's strip (its plugin is back, or a reload), without showing it. */
+    _addPanelEditorTab(ref: string) {
+      const place = this.panelTabPlaces[ref]
+      if (place?.at !== 'editor' || this.panelEditorTab(ref)) return
+      const threads = useThreads()
+      const tabId = panelEditorTabId(place.projectPath, ref)
+      threads.addTab(tabId)
+      if (threads.panes.some(p => p.id === place.paneId)) threads._setGroup(tabId, place.paneId)
+    },
+    /**
+     * Keep the main area in step with the panel tabs: a tab for each registered one placed there, and none
+     * for one whose plugin is away (its place is remembered, with the pane it was in) or that moved elsewhere.
+     */
+    syncPanelEditorTabs() {
+      const threads = useThreads()
+      const live = new Set(allPanelTabs().map(t => t.fullId))
+      for (const id of [...threads.tabs]) {
+        const p = parsePanelEditorTab(id)
+        if (!p) continue
+        const place = this.panelTabPlaces[p.ref]
+        if (live.has(p.ref) && place?.at === 'editor') continue
+        if (place?.at === 'editor') place.paneId = threads.groupOf(id)
+        threads.removeTab(id)
+      }
+      for (const ref of live) this._addPanelEditorTab(ref)
+    },
+    /** A panel tab leaves the panel's view: the strip's neighbour shows instead (a terminal or another tab); with none, the panel hides. */
+    _panelTabLeaving(ref: string) {
+      if (this.panelPluginTab !== ref) return
+      const strip = this.panelStrip
+      const i = strip.indexOf(ref)
+      const next = (i > 0 ? strip[i - 1] : strip[i + 1]) ?? null
+      this.panelPluginTab = null
+      if (next && isPanelTabRef(next)) this.panelPluginTab = next
+      else if (next) this.activeTerminalId = next
+      else this.terminalOpen = false
+    },
+    /** Close a panel tab wherever it is. Nothing is lost: its button, `panelTabs.open` or a command brings it back into the panel. */
+    closePanelTab(ref: string) {
+      if (this.panelTabPlaces[ref]?.at !== 'editor') this._panelTabLeaving(ref)
+      const tabId = this.panelEditorTab(ref)
+      this.panelTabPlaces[ref] = { at: 'closed' }
+      if (tabId) useThreads().removeTab(tabId)
+      this.persist()
+    },
+    /** Show a panel tab as a tab in the main area (like `moveTerminalToEditor`); it belongs to the project in view. */
+    movePanelTabToEditor(ref: string, at: TerminalPlacement = {}) {
+      const project = this.activeProjectPath
+      if (!project) return
+      const threads = useThreads()
+      if (this.panelTabPlaces[ref]?.at !== 'editor') this._panelTabLeaving(ref)
+      const tabId = this.panelEditorTab(ref) ?? panelEditorTabId(project, ref)
+      const projectPath = parsePanelEditorTab(tabId)!.projectPath
+      // Placed first: the main area keeps this tab only while its place says so (`syncPanelEditorTabs`).
+      this.panelTabPlaces[ref] = { at: 'editor', projectPath, paneId: threads.activePaneId }
+      if (at.before !== undefined) threads.placeTab(tabId, at.before)
+      else threads.addTab(tabId, threads.activePane.threadId)
+      threads.showOnly(tabId, at.split ? 'split' : at.paneId ?? threads.activePaneId)
+      this.panelTabPlaces[ref] = { at: 'editor', projectPath, paneId: threads.groupOf(tabId) }
+      this.persist()
+    },
+    /** Dock a panel tab in the panel before `before` (a strip key; null: at the end; left out: where it was) and show it there. */
+    movePanelTabToPanel(ref: string, before?: string | null) {
+      const tabId = this.panelEditorTab(ref)
+      delete this.panelTabPlaces[ref]
+      if (tabId) useThreads().removeTab(tabId)
+      if (before !== undefined) this.panelOrder = placeBefore(this.panelStrip, ref, before)
+      this.panelPluginTab = ref
+      this.terminalOpen = true
+      this.persist()
+    },
+    /** Show a terminal of the panel (the active one when left out) instead of a plugin tab; starts a shell when there is none. */
+    showTerminals(id?: string) {
+      const changed = this.panelPluginTab !== null || !this.terminalOpen
+      this.panelPluginTab = null
+      if (id && this.panelTerminals.some(t => t.id === id)) this.activeTerminalId = id
+      if (this.panelTerminals.length === 0) this.newTerminal()
+      this.terminalOpen = true
+      if (changed) this.persist()
     },
     setTerminalHeight(fraction: number) {
       this.terminalHeight = Math.min(0.8, Math.max(0.14, fraction))
@@ -886,6 +1250,7 @@ export const useWorkspace = defineStore('workspace', {
         return id
       }
       this.activeTerminalId = id
+      this.panelPluginTab = null
       this.terminalOpen = true
       return id
     },
@@ -910,7 +1275,12 @@ export const useWorkspace = defineStore('workspace', {
         const before = this.terminalTabs.slice(0, index).filter(t => !t.inEditor)
         this.activeTerminalId = before[before.length - 1]?.id ?? panel[0]?.id ?? null
       }
-      if (panel.length === 0) this.terminalOpen = false
+      // A plugin tab showing keeps the panel up without terminals.
+      if (panel.length === 0 && !this.activePanelTab) {
+        const tab = this.dockedPanelTabs[0]
+        if (tab && this.terminalOpen) this.panelPluginTab = tab
+        else this.terminalOpen = false
+      }
     },
     /**
      * Show a terminal as a tab in the main area, with the same shell and scrollback (TerminalPanel
@@ -941,7 +1311,10 @@ export const useWorkspace = defineStore('workspace', {
       }
       const target = before ? this.terminalTabs.find(t => t.id === before) ?? null : null
       this.terminalTabs = placeBefore(this.terminalTabs, tab, target)
+      // With panel tabs in the strip, its order says where the terminal goes among them.
+      if (this.panelOrder.length || (before && isPanelTabRef(before))) this.panelOrder = placeBefore(this.panelStrip, id, before)
       this.activeTerminalId = id
+      this.panelPluginTab = null
       this.terminalOpen = true
       this.persist()
     },

@@ -64,8 +64,32 @@ fn need(bin: &str, what: &str) -> String {
     )
 }
 
-/// Master-side argv running `tool`'s own sign-in inside the instance.
-fn login_line(host: &EnvHost, instance: &str, tool: &str) -> Result<Vec<String>, String> {
+/// The GitLab CLI's sign-in, as the agent user, for the server in `$1` (validated, passed as an
+/// argument, never part of the script). Everything glab would ask besides how to sign in is
+/// answered with flags (what is saved for that server first, else glab's own defaults), and git
+/// uses glab's sign-in for https remotes on it (`--setup-git-credential-helper`). The token is kept
+/// in glab's config file (`--insecure-storage`): an environment has no keyring that every session
+/// (agents, other computers) can open. gitlab.com takes the device flow (a code and a page,
+/// nothing reaches back into the instance); a self-managed server asks, where a token works on
+/// any version and the device flow needs an OAuth application its admin set up for glab.
+const GLAB_LOGIN: &str = r#"export GLAB_CHECK_UPDATE=false GLAB_SEND_TELEMETRY=false
+h=$1
+saved() { glab config get "$1" --host "$h" 2>/dev/null || true; }
+crd=$(saved container_registry_domains)
+case $h in
+  *:*) crd=${crd:-$h,registry.$h} ;;
+  *) crd=${crd:-$h,$h:443,registry.$h} ;;
+esac
+set -- auth login --hostname "$h" --git-protocol https --api-protocol https --container-registry-domains "$crd" --setup-git-credential-helper --insecure-storage
+[ "$h" = gitlab.com ] && exec glab "$@" --device
+api=$(saved api_host)
+sshh=$(saved ssh_host)
+echo "Signing in to $h. Choose Token and paste a personal access token with the api and write_repository scopes (glab shows where to make one); Device works too when $h has an OAuth application for glab."
+exec glab "$@" --api-host "${api:-$h}" --ssh-hostname "${sshh:-${h%%:*}}""#;
+
+/// Master-side argv running `tool`'s own sign-in inside the instance. `gitlab_host` is the server
+/// a `glab` sign-in is for (gitlab.com when none); other tools ignore it.
+fn login_line(host: &EnvHost, instance: &str, tool: &str, gitlab_host: Option<&str>) -> Result<Vec<String>, String> {
     let as_agent = |script: String| ssh::as_agent(None, &[], &["bash".into(), "-c".into(), script]);
     let inner = match tool {
         // The same command Settings > Agents runs locally; it prints a link and asks for the code.
@@ -75,6 +99,11 @@ fn login_line(host: &EnvHost, instance: &str, tool: &str) -> Result<Vec<String>,
         // Browser (device) sign-in without prompts: there is no browser in the instance, so GH_BROWSER=echo
         // prints the device page and Mango opens it here. Then git uses gh's sign-in for https remotes.
         "gh" => as_agent(need("gh", "The GitHub CLI") + "GH_BROWSER=echo gh auth login --hostname github.com --git-protocol https --web && exec gh auth setup-git"),
+        "glab" => {
+            let server = super::valid_gitlab_host(gitlab_host)?;
+            let script = need("glab", "The GitLab CLI") + GLAB_LOGIN;
+            ssh::as_agent(None, &[], &["bash".into(), "-c".into(), script, "mango-glab".into(), server])
+        }
         // Root (incus exec runs as root; sudo in a joined environment): it joins the whole instance to the tailnet.
         "tailscale" => {
             let mut script = need("tailscale", "Tailscale") + "exec tailscale up --ssh";
@@ -99,15 +128,29 @@ pub async fn env_login(
     host_id: String,
     instance: String,
     tool: String,
+    host: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
     valid_instance(&instance)?;
-    let host = {
-        let app = app.clone();
-        blocking(move || hosts::get(&app, &host_id)).await?
+    let gitlab_host = match tool.as_str() {
+        "glab" => Some(super::valid_gitlab_host(host.as_deref())?),
+        _ => None,
     };
-    let argv = ssh::argv(&host, Mode::Tty, &login_line(&host, &instance, &tool)?)?;
+    let env_host = {
+        let app = app.clone();
+        blocking(move || {
+            // A self-managed server signed in to here joins the list Mango knows as GitLab.
+            if let Some(h) = gitlab_host.as_deref().filter(|h| *h != crate::gitlab::GITLAB_COM) {
+                if let Err(e) = crate::gitlab::remember_host(&app, h) {
+                    eprintln!("[envs] could not remember the GitLab server {h}: {e}");
+                }
+            }
+            hosts::get(&app, &host_id)
+        })
+        .await?
+    };
+    let argv = ssh::argv(&env_host, Mode::Tty, &login_line(&env_host, &instance, &tool, host.as_deref())?)?;
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[])
 }
 
@@ -126,7 +169,7 @@ pub fn valid_clone_url(s: &str) -> Result<(), String> {
         let authority = rest.split('/').next().unwrap_or("");
         if authority.contains('@') {
             return Err(
-                "Leave the sign-in out of the URL: sign in to GitHub (gh) in the environment instead, and git will use it."
+                "Leave the sign-in out of the URL: sign in to GitHub (gh) or GitLab (glab) in the environment instead, and git will use it."
                     .into(),
             );
         }
@@ -229,7 +272,7 @@ fn parse_prepare(out: &str, dir: &str, url: Option<&str>) -> Result<String, Stri
                 .any(|p| lower.contains(p)) =>
             {
                 with_tail(format!(
-                    "Could not clone {url}: the server refused access. For a private GitHub repository, sign in to GitHub (gh) in this environment, then try again."
+                    "Could not clone {url}: the server refused access. For a private repository, sign in to GitHub (gh) or GitLab (glab) in this environment, then try again."
                 ))
             }
             "clone" if lower.contains("could not resolve host") || lower.contains("connection timed out") => {
@@ -661,10 +704,14 @@ fn ssh_dialer(host: &EnvHost, instance: &str) -> Result<Dialer, String> {
     ssh_dialer_to(host, instance, NOVNC_ADDR)
 }
 
-/// Connections to `addr` (a socat address such as `TCP:127.0.0.1:3000`) inside the instance.
-pub(crate) fn ssh_dialer_to(host: &EnvHost, instance: &str, addr: &str) -> Result<Dialer, String> {
-    let inner = ["socat".to_string(), "-".into(), addr.to_string()];
-    let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, &inner)?)?;
+/// Connections to `addr` (a socat address such as `TCP:127.0.0.1:6080`) inside the instance.
+fn ssh_dialer_to(host: &EnvHost, instance: &str, addr: &str) -> Result<Dialer, String> {
+    ssh_dialer_run(host, instance, &["socat".to_string(), "-".into(), addr.to_string()])
+}
+
+/// Connections through `inner`, a command inside the instance that relays its stdin and stdout.
+pub(crate) fn ssh_dialer_run(host: &EnvHost, instance: &str, inner: &[String]) -> Result<Dialer, String> {
+    let argv = ssh::argv(host, Mode::Batch, &ssh::in_instance(host, instance, Mode::Batch, inner)?)?;
     Ok(Arc::new(move || {
         let mut cmd = ssh::command(&argv);
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null());
@@ -814,25 +861,39 @@ mod tests {
         assert!(l.starts_with("incus exec dev -t -- runuser -u agent -- env HOME=/home/agent"), "{l}");
         assert!(l.ends_with("mango '/home/agent/work/my app' bash -l"), "{l}");
 
-        let l = ssh::line(&login_line(&h, "dev", "claude").unwrap());
+        let l = ssh::line(&login_line(&h, "dev", "claude", None).unwrap());
         assert!(l.starts_with("incus exec dev -t -- runuser -u agent"), "{l}");
         assert!(l.contains("exec claude auth login'"), "{l}");
-        let l = ssh::line(&login_line(&h, "dev", "codex").unwrap());
+        let l = ssh::line(&login_line(&h, "dev", "codex", None).unwrap());
         assert!(l.contains("exec codex login --device-auth'"), "{l}");
-        let l = ssh::line(&login_line(&h, "dev", "gh").unwrap());
+        let l = ssh::line(&login_line(&h, "dev", "gh", None).unwrap());
         assert!(l.contains("GH_BROWSER=echo gh auth login --hostname github.com --git-protocol https --web && exec gh auth setup-git'"), "{l}");
+
+        // glab: the server is validated and handed over as an argument, never part of the script.
+        let l = ssh::line(&login_line(&h, "dev", "glab", None).unwrap());
+        assert!(l.starts_with("incus exec dev -t -- runuser -u agent"), "{l}");
+        assert!(l.contains("exec glab \"$@\" --device"), "{l}");
+        assert!(l.ends_with(" mango-glab gitlab.com"), "{l}");
+        let l = ssh::line(&login_line(&h, "dev", "glab", Some("https://GitLab.Corp.io:8443/")).unwrap());
+        assert!(l.ends_with(" mango-glab gitlab.corp.io:8443"), "{l}");
+        for bad in ["corp", "a.io;id", "$(id).io", "a.io' x"] {
+            assert!(login_line(&h, "dev", "glab", Some(bad)).is_err(), "{bad:?}");
+        }
+        // Other tools ignore a server.
+        let l = ssh::line(&login_line(&h, "dev", "gh", Some("a.io;id")).unwrap());
+        assert!(!l.contains("a.io"), "{l}");
 
         // Tailscale runs as root, with the server's tags.
         let mut ts = h.clone();
         ts.tailscale = Some(EnvTailscale { tags: vec!["tag:mango".into(), "tag:dev".into()], auth_key_file: None });
-        let l = ssh::line(&login_line(&ts, "dev", "tailscale").unwrap());
+        let l = ssh::line(&login_line(&ts, "dev", "tailscale", None).unwrap());
         assert!(l.starts_with("incus exec dev -t -- bash -lc '"), "{l}");
         assert!(!l.contains("runuser"), "{l}");
         assert!(l.ends_with("exec tailscale up --ssh --advertise-tags=tag:mango,tag:dev'"), "{l}");
 
-        assert!(login_line(&h, "dev", "rm -rf").is_err());
+        assert!(login_line(&h, "dev", "rm -rf", None).is_err());
         ts.tailscale = Some(EnvTailscale { tags: vec!["tag:x;id".into()], auth_key_file: None });
-        assert!(login_line(&ts, "dev", "tailscale").is_err());
+        assert!(login_line(&ts, "dev", "tailscale", None).is_err());
     }
 
     #[test]
@@ -896,7 +957,7 @@ mod tests {
             u,
         )
         .unwrap_err();
-        assert!(e.contains("sign in to GitHub (gh)"), "{e}");
+        assert!(e.contains("sign in to GitHub (gh) or GitLab (glab)"), "{e}");
         assert!(e.contains("terminal prompts disabled"), "{e}");
         let e = parse_prepare("MANGO-ERR:clone 128\ngit@github.com: Permission denied (publickey).\n", d, u).unwrap_err();
         assert!(e.contains("refused access") && !e.contains("SSH sign-in"), "{e}");
@@ -1027,7 +1088,7 @@ mod tests {
     fn scripts_parse() {
         use std::io::Write;
         let Some(bash) = real_bash() else { return eprintln!("no bash found; skipping") };
-        for (name, script) in [("prepare", PREPARE_SCRIPT), ("list", LIST_SCRIPT)] {
+        for (name, script) in [("prepare", PREPARE_SCRIPT), ("list", LIST_SCRIPT), ("glab", GLAB_LOGIN)] {
             // Through stdin: MSYS/Cygwin shells re-parse a Windows command line with their own quoting rules.
             let mut child = std::process::Command::new(&bash)
                 .arg("-n")
@@ -1039,6 +1100,39 @@ mod tests {
             let out = child.wait_with_output().unwrap();
             assert!(out.status.success(), "{name}: {}", String::from_utf8_lossy(&out.stderr));
         }
+    }
+
+    /// Runs [`GLAB_LOGIN`] with a stand-in `glab` that prints its arguments (and knows one saved value).
+    #[test]
+    fn glab_login_script_runs() {
+        use std::io::Write;
+        let Some(bash) = real_bash() else { return eprintln!("no bash found; skipping") };
+        let fake = "glab() { if [ \"$1\" = config ]; then [ \"$3$5\" = api_hostgit.corp.io:8443 ] && echo api.corp.io; return 0; fi; printf '<%s>' \"$@\"; echo; }\n\
+                    glab_exec() { glab \"$@\"; exit 0; }\n";
+        let run = |server: &str| {
+            let script = format!("{fake}{}", GLAB_LOGIN.replace("exec glab", "glab_exec"));
+            let mut child = std::process::Command::new(&bash)
+                .args(["-s", "--", server])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("run bash");
+            child.stdin.take().unwrap().write_all(script.as_bytes()).unwrap();
+            let out = child.wait_with_output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout).lines().last().unwrap_or("").to_string()
+        };
+        let common = "<auth><login><--hostname><{h}><--git-protocol><https><--api-protocol><https><--container-registry-domains><{d}><--setup-git-credential-helper><--insecure-storage>";
+        assert_eq!(
+            run("gitlab.com"),
+            common.replace("{h}", "gitlab.com").replace("{d}", "gitlab.com,gitlab.com:443,registry.gitlab.com") + "<--device>"
+        );
+        assert_eq!(
+            run("git.corp.io:8443"),
+            common.replace("{h}", "git.corp.io:8443").replace("{d}", "git.corp.io:8443,registry.git.corp.io:8443")
+                + "<--api-host><api.corp.io><--ssh-hostname><git.corp.io>"
+        );
     }
 
     /// Runs [`LIST_SCRIPT`] against a scratch folder with the local bash (Git Bash on Windows).

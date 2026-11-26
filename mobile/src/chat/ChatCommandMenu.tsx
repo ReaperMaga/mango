@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Animated, Pressable, ScrollView, View } from 'react-native'
-import { easeOut, fonts, makeStyles, motion, radius, space, touch, useReducedMotion, useTheme } from '@/theme'
+import { easeOut, makeStyles, motion, space, touch, useReducedMotion, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { nameParts, type CommandMatch } from './commands'
 
@@ -66,7 +66,7 @@ function Row({ match, query, onPick }: { match: CommandMatch; query: string; onP
           /
           {nameParts(match, query).map((p, i) => (
             p.hit
-              ? <Text key={i} variant="label" style={{ color: t.colors.accentInk, fontFamily: fonts.semibold }}>{p.text}</Text>
+              ? <Text key={i} variant="label" style={{ color: t.colors.accentInk, ...t.fonts.semibold }}>{p.text}</Text>
               : p.text
           ))}
         </Text>
@@ -89,7 +89,7 @@ const useStyles = makeStyles(t => ({
     backgroundColor: t.colors.bgRaised,
     borderWidth: 1,
     borderColor: t.colors.line,
-    borderRadius: radius.lg,
+    borderRadius: t.radius.lg,
     borderCurve: 'continuous',
     boxShadow: t.shadow.pop,
     overflow: 'hidden',
@@ -101,7 +101,7 @@ const useStyles = makeStyles(t => ({
     gap: 1,
     paddingVertical: 6,
     paddingHorizontal: space[2],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
   },
   rowPressed: { backgroundColor: t.colors.bgActive },

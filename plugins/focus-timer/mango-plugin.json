@@ -1,0 +1,37 @@
+{
+  "id": "focus-timer",
+  "name": "Focus timer",
+  "version": "1.0.0",
+  "description": "A work and break timer in the titlebar: click to start or pause, with a notification when time is up.",
+  "author": "Mango",
+  "homepage": "https://github.com/ReaperMaga/mango/tree/main/plugins/focus-timer",
+  "main": "main.js",
+  "minAppVersion": "0.1.36",
+  "settings": [
+    {
+      "key": "workMinutes",
+      "type": "number",
+      "label": "Focus length",
+      "description": "Minutes of one focus block.",
+      "default": 25,
+      "min": 1,
+      "max": 180
+    },
+    {
+      "key": "breakMinutes",
+      "type": "number",
+      "label": "Break length",
+      "description": "Minutes of the break after it.",
+      "default": 5,
+      "min": 1,
+      "max": 60
+    },
+    {
+      "key": "autoStart",
+      "type": "boolean",
+      "label": "Start the next block on its own",
+      "description": "Off: the timer waits for a click after each focus block and break.",
+      "default": false
+    }
+  ]
+}

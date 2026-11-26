@@ -4,14 +4,19 @@
  * in camelCase (`--accent-ink` is `accentInk`, `--ripe-waiting-fg` is `ripeWaitingFg`), so a rule
  * in DESIGN.md reads the same here.
  *
- * Colours are the Mango scheme (ground hue 160, ink hue 150) resolved from OKLCH to sRGB once,
- * with CSS Color 4 gamut mapping (chroma reduced until in sRGB), because React Native takes
- * hex/rgba only. Translucent tokens keep their alpha as rgba(). The few `color-mix()` values the
- * desktop computes in components (the waiting card's wash, a selected option's wash, tinted
- * borders) are resolved here too, under their own names, so components still read tokens only.
- * Regenerate them the same way if tokens.css changes.
+ * Colours are every colour scheme of tokens.css (Mango, Blue, … Graphite), dark and light, resolved
+ * from OKLCH to sRGB by `scripts/schemes.ts` into `schemes.generated.ts` (CSS Color 4 gamut mapping),
+ * because React Native takes hex/rgba only. Translucent tokens keep their alpha as rgba(). The few
+ * `color-mix()` values the desktop computes in components (the waiting card's wash, a selected
+ * option's wash, tinted borders) are resolved there too, under their own names, so components still
+ * read tokens only. Change tokens.css, then run `node scripts/schemes.ts` (CI runs it with `--check`).
  */
 
+import type { FontFace, Fonts } from './fonts'
+import { RADIUS_SCALE, TEXT_SCALE, type ColorScheme, type Corners, type TextSize } from './look'
+import { generated } from './schemes.generated'
+
+/** Light or dark. (The tinted palettes, Mango to Graphite, are `ColorScheme` in `look.ts`.) */
 export type SchemeName = 'dark' | 'light'
 
 export interface Colors {
@@ -72,6 +77,8 @@ export interface Colors {
   waitingLine: string
   /** `color-mix(in oklch, accent 9%, bg-panel)`: a picked option. */
   accentWash: string
+  /** The app mark's lighter half: the accent lighter and turned towards gold (`ui/MangoMark.vue`). */
+  markLight: string
   /** `ripe-error` at 12%, 40% and 60%: error banner wash, danger button border, field error border. */
   errorWash: string
   errorLine: string
@@ -85,128 +92,25 @@ export interface Colors {
 
   /** Claude's brand orange: only the agent logo uses it, as on the desktop (`--brand-claude`). */
   brandClaude: string
-}
 
-const dark: Colors = {
-  bgApp: '#0b100d',
-  bgCanvas: '#111613',
-  bgPanel: '#151b18',
-  bgRaised: '#1d2320',
-  bgInset: '#070b09',
-  bgHover: 'rgba(34, 40, 36, 0.55)',
-  bgActive: 'rgba(40, 48, 43, 0.7)',
+  /** `--file-*`: file-type marks, also the categories of a context window's breakdown. */
+  fileBlue: string
+  fileYellow: string
+  fileOrange: string
+  fileGreen: string
+  filePurple: string
+  fileRed: string
 
-  line: '#29302c',
-  lineSoft: '#202622',
-  lineStrong: '#3c4540',
-
-  fg: '#e8ede8',
-  fgMuted: '#b9c0ba',
-  fgSubtle: '#969e97',
-  fgFaint: '#878e88',
-
-  accent: '#ff9d43',
-  accentStrong: '#ffaf64',
-  accentFg: '#281606',
-  accentInk: '#ffac52',
-  accentSoft: 'rgba(255, 164, 69, 0.14)',
-  accentLine: 'rgba(255, 164, 69, 0.45)',
-
-  ripeIdle: '#737d77',
-  ripeQueued: '#69b27a',
-  ripeRunning: '#ff903d',
-  ripeWaiting: '#f47c6e',
-  ripeDone: '#a1e24c',
-  ripeError: '#f0555b',
-  ripeQueuedFg: '#82cb92',
-  ripeRunningFg: '#ffac52',
-  ripeWaitingFg: '#ff9284',
-  ripeDoneFg: '#a9e85e',
-  ripeErrorFg: '#ff7d7c',
-
-  diffAddBg: 'rgba(105, 178, 122, 0.12)',
-  diffAddFg: '#7ccd8e',
-  diffDelBg: 'rgba(240, 85, 91, 0.12)',
-  diffDelFg: '#f68482',
-
-  scrim: 'rgba(1, 2, 1, 0.55)',
-  selection: 'rgba(255, 164, 69, 0.28)',
-  focusRing: 'rgba(255, 164, 69, 0.7)',
-
-  waitingWash: '#1b251d',
-  waitingLine: 'rgba(244, 124, 110, 0.55)',
-  accentWash: '#1d2920',
-  errorWash: 'rgba(240, 85, 91, 0.12)',
-  errorLine: 'rgba(240, 85, 91, 0.4)',
-  errorLineStrong: 'rgba(240, 85, 91, 0.6)',
-  chipAccent: 'rgba(255, 172, 82, 0.14)',
-  chipAdd: 'rgba(124, 205, 142, 0.14)',
-  chipDel: 'rgba(246, 132, 130, 0.14)',
-  chipQueued: 'rgba(130, 203, 146, 0.14)',
-  chipError: 'rgba(255, 125, 124, 0.14)',
-
-  brandClaude: '#d97757',
-}
-
-const light: Colors = {
-  bgApp: '#edf1ee',
-  bgCanvas: '#f8fbf9',
-  bgPanel: '#ffffff',
-  bgRaised: '#ffffff',
-  bgInset: '#f4f8f5',
-  bgHover: 'rgba(218, 224, 218, 0.55)',
-  bgActive: 'rgba(209, 218, 211, 0.75)',
-
-  line: '#d4d9d5',
-  lineSoft: '#e2e6e2',
-  lineStrong: '#b9c0ba',
-
-  fg: '#19221d',
-  fgMuted: '#3c4540',
-  fgSubtle: '#545d58',
-  fgFaint: '#666e69',
-
-  accent: '#f68c11',
-  accentStrong: '#ea7e00',
-  accentFg: '#281606',
-  accentInk: '#a94700',
-  accentSoft: 'rgba(235, 136, 31, 0.16)',
-  accentLine: 'rgba(222, 111, 0, 0.45)',
-
-  ripeIdle: '#8c9590',
-  ripeQueued: '#3d8e53',
-  ripeRunning: '#ec6f00',
-  ripeWaiting: '#d95448',
-  ripeDone: '#6fb511',
-  ripeError: '#d02b31',
-  ripeQueuedFg: '#0f6a31',
-  ripeRunningFg: '#a64b00',
-  ripeWaitingFg: '#b6322b',
-  ripeDoneFg: '#3c740d',
-  ripeErrorFg: '#b71824',
-
-  diffAddBg: 'rgba(99, 179, 118, 0.14)',
-  diffAddFg: '#09672e',
-  diffDelBg: 'rgba(226, 73, 71, 0.12)',
-  diffDelFg: '#b32228',
-
-  scrim: 'rgba(37, 49, 42, 0.25)',
-  selection: 'rgba(235, 136, 31, 0.25)',
-  focusRing: 'rgba(203, 90, 0, 0.7)',
-
-  waitingWash: '#fef3f2',
-  waitingLine: 'rgba(217, 84, 72, 0.55)',
-  accentWash: '#fff5ed',
-  errorWash: 'rgba(208, 43, 49, 0.12)',
-  errorLine: 'rgba(208, 43, 49, 0.4)',
-  errorLineStrong: 'rgba(208, 43, 49, 0.6)',
-  chipAccent: 'rgba(169, 71, 0, 0.14)',
-  chipAdd: 'rgba(9, 103, 46, 0.14)',
-  chipDel: 'rgba(179, 34, 40, 0.14)',
-  chipQueued: 'rgba(15, 106, 49, 0.14)',
-  chipError: 'rgba(183, 24, 36, 0.14)',
-
-  brandClaude: '#d97757',
+  /** The terminal's ANSI palette (`--term-*`): colours in a GitHub Actions log, as the desktop shows them. */
+  termRed: string
+  termGreen: string
+  termYellow: string
+  termBlue: string
+  termMagenta: string
+  termCyan: string
+  termBrightBlack: string
+  /** `color-mix(in oklch, term-yellow 9%, transparent)`: a warning line in a log. */
+  termYellowWash: string
 }
 
 /**
@@ -220,18 +124,9 @@ export interface Shadows {
   soft: string
 }
 
-const darkShadows: Shadows = {
-  pop: '0px 12px 32px -8px rgba(0, 1, 0, 0.6), 0px 2px 6px 0px rgba(0, 1, 0, 0.35)',
-  soft: '0px 4px 14px -6px rgba(0, 1, 0, 0.5)',
-}
-const lightShadows: Shadows = {
-  pop: '0px 14px 34px -10px rgba(32, 51, 41, 0.28), 0px 2px 6px 0px rgba(32, 51, 41, 0.1)',
-  soft: '0px 4px 14px -6px rgba(32, 51, 41, 0.18)',
-}
-
-export const palettes: Record<SchemeName, { colors: Colors; shadow: Shadows }> = {
-  dark: { colors: dark, shadow: darkShadows },
-  light: { colors: light, shadow: lightShadows },
+/** The colours and shadows of a colour scheme in light or dark: generated from tokens.css (`scripts/schemes.ts`). */
+export function paletteFor(scheme: ColorScheme, mode: SchemeName): { colors: Colors; shadow: Shadows } {
+  return generated[scheme][mode] as unknown as { colors: Colors; shadow: Shadows }
 }
 
 /** `#rrggbb` at an alpha: the CSS `color-mix(in oklch, X p%, transparent)` the desktop uses for tinted borders and washes. */
@@ -263,19 +158,8 @@ export function withAlpha(hex: string, alpha: number): string {
  * Line heights keep the desktop's ratios (tight 1.25, normal 1.5, chat 1.62) as points.
  */
 
-export const fonts = {
-  regular: 'Inter_400Regular',
-  medium: 'Inter_500Medium',
-  semibold: 'Inter_600SemiBold',
-  bold: 'Inter_700Bold',
-  /** Emphasis in agent prose (custom fonts get no synthesized italic on iOS). */
-  italic: 'Inter_400Regular_Italic',
-  mono: 'JetBrainsMono_400Regular',
-  monoMedium: 'JetBrainsMono_500Medium',
-  monoSemibold: 'JetBrainsMono_600SemiBold',
-} as const
-
-export const fontSize = {
+/** The unscaled sizes; `fontSizeFor` applies Settings > Appearance > Text size. */
+const BASE_FONT_SIZE = {
   micro: 11,
   caption: 13,
   bodySm: 15,
@@ -288,32 +172,59 @@ export const fontSize = {
   code: 14,
 } as const
 
+export type FontSizes = { [K in keyof typeof BASE_FONT_SIZE]: number }
+
+/** The sizes at a text size (the desktop's `--text-scale`), whole points, never under 10. */
+export function fontSizeFor(textSize: TextSize): FontSizes {
+  const k = TEXT_SCALE[textSize]
+  return Object.fromEntries(Object.entries(BASE_FONT_SIZE).map(([name, v]) => [name, Math.max(10, Math.round(v * k))])) as FontSizes
+}
+
 export const leading = { tight: 1.25, normal: 1.5, chat: 1.62 } as const
 
 const lh = (size: number, ratio: number) => Math.round(size * ratio)
 
-/** Ready-made text styles (no colour: pair with a `Colors` ink). */
-export const type = {
-  display: { fontFamily: fonts.semibold, fontSize: fontSize.display, lineHeight: lh(fontSize.display, leading.tight), letterSpacing: -0.8 },
-  headline: { fontFamily: fonts.semibold, fontSize: fontSize.headline, lineHeight: lh(fontSize.headline, 1.3), letterSpacing: -0.33 },
-  title: { fontFamily: fonts.semibold, fontSize: fontSize.title, lineHeight: lh(fontSize.title, 1.35), letterSpacing: -0.17 },
-  body: { fontFamily: fonts.regular, fontSize: fontSize.body, lineHeight: lh(fontSize.body, leading.normal) },
-  chat: { fontFamily: fonts.regular, fontSize: fontSize.body, lineHeight: lh(fontSize.body, leading.chat) },
-  bodySm: { fontFamily: fonts.regular, fontSize: fontSize.bodySm, lineHeight: lh(fontSize.bodySm, leading.normal) },
-  label: { fontFamily: fonts.medium, fontSize: fontSize.bodySm, lineHeight: lh(fontSize.bodySm, leading.tight) },
-  caption: { fontFamily: fonts.regular, fontSize: fontSize.caption, lineHeight: lh(fontSize.caption, leading.normal) },
-  captionStrong: { fontFamily: fonts.medium, fontSize: fontSize.caption, lineHeight: lh(fontSize.caption, leading.normal) },
-  micro: { fontFamily: fonts.regular, fontSize: fontSize.micro, lineHeight: lh(fontSize.micro, leading.normal) },
-  mono: { fontFamily: fonts.mono, fontSize: fontSize.mono, lineHeight: lh(fontSize.mono, leading.normal) },
-  monoSm: { fontFamily: fonts.mono, fontSize: fontSize.monoSm, lineHeight: lh(fontSize.monoSm, leading.normal) },
-  code: { fontFamily: fonts.mono, fontSize: fontSize.code, lineHeight: lh(fontSize.code, 1.55) },
-} as const
+export type TextStyleName =
+  | 'display' | 'headline' | 'title' | 'body' | 'chat' | 'bodySm' | 'label' | 'caption' | 'captionStrong' | 'micro' | 'mono' | 'monoSm' | 'code'
+
+export interface TextStyleSpec extends FontFace {
+  fontSize: number
+  lineHeight: number
+  letterSpacing?: number
+}
+
+/** Ready-made text styles for a font choice and size (no colour: pair with a `Colors` ink). */
+export function typeFor(fonts: Fonts, size: FontSizes): Record<TextStyleName, TextStyleSpec> {
+  return {
+    display: { ...fonts.semibold, fontSize: size.display, lineHeight: lh(size.display, leading.tight), letterSpacing: -0.8 },
+    headline: { ...fonts.semibold, fontSize: size.headline, lineHeight: lh(size.headline, 1.3), letterSpacing: -0.33 },
+    title: { ...fonts.semibold, fontSize: size.title, lineHeight: lh(size.title, 1.35), letterSpacing: -0.17 },
+    body: { ...fonts.regular, fontSize: size.body, lineHeight: lh(size.body, leading.normal) },
+    chat: { ...fonts.regular, fontSize: size.body, lineHeight: lh(size.body, leading.chat) },
+    bodySm: { ...fonts.regular, fontSize: size.bodySm, lineHeight: lh(size.bodySm, leading.normal) },
+    label: { ...fonts.medium, fontSize: size.bodySm, lineHeight: lh(size.bodySm, leading.tight) },
+    caption: { ...fonts.regular, fontSize: size.caption, lineHeight: lh(size.caption, leading.normal) },
+    captionStrong: { ...fonts.medium, fontSize: size.caption, lineHeight: lh(size.caption, leading.normal) },
+    micro: { ...fonts.regular, fontSize: size.micro, lineHeight: lh(size.micro, leading.normal) },
+    mono: { ...fonts.mono, fontSize: size.mono, lineHeight: lh(size.mono, leading.normal) },
+    monoSm: { ...fonts.mono, fontSize: size.monoSm, lineHeight: lh(size.monoSm, leading.normal) },
+    code: { ...fonts.mono, fontSize: size.code, lineHeight: lh(size.code, 1.55) },
+  }
+}
 
 /* ---------- Space (4pt grid) ---------- */
 export const space = { 1: 4, 2: 8, 3: 12, 4: 16, 5: 20, 6: 24, 8: 32, 10: 40, 12: 48 } as const
 
 /* ---------- Shape: radius follows the size of the thing (4, 6, 8, 12) ---------- */
-export const radius = { xs: 4, sm: 6, md: 8, lg: 12, pill: 999 } as const
+const BASE_RADIUS = { xs: 4, sm: 6, md: 8, lg: 12 } as const
+export type Radii = { xs: number; sm: number; md: number; lg: number; pill: number }
+
+/** The radii at a corner choice (the desktop's `--radius-scale`); a pill stays a pill. */
+export function radiusFor(corners: Corners): Radii {
+  const k = RADIUS_SCALE[corners]
+  const r = (v: number) => Math.round(v * k * 2) / 2
+  return { xs: r(BASE_RADIUS.xs), sm: r(BASE_RADIUS.sm), md: r(BASE_RADIUS.md), lg: r(BASE_RADIUS.lg), pill: 999 }
+}
 
 /* ---------- Touch: the HIG's 44pt floor, and the desktop row heights it replaces ---------- */
 export const touch = {

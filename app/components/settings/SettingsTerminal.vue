@@ -5,6 +5,7 @@ import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 
 /** The shell new terminals use: the user's pick while it still exists, otherwise the system default. */
@@ -20,11 +21,11 @@ function choose(id: string) {
   ws.setTerminalProfile(id === systemDefault.value?.id ? null : id)
 }
 
-const cursors: Array<{ value: CursorStyle; label: string }> = [
-  { value: 'bar', label: 'Bar' },
-  { value: 'block', label: 'Block' },
-  { value: 'underline', label: 'Underline' },
-]
+const cursors = computed<Array<{ value: CursorStyle; label: string }>>(() => [
+  { value: 'bar', label: t('settings.terminal.bar') },
+  { value: 'block', label: t('settings.terminal.block') },
+  { value: 'underline', label: t('settings.terminal.underline') },
+])
 function setCursor(style: CursorStyle) {
   ws.terminalCursorStyle = style
   ws.persist()
@@ -43,22 +44,22 @@ onMounted(() => { if (!ws.terminalProfiles.length) ws.loadTerminalProfiles() })
 </script>
 
 <template>
-  <SettingsSection title="Terminal" description="The shells Mango found on this computer, and how the terminal looks.">
+  <SettingsSection :title="t('settings.nav.terminal')" :description="t('settings.terminal.description')">
     <div class="group">
       <div class="group__head">
         <div>
-          <h3 :id="labelId" class="group__title">Shell for new terminals</h3>
+          <h3 :id="labelId" class="group__title">{{ t('settings.terminal.shell') }}</h3>
           <p :id="hintId" class="group__hint">
-            Open any other shell from the arrow next to the + in the terminal panel. Terminals that are already open keep their shell.
+            {{ t('settings.terminal.shellHint') }}
           </p>
         </div>
         <UiButton size="sm" variant="ghost" :loading="ws.terminalProfilesLoading" @click="ws.loadTerminalProfiles()">
-          <RefreshCw v-if="!ws.terminalProfilesLoading" />Look again
+          <RefreshCw v-if="!ws.terminalProfilesLoading" />{{ t('settings.terminal.lookAgain') }}
         </UiButton>
       </div>
 
       <p v-if="missingChoice" class="note" role="status">
-        The shell you picked earlier is no longer installed, so new terminals use {{ ws.defaultTerminalProfile?.name }}.
+        {{ t('settings.terminal.missing', { shell: ws.defaultTerminalProfile?.name ?? '' }) }}
       </p>
 
       <div v-if="ws.terminalProfiles.length" class="shells" role="radiogroup" :aria-labelledby="labelId" :aria-describedby="hintId">
@@ -76,37 +77,37 @@ onMounted(() => { if (!ws.terminalProfiles.length) ws.loadTerminalProfiles() })
             <span class="shell__text">
               <span class="shell__label">
                 {{ p.name }}
-                <span v-if="p.isDefault" class="shell__tag">System default</span>
+                <span v-if="p.isDefault" class="shell__tag">{{ t('settings.terminal.systemDefault') }}</span>
               </span>
               <code class="shell__path">{{ [p.path, ...p.args].join(' ') }}</code>
             </span>
           </span>
         </label>
       </div>
-      <p v-else-if="ws.terminalProfilesLoading" class="note" role="status">Looking for shells…</p>
+      <p v-else-if="ws.terminalProfilesLoading" class="note" role="status">{{ t('settings.terminal.looking') }}</p>
       <p v-else class="note" role="status">
-        No shells were found. Terminals still open with your system's default shell.
+        {{ t('settings.terminal.none') }}
       </p>
     </div>
 
     <div class="rows">
-      <SettingsRow label="Font size" hint="Applies to open terminals straight away.">
+      <SettingsRow :label="t('settings.terminal.fontSize')" :hint="t('settings.terminal.fontSizeHint')">
         <template #default="{ labelId: id }">
           <div class="stepper" role="group" :aria-labelledby="id">
-            <UiIconButton size="sm" label="Smaller" :disabled="ws.terminalFontSize <= 9" @click="ws.setTerminalFontSize(ws.terminalFontSize - 0.5)"><Minus /></UiIconButton>
+            <UiIconButton size="sm" :label="t('settings.terminal.smaller')" :disabled="ws.terminalFontSize <= 9" @click="ws.setTerminalFontSize(ws.terminalFontSize - 0.5)"><Minus /></UiIconButton>
             <output class="stepper__value tabular" aria-live="polite">{{ ws.terminalFontSize }} px</output>
-            <UiIconButton size="sm" label="Larger" :disabled="ws.terminalFontSize >= 22" @click="ws.setTerminalFontSize(ws.terminalFontSize + 0.5)"><Plus /></UiIconButton>
+            <UiIconButton size="sm" :label="t('settings.terminal.larger')" :disabled="ws.terminalFontSize >= 22" @click="ws.setTerminalFontSize(ws.terminalFontSize + 0.5)"><Plus /></UiIconButton>
           </div>
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Cursor">
+      <SettingsRow :label="t('settings.terminal.cursor')">
         <template #default="{ labelId: id }">
           <SettingsSegmented :model-value="ws.terminalCursorStyle" :options="cursors" :labelledby="id" @update:model-value="setCursor" />
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Blinking cursor">
+      <SettingsRow :label="t('settings.terminal.blink')">
         <template #default="{ labelId: id }">
           <button
             :id="blinkId"

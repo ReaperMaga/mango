@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Pressable, TextInput, View } from 'react-native'
 import { Ban, Check, MessageCircleQuestionMark } from 'lucide-react-native'
 import type { AgentQuestion, Part, QuestionAnswers } from '~/types/chat'
-import { fonts, fontSize, makeStyles, radius, space, touch, useTheme } from '@/theme'
+import { makeStyles, space, touch, useTheme } from '@/theme'
 import { Button, ButtonRow, Text, haptic } from '@/ui'
 
 export type QuestionPart = Extract<Part, { type: 'question' }>
@@ -233,7 +233,7 @@ const useStyles = makeStyles(t => ({
   card: {
     marginVertical: 6,
     padding: space[3],
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.waitingLine,
@@ -241,20 +241,20 @@ const useStyles = makeStyles(t => ({
     boxShadow: t.shadow.soft,
   },
   head: { flexDirection: 'row', alignItems: 'center', gap: space[2] },
-  title: { flex: 1, fontFamily: fonts.semibold },
+  title: { flex: 1, ...t.fonts.semibold },
   message: { marginTop: space[2] },
   q: { marginTop: space[4] },
   legend: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 6, marginBottom: space[2] },
   tag: {
     paddingHorizontal: 6,
     paddingVertical: 1,
-    borderRadius: radius.xs,
+    borderRadius: t.radius.xs,
     backgroundColor: t.colors.bgHover,
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
   },
-  tagText: { fontFamily: fonts.medium },
-  qText: { fontFamily: fonts.medium, color: t.colors.fg, flexShrink: 1 },
+  tagText: { ...t.fonts.medium },
+  qText: { ...t.fonts.medium, color: t.colors.fg, flexShrink: 1 },
   detail: { marginTop: -4, marginBottom: space[2] },
   options: { gap: 6 },
   opt: {
@@ -264,7 +264,7 @@ const useStyles = makeStyles(t => ({
     minHeight: touch.min,
     paddingVertical: 11,
     paddingHorizontal: space[3],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
@@ -273,7 +273,7 @@ const useStyles = makeStyles(t => ({
   optOn: { borderColor: t.colors.accentLine, backgroundColor: t.colors.accentWash },
   optPressed: { backgroundColor: t.colors.bgRaised, borderColor: t.colors.lineStrong },
   copy: { flex: 1, minWidth: 0, gap: 1 },
-  label: { fontFamily: fonts.medium, color: t.colors.fg },
+  label: { ...t.fonts.medium, color: t.colors.fg },
   mark: {
     width: 18,
     height: 18,
@@ -284,23 +284,23 @@ const useStyles = makeStyles(t => ({
     borderColor: t.colors.lineStrong,
     backgroundColor: t.colors.bgInset,
   },
-  dot: { borderRadius: radius.pill },
-  box: { borderRadius: radius.xs },
+  dot: { borderRadius: t.radius.pill },
+  box: { borderRadius: t.radius.xs },
   markOn: { borderColor: t.colors.accent, backgroundColor: t.colors.accent },
-  dotCore: { width: 6, height: 6, borderRadius: radius.pill, backgroundColor: t.colors.accentFg },
+  dotCore: { width: 6, height: 6, borderRadius: t.radius.pill, backgroundColor: t.colors.accentFg },
   otherRow: { alignItems: 'center', paddingVertical: 0 },
-  otherField: { flex: 1, minHeight: touch.min - 2, paddingVertical: 0, color: t.colors.fg, fontFamily: fonts.regular, fontSize: fontSize.bodySm },
+  otherField: { flex: 1, minHeight: touch.min - 2, paddingVertical: 0, color: t.colors.fg, ...t.fonts.regular, fontSize: t.fontSize.bodySm },
   field: {
     minHeight: touch.min,
     paddingHorizontal: space[3],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.line,
     backgroundColor: t.colors.bgInset,
     color: t.colors.fg,
-    fontFamily: fonts.regular,
-    fontSize: fontSize.body,
+    ...t.fonts.regular,
+    fontSize: t.fontSize.body,
   },
   fieldBad: { borderColor: t.colors.errorLineStrong },
   note: { marginTop: space[1] },

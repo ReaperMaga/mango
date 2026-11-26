@@ -1,4 +1,4 @@
-import type { GhCheck, GhItem, GhJob, GhJobStep, GhMergeMethod, GhRunState, GitStatus } from '~/types/ipc'
+import type { GhCheck, GhItem, GhJob, GhJobStep, GhListItem, GhMergeMethod, GhOpenItems, GhRepoLink, GhRunState, GitStatus } from '~/types/ipc'
 import { baseName } from '~/utils/paths'
 
 /**
@@ -70,6 +70,21 @@ function mockChecks(key: string, owner: string, repo: string, number: number, do
 
 /** The jobs `mockChecks` made up, by link, so `gh_job` tells the same story. */
 const jobs = new Map<string, { name: string; after: number; fails: boolean; key: string; done: boolean }>()
+
+/**
+ * A job made up elsewhere (the mock releases' workflow runs): it starts at `startedAt` and ends
+ * `after` ms later, failing if `fails`, so `gh_job` shows the same steps and log.
+ */
+export function registerMockJob(url: string, name: string, startedAt: number, after: number, fails: boolean) {
+  jobs.set(url, { name, after, fails, key: url, done: false })
+  firstRead.set(url, startedAt)
+}
+
+/** The same job under another link (a GitLab job page for a GitHub mock's job). */
+export function aliasMockJob(from: string, to: string) {
+  const known = jobs.get(from)
+  if (known) jobs.set(to, known)
+}
 
 const ESC = '\x1b'
 const red = (s: string) => `${ESC}[31m${s}${ESC}[0m`
@@ -179,9 +194,15 @@ export function mockGhJob(url: string): GhJob {
     }
   })
   const finished = elapsed >= after
-  if (finished) plan.forEach((p, i) => { if (steps[i]!.state !== 'skipped') steps[i]!.lines = p.lines })
+  // A GitLab job's log comes without GitHub's markers (GitLab's own sections are steps already) and with a progress bar redrawn by `\r`.
+  const gitlab = isGitlabJob(url)
+  const shown = (lines: string[]) => (gitlab
+    ? [...lines.filter(l => !l.startsWith('##[endgroup]')).map(l => l.replace(/^##\[(?:group|warning|error)\]/, '')), 'Uploading artifacts... 10%\r\x1b[0KUploading artifacts... 100%']
+    : lines)
+  if (finished) plan.forEach((p, i) => { if (steps[i]!.state !== 'skipped') steps[i]!.lines = shown(p.lines) })
   return {
-    id: name.length, name, workflow: 'CI', url,
+    provider: gitlab ? 'gitlab' : 'github',
+    id: name.length, name, workflow: gitlab ? 'test' : 'CI', url,
     state: finished ? (fails ? 'failure' : 'success') : 'pending',
     startedAt: iso(0), completedAt: finished ? iso(after) : null,
     steps, logReady: finished, logError: null, logTruncated: false,
@@ -189,6 +210,14 @@ export function mockGhJob(url: string): GhJob {
 }
 
 export function mockGhMerge(path: string, reference: string, _method: GhMergeMethod, headSha: string) {
+  if (isGitlabMock(path) || isGitlabRef(reference)) {
+    const { key, kind } = glParse(path, reference)
+    if (kind !== 'pr') throw new Error('GitLab refused the merge: issues cannot be merged.')
+    if (mergedHere.has(key)) throw new Error('GitLab refused the merge: the merge request is already merged.')
+    if (headSha !== HEAD) throw new Error('The branch got new commits since this was read. Look at them, then merge again.')
+    mergedHere.add(key)
+    return
+  }
   const { key, isPr, number } = parse(path, reference)
   if (!isPr) throw new Error('GitHub refused the merge: issues cannot be merged.')
   if (mergedHere.has(key) || (number !== 42 && number % 3 === 0)) throw new Error('GitHub refused the merge: Pull Request is not mergeable')
@@ -208,6 +237,13 @@ export function mockGhPrCreate(path: string, base: string, status: GitStatus): G
   if (!branch) throw new Error('HEAD is detached, so there is no branch to open a pull request from. Switch to a branch first.')
   if (!status.upstream) throw new Error(`pull request create failed: GraphQL: Head sha can't be blank, Head ref must be a branch (createPullRequest)\nPush ${branch} first.`)
   const repo = baseName(status.mainRoot ?? path)
+  if (isGitlabMock(status.mainRoot ?? path)) {
+    const number = glOpenedFor.get(branch) ?? (glNext += 1)
+    glOpenedFor.set(branch, number)
+    const words = (branch.split('/').pop() ?? branch).replace(/[-_]/g, ' ')
+    glListed.set(`${GL_HOST}/${GL_OWNER}/${repo}!${number}`.toLowerCase(), { title: words.charAt(0).toUpperCase() + words.slice(1), draft: false, head: branch })
+    return mockGhItem(status.mainRoot ?? path, `!${number}`)
+  }
   const forKey = `you/${repo}:${branch}`
   const number = openedFor.get(forKey) ?? (nextNumber += 2)
   openedFor.set(forKey, number)
@@ -216,7 +252,145 @@ export function mockGhPrCreate(path: string, base: string, status: GitStatus): G
   return mockGhItem(path, `you/${repo}#${number}`)
 }
 
+/** What the browser preview's "open" list holds, by key, so an item linked from it reads back the same. */
+const listed = new Map<string, { title: string; draft: boolean; head: string | null }>()
+
+/* ---------- GitLab, for the preview's orchard-api project ---------- */
+
+/** The preview's project on GitLab: orchard-api lives in a nested group on gitlab.com. */
+const GL_HOST = 'gitlab.com'
+const GL_OWNER = 'acme/backend'
+export const isGitlabMock = (path: string) => baseName(path || '') === 'orchard-api'
+const glBase = (repo: string) => `https://${GL_HOST}/${GL_OWNER}/${repo}`
+/** A reference that only GitLab writes: a `/-/` link or a `!12` merge request. */
+const isGitlabRef = (reference: string) => /\/-\/(?:merge_requests|issues|work_items)\/\d+/.test(reference) || /!\d+$/.test(reference.trim())
+const isGitlabJob = (url: string) => url.includes('/-/jobs/')
+
+/** Merge requests and issues counted apart, as GitLab does: !12 and #12 are both there. */
+const GL_OPEN: Array<['pr' | 'issue', number, string, boolean, string | null, number]> = [
+  ['pr', 14, 'feat(api): rate limits per token', false, 'feat/rate-limits', 0.4],
+  ['issue', 14, 'Webhook retries pile up after an outage', false, null, 3],
+  ['pr', 12, 'fix(db): close idle connections', true, 'fix/idle-connections', 9],
+  ['issue', 12, 'Document the self-managed setup', false, null, 30],
+  ['issue', 9, 'Health check reports ready before migrations finish', false, null, 70],
+]
+const glListed = new Map<string, { title: string; draft: boolean; head: string | null }>()
+const glOpenedFor = new Map<string, number>()
+let glNext = 20
+
+function glParse(path: string, reference: string) {
+  const ref = reference.trim()
+  const url = /^https?:\/\/([^/]+)\/(.+)\/([^/]+)\/-\/(merge_requests|issues|work_items)\/(\d+)/i.exec(ref)
+  const short = /^(?:(.+)\/([^/!#]+))?([#!]?)(\d+)$/.exec(ref)
+  if (!url && !short) throw new Error('Paste a merge request or issue link (https://gitlab.com/group/project/-/merge_requests/12), or its number (!12 for a merge request, #12 for an issue).')
+  const host = url ? url[1]!.toLowerCase() : GL_HOST
+  const owner = url?.[2] ?? short?.[1] ?? GL_OWNER
+  const repo = url?.[3] ?? short?.[2] ?? baseName(path || 'project')
+  const number = Number(url?.[5] ?? short?.[4])
+  const kind: 'pr' | 'issue' = url ? (url[4]!.toLowerCase() === 'merge_requests' ? 'pr' : 'issue') : short?.[3] === '#' ? 'issue' : 'pr'
+  return { host, owner, repo, number, kind, key: `${host}/${owner}/${repo}${kind === 'pr' ? '!' : '#'}${number}`.toLowerCase() }
+}
+
+/** A GitHub mock check's job, under a GitLab job link that tells the same story. */
+function glJob(repo: string, url: string | null): string | null {
+  if (!url) return null
+  const id = /(\d+)$/.exec(url)?.[1] ?? '1'
+  const to = `${glBase(repo)}/-/jobs/${4_810_000 + Number(id)}`
+  const known = jobs.get(url)
+  if (known) jobs.set(to, known)
+  return to
+}
+
+function glItem(path: string, reference: string): GhItem {
+  const { host, owner, repo, number, kind, key } = glParse(path, reference)
+  // The GitHub preview's #42 (a pull request) and #41 (an issue) tell the story; GitLab's names go on top.
+  const base = madeUpItem(path, kind === 'pr' ? `${GL_OWNER.replace('/', '-')}/${repo}#42` : `${GL_OWNER.replace('/', '-')}/${repo}#41`)
+  const shown = glListed.get(key)
+  const merged = mergedHere.has(key)
+  const web = `https://${host}/${owner}/${repo}`
+  const url = `${web}/-/${kind === 'pr' ? 'merge_requests' : 'issues'}/${number}`
+  const state = kind === 'issue' ? 'open' : merged ? 'merged' : shown?.draft ? 'draft' : 'open'
+  return {
+    ...base,
+    provider: 'gitlab', kind, url, host, owner, repo, number, state,
+    title: shown?.title ?? base.title,
+    headRef: kind === 'pr' ? shown?.head ?? base.headRef : null,
+    mergeable: state === 'open' || state === 'draft' ? base.mergeable : null,
+    mergeState: state === 'draft' ? 'draft' : state === 'open' ? base.mergeState : null,
+    reviewDecision: kind === 'pr' ? 'review_required' : null,
+    checkRuns: base.checkRuns.map(c => ({ ...c, workflow: c.required ? 'build' : 'test', url: glJob(repo, c.url) })),
+    mergeMethods: kind === 'pr' ? ['merge', 'squash'] : [],
+    defaultMergeMethod: kind === 'pr' ? 'merge' : null,
+    bodyHtml: kind === 'pr'
+      ? `<h2>What changes</h2>
+<ul>
+<li>Each API token gets its own bucket, refilled every minute</li>
+<li>Requests over the limit get <code>429</code> with a <code>Retry-After</code> header</li>
+</ul>
+<p>Closes <a href="/${owner}/${repo}/-/issues/14" data-reference-type="issue">#14</a>.</p>
+<p><a href="/${owner}/${repo}/uploads/limits.png"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==" data-src="${PICTURE}" alt="Requests per token, before and after" class="lazy"></a></p>
+<p><em>Simulated: the browser preview cannot ask GitLab. Inside the Mango app this is read with the GitLab CLI.</em></p>`
+      : `<p>After a webhook endpoint is down for a while, every retry fires at once when it comes back.</p>
+<p>Related to <a href="/${owner}/${repo}/-/merge_requests/14">!14</a>.</p>
+<p><em>Simulated: the browser preview cannot ask GitLab.</em></p>`,
+  }
+}
+
+/** `gh_repo_link` for the browser preview: orchard-api is on gitlab.com, every other project on github.com under the same made-up owner as `mockGhOpenItems`. */
+export function mockGhRepoLink(path: string): GhRepoLink {
+  if (isGitlabMock(path)) return { provider: 'gitlab', host: GL_HOST, owner: GL_OWNER, repo: baseName(path) }
+  return { provider: 'github', host: 'github.com', owner: 'you', repo: baseName(path || 'project') }
+}
+
+/** `gh_open_items` for the browser preview: a few made-up open pull requests (even numbers) and issues (odd). */
+export function mockGhOpenItems(path: string): GhOpenItems {
+  if (isGitlabMock(path)) {
+    const repo = baseName(path)
+    const items: GhListItem[] = GL_OPEN.map(([kind, number, title, draft, head, ago]) => {
+      glListed.set(`${GL_HOST}/${GL_OWNER}/${repo}${kind === 'pr' ? '!' : '#'}${number}`.toLowerCase(), { title, draft, head })
+      return {
+        kind, number, title, state: draft ? 'draft' : 'open', headRef: head, author: 'you',
+        url: `${glBase(repo)}/-/${kind === 'pr' ? 'merge_requests' : 'issues'}/${number}`,
+        updatedAt: new Date(Date.now() - ago * 3_600_000).toISOString(),
+      }
+    })
+    return { provider: 'gitlab', host: GL_HOST, owner: GL_OWNER, repo, items }
+  }
+  const owner = 'you'
+  const repo = baseName(path || 'project')
+  const hour = 3_600_000
+  const made: Array<[number, string, boolean, string | null, number]> = [
+    [64, 'feat(links): pick a pull request to link from the open ones', false, 'feat/links-picker', 0.3],
+    [61, 'Settings crashes when an env file is empty', false, null, 2],
+    [58, 'fix(git): keep the branch popup inside the window', true, 'fix/branch-popup', 5],
+    [55, 'Terminal loses focus after a dialog closes', false, null, 20],
+    [52, 'perf(files): read big folders in pages', false, 'perf/files-pages', 30],
+    [49, 'Voice input stops after a minute on Windows', false, null, 72],
+    [46, 'docs: explain remote environments in the README', true, 'docs/remote-envs', 120],
+  ]
+  const items: GhListItem[] = made.map(([number, title, draft, head, ago]) => {
+    const kind = number % 2 === 0 ? 'pr' : 'issue'
+    listed.set(`github.com/${owner}/${repo}#${number}`, { title, draft, head })
+    return {
+      kind, number, title, state: draft ? 'draft' : 'open', headRef: head, author: 'you',
+      url: `https://github.com/${owner}/${repo}/${kind === 'pr' ? 'pull' : 'issues'}/${number}`,
+      updatedAt: new Date(Date.now() - ago * hour).toISOString(),
+    }
+  })
+  return { provider: 'github', host: 'github.com', owner, repo, items }
+}
+
 export function mockGhItem(path: string, reference: string): GhItem {
+  if (isGitlabMock(path) || isGitlabRef(reference)) return glItem(path, reference)
+  const item = madeUpItem(path, reference)
+  const shown = listed.get(parse(path, reference).key)
+  if (!shown) return item
+  if (item.kind !== 'pr') return { ...item, title: shown.title }
+  if (item.state === 'merged') return { ...item, title: shown.title, headRef: shown.head }
+  return { ...item, title: shown.title, headRef: shown.head, state: shown.draft ? 'draft' : 'open', mergeState: shown.draft ? 'draft' : item.mergeState }
+}
+
+function madeUpItem(path: string, reference: string): GhItem {
   const { host, owner, repo, number, isPr, key } = parse(path, reference)
   const mine = opened.get(key)
   if (mine) {
@@ -233,6 +407,7 @@ export function mockGhItem(path: string, reference: string): GhItem {
     const checks = checkRuns.some(c => c.state === 'failure') ? 'failure'
       : checkRuns.some(c => c.state === 'pending') ? 'pending' : 'success'
     return {
+      provider: 'github',
       kind: 'pr', url: `https://${host}/${owner}/${repo}/pull/${number}`, host, owner, repo, number,
       title: number === 42 ? 'fix(chat): keep the pane when its tab closes' : 'feat(git): show ahead and behind counts in the branch popup',
       // The one the simulated agent just opened is open; others vary so the list shows a few states.
@@ -266,6 +441,7 @@ export function mockGhItem(path: string, reference: string): GhItem {
     }
   }
   return {
+    provider: 'github',
     kind: 'issue', url: `https://${host}/${owner}/${repo}/issues/${number}`, host, owner, repo, number,
     title: 'Closing the last tab leaves a blank pane',
     state: 'open', stateReason: null,

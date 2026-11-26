@@ -1,7 +1,7 @@
-import { Image, View } from 'react-native'
-import { CircleAlert, FileText } from 'lucide-react-native'
+import { Image, Pressable, View } from 'react-native'
+import { CircleAlert, Ellipsis, FileText, Pin } from 'lucide-react-native'
 import { AGENTS, type Message, type Part, type QuestionAnswers, type Thread } from '~/types/chat'
-import { fonts, makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Text } from '@/ui'
 import { ChatApproval } from './ChatApproval'
 import { ChatChanges } from './ChatChanges'
@@ -9,11 +9,13 @@ import { ChatMarkdown } from './ChatMarkdown'
 import { ChatQuestion } from './ChatQuestion'
 import { ChatSteps, ChatThinking, type Step } from './ChatSteps'
 import { ChatTool } from './ChatTool'
+import { formatCost, formatTokens } from '~/agents/context'
 import { formatDuration } from './time'
 import { useThreads } from '@/state/threads'
+import type { ToolCalls } from '@/state/prefsModel'
 
 /** Which tool rows show, as the desktop's Settings > Behaviour. Approvals, questions and errors always show. */
-export type ToolCallsMode = 'all' | 'hide-ok' | 'hide' | 'zen'
+export type ToolCallsMode = ToolCalls
 
 export interface ChatMessageProps {
   message: Message
@@ -26,6 +28,8 @@ export interface ChatMessageProps {
   onAnswerQuestion?: (index: number, answers: QuestionAnswers | null) => void
   /** Open a sub-agent's chat from the tool row that started it. */
   onOpenChild?: (childId: string) => void
+  /** Open the message's actions (copy, pin, edit, ask again, branch). Without it the message has no menu. */
+  onActions?: (message: Message) => void
 }
 
 type Segment =
@@ -76,12 +80,35 @@ function formatSize(bytes: number): string {
  * prose on the canvas with its tool rows, approvals and questions in order, and a quiet
  * "Worked for" line once the turn is over.
  */
-export function ChatMessage({ message, thread, last = false, toolCalls = 'all', onResolveApproval, onAnswerQuestion, onOpenChild }: ChatMessageProps) {
+export function ChatMessage({ message, thread, last = false, toolCalls = 'all', onResolveApproval, onAnswerQuestion, onOpenChild, onActions }: ChatMessageProps) {
   // Pictures in replies are read where the chat works: its worktree, else the project.
   const pictureBase = useThreads(st => st.workdirFor(thread.id)) ?? thread.projectPath
   const t = useTheme()
   const s = useStyles()
   const agentName = AGENTS[thread.agent].name
+
+  const clock = new Date(message.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  const meta = (live: boolean) => (live
+    ? null
+    : (
+        <View style={[s.meta, message.role === 'user' && s.metaUser]}>
+          <Text variant="micro" tone="faint" tabular>{clock}</Text>
+          {message.pinned ? <Pin size={12} strokeWidth={2} color={t.colors.accentInk} accessibilityLabel="Pinned" /> : null}
+          {onActions
+            ? (
+                <Pressable
+                  onPress={() => onActions(message)}
+                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+                  accessibilityRole="button"
+                  accessibilityLabel="Message actions"
+                  style={({ pressed }) => [s.more, pressed && s.morePressed]}
+                >
+                  <Ellipsis size={16} strokeWidth={1.85} color={t.colors.fgFaint} />
+                </Pressable>
+              )
+            : null}
+        </View>
+      ))
 
   if (message.role === 'user') {
     const text = message.parts.filter(p => p.type === 'text').map(p => (p as { text: string }).text).join('\n\n')
@@ -109,6 +136,7 @@ export function ChatMessage({ message, thread, last = false, toolCalls = 'all', 
             )
           : null}
         {text ? <View style={s.bubble}><Text variant="chat" selectable>{text}</Text></View> : null}
+        {text ? meta(false) : null}
       </View>
     )
   }
@@ -155,9 +183,13 @@ export function ChatMessage({ message, thread, last = false, toolCalls = 'all', 
         ? (
             <Text variant="caption" tone="faint" tabular style={s.ran}>
               {message.outcome === 'stopped' ? 'Stopped after' : message.outcome === 'error' ? 'Failed after' : 'Worked for'} {formatDuration(message.elapsedMs)}
+              {message.usage
+                ? ` · ${[`${formatTokens(message.usage.input)} in`, `${formatTokens(message.usage.output)} out`, ...(message.usage.costUsd !== undefined ? [formatCost(message.usage.costUsd)] : [])].join(' · ')}`
+                : ''}
             </Text>
           )
         : null}
+      {meta(live)}
     </View>
   )
 }
@@ -169,8 +201,8 @@ const useStyles = makeStyles(t => ({
     maxWidth: '88%',
     paddingVertical: 10,
     paddingHorizontal: 14,
-    borderRadius: radius.lg,
-    borderBottomRightRadius: radius.xs,
+    borderRadius: t.radius.lg,
+    borderBottomRightRadius: t.radius.xs,
     borderCurve: 'continuous',
     backgroundColor: t.colors.bgPanel,
     borderWidth: 1,
@@ -187,16 +219,20 @@ const useStyles = makeStyles(t => ({
     paddingRight: space[3],
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     backgroundColor: t.colors.bgPanel,
   },
   fileMeta: { minWidth: 0, flexShrink: 1 },
-  fileName: { fontFamily: fonts.medium, color: t.colors.fg },
-  thumb: { width: 140, height: 100, borderRadius: radius.md, borderWidth: 1, borderColor: t.colors.lineSoft, backgroundColor: t.colors.bgInset },
+  fileName: { ...t.fonts.medium, color: t.colors.fg },
+  thumb: { width: 140, height: 100, borderRadius: t.radius.md, borderWidth: 1, borderColor: t.colors.lineSoft, backgroundColor: t.colors.bgInset },
   agent: { gap: 2 },
   text: { marginTop: 6, marginBottom: 2 },
   notice: { flexDirection: 'row', alignItems: 'flex-start', gap: space[2], marginTop: 6 },
   noticeIcon: { marginTop: 3 },
   noticeText: { flex: 1 },
   ran: { marginTop: space[2] },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: space[2], marginTop: 2, minHeight: 20 },
+  metaUser: { justifyContent: 'flex-end' },
+  more: { width: 28, height: 20, alignItems: 'center', justifyContent: 'center', borderRadius: t.radius.sm },
+  morePressed: { backgroundColor: t.colors.bgActive },
 }))

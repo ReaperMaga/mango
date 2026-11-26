@@ -12,13 +12,13 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Os {
+pub(crate) enum Os {
     Windows,
     Mac,
     Linux,
 }
 
-fn this_os() -> Os {
+pub(crate) fn this_os() -> Os {
     if cfg!(windows) {
         Os::Windows
     } else if cfg!(target_os = "macos") {
@@ -30,18 +30,18 @@ fn this_os() -> Os {
 
 /// One way to install a tool: the program to run and what to show for it.
 #[derive(Debug, Clone, PartialEq)]
-struct Plan {
-    argv: Vec<String>,
+pub(crate) struct Plan {
+    pub(crate) argv: Vec<String>,
     /// The command as the user would type it.
-    display: String,
+    pub(crate) display: String,
     /// Who does the installing, e.g. "WinGet", "Anthropic's installer".
     via: &'static str,
-    env: &'static [(&'static str, &'static str)],
+    pub(crate) env: &'static [(&'static str, &'static str)],
 }
 
 impl Plan {
     /// Run a program directly; the display is its argv.
-    fn direct(argv: &[&str], via: &'static str) -> Plan {
+    pub(crate) fn direct(argv: &[&str], via: &'static str) -> Plan {
         Plan {
             argv: argv.iter().map(|s| s.to_string()).collect(),
             display: argv.join(" "),
@@ -103,6 +103,15 @@ fn plan_for(tool: &str, os: Os, has: &dyn Fn(&str) -> bool) -> Option<Plan> {
             Plan::script(&["sh", "-c"], "curl -fsSL https://chatgpt.com/codex/install.sh | sh", "OpenAI's installer", CODEX_ENV)
         }),
 
+        // The forge CLIs (Settings > Git hosting). Linux has no one package source for them that Mango
+        // can run without adding repositories, so there it is Homebrew or the vendor's page.
+        ("gh", Os::Windows) => has("winget")
+            .then(|| Plan::direct(&["winget", "install", "--id", "GitHub.cli", "-e", "--source", "winget"], "WinGet")),
+        ("glab", Os::Windows) => has("winget")
+            .then(|| Plan::direct(&["winget", "install", "--id", "GLab.GLab", "-e", "--source", "winget"], "WinGet")),
+        ("gh", _) => has("brew").then(|| Plan::direct(&["brew", "install", "gh"], "Homebrew")),
+        ("glab", _) => has("brew").then(|| Plan::direct(&["brew", "install", "glab"], "Homebrew")),
+
         _ => None,
     }
 }
@@ -113,6 +122,18 @@ const TOOLS: [(&str, &str, &str, &str); 3] = [
     ("claude", "Claude Code", "claude", "https://code.claude.com/docs/en/setup"),
     ("codex", "Codex", "codex", "https://github.com/openai/codex"),
 ];
+
+/// The forge CLIs Settings > Git hosting offers (not the setup dialog): same shape as `TOOLS`.
+pub(crate) const HOSTING_TOOLS: [(&str, &str, &str, &str); 2] = [
+    ("gh", "GitHub CLI", "gh", "https://cli.github.com"),
+    ("glab", "GitLab CLI", "glab", "https://gitlab.com/gitlab-org/cli#installation"),
+];
+
+/// How Mango would install `tool` on this computer, as the UI shows it.
+pub(crate) fn install_plan(tool: &str) -> Option<InstallPlan> {
+    let has = |b: &str| crate::bin::find(b).is_some();
+    plan_for(tool, this_os(), &has).map(|p| InstallPlan { command: p.display, via: p.via.to_string() })
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -208,6 +229,7 @@ pub async fn setup_install(
 ) -> Result<String, String> {
     let name = TOOLS
         .iter()
+        .chain(HOSTING_TOOLS.iter())
         .find(|t| t.0 == tool)
         .map(|t| t.1)
         .ok_or_else(|| format!("Mango doesn't know how to install \"{tool}\""))?;
@@ -257,6 +279,21 @@ mod tests {
         assert_eq!(p.argv, ["sh", "-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"]);
         assert_eq!(p.env, CODEX_ENV);
         assert!(plan_for("codex", Os::Windows, &with(&["powershell"])).is_some());
+    }
+
+    #[test]
+    fn forge_clis() {
+        let p = plan_for("gh", Os::Windows, &with(&["winget"])).unwrap();
+        assert_eq!(p.argv, ["winget", "install", "--id", "GitHub.cli", "-e", "--source", "winget"]);
+        let p = plan_for("glab", Os::Windows, &with(&["winget"])).unwrap();
+        assert_eq!(p.argv[3], "GLab.GLab");
+        assert!(plan_for("glab", Os::Windows, &with(&[])).is_none());
+        assert_eq!(plan_for("gh", Os::Mac, &with(&["brew"])).unwrap().display, "brew install gh");
+        assert_eq!(plan_for("glab", Os::Linux, &with(&["brew", "sudo", "apt-get"])).unwrap().display, "brew install glab");
+        assert!(plan_for("gh", Os::Linux, &with(&["sudo", "apt-get"])).is_none(), "no Homebrew: the vendor's page");
+        assert!(plan_for("gh", Os::Mac, &with(&[])).is_none());
+        // The setup dialog keeps to what Mango itself needs.
+        assert!(TOOLS.iter().all(|t| !matches!(t.0, "gh" | "glab")));
     }
 
     #[test]

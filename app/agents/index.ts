@@ -1,12 +1,18 @@
 import type { AgentCommand, AgentId, AgentModel, Attachment, Message, Part, QuestionAnswers, Thread } from '~/types/chat'
 import { awaitsUser } from '~/types/chat'
-import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, SpawnFn, SpawnHandlers, ToolImage } from '~/agents/types'
+import type { AgentAdapter, AgentEvent, AgentRun, AgentUsage, ContextUsage, SpawnFn, SpawnHandlers, ToolImage, TurnUsage } from '~/agents/types'
 import type { useThreads } from '~/stores/threads'
+import type { EnvRemote } from '~/types/ipc'
 import { call, isTauri, on } from '~/composables/useBackend'
 import { runMockAgent } from '~/utils/mockAgent'
-import { forAgent, makeThumb } from '~/utils/attachments'
+import { formatTokens, mergeCache, mergeContext } from '~/agents/context'
+import { cacheOwner } from '~/utils/idleCompaction'
+import { KeptProcesses, type KeptFor } from '~/agents/keeper'
+import { forAgent, forRemoteAgent, makeThumb, type DroppedAttachment } from '~/utils/attachments'
 import { envPath, parseEnvPath } from '~/utils/envPath'
 import { mcpServersForRun } from '~/utils/mcpServers'
+import { t } from '~/i18n'
+import { emitAgentEvent, pluginMcpFor, pluginSystemPrompt } from '~/plugin-host/registry'
 
 /**
  * Runs agent turns for threads: picks the adapter, bridges its CLI process to
@@ -24,6 +30,21 @@ interface LiveRun { run: AgentRun; steer(text: string, attachments: Attachment[]
 
 /** Live runs by thread id (not persisted: a run dies with the app). */
 const runs = new Map<string, LiveRun>()
+/** Turns still getting ready to start their CLI, by thread id: stopping one, or a newer one, takes it out. */
+const starting = new Map<string, symbol>()
+
+/** CLI processes waiting for their chat's next message. */
+const kept = new KeptProcesses()
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => kept.killAll())
+
+/**
+ * End the CLI processes kept for chats between turns, before something they must not outlive (their
+ * folder going away, a sign-out, an update). A chat's next message starts a new one.
+ */
+export const releaseAgents = (which: (p: KeptFor) => boolean) => kept.release(which)
+
+/** What tells whether a chat went on without the process kept for it: its last reply. */
+const lastReply = (t: Thread) => t.messages.findLast(m => m.role === 'agent')?.id ?? ''
 
 export const isRunning = (threadId: string) => runs.has(threadId)
 
@@ -37,6 +58,7 @@ export function answerQuestion(threadId: string, questionId: string, answers: Qu
 
 export function interruptRun(threadId: string): boolean {
   const live = runs.get(threadId)
+  if (!live) starting.delete(threadId)
   live?.run.interrupt()
   return !!live
 }
@@ -110,7 +132,11 @@ function placeOf(projectPath: string) {
  * the runner shows it, whether or not the adapter cares.
  */
 function spawnFor(agent: AgentId, projectPath: string, onConnection?: (state: 'lost' | 'back') => void): SpawnFn {
-  const { cwd, remote } = placeOf(projectPath)
+  return spawnAt(agent, placeOf(projectPath), onConnection)
+}
+
+/** `spawnFor` with the place given: an empty `cwd` is the agent's home, here or in `remote`. */
+function spawnAt(agent: AgentId, { cwd, remote }: { cwd: string; remote: EnvRemote | null }, onConnection?: (state: 'lost' | 'back') => void): SpawnFn {
   return async (args, given, env) => {
     await ensureListening()
     const id = await call('agent_spawn', { agent, args, cwd, env: env ?? null, ...(remote ? { remote } : {}) })
@@ -134,14 +160,14 @@ function spawnFor(agent: AgentId, projectPath: string, onConnection?: (state: 'l
 }
 
 /**
- * The models the agent's CLI offers (no turn is run). Null in the browser preview,
- * which has no CLI, and when the adapter cannot list them.
+ * The models the agent's CLI offers where `cwd` runs (no turn is run): a remote project asks the CLI
+ * inside its environment, which may be signed in to another account or plan than this computer's.
+ * Null in the browser preview, which has no CLI, and when the adapter cannot list them.
  */
 export async function listAgentModels(agent: AgentId, cwd: string): Promise<AgentModel[] | null> {
   if (!isTauri()) return null
   const adapter = await adapters[agent]()
-  // The list is kept per agent, not per project: ask the CLI on this computer, also for a remote project.
-  return adapter.listModels ? adapter.listModels(spawnFor(agent, parseEnvPath(cwd) ? '' : cwd)) : null
+  return adapter.listModels ? adapter.listModels(spawnFor(agent, cwd)) : null
 }
 
 /**
@@ -156,12 +182,25 @@ export async function listAgentCommands(agent: AgentId, cwd: string): Promise<Ag
 
 /**
  * The plan's usage limits as the agent's CLI reports them (no turn is run; the CLI starts
- * in the home folder). Rejects with a readable message when the CLI cannot answer.
+ * in the home folder). With `remote`, the CLI inside that environment answers: it may be signed
+ * in to another account or plan than this computer's. Rejects with a readable message when the
+ * CLI cannot answer.
  */
-export async function readAgentUsage(agent: AgentId): Promise<AgentUsage> {
+export async function readAgentUsage(agent: AgentId, remote: EnvRemote | null = null): Promise<AgentUsage> {
   const adapter = await adapters[agent]()
-  if (!adapter.readUsage) throw new Error(`${agent} cannot report its usage.`)
-  return adapter.readUsage(spawnFor(agent, ''))
+  if (!adapter.readUsage) throw new Error(t('chat.errors.usage', { agent }))
+  // No folder: the agent's home, here or in the environment (`agent_spawn`).
+  return adapter.readUsage(spawnAt(agent, { cwd: '', remote }))
+}
+
+/**
+ * How full the conversation `sessionId` is, read in `workdir` (where its runs happen) without a
+ * turn. Null in the browser preview and for agents that cannot say without one (Codex).
+ */
+export async function readAgentContext(agent: AgentId, workdir: string, sessionId: string, model: string): Promise<ContextUsage | null> {
+  if (!isTauri()) return null
+  const adapter = await adapters[agent]()
+  return adapter.readContext ? adapter.readContext(spawnFor(agent, workdir), sessionId, model) : null
 }
 
 /* ------------------------------------------------------------------ */
@@ -235,20 +274,45 @@ function settleParts(msgs: Message[], status: 'done' | 'error' | 'stopped') {
   }
 }
 
+/** What a chat says once it was compacted (shown through `noticeText`). */
+function compactedNote(idle: boolean, before = 0, after = 0) {
+  const when = idle ? 'Compacted during a break' : 'Compacted'
+  return before && after && after < before ? `${when}: ${formatTokens(before)} to ${formatTokens(after)} tokens.` : `${when}.`
+}
+
+/**
+ * Whether the chat's Claude Code session was used since its last reply in Mango (in a terminal, say), or
+ * cannot be read: Mango must not compact it by itself then.
+ */
+export async function sessionMovedOn(thread: Thread): Promise<boolean> {
+  const asked = thread.messages.findLast(m => m.role === 'user')
+  const reply = thread.messages.at(-1)
+  if (!thread.sessionId || !asked || !reply) return true
+  const ended = Math.max(reply.createdAt, asked.createdAt + (reply.elapsedMs ?? 0))
+  try {
+    const tail = await call('agent_transcript', { sessionId: thread.sessionId, maxBytes: 256 * 1024 })
+    const { lastMessage } = await import('~/agents/claude')
+    const last = tail && lastMessage(tail.lines)
+    return !last || last.at > ended + 5000
+  } catch {
+    return true
+  }
+}
+
 const TASK_END_SUMMARY = { done: 'finished', error: 'failed', stopped: 'stopped' } as const
 
 /**
  * What a run gets for a message and its attachments. A `remote` run (the CLI is in a remote
- * environment) cannot read this computer's disk: pictures go inline, every other file (and a
- * picture too large to send inline) stays behind and is listed in `dropped`.
+ * environment) cannot read this computer's disk: pictures go inline, and every other file (or a
+ * picture too large to send inline) is put into the environment first and named by its path
+ * there. One that could not be put there stays behind and is listed in `dropped`.
  */
-async function agentInput(text: string, files: Attachment[], remote: boolean) {
+async function agentInput(text: string, files: Attachment[], remote: EnvRemote | null) {
   const read = (path: string) => call('attachment_read', { path })
-  if (!files.length) return { prompt: text, images: [], readDirs: [] as string[], dropped: [] as Attachment[] }
-  if (!remote) return { ...(await forAgent(text, files, read)), dropped: [] as Attachment[] }
-  const { images } = await forAgent(text, files.filter(a => a.kind === 'image'), read)
-  const sent = new Set(images.map(i => i.path))
-  return { prompt: text.trim(), images, readDirs: [] as string[], dropped: files.filter(a => !sent.has(a.path)) }
+  if (!files.length) return { prompt: text, images: [], readDirs: [] as string[], dropped: [] as DroppedAttachment[] }
+  if (!remote) return { ...(await forAgent(text, files, read)), dropped: [] as DroppedAttachment[] }
+  const put = (path: string) => call('attachment_put_remote', { ...remote, path })
+  return { ...(await forRemoteAgent(text, files, read, put)), readDirs: [] as string[] }
 }
 
 /**
@@ -280,25 +344,45 @@ async function userMcpFor(agent: AgentId, projectPath: string) {
   }
 }
 
-/** `attachments`: files sent with `text`, already in the attachment store. */
-export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = []): Promise<void> {
+/**
+ * Run one turn to its end. `attachments`: files sent with `text`, already in the attachment store.
+ * `idle`: Mango compacts the chat by itself, in a message that says so.
+ * False when it was stopped before its agent started: that one never saw the prompt.
+ */
+export async function runAgentTurn(store: Store, threadId: string, text: string, attachments: Attachment[] = [], idle = false): Promise<boolean> {
   const thread = store.byId(threadId)
-  if (!thread) return
+  if (!thread) return false
   /** Where the agent works: the chat's own worktree, or the project folder. */
   const workdir = store.workdirFor(threadId) ?? thread.projectPath
 
   // The browser preview has no backend to run CLIs: simulate, and say so.
   if (!isTauri()) {
     thread.simulated = true
-    return runMockAgent(store, threadId, text.trim() || attachments.map(a => a.name).join(', '))
+    await runMockAgent(store, threadId, text.trim() || attachments.map(a => a.name).join(', '))
+    return true
   }
   thread.simulated = false
 
+  const replied = lastReply(thread)
   const first = store._pushAgentMessage(threadId)
-  if (!first) return
+  if (!first) return false
+  if (idle) first.idle = true
   store._setStatus(threadId, 'running')
+  const turn = Symbol(threadId)
+  starting.set(threadId, turn)
+  /** Stopped (and maybe sent again) while this got ready: the chat is not this turn's any more. */
+  const standDown = () => {
+    const t = store.byId(threadId)
+    const at = t?.messages.findIndex(m => m.id === first.id && !m.parts.length) ?? -1
+    if (at >= 0) t!.messages.splice(at, 1)
+    store.persist(threadId)
+    return false
+  }
 
   const main: Target = { threadId, msgs: [first], msg: first }
+  let runUsage: TurnUsage | null = null
+  /** A compaction whose note still lacks what it came down to. */
+  let compaction: { before: number; note: Extract<Part, { type: 'notice' }> } | null = null
   const place = placeOf(workdir)
   /** Sub-agents' chats, by the id of the tool call that started each. */
   const subs = new Map<string, Target>()
@@ -327,11 +411,30 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
   const finished = new Promise<void>(resolve => (finish = () => { over = true; resolve() }))
 
   const emit = (e: AgentEvent) => {
+    // Plugins see every event as it arrives (`chat.onAgentEvent`); one that throws is skipped.
+    emitAgentEvent(threadId, e)
     const t = store.byId(threadId)
     if (!t) return
     switch (e.type) {
       case 'session':
         t.sessionId = e.sessionId
+        break
+      case 'context':
+        t.context = mergeContext(t.context, e.usage)
+        if (compaction && e.usage.max > 0) {
+          compaction.note.text = compactedNote(idle, compaction.before, e.usage.used)
+          compaction = null
+        }
+        // Live readings come with every request; the full one at the end of a turn is worth saving.
+        if (e.usage.max > 0) store.persist(threadId)
+        break
+      case 'cache':
+        t.cache = mergeCache(t.cache, e, cacheOwner(t))
+        break
+      case 'compacted':
+        // The next message goes out with another conversation than the cached one.
+        delete t.cache
+        compaction = { before: t.context?.used ?? 0, note: push(main, { type: 'notice', level: 'info', text: compactedNote(idle) }) as Extract<Part, { type: 'notice' }> }
         break
       case 'workdir': {
         // The agent moved its session (Claude Code's EnterWorktree / ExitWorktree): later turns,
@@ -471,6 +574,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (!pendingApprovals() && t.status === 'waiting') store._setStatus(threadId, 'running')
         break
       }
+      case 'usage':
+        runUsage = e.usage
+        break
       case 'turn-end': {
         settleParts(main.msgs, e.status)
         // Sub-agents end with the run that started them.
@@ -483,6 +589,9 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.status === 'stopped') push(main, { type: 'notice', level: 'info', text: 'Stopped.' })
         // An agent message with nothing in it (stopped before any output) would render as a gap.
         for (const m of main.msgs) if (!m.parts.length && t.messages.includes(m)) t.messages.splice(t.messages.indexOf(m), 1)
+        // What the turn spent goes on its last reply, beside how long it took.
+        const lastReply = t.messages[t.messages.length - 1]
+        if (runUsage && lastReply?.role === 'agent') lastReply.usage = { ...runUsage }
         runs.delete(threadId)
         store._clearLive(threadId)
         // Answering never settles a chat: it stays Working until the user marks it settled.
@@ -498,28 +607,37 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
     store._touch(threadId)
   }
 
-  /** Tell the user which files stayed behind (a remote run cannot read this computer's disk). */
-  const noteDropped = (dropped: Attachment[]) => {
+  /** Tell the user which files stayed behind (they could not be put into the remote environment). */
+  const noteDropped = (dropped: DroppedAttachment[]) => {
     if (!dropped.length) return
-    const names = dropped.map(a => a.name).join(', ')
+    const names = dropped.map(d => d.attachment.name).join(', ')
     push(main, {
       type: 'notice',
-      level: 'info',
-      text: `Not sent: ${names}. The agent runs in a remote environment and can't read files on this computer; only pictures go along. Copy files into the instance from a terminal.`,
+      level: 'error',
+      text: `Not sent: ${names}. ${dropped[0]!.error}`,
     })
   }
 
   try {
     const adapter = await adapters[thread.agent]()
-    const { dropped, ...input } = await agentInput(text, attachments, !!place.remote)
+    const { dropped, ...input } = await agentInput(text, attachments, place.remote)
     noteDropped(dropped)
     if (place.remote && !input.prompt.trim() && !input.images.length) {
-      throw new Error('Nothing to send: the attached files are on this computer, and the remote environment can\'t read them. Paste pictures instead, or copy the files into the instance from a terminal.')
+      throw new Error(`Nothing to send: the attached files could not be put into the remote environment. ${dropped[0]?.error ?? ''}`.trim())
     }
-    const [browserMcp, mcpServers] = await Promise.all([
+    const [browserMcp, userMcp] = await Promise.all([
       browserToolsFor(store, threadId),
       userMcpFor(thread.agent, (store.rootOf(threadId) ?? thread).projectPath),
     ])
+    // Plugins' servers come after the user's (a name the user has, or the browser's, stays theirs). Their
+    // env values and headers are secrets like the user's: the adapters put them in the CLI's environment.
+    // A remote project gets none: like the user's global servers, they would start in the wrong place.
+    const pluginMcp = place.remote ? [] : pluginMcpFor(thread.agent, [...userMcp.map(s => s.name), ...(browserMcp ? [browserMcp.name] : [])])
+    const mcpServers = [...userMcp, ...pluginMcp]
+    const appendSystemPrompt = pluginSystemPrompt({
+      threadId, agent: thread.agent, projectPath: (store.rootOf(threadId) ?? thread).projectPath, workdir,
+    })
+    if (starting.get(threadId) !== turn) return standDown()
     const run = adapter.run({
       cwd: place.cwd,
       remote: !!place.remote,
@@ -530,6 +648,16 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       sessionId: thread.sessionId ?? null,
       ...(browserMcp ? { browserMcp } : {}),
       ...(mcpServers.length ? { mcpServers } : {}),
+      ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
+      ...(place.remote
+        ? {}
+        : {
+            keeper: kept.keeperFor({ chat: threadId, agent: thread.agent, folder: workdir }, replied, () => {
+              const t = store.byId(threadId)
+              return t ? lastReply(t) : null
+            }),
+            readTranscript: (sessionId: string, maxBytes: number) => call('agent_transcript', { sessionId, maxBytes }),
+          }),
       // Through a drop the run goes on in its environment: the chat says it is reconnecting, and stays Working.
       spawn: spawnFor(thread.agent, workdir, (state) => { if (!over) store._setReconnecting(threadId, state === 'lost') }),
       emit,
@@ -538,7 +666,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       run,
       async steer(text, files) {
         if (!run.steer) return false
-        const { dropped, ...input } = await agentInput(text, files, !!place.remote)
+        const { dropped, ...input } = await agentInput(text, files, place.remote)
         // A message with nothing that can go along waits for the next turn, which says why.
         if (place.remote && !input.prompt.trim() && !input.images.length) return false
         if (runs.get(threadId)?.run !== run || !(await run.steer(input))) return false
@@ -553,12 +681,15 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
       },
     })
   } catch (err) {
+    if (starting.get(threadId) !== turn) return standDown()
     emit({ type: 'turn-end', status: 'error', error: err instanceof Error ? err.message : String(err) })
   }
 
+  starting.delete(threadId)
   await finished
   // The agent probably changed files: let whoever shows them (the changes panel) catch up.
   for (const path of new Set([workdir, ...moved])) window.dispatchEvent(new CustomEvent('mango:files-changed', { detail: { path } }))
+  return true
 }
 
 export type { Thread }

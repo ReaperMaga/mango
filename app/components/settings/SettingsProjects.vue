@@ -7,6 +7,8 @@ import { useThreads } from '~/stores/threads'
 import { useModels } from '~/stores/models'
 import { baseName } from '~/utils/paths'
 import { isEnvPath, parseEnvPath } from '~/utils/envPath'
+import { THRESHOLDS, thresholdOf } from '~/utils/idleCompaction'
+import { formatTokens } from '~/agents/context'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 import SettingsSegmented from './SettingsSegmented.vue'
@@ -20,6 +22,7 @@ import { useMcp } from '~/stores/mcp'
  * Settings > Projects: what one project overrides. Pick the project at the top; every row below applies
  * to it. Anything left alone follows the global default (Preferences).
  */
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const models = useModels()
@@ -41,7 +44,7 @@ const prefs = computed<ProjectPrefs>(() => (path.value ? ws.projectPrefs[path.va
 
 const pickItems = computed<MenuItem[]>(() => projects.value.map(p => ({
   label: p.name,
-  hint: ws.projectPrefs[p.path]?.archived ? 'Archived' : undefined,
+  hint: ws.projectPrefs[p.path]?.archived ? t('settings.projects.archived') : undefined,
   checked: p.path === path.value,
   onSelect: () => { picked.value = p.path },
 })))
@@ -70,27 +73,34 @@ const hues = [25, 60, 100, 150, 195, 255, 295, 340]
 
 /* ---------- new chats ---------- */
 type Choice<T extends string> = T | 'default'
-const agents: Array<{ value: Choice<AgentId>; label: string }> = [
-  { value: 'default', label: 'Default' },
+const agents = computed<Array<{ value: Choice<AgentId>; label: string }>>(() => [
+  { value: 'default', label: t('settings.projects.default') },
   ...(Object.keys(AGENTS) as AgentId[]).map(id => ({ value: id, label: AGENTS[id].name })),
-]
-const modes: Array<{ value: Choice<PermissionMode>; label: string }> = [
-  { value: 'default', label: 'Default' },
-  { value: 'plan', label: 'Plan' },
-  { value: 'ask', label: 'Ask first' },
-  { value: 'edits', label: 'Accept edits' },
-  { value: 'auto', label: 'Full auto' },
-]
+])
+const modes = computed<Array<{ value: Choice<PermissionMode>; label: string }>>(() => [
+  { value: 'default', label: t('settings.projects.default') },
+  { value: 'plan', label: t('general.modes.plan.label') },
+  { value: 'ask', label: t('general.modes.ask.label') },
+  { value: 'edits', label: t('general.modes.edits.label') },
+  { value: 'auto', label: t('general.modes.auto.label') },
+])
 /** The agent new chats here start with: the project's own, else the global default. */
 const agent = computed<AgentId>(() => prefs.value.agent ?? threads.defaultAgent)
 const modelOptions = computed(() => [
-  { value: '', label: 'Default' },
-  ...models.list(agent.value).filter(m => m.id !== 'default').map(m => ({ value: m.id, label: m.label })),
+  { value: '', label: t('settings.projects.default') },
+  ...models.list(agent.value, path.value).filter(m => m.id !== 'default').map(m => ({ value: m.id, label: m.label })),
 ])
 function setAgent(v: string) {
   // The model belongs to an agent: a different agent starts from its own default.
   set({ agent: v === 'default' ? null : v as AgentId, model: null })
 }
+
+/* ---------- long breaks ---------- */
+const thresholds = computed(() => [
+  { value: '', label: t('settings.projects.defaultTokens', { tokens: formatTokens(ws.idleTokens) }) },
+  ...THRESHOLDS.map(n => ({ value: String(n), label: formatTokens(n) })),
+])
+const threshold = computed(() => String(thresholdOf(prefs.value.idleTokens) ?? ''))
 
 /* ---------- MCP servers ---------- */
 const mcpHeadId = useId()
@@ -118,15 +128,15 @@ function askRemove() {
   const p = project.value
   if (!p) return
   ws.confirm = {
-    title: `Remove ${p.name}?`,
-    body: `${p.name}, all its chats and its MCP servers are removed from Mango. The folder on disk is not touched.`,
-    label: 'Remove project',
+    title: t('settings.projects.removeTitle', { name: p.name }),
+    body: t('settings.projects.removeBody', { name: p.name }),
+    label: t('settings.projects.remove'),
     danger: true,
     run: async () => {
-      for (const t of threads.threads.filter(x => x.projectPath === p.path && !x.parentId)) threads.remove(t.id)
+      for (const thread of threads.threads.filter(x => x.projectPath === p.path && !x.parentId)) threads.remove(thread.id)
       ws.closeProject(p.path)
       await ws.forgetProject(p.path)
-      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, color: null, archived: null })
+      ws.setProjectPref(p.path, { name: null, pinned: null, agent: null, mode: null, model: null, idleTokens: null, color: null, archived: null, excluded: null, languageServers: null })
       ws.forgetEnvExtraFiles(p.path)
       await useMcp().forgetProject(p.path).catch(() => {})
       picked.value = null
@@ -136,13 +146,13 @@ function askRemove() {
 </script>
 
 <template>
-  <SettingsSection title="Projects" description="Settings for one project. What you leave alone follows the defaults in Preferences.">
-    <p v-if="!project" class="empty">Open a project to change its settings.</p>
+  <SettingsSection :title="t('settings.nav.projects')" :description="t('settings.projects.description')">
+    <p v-if="!project" class="empty">{{ t('settings.projects.empty') }}</p>
 
     <template v-else>
       <div class="pick">
-        <span class="pick__label">Applying settings for</span>
-        <UiMenu :items="pickItems" :width="260" label="Project">
+        <span class="pick__label">{{ t('settings.projects.applying') }}</span>
+        <UiMenu :items="pickItems" :width="260" :label="t('settings.projects.project')">
           <template #default="{ toggle, open }">
             <button type="button" class="pick__btn" :class="{ 'is-open': open }" aria-haspopup="menu" :aria-expanded="open" @click="toggle">
               <UiProjectBadge :name="project.name" :path="project.path" :hue="prefs.color" />
@@ -151,12 +161,12 @@ function askRemove() {
             </button>
           </template>
         </UiMenu>
-        <span v-if="isEnvPath(project.path)" class="pick__where">in an environment</span>
-        <span v-if="prefs.archived" class="pick__where">Archived</span>
+        <span v-if="isEnvPath(project.path)" class="pick__where">{{ t('settings.projects.inEnv') }}</span>
+        <span v-if="prefs.archived" class="pick__where">{{ t('settings.projects.archived') }}</span>
       </div>
 
       <div class="card">
-        <SettingsRow label="Name" hint="Shown in the sidebar and the project lists. The folder is not renamed.">
+        <SettingsRow :label="t('settings.projects.name')" :hint="t('settings.projects.nameHint')">
           <template #default>
             <input
               :id="nameId"
@@ -164,14 +174,14 @@ function askRemove() {
               class="field"
               type="text"
               :placeholder="folderName(project.path)"
-              aria-label="Project name"
+              :aria-label="t('settings.projects.projectName')"
               spellcheck="false"
               @change="commitName"
               @keydown.enter.prevent="($event.target as HTMLInputElement).blur()"
             >
           </template>
         </SettingsRow>
-        <SettingsRow :label="'Project icon'" :hint="prefs.color === undefined ? 'Automatic' : 'Custom color'">
+        <SettingsRow :label="t('settings.projects.icon')" :hint="prefs.color === undefined ? t('settings.projects.automatic') : t('settings.projects.customColor')">
           <template #default="{ labelId }">
             <div class="icon" role="group" :aria-labelledby="labelId">
               <UiProjectBadge :name="project.name" :path="project.path" :hue="prefs.color" />
@@ -182,41 +192,50 @@ function askRemove() {
                 class="hue"
                 :class="{ 'is-on': prefs.color === h }"
                 :style="{ '--badge-hue': h }"
-                :aria-label="`Color ${h}`"
+                :aria-label="t('settings.projects.color', { hue: h })"
                 :aria-pressed="prefs.color === h"
                 @click="set({ color: h })"
               />
-              <UiButton size="sm" variant="ghost" :disabled="prefs.color === undefined || undefined" @click="set({ color: null })">Automatic</UiButton>
+              <UiButton size="sm" variant="ghost" :disabled="prefs.color === undefined || undefined" @click="set({ color: null })">{{ t('settings.projects.automatic') }}</UiButton>
             </div>
           </template>
         </SettingsRow>
-        <SettingsRow label="Pin" hint="Pinned projects come first in the project lists.">
+        <SettingsRow :label="t('settings.projects.pin')" :hint="t('settings.projects.pinHint')">
           <template #default="{ labelId }">
             <SettingsSwitch :model-value="!!prefs.pinned" :labelledby="labelId" @update:model-value="v => set({ pinned: v })" />
           </template>
         </SettingsRow>
-        <SettingsRow label="Archive" hint="Hides the project from the Recent list. Chats and files are kept; opening the project brings it back.">
+        <SettingsRow :label="t('settings.projects.archive')" :hint="t('settings.projects.archiveHint')">
           <template #default>
-            <UiButton size="sm" @click="toggleArchive">{{ prefs.archived ? 'Unarchive' : 'Archive' }}</UiButton>
+            <UiButton size="sm" @click="toggleArchive">{{ prefs.archived ? t('settings.projects.unarchive') : t('settings.projects.archive') }}</UiButton>
           </template>
         </SettingsRow>
       </div>
 
-      <h3 class="head">New chats</h3>
+      <h3 class="head">{{ t('settings.projects.newChats') }}</h3>
       <div class="card">
-        <SettingsRow label="Agent" hint="The agent a new chat in this project starts with.">
+        <SettingsRow :label="t('settings.projects.agent')" :hint="t('settings.projects.agentHint')">
           <template #default="{ labelId }">
             <SettingsSegmented :model-value="prefs.agent ?? 'default'" :options="agents" :labelledby="labelId" @update:model-value="setAgent" />
           </template>
         </SettingsRow>
-        <SettingsRow label="Model" :hint="`Model for new chats in this project, for ${AGENTS[agent].name}.`">
+        <SettingsRow :label="t('settings.projects.model')" :hint="t('settings.projects.modelHint', { agent: AGENTS[agent].name })">
           <template #default="{ labelId }">
-            <SettingsSelect :model-value="prefs.model ?? ''" :options="modelOptions" :labelledby="labelId" label="Model" @update:model-value="v => set({ model: v || null })" />
+            <SettingsSelect :model-value="prefs.model ?? ''" :options="modelOptions" :labelledby="labelId" :label="t('settings.projects.model')" @update:model-value="v => set({ model: v || null })" />
           </template>
         </SettingsRow>
-        <SettingsRow label="Permissions" hint="How much the agent may do before it checks with you.">
+        <SettingsRow :label="t('settings.projects.permissions')" :hint="t('settings.projects.permissionsHint')">
           <template #default="{ labelId }">
             <SettingsSegmented :model-value="prefs.mode ?? 'default'" :options="modes" :labelledby="labelId" @update:model-value="v => set({ mode: v === 'default' ? null : v as PermissionMode })" />
+          </template>
+        </SettingsRow>
+      </div>
+
+      <h3 class="head">{{ t('behavior.breaks.title') }}</h3>
+      <div class="card">
+        <SettingsRow :label="t('settings.projects.breaks')" :hint="ws.idleCompaction === 'off' ? t('settings.projects.breaksOff') : t('settings.projects.breaksHint')">
+          <template #default="{ labelId }">
+            <SettingsSelect :model-value="threshold" :options="thresholds" :labelledby="labelId" :label="t('settings.projects.breaks')" @update:model-value="v => set({ idleTokens: v ? Number(v) : null })" />
           </template>
         </SettingsRow>
       </div>
@@ -225,20 +244,20 @@ function askRemove() {
 
       <section ref="mcpEl" class="block" :aria-labelledby="mcpHeadId">
         <header class="block__head">
-          <h3 :id="mcpHeadId" class="block__title">MCP servers</h3>
+          <h3 :id="mcpHeadId" class="block__title">{{ t('settings.nav.mcp') }}</h3>
           <p class="block__desc">
-            <template v-if="isEnvPath(project.path)">Tool servers for chats in {{ project.name }}. They start inside its environment, like its agents.</template>
-            <template v-else>Tool servers for chats in {{ project.name }} only, on top of the ones for all projects. One with the same name takes the place of a server for all projects.</template>
+            <template v-if="isEnvPath(project.path)">{{ t('settings.projects.mcpRemote', { name: project.name }) }}</template>
+            <template v-else>{{ t('settings.projects.mcpLocal', { name: project.name }) }}</template>
           </p>
         </header>
         <McpServerList :key="project.path" :project="project.path" />
       </section>
 
-      <h3 class="head">Danger</h3>
+      <h3 class="head">{{ t('settings.projects.danger') }}</h3>
       <div class="card">
-        <SettingsRow label="Remove project" hint="Deletes the project entry and its chats. Files on disk are not touched.">
+        <SettingsRow :label="t('settings.projects.remove')" :hint="t('settings.projects.removeHint')">
           <template #default>
-            <UiButton size="sm" variant="danger" @click="askRemove"><Trash2 /> Remove project</UiButton>
+            <UiButton size="sm" variant="danger" @click="askRemove"><Trash2 /> {{ t('settings.projects.remove') }}</UiButton>
           </template>
         </SettingsRow>
       </div>

@@ -1,10 +1,12 @@
 import { defineStore } from 'pinia'
+import { t } from '~/i18n'
 import { AGENTS, type AgentId } from '~/types/chat'
 import type { AgentUsage, UsageWindow } from '~/agents/types'
 import { detectEarlyResets, type UsageReset } from '~/utils/usageReset'
 import { readAgentUsage } from '~/agents'
 import { isTauri } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
+import { parseEnvPath, placeKey } from '~/utils/envPath'
 import { shortAgo, useNow } from '~/utils/time'
 
 /**
@@ -13,6 +15,10 @@ import { shortAgo, useNow } from '~/utils/time'
  * shown is always a fresh read, or the last one while the next is on its way. What is remembered
  * between runs is the last read's windows and any early reset noticed, so a reset that happened
  * while Mango was closed still shows up.
+ *
+ * Readings are kept per place (`placeKey`): this computer, or a remote environment, whose CLIs may
+ * be signed in to other accounts and plans. What is shown is the active project's place, so a remote
+ * project shows its environment's agents, never this computer's.
  */
 export interface UsageEntry {
   usage: AgentUsage | null
@@ -26,12 +32,18 @@ export interface UsageEntry {
   resets: UsageReset[]
 }
 
+type Entries = Record<AgentId, UsageEntry>
+
+const LOCAL = 'local'
 const SEEN_KEY = 'mango.usage.seen.v1'
 interface Seen { windows: UsageWindow[]; resets: UsageReset[] }
 /** Resets older than this are no longer news. */
 const RESET_TTL_MS = 48 * 60 * 60 * 1000
 
-function loadSeen(): Partial<Record<AgentId, Seen>> {
+/** This computer's agents keep the key older builds wrote; an environment's are `env://host/instance#agent`. */
+const seenKey = (place: string, agent: AgentId) => (place === LOCAL ? agent : `${place}#${agent}`)
+
+function loadSeen(): Record<string, Seen> {
   try {
     const raw = JSON.parse(localStorage.getItem(SEEN_KEY) || '{}')
     return raw && typeof raw === 'object' ? raw : {}
@@ -39,18 +51,19 @@ function loadSeen(): Partial<Record<AgentId, Seen>> {
 }
 const seen = loadSeen()
 
-function remember(agent: AgentId, windows: UsageWindow[], resets: UsageReset[]) {
-  seen[agent] = { windows, resets }
+function remember(place: string, agent: AgentId, windows: UsageWindow[], resets: UsageReset[]) {
+  seen[seenKey(place, agent)] = { windows, resets }
   try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)) } catch { /* not remembered */ }
 }
 
 /** A read younger than this is shown as is when the dialog opens again. */
 const FRESH_MS = 60_000
 
-const blank = (agent?: AgentId): UsageEntry => ({
+const blank = (place: string, agent: AgentId): UsageEntry => ({
   usage: null, error: null, loading: false, fetchedAt: null, simulated: false,
-  resets: ((agent && seen[agent]?.resets) || []).filter(r => Date.now() - r.at < RESET_TTL_MS),
+  resets: (seen[seenKey(place, agent)]?.resets ?? []).filter(r => Date.now() - r.at < RESET_TTL_MS),
 })
+const blanks = (place: string) => Object.fromEntries((Object.keys(AGENTS) as AgentId[]).map(id => [id, blank(place, id)])) as Entries
 
 /** Plausible numbers for the browser preview, which has no CLI to ask. */
 function sampleUsage(agent: AgentId): AgentUsage {
@@ -74,73 +87,95 @@ function sampleUsage(agent: AgentId): AgentUsage {
       }
 }
 
-const inflight = new Map<AgentId, Promise<void>>()
+/** Reads on their way, by `place|agent`. */
+const inflight = new Map<string, Promise<void>>()
 
 export const useUsage = defineStore('usage', {
   state: () => ({
-    entries: Object.fromEntries((Object.keys(AGENTS) as AgentId[]).map(id => [id, blank(id)])) as Record<AgentId, UsageEntry>,
+    places: { [LOCAL]: blanks(LOCAL) } as Record<string, Entries>,
   }),
 
   getters: {
-    /** An early reset was noticed and not dismissed yet, for any agent. */
-    hasReset: s => Object.values(s.entries).some(e => e.resets.length > 0),
-    /** Something is being read right now. */
-    loading: s => Object.values(s.entries).some(e => e.loading),
+    /** Where the agents on screen run: the active project's place (`local`, or `env://host/instance`). */
+    place(): string {
+      return placeKey(useWorkspace().activeProjectPath)
+    },
+    /** The readings of the place on screen (blank ones until its first read). */
+    entries(): Entries {
+      return this.places[this.place] ?? blanks(this.place)
+    },
+    /** An early reset was noticed and not dismissed yet, for any agent of the place on screen. */
+    hasReset(): boolean {
+      return Object.values(this.entries).some(e => e.resets.length > 0)
+    },
+    /** Something of the place on screen is being read right now. */
+    loading(): boolean {
+      return Object.values(this.entries).some(e => e.loading)
+    },
     /** When the oldest shown answer arrived; null before any. */
-    oldest: (s): number | null => {
-      const times = Object.values(s.entries).map(e => e.fetchedAt).filter((t): t is number => t !== null)
+    oldest(): number | null {
+      const times = Object.values(this.entries).map(e => e.fetchedAt).filter((at): at is number => at !== null)
       return times.length ? Math.min(...times) : null
     },
   },
 
   actions: {
-    /** Ask `agent`'s CLI for its limits; a fresh answer is kept unless `force`. */
-    refresh(agent: AgentId, force = false): Promise<void> {
-      const entry = this.entries[agent]
+    /** The readings of `place`, made when first needed. */
+    _at(place: string): Entries {
+      return (this.places[place] ??= blanks(place))
+    },
+
+    /** Ask `agent`'s CLI in `place` (the one on screen by default) for its limits; a fresh answer is kept unless `force`. */
+    refresh(agent: AgentId, force = false, at?: string): Promise<void> {
+      const place = at ?? this.place
+      const entry = this._at(place)[agent]
       if (!force && entry.fetchedAt && !entry.error && Date.now() - entry.fetchedAt < FRESH_MS) return Promise.resolve()
-      const running = inflight.get(agent)
+      const key = `${place}|${agent}`
+      const running = inflight.get(key)
       if (running) return running
       entry.loading = true
+      const loc = parseEnvPath(place)
+      const remote = loc ? { hostId: loc.hostId, instance: loc.instance } : null
       const read = isTauri()
-        ? readAgentUsage(agent).then(usage => ({ usage, simulated: false }))
+        ? readAgentUsage(agent, remote).then(usage => ({ usage, simulated: false }))
         : new Promise<{ usage: AgentUsage; simulated: boolean }>(r => setTimeout(() => r({ usage: sampleUsage(agent), simulated: true }), 450))
       const job = read
         .then(({ usage, simulated }) => {
-          const before = entry.usage?.windows ?? seen[agent]?.windows
+          const before = entry.usage?.windows ?? seen[seenKey(place, agent)]?.windows
           const found = detectEarlyResets(before, usage.windows, Date.now())
           Object.assign(entry, { usage, simulated, error: null })
           if (found.length) entry.resets = [...found, ...entry.resets].slice(0, 6)
-          if (!simulated) remember(agent, usage.windows, entry.resets)
+          if (!simulated) remember(place, agent, usage.windows, entry.resets)
         })
         .catch((e) => { entry.error = e instanceof Error ? e.message : String(e) })
         .finally(() => {
           entry.loading = false
           entry.fetchedAt = Date.now()
-          inflight.delete(agent)
+          inflight.delete(key)
         })
         .then(() => {})
-      inflight.set(agent, job)
+      inflight.set(key, job)
       return job
     },
 
-    /** Hide the early-reset notices of `agent`. */
+    /** Hide the early-reset notices of `agent` in the place on screen. */
     dismissResets(agent: AgentId) {
-      const entry = this.entries[agent]
-      entry.resets = []
-      const kept = seen[agent]
-      if (kept) remember(agent, kept.windows, [])
+      const place = this.place
+      this._at(place)[agent].resets = []
+      const kept = seen[seenKey(place, agent)]
+      if (kept) remember(place, agent, kept.windows, [])
     },
 
-    /** Every agent that is, or may be, installed: unknown until detection ran, then the CLI says what is wrong. */
+    /**
+     * Every agent of the place on screen that is, or may be, installed: on this computer, unknown until
+     * detection ran (then the CLI says what is wrong); in an environment, every agent (its CLI says).
+     */
     refreshReadable(force = false): Promise<void> {
+      const place = this.place
       const ws = useWorkspace()
-      const ids = (Object.keys(AGENTS) as AgentId[]).filter(id => ws.agents.find(a => a.id === id)?.installed ?? true)
-      return this.refreshAll(ids, force)
-    },
-
-    /** Every agent in `agents` (the installed ones), all at once. */
-    refreshAll(agents: AgentId[], force = false): Promise<void> {
-      return Promise.all(agents.map(a => this.refresh(a, force))).then(() => {})
+      const ids = (Object.keys(AGENTS) as AgentId[])
+        .filter(id => place !== LOCAL || (ws.agents.find(a => a.id === id)?.installed ?? true))
+      return Promise.all(ids.map(a => this.refresh(a, force, place))).then(() => {})
     },
   },
 })
@@ -150,9 +185,9 @@ export function useUsageUpdated() {
   const usage = useUsage()
   const now = useNow(15_000)
   return computed(() => {
-    if (usage.loading) return 'Reading usage…'
+    if (usage.loading) return t('shell.usage.readingNow')
     if (!usage.oldest) return ''
-    const ago = shortAgo(usage.oldest, now.value)
-    return ago === 'now' ? 'Updated just now' : `Updated ${ago} ago`
+    if (Math.round((now.value - usage.oldest) / 1000) < 45) return t('shell.usage.updatedNow')
+    return t('shell.usage.updatedAgo', { ago: shortAgo(usage.oldest, now.value) })
   })
 }

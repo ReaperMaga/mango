@@ -8,10 +8,15 @@
  *   node scripts/version.ts --check         the same, exit 1 if they disagree (for CI)
  *   node scripts/version.ts patch|minor|major|<x.y.z[-pre]>   set a new version everywhere
  *
+ * A bump also writes the changelog: commits since the last `vX.Y.Z` tag (feat, fix, perf) and
+ * whatever stands under `## Unreleased` in docs/changelog.md become the new version's section.
+ *
  * It never commits or tags; it prints the commands for that.
  */
+import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { applyRelease, notesFromSubjects } from './changelog.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const files = {
@@ -19,6 +24,7 @@ const files = {
   tauri: `${root}src-tauri/tauri.conf.json`,
   cargo: `${root}src-tauri/Cargo.toml`,
   lock: `${root}src-tauri/Cargo.lock`,
+  changelog: `${root}docs/changelog.md`,
 }
 
 const SEMVER = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/
@@ -70,6 +76,14 @@ function setIn(path: string, pattern: RegExp, version: string) {
   writeFileSync(path, text.replace(pattern, `$1${version}$3`))
 }
 
+/** Subjects of the commits since the last desktop release tag, oldest first. */
+function commitsSinceRelease(): string[] {
+  const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  const tag = git('tag', '--list', 'v[0-9]*', '--sort=-v:refname').split('\n')[0]
+  const range = tag ? [`${tag}..HEAD`] : []
+  return git('log', ...range, '--no-merges', '--reverse', '--format=%s').split('\n').filter(Boolean)
+}
+
 const arg = process.argv[2]
 
 if (!arg || arg === '--check') {
@@ -85,10 +99,12 @@ try {
   setIn(files.pkg, /("version":\s*")([^"]+)(")/, version)
   setIn(files.cargo, CARGO_VERSION, version)
   setIn(files.lock, LOCK_VERSION, version)
+  writeFileSync(files.changelog, applyRelease(read(files.changelog), version, notesFromSubjects(commitsSinceRelease())))
   const tauri = JSON.parse(read(files.tauri))
   if (tauri.version !== '../package.json') setIn(files.tauri, /("version":\s*")([^"]+)(")/, '../package.json')
   console.log(`Mango ${before} -> ${version}`)
   report()
+  console.log('Changelog: docs/changelog.md has a section for it. Read it over before committing.')
   console.log(`\nTo release it:\n  git commit -am "chore(release): v${version}"\n  git tag v${version}`)
 } catch (e) {
   console.error(e instanceof Error ? e.message : String(e))

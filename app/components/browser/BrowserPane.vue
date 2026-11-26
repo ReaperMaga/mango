@@ -14,6 +14,7 @@ import { isBlank, normalizeAddress, parseBrowserTab } from '~/utils/browserTabs'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const threads = useThreads()
 const browsers = useBrowser()
 const native = isTauri()
@@ -85,11 +86,11 @@ function openOutside() {
 </script>
 
 <template>
-  <section class="bw" :class="{ 'is-active': active, 'is-split': split }" :aria-label="b?.title || 'Browser'">
+  <section class="bw" :class="{ 'is-active': active, 'is-split': split }" :aria-label="b?.title || t('terminal.browser.label')">
     <header class="bw__bar">
-      <UiIconButton size="sm" label="Back" :disabled="!native || blank" @click="browsers.go(id, 'back')"><ArrowLeft /></UiIconButton>
-      <UiIconButton size="sm" label="Forward" :disabled="!native || blank" @click="browsers.go(id, 'forward')"><ArrowRight /></UiIconButton>
-      <UiIconButton size="sm" :label="loading ? 'Stop loading' : 'Reload'" :disabled="blank" @click="reloadOrStop">
+      <UiIconButton size="sm" :label="t('common.actions.back')" :disabled="!native || blank" @click="browsers.go(id, 'back')"><ArrowLeft /></UiIconButton>
+      <UiIconButton size="sm" :label="t('terminal.browser.forward')" :disabled="!native || blank" @click="browsers.go(id, 'forward')"><ArrowRight /></UiIconButton>
+      <UiIconButton size="sm" :label="loading ? t('terminal.browser.stop') : t('terminal.browser.reload')" :disabled="blank" @click="reloadOrStop">
         <X v-if="loading" /><RotateCw v-else />
       </UiIconButton>
       <form class="bw__address" :class="{ 'is-wrong': notAddress }" @submit.prevent="go">
@@ -102,23 +103,23 @@ function openOutside() {
           spellcheck="false"
           autocomplete="off"
           autocapitalize="off"
-          aria-label="Address"
+          :aria-label="t('terminal.browser.address')"
           :aria-invalid="!!notAddress"
-          placeholder="localhost:3000 or an address"
+          :placeholder="t('terminal.browser.placeholder')"
           @focus="onFocus"
           @blur="onBlur"
           @keydown.esc.prevent="revert"
         >
       </form>
-      <UiIconButton size="sm" label="Open in system browser" :disabled="blank" @click="openOutside"><ExternalLink /></UiIconButton>
-      <UiIconButton v-if="native" size="sm" label="Developer tools" :disabled="!b || !!b.error" @click="browsers.devtools(id)"><Bug /></UiIconButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiIconButton size="sm" :label="t('terminal.browser.openOutside')" :disabled="blank" @click="openOutside"><ExternalLink /></UiIconButton>
+      <UiIconButton v-if="native" size="sm" :label="t('terminal.browser.devtools')" :disabled="!b || !!b.error" @click="browsers.devtools(id)"><Bug /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('terminal.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
       <span v-if="loading" class="bw__progress" aria-hidden="true" />
     </header>
 
     <div v-if="notAddress" class="bw__note" role="alert">
       <CircleAlert class="bw__note-icon" aria-hidden="true" />
-      <span class="bw__note-text"><strong class="selectable">{{ notAddress }}</strong> is not an address. Type a URL such as localhost:3000 or example.com.</span>
+      <i18n-t keypath="terminal.browser.notAddress" tag="span" scope="global" class="bw__note-text"><template #text><strong class="selectable">{{ notAddress }}</strong></template></i18n-t>
     </div>
     <div v-else-if="b?.error" class="bw__note" role="alert">
       <CircleAlert class="bw__note-icon" aria-hidden="true" />
@@ -127,11 +128,8 @@ function openOutside() {
 
     <div ref="host" class="bw__page" :aria-busy="loading">
       <div v-if="blank || !b" class="bw__start">
-        <p class="bw__start-title">{{ owner ? `Waiting for ${owner.title}` : 'Open a page' }}</p>
-        <p class="bw__start-sub">
-          Type an address above, such as <span class="bw__mono">localhost:3000</span>. Links to local dev servers in chats and
-          the terminal open here, and agents can use this browser to check their work.
-        </p>
+        <p class="bw__start-title">{{ owner ? t('terminal.browser.waiting', { chat: owner.title }) : t('terminal.browser.openPage') }}</p>
+        <i18n-t keypath="terminal.browser.start" tag="p" scope="global" class="bw__start-sub"><template #address><span class="bw__mono">localhost:3000</span></template></i18n-t>
       </div>
       <iframe
         v-else-if="!native"
@@ -143,7 +141,7 @@ function openOutside() {
         referrerpolicy="no-referrer"
       />
     </div>
-    <p v-if="!native && !blank && b" class="bw__preview-note">Browser preview: a sandboxed frame stands in for the app's browser; many sites refuse to show in one.</p>
+    <p v-if="!native && !blank && b" class="bw__preview-note">{{ t('terminal.browser.previewNote') }}</p>
   </section>
 </template>
 

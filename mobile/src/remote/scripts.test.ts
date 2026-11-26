@@ -9,6 +9,7 @@ import { BATCH, COMMIT, DIFF_CAP, UNTRACKED_DIFF, batchArgs, gitRead, parseBatch
 import { ATTACH, FETCH, LIST, PROJECTS, PUT, REMOVE, parseFetch, parseList, parseProjects, validAttachmentName } from './sshBackend'
 import { readFileSync } from 'node:fs'
 import type { Env } from './types'
+import { GLAB_HOSTS, parseGlabHosts } from './gitlab'
 
 /**
  * The remote scripts themselves, run by this computer's `sh`/`bash` against scratch folders
@@ -202,7 +203,7 @@ describe('projects script', () => {
     addedAt: 0,
   }
 
-  it('finds repositories under the home, outermost first', () => {
+  it('finds repositories under the home, outermost first, without worktrees', () => {
     const home = tmp('home')
     const repo = (dir: string, head: string) => {
       mkdirSync(join(home, dir, '.git'), { recursive: true })
@@ -215,7 +216,7 @@ describe('projects script', () => {
     repo('work/node_modules/dep', 'ref: refs/heads/main') // skipped
     repo('.cache/thing', 'ref: refs/heads/main') // hidden: skipped
     repo('a/b/c/d/e/too-deep', 'ref: refs/heads/main') // beyond the depth
-    // A linked worktree: `.git` is a file pointing at its git dir.
+    // A linked worktree (`.git` is a file pointing at its git dir): part of shop, skipped.
     mkdirSync(join(home, 'work/shop/.git/worktrees/wt'), { recursive: true })
     writeFileSync(join(home, 'work/shop/.git/worktrees/wt/HEAD'), 'ref: refs/heads/wt-branch\n')
     mkdirSync(join(home, 'trees/wt'), { recursive: true })
@@ -225,11 +226,38 @@ describe('projects script', () => {
     expect(r.code, r.stderr).toBe(0)
     const got = parseProjects(r.stdout, env, 'dev')
     expect(got.map(p => [p.path, p.name, p.branch])).toEqual([
-      [`env://h1/dev${home}/trees/wt`, 'wt', 'wt-branch'],
       [`env://h1/dev${home}/work/detached`, 'detached', null],
       [`env://h1/dev${home}/work/my app`, 'my app', 'feat/x'],
       [`env://h1/dev${home}/work/shop`, 'shop', 'main'],
     ])
     expect(() => parseProjects('MANGO-ERR:nobase64\n', env, 'dev')).toThrow(/base64/)
+  })
+})
+
+describe('glab hosts script', () => {
+  it('prints the servers glab is configured for, and none of their tokens', () => {
+    const dir = tmp('glab')
+    mkdirSync(join(dir, 'glab-cli'))
+    writeFileSync(join(dir, 'glab-cli', 'config.yml'), [
+      'git_protocol: ssh',
+      'hosts:',
+      '    gitlab.com:',
+      '        api_protocol: https',
+      '        token: glpat-SECRET',
+      '    "git.corp.io:8443":',
+      '        token: glpat-OTHER',
+      '    git.corp.io:',
+      '        api_host: git.corp.io',
+      '# a comment',
+      'no_prompt: false',
+      '',
+    ].join('\n'))
+    const r = spawnSync('sh', ['-c', GLAB_HOSTS], { env: { ...process.env, GLAB_CONFIG_DIR: join(dir, 'glab-cli') }, encoding: 'utf8' })
+    expect(r.status).toBe(0)
+    expect(r.stdout).not.toContain('glpat')
+    expect(parseGlabHosts(r.stdout)).toEqual(['git.corp.io:8443', 'git.corp.io'])
+    // No config: nothing, and no failure.
+    const none = spawnSync('sh', ['-c', GLAB_HOSTS], { env: { ...process.env, GLAB_CONFIG_DIR: join(dir, 'none') }, encoding: 'utf8' })
+    expect([none.status, none.stdout]).toEqual([0, ''])
   })
 })

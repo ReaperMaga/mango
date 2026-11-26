@@ -7,7 +7,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   CHAT_WINDOW, MAIN_WINDOW, TEAR_EDGE, chatRefs, claimsFor, dragPlace, holderOf, lostChats, ownerOf, parseWindowQuery, returningChats, rootIds, tearOffPlace,
-  windowQuery, withClaims, withoutWindow,
+  onlyOpen, windowQuery, withClaims, withoutWindow,
   type ClaimTable,
 } from '../app/utils/windows.ts'
 
@@ -156,4 +156,17 @@ test('only a chat window\'s chats come back as tabs when it closes', () => {
   assert.deepEqual(returningChats([{ kind: 'project', key: P }, { kind: 'chat', key: 'busy' }]), [], 'a project window\'s leftovers go back quietly')
   assert.deepEqual(returningChats([]), [])
   assert.deepEqual(returningChats(undefined), [])
+})
+
+test('windows the backend no longer has are forgotten, this one never', () => {
+  const table: ClaimTable = {
+    'main': [{ kind: 'project', key: P }],
+    'w-1': [{ kind: 'project', key: Q }],
+    'w-2': [{ kind: 'project', key: R }],
+  }
+  const kept = onlyOpen(table, ['main', 'w-2'], 'w-3')
+  assert.deepEqual(Object.keys(kept).sort(), ['main', 'w-2'])
+  assert.equal(holderOf(kept, { kind: 'project', key: Q }), null)
+  // The window asking is kept even when the list (read a moment ago) does not have it yet.
+  assert.deepEqual(Object.keys(onlyOpen(table, [], 'w-1')), ['w-1'])
 })

@@ -2,6 +2,380 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.7.0
+
+### New
+
+- GitLab in remote projects: `glab` runs inside the environment, signed in there, and falls back to this computer's sign-in when the environment has none.
+
+## 0.6.0
+
+### New
+
+- Planner server: each space has people, and everyone can rename themselves (`POST /v1/me`, `planner-server person rename`).
+- Assign people in planner collections, Notion-style.
+
+### Fixes
+
+- Show a planner server's collections when Mango starts.
+
+## 0.5.0
+
+### New
+
+- Add the Planner plugin: boards and tables for tasks and notes.
+- Sync Planner collections through a self-hosted planner server.
+
+## 0.4.1
+
+### Fixes
+
+- Keep Claude Code running through attachments, Stop and passing errors.
+
+## 0.4.0
+
+- Choose from how many tokens large chats are compacted after a break, also per project.
+- Change model or effort in a Claude Code chat without restarting it.
+- Stop losing a message sent while Claude Code compacts a chat.
+
+### New
+
+- Offer to compact large Claude Code chats after a long break.
+
+### Fixes
+
+- Notice when a Claude Code chat went on in a terminal.
+- Show only a reply's own cost when a Claude Code chat is resumed.
+
+## 0.3.1
+
+### Fixes
+
+- Stop re-sending edited instruction files with every message to Claude Code.
+
+## 0.3.0
+
+### New
+
+- Show a remote environment's usage limits in its projects.
+- Add German and Russian interface languages.
+
+## 0.2.0
+
+### New
+
+- Send PDFs and other files to agents in remote projects.
+- Support GitLab for merge requests, issues, pipelines and releases.
+
+### Fixes
+
+- Say the name is taken when renaming a folder onto an empty one on Windows.
+
+## 0.1.48
+
+### New
+
+- Open the project's GitHub repository from the titlebar and the phone.
+
+### Fixes
+
+- List the models a remote environment's agent offers.
+
+## 0.1.47
+
+### New
+
+- Keep language servers loaded and tell them about changes on disk.
+
+### Fixes
+
+- Always offer an Other field on agent questions.
+
+## 0.1.46
+
+### Fixes
+
+- Keep a running chat's messages when another device saves it: opening a remote chat on the phone while it ran on the desktop stopped the phone from seeing new messages, and the desktop lost the run's messages when it ended.
+
+### Performance
+
+- Fetch and Update in remote projects take one SSH round trip instead of five or six, so they finish seconds sooner on a distant server.
+
+## 0.1.45
+
+### Fixes
+
+- Keep a chat in its project when its agent changes folders: a `cd` into a subfolder no longer counts as a worktree, which made Files, Unity detection and language servers work in that subfolder. Chats already caught by it go back to their project.
+
+## 0.1.44
+
+### New
+
+- Colour types, methods and constants as the language server knows them.
+- `/create-release` in any chat: the agent picks the next version, runs the checks, tags, pushes and publishes a GitHub release, following the project's own release steps.
+
+## 0.1.43
+
+### New
+
+- Open decompiled library source on go to definition in C#.
+
+## 0.1.42
+
+### New
+
+- Add autosave, autocomplete, language servers and a smooth caret.
+
+## 0.1.41
+
+### New
+
+- Add the Unity plugin: file icons, `.meta` files that stay hidden and follow their assets, project details and reference search.
+- Let plugins shape the Files view, file icons and editor languages.
+
+### Fixes
+
+- Size SVG plugin icons like the other icons.
+- Keep agents starting on Windows when several plugins add to the system prompt.
+
+## 0.1.40
+
+### New
+
+- Add view options and excluded files to the Files view.
+- Build the Git log into Mango, so it no longer needs a plugin: an installed Git log plugin stops running and can be removed.
+- Add create, rename, duplicate and delete to the Files view.
+- List a fork under the chat it was branched from.
+
+### Fixes
+
+- Show restore on the maximize button when maximized, keep new chat on one line.
+- Recognise ignored files in and next to submodules and linked folders.
+- Show an empty history in the Git log for a repository with no commits.
+- Keep what you type elsewhere out of a file that finishes opening.
+
+## 0.1.39
+
+### New
+
+- Move the sidebar toggle into the sidebar.
+- Git log plugin, a commit graph in the bottom panel.
+
+## 0.1.38
+
+### New
+
+- Show every tool window on the stripe again, with terminal and environment at its foot.
+
+## 0.1.37
+
+### New
+
+- Install plugins from git, browse the official catalog, plugin api.
+
+## 0.1.36
+
+### New
+
+- Show the agent's plan and usage in the sidebar footer.
+- Group appearance options and make uchiha visibly red.
+- Show the tokens and cost a reply used.
+- Put the tool windows behind one button with a dropdown, and clear the env, panel, settings and usage buttons from the titlebar.
+
+### Fixes
+
+- Stop the agent with Esc wherever focus is.
+
+## 0.1.35
+
+### New
+
+- Replace the app mark with a mango split down its ridge.
+- Copy, edit, ask again, branch and pin messages, find and jump through a chat.
+
+## 0.1.34
+
+### New
+
+- Browse the project's open pull requests when no chat is open.
+
+## 0.1.33
+
+### Fixes
+
+- Remove recent projects from the project menu.
+- Remove a branch's worktree when deleting the branch.
+
+## 0.1.32
+
+### New
+
+- List projects as one list in the project menu.
+
+## 0.1.31
+
+### Fixes
+
+- Stop listing projects as open in a window that let them go.
+
+## 0.1.30
+
+### New
+
+- Write the changelog from commits when bumping.
+- List recent projects in the project menu.
+- Title each window with its project's name.
+
+## 0.1.29
+
+### New
+
+- Add a releases tool window with the runs that build them.
+- Split two chats from different projects side by side.
+
+## 0.1.28
+
+### Agents and chats
+
+- **Link pull requests and issues:** pick an open pull request or issue from the Pull requests tool window to link it to the chat.
+
+### Mobile
+
+- Pull requests on the phone, as on the desktop.
+- Categorized settings, live chats and four new color schemes (Ink, Cocoa, Neon and Solar).
+
+### Builds
+
+- The macOS app is signed and notarized, and the iOS app ships through TestFlight.
+
+## 0.1.27
+
+### Agents and chats
+
+- Menu flyouts of the run menu open from their row and animate.
+
+## 0.1.26
+
+### Agents and chats
+
+- **One run menu:** pick agent, model, effort and permissions from a single menu.
+- **Context window:** a chat shows how full the agent's context window is.
+
+### Mobile
+
+- Categorized settings, appearance options and project folders.
+
+## 0.1.25
+
+### Environments
+
+- The browser reaches dev servers that listen only on IPv6 in remote environments.
+
+## 0.1.24
+
+### Windows
+
+- Each window closes on its own, and Mango asks where to open a project.
+
+## 0.1.23
+
+### Settings
+
+- **Notifications and shortcuts:** desktop notifications when a chat needs you, finishes or fails, and keyboard shortcuts you can rebind.
+
+### Environments
+
+- **Java:** add Java through SDKMAN, and pick Node and Java versions.
+- Remote agent runs get the login's umask.
+
+## 0.1.22
+
+### Agents and chats
+
+- **Tabs per pane:** each split pane has its own tab strip.
+- A chat's tab and pane close when the chat is settled.
+
+### Environments
+
+- **Docker** is a one-click component.
+- Remote agent runs stay alive and reconnect after a dropped connection.
+
+## 0.1.21
+
+### Windows
+
+- Open projects and chats in their own windows.
+- Long project names fit in the project menu.
+
+### Mobile
+
+- Pictures from agent replies show on the phone.
+
+## 0.1.20
+
+### Agents and chats
+
+- **MCP servers:** add your own MCP servers to agent chats.
+- The empty chat pane no longer suggests prompts.
+
+### Environments
+
+- A headless Chromium component for agents.
+
+### Mobile
+
+- **The iOS app:** open remote environments and their chats from the phone.
+
+## 0.1.19
+
+### Environments
+
+- A remote project's chats are kept in its environment, so other computers see them.
+
+## 0.1.18
+
+### Builds
+
+- **macOS:** builds and downloads for Apple Silicon and Intel.
+
+## 0.1.17
+
+### Interface
+
+- Smooth transitions across chats, panels, lists and settings.
+
+### Environments
+
+- The branch popup and Files are faster on remote projects.
+
+## 0.1.16
+
+### Interface
+
+- Polish for the titlebar, menus and the in-app browser preview.
+
+## 0.1.15
+
+### Interface
+
+- A rebuilt titlebar with widgets and one aligned header row.
+- Tab titles no longer sit below their icons.
+
+## 0.1.14
+
+### Agents and chats
+
+- **Questions in the chat:** answer questions from the agent and from MCP servers right in the chat.
+- **Changed files:** shown under replies and as markers in the editor gutter.
+
+### Version control
+
+- **Unity VCS:** locks, shelves, merge, per-chat workspaces and code reviews.
+
+### Interface
+
+- Tabs are pills with file-type icons.
+
 ## 0.1.13
 
 ### Environments

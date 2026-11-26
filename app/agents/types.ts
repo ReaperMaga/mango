@@ -29,6 +29,37 @@ export interface SpawnHandlers {
 /** Starts the agent's CLI with `args` in `cwd`. Handlers are attached before any output can arrive. */
 export type SpawnFn = (args: string[], handlers: SpawnHandlers, env?: Record<string, string>) => Promise<AgentTransport>
 
+/** A CLI process between two turns of a chat. */
+export interface KeptProcess {
+  transport: AgentTransport
+  /** Where its output goes: whoever holds the process sets this. */
+  handlers: SpawnHandlers
+  /** Folders outside the project it can read: given at its start, or asked for since. */
+  readDirs: string[]
+  /** The model and effort it runs at, as they were asked for (`AgentRunOptions`). */
+  model: string
+  effort: string | null
+  /** The ids of the conversation's messages it has printed, as its transcript names them. */
+  seen: Set<string>
+  /** What it has spent so far, over all its turns. */
+  costUsd: number
+  /** Whether an output line means it started working by itself. */
+  wakes(line: string): boolean
+}
+
+/** Holds a chat's CLI process from one turn to the next. */
+export interface ProcessKeeper {
+  /** The chat's kept process, when it was kept under `key` and `fits`; any other one is closed. */
+  take(key: string, fits: (p: KeptProcess) => boolean): KeptProcess | null
+  keep(key: string, process: KeptProcess): void
+}
+
+/** The end of a session's transcript: complete lines, oldest first. `whole`: they are all of it. */
+export interface TranscriptTail {
+  lines: string[]
+  whole: boolean
+}
+
 export type PermissionMode =
   | 'plan'   // read-only: explore and propose, change nothing
   | 'ask'    // ask before edits and commands
@@ -140,6 +171,20 @@ export type AgentEvent =
   | { type: 'question'; id: string; questions: AgentQuestion[]; toolId?: string; title?: string; message?: string }
   /** The approval or question was settled without the user (e.g. the run was interrupted). */
   | { type: 'approval-cancelled'; id: string }
+  /**
+   * How full the conversation's context window is now. A reading with `max` 0 is a live one
+   * taken mid-turn: it only updates the total (see `mergeContext`).
+   */
+  | { type: 'context'; usage: ContextUsage }
+  /**
+   * A request of the conversation went out: what it read stays in the prompt cache for `ttlMs` from `at`
+   * (left out when the CLI does not say: the request only used what was cached).
+   */
+  | { type: 'cache'; at: number; ttlMs?: number }
+  /** `/compact` replaced the conversation with a summary. */
+  | { type: 'compacted' }
+  /** What the run has used so far, in total (each event replaces the one before). */
+  | { type: 'usage'; usage: TurnUsage }
   /** Exactly one per run, always last. */
   | { type: 'turn-end'; status: 'done' | 'error' | 'stopped'; error?: string }
 
@@ -190,6 +235,21 @@ export interface AgentRunOptions {
    * keep them out of the command line where the CLI can read them from its environment instead.
    */
   mcpServers?: AgentMcpServer[]
+  /**
+   * Text added to the agent's system prompt for this run (what plugins append, see `plugin-host/`):
+   * Claude Code `--append-system-prompt`, Codex `developerInstructions`. Absent when there is none.
+   */
+  appendSystemPrompt?: string
+  /**
+   * Keeps the CLI process running for the chat's next turn (see `agents/keeper.ts`). Absent: every turn
+   * starts its own. Only for runs on this computer: in an environment another device may go on with the chat.
+   */
+  keeper?: ProcessKeeper
+  /**
+   * The last lines of a session's transcript, at most `maxBytes` of it: tells whether a kept process missed
+   * part of its session. Null when there is none. Absent: a kept process is taken as it is.
+   */
+  readTranscript?(sessionId: string, maxBytes: number): Promise<TranscriptTail | null>
   spawn: SpawnFn
   emit(event: AgentEvent): void
 }
@@ -232,6 +292,49 @@ export interface AgentRun {
   taskOutput?(id: string): Promise<string | null>
 }
 
+/** What one run (a turn, with its steering messages) spent: tokens in (cached ones too) and out, and the cost when the CLI says. */
+export interface TurnUsage {
+  input: number
+  output: number
+  costUsd?: number
+}
+
+/** One thing that takes room in the context window ("System prompt", "Messages", "Free space"). */
+export interface ContextPart {
+  id: string
+  label: string
+  tokens: number
+  /** 'buffer': kept free for compacting; 'free': still unused. */
+  kind: 'used' | 'buffer' | 'free'
+}
+
+/** A conversation's context window, as its CLI last reported it. */
+export interface ContextUsage {
+  /** Tokens the conversation takes up. */
+  used: number
+  /** The model's window in tokens; 0 when unknown. */
+  max: number
+  /** Where the CLI compacts the conversation by itself, when it says. */
+  compactAt?: number
+  /** What fills the window, when the CLI breaks it down (Claude Code). */
+  parts?: ContextPart[]
+  /** The model the numbers are for, as the CLI names it. */
+  model?: string
+  /** Unix ms of the reading. */
+  at: number
+}
+
+/** A conversation's prompt cache at its provider. */
+export interface PromptCache {
+  /** Unix ms of the last request, which started its time anew. */
+  at: number
+  ttlMs: number
+  /** The model and effort it belongs to (`cacheOwner`). */
+  for: string
+  /** Mango has tried to compact the conversation in this break. */
+  tried?: true
+}
+
 /** One rolling usage limit of the signed-in plan, e.g. the 5-hour or the weekly window. */
 export interface UsageWindow {
   /** Stable per agent: 'five-hour', 'weekly', 'weekly:<model>', or 'window:<minutes>'. */
@@ -272,6 +375,11 @@ export interface AgentAdapter {
    * turn (no quota is spent). Rejects when the CLI can't answer (missing, signed out, too old).
    */
   readUsage?(spawn: SpawnFn): Promise<AgentUsage>
+  /**
+   * How full the conversation `sessionId` is, read without running a turn (no quota is spent);
+   * `spawn` runs where the conversation's runs do. Rejects when the CLI can't answer.
+   */
+  readContext?(spawn: SpawnFn, sessionId: string, model: string): Promise<ContextUsage>
   /**
    * The slash commands a message can start with in this project (`spawn` runs in it), without
    * running a turn. A message `/name args` goes to `run()` as its prompt, unchanged.

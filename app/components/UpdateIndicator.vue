@@ -8,6 +8,7 @@ import { openExternal } from '~/composables/useBackend'
 import { releaseUrl } from '~/utils/releases'
 
 /** Titlebar entry for a newer release: shows while one is available or installing. */
+const { t } = useI18n()
 const up = useUpdater()
 const ws = useWorkspace()
 const threads = useThreads()
@@ -18,24 +19,24 @@ const items = computed<MenuItem[]>(() => {
   const v = up.update?.version
   return [
     {
-      label: up.installFailed ? 'Try the update again' : 'Update and restart',
-      hint: running.value ? `Stops ${running.value} running chat${running.value === 1 ? '' : 's'}` : v,
+      label: up.installFailed ? t('shell.update.again') : t('shell.update.restart'),
+      hint: running.value ? t('shell.update.stops', running.value) : v,
       icon: up.installFailed ? RotateCw : CircleArrowUp,
       onSelect: () => up.install(),
     },
-    { label: 'Release notes', icon: ExternalLink, onSelect: () => v && openExternal(releaseUrl(v)) },
-    { label: 'Update settings', icon: Settings, divider: true, onSelect: () => ws.openSettings('maintenance') },
+    { label: t('shell.update.notes'), icon: ExternalLink, onSelect: () => v && openExternal(releaseUrl(v)) },
+    { label: t('shell.update.settings'), icon: Settings, divider: true, onSelect: () => ws.openSettings('maintenance') },
   ]
 })
 
 const label = computed(() => {
-  if (up.phase === 'restarting') return 'Restarting…'
-  if (up.phase === 'downloading') return up.fraction === null ? 'Updating…' : `Updating ${Math.round(up.fraction * 100)}%`
-  if (up.installFailed) return 'Update failed'
-  return 'Update'
+  if (up.phase === 'restarting') return t('shell.update.restarting')
+  if (up.phase === 'downloading') return up.fraction === null ? t('shell.update.updating') : t('shell.update.updatingPercent', { percent: Math.round(up.fraction * 100) })
+  if (up.installFailed) return t('shell.update.failed')
+  return t('shell.update.label')
 })
 const working = computed(() => up.phase === 'downloading' || up.phase === 'restarting')
-const title = computed(() => up.installFailed ? up.error ?? undefined : up.update ? `Mango ${up.update.version} is available` : undefined)
+const title = computed(() => up.installFailed ? up.error ?? undefined : up.update ? t('shell.update.available', { version: up.update.version }) : undefined)
 </script>
 
 <template>
@@ -45,7 +46,7 @@ const title = computed(() => up.installFailed ? up.error ?? undefined : up.updat
       <span class="tabular">{{ label }}</span>
       <span v-if="up.fraction !== null" class="upd__bar" :style="{ transform: `scaleX(${up.fraction})` }" aria-hidden="true" />
     </span>
-    <UiMenu v-else :items="items" :width="250" label="Update">
+    <UiMenu v-else :items="items" :width="250" :label="t('shell.update.label')">
       <template #default="{ toggle, open }">
         <button
           type="button"

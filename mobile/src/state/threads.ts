@@ -1,15 +1,19 @@
 import { create } from 'zustand'
-import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread } from '~/types/chat'
+import type { AgentId, Attachment, BackgroundTask, LinkedItem, Message, Part, PermissionMode, QuestionAnswers, Thread, ThreadStatus } from '~/types/chat'
 import { AGENTS, awaitsUser } from '~/types/chat'
-import { createdBy } from '~/utils/githubLinks'
+import { createdBy, linkFromRef } from '~/utils/githubLinks'
+import { transcript } from '~/utils/transcript'
 import { createPrPrompt } from '~/utils/createPr'
+import { createReleasePrompt } from '~/utils/createRelease'
 import { branchFromMessage, untakenName, workdirOf, worktreeName } from '~/utils/worktrees'
 import { backend } from '@/remote'
+import { forgeOfProject, knownProvider } from '@/state/forges'
 import { attachRemoteChats, noteSaved } from '@/remote/chatSync'
-import { answerQuestion as answerRun, interruptRun, isRunning, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
+import { answerQuestion as answerRun, interruptRun, isRunning, readAgentContext, respondApproval, runAgentTurn, steerRun, stopTask } from '@/agents/run'
 import { type ChatFiles, ChatHistory } from '@/state/chatHistory'
 import { chatFiles } from '@/state/chatFiles'
-import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, titleFrom, uid } from '@/state/threadModel'
+import type { FollowUp } from '@/state/prefsModel'
+import { byListOrder, errorText, isBusy, isClear, isCommand, isSafeId, normalizeLoaded, runElsewhere, titleFrom, uid, type ElsewhereRun } from '@/state/threadModel'
 
 /**
  * The phone's chats: a zustand port of the desktop's `app/stores/threads.ts`, without what only a
@@ -35,6 +39,8 @@ export interface QueuedMessage {
   attachments: Attachment[]
   /** Already in the chat (sent now, but the run could not take it): only its turn is still due. */
   shown?: boolean
+  /** When the person wrote it. */
+  queuedAt?: number
 }
 
 /** What a running chat has going on besides its reply. Not saved: it dies with the run. */
@@ -50,8 +56,7 @@ export interface LiveState {
   reconnecting?: boolean
 }
 
-/** What a message sent during a turn does: wait for the turn to end, or go to the agent right away. */
-export type FollowUp = 'queue' | 'steer'
+export type { FollowUp }
 
 export interface NewChat {
   projectPath: string
@@ -77,8 +82,15 @@ export interface ThreadsState {
   queue: Record<string, QueuedMessage[]>
   /** Per chat id: what is typed in its composer and not sent yet. Not saved. */
   drafts: Record<string, string>
+  /** Chats whose context window is being read from the CLI (`readContext`). */
+  contextReading: Record<string, true>
   /** The chat on screen: a turn that finishes there counts as seen. */
   viewing: string | null
+  /**
+   * Per chat id: a run another computer has going, read from the copy it saved. Not saved: it is
+   * only what the phone last saw, and it goes when a newer copy says the run ended.
+   */
+  elsewhere: Record<string, ElsewhereRun>
   followUp: FollowUp
 
   /* ---- reading ---- */
@@ -123,6 +135,11 @@ export interface ThreadsState {
   /** Set a chat's status by hand: Working, or Settled. While an agent runs, the run owns the status. */
   setStatus(id: string, status: 'working' | 'done'): void
   setAgent(id: string, agent: AgentId): void
+  /**
+   * A chat shown without a context reading gets one from its CLI, without a turn: once per chat
+   * while the app runs (the desktop's `readContext`). Codex chats wait for their next reply.
+   */
+  readContext(id: string): Promise<void>
   /** `efforts`: the levels the new model accepts; an effort it doesn't know is dropped. */
   setModel(id: string, model: string, efforts?: string[]): void
   setEffort(id: string, effort: string | null): void
@@ -144,6 +161,16 @@ export interface ThreadsState {
   sendNow(id: string, queuedId: string): Promise<void>
   /** Take a waiting message back without sending it. */
   dropQueued(id: string, queuedId: string): void
+  /** Keep a message (or let it go): the chat's message list shows pinned ones first. */
+  togglePin(id: string, messageId: string): void
+  /** Messages that would go if the chat were cut back at `messageId` (the message itself included). */
+  cutCount(id: string, messageId: string): number
+  /** Replace one of your messages and run it again: it and everything after it make way. */
+  editMessage(id: string, messageId: string, text: string): Promise<void>
+  /** Ask again: an answer and everything after it make way, and the message before it runs once more. */
+  regenerate(id: string, messageId: string): Promise<void>
+  /** A new chat that continues from a message (the earlier part goes to the agent as text). Null when it cannot. */
+  branchFrom(id: string, messageId: string): Thread | null
   /** Answer an approval request inside a message. */
   resolveApproval(threadId: string, messageId: string, partIndex: number, allow: boolean): void
   /** Answer an agent's questions (null: dismissed without an answer). */
@@ -166,7 +193,7 @@ export interface ThreadsState {
    */
   _addWorktreeFor(id: string): Promise<void>
   _adoptRemote(incoming: Thread[]): Thread[]
-  _appendUser(id: string, text: string, attachments: Attachment[]): void
+  _appendUser(id: string, text: string, attachments: Attachment[], writtenAt?: number): void
   _runTurn(id: string, text: string, attachments: Attachment[]): Promise<void>
   _sendFollowUps(id: string): Promise<void>
   _createSubagent(parentId: string, opts: { toolId: string; title: string; agentType?: string; prompt?: string }): Thread | null
@@ -195,9 +222,17 @@ function draftOf(t: Thread, msgIds?: readonly string[] | 'all'): Thread {
   }
 }
 
+/** What a status change hands to whoever listens (the app listens to notify; tests and Node do not). */
+export type StatusHook = (t: Thread, before: ThreadStatus, outcome: Message['outcome'] | undefined, ctx: { viewing: string | null; queued: number }) => void
+let statusHook: StatusHook | null = null
+/** Listen to chats' status changes (one listener; null stops). A listener that throws never breaks a chat. */
+export function setStatusHook(hook: StatusHook | null) { statusHook = hook }
+
 let history: ChatHistory | null = null
 /** Chats whose queue waits for the user: the run was stopped, so nothing goes out by itself. */
 const held = new Set<string>()
+/** Chats whose context window was already read from the CLI while the app runs (`readContext`). */
+const contextTried = new Set<string>()
 
 export const useThreads = create<ThreadsState>()((set, get) => ({
   threads: {},
@@ -205,7 +240,9 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
   live: {},
   queue: {},
   drafts: {},
+  contextReading: {},
   viewing: null,
+  elsewhere: {},
   followUp: 'queue',
 
   byId: id => (id ? get().threads[id] ?? null : null),
@@ -240,7 +277,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       try { threads[t.id] = normalizeLoaded(t) } catch { /* a chat that cannot be read is left out */ }
     }
     held.clear()
-    set({ threads, loaded: true, live: {}, queue: {} })
+    set({ threads, loaded: true, live: {}, queue: {}, elsewhere: {} })
     h.attach({ threads: () => Object.values(get().threads), byId: id => get().byId(id) })
     // Remote projects' chats are kept in their environment too (see `remote/chatSync.ts`).
     attachRemoteChats(get().remoteSource())
@@ -272,12 +309,19 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
    */
   _adoptRemote(incoming) {
     const adopted: Thread[] = []
+    const elsewhere = { ...get().elsewhere }
     for (const raw of incoming) {
       if (!raw || !isSafeId(raw.id) || !Array.isArray(raw.messages)) continue
-      try { adopted.push(normalizeLoaded(raw)) } catch { /* unreadable: left out */ }
+      try {
+        adopted.push(normalizeLoaded(raw))
+        // Nothing runs here, but the copy says whether the computer that saved it still has a run going.
+        const run = runElsewhere(raw)
+        if (run) elsewhere[raw.id] = run
+        else delete elsewhere[raw.id]
+      } catch { /* unreadable: left out */ }
     }
     if (!adopted.length) return []
-    set(s => ({ threads: { ...s.threads, ...Object.fromEntries(adopted.map(t => [t.id, t])) } }))
+    set(s => ({ threads: { ...s.threads, ...Object.fromEntries(adopted.map(t => [t.id, t])) }, elsewhere }))
     get().persist(adopted.map(t => t.id))
     return adopted.map(t => get().byId(t.id)!)
   },
@@ -351,6 +395,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       threads: without(s.threads),
       queue: without(s.queue),
       drafts: without(s.drafts),
+      elsewhere: without(s.elsewhere),
       viewing: s.viewing && doomed.has(s.viewing) ? null : s.viewing,
     }))
     get().persist()
@@ -371,8 +416,27 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       d.effort = null
       // Each CLI keeps its own conversation; the other agent starts fresh.
       d.sessionId = null
+      d.context = undefined
     })
     get().persist(id)
+  },
+
+  async readContext(id) {
+    const t = get().byId(id)
+    if (!t || t.parentId || t.context || !t.sessionId || isRunning(id) || contextTried.has(id)) return
+    contextTried.add(id)
+    const session = t.sessionId
+    set(s => ({ contextReading: { ...s.contextReading, [id]: true } }))
+    try {
+      const usage = await readAgentContext(t.agent, get().workdirFor(id) ?? t.projectPath, session, t.model)
+      const now = get().byId(id)
+      // A run that started meanwhile reports its own, newer reading.
+      if (!usage || !now || now.context || now.sessionId !== session || isRunning(id)) return
+      get().edit(id, (d) => { d.context = usage })
+      get().persist(id)
+    } catch { /* no reading: the ring stays empty until the next reply */ } finally {
+      set(s => ({ contextReading: Object.fromEntries(Object.entries(s.contextReading).filter(([k]) => k !== id)) }))
+    }
   },
 
   setModel(id, model, efforts) {
@@ -445,7 +509,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (!t || t.parentId || (!text.trim() && !attachments.length)) return
     if (t.archived) get().edit(id, (d) => { d.archived = false }) // writing in an archived chat brings it back
     if (isBusy(t)) {
-      const queued: QueuedMessage = { id: uid('q'), text: text.trim(), attachments }
+      const queued: QueuedMessage = { id: uid('q'), text: text.trim(), attachments, queuedAt: Date.now() }
       set(s => ({ queue: { ...s.queue, [id]: [...(s.queue[id] ?? []), queued] } }))
       // Steer: hand it to the running turn now. Queue: it waits for the turn to end. `opposite` flips the
       // setting for this one message. When the agent has answered and only background tasks keep the
@@ -455,6 +519,8 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       return
     }
     held.delete(id)
+    // This phone drives the chat from here on: whatever another computer had going is no longer the story.
+    if (get().elsewhere[id]) set(s => ({ elsewhere: Object.fromEntries(Object.entries(s.elsewhere).filter(([k]) => k !== id)) }))
     get()._appendUser(id, text.trim(), attachments)
     await get()._runTurn(id, text.trim(), attachments)
     await get()._sendFollowUps(id)
@@ -475,7 +541,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       return { queue }
     })
     held.delete(id)
-    get()._appendUser(id, q.text, q.attachments)
+    get()._appendUser(id, q.text, q.attachments, q.queuedAt)
     if (!isBusy(get().byId(id)!)) {
       await get()._runTurn(id, q.text, q.attachments)
       await get()._sendFollowUps(id)
@@ -499,30 +565,117 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     })
   },
 
+  togglePin(id, messageId) {
+    const m = get().byId(id)?.messages.find(x => x.id === messageId)
+    if (!m) return
+    get().edit(id, (d) => {
+      const x = d.messages.find(y => y.id === messageId)
+      if (!x) return
+      if (x.pinned) delete x.pinned
+      else x.pinned = true
+    }, [messageId])
+    get().persist(id)
+  },
+
+  cutCount(id, messageId) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    return t && i >= 0 ? t.messages.length - i : 0
+  },
+
+  async editMessage(id, messageId, text) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    const old = t?.messages[i]
+    if (!t || !old || old.role !== 'user' || t.parentId || isBusy(t) || (!text.trim() && !old.attachments?.length)) return
+    const attachments = old.attachments ?? []
+    // The CLI's session cannot be rewound: the next turn starts a fresh one and gets what came before as text.
+    get().edit(id, (d) => {
+      d.messages.splice(i)
+      d.sessionId = null
+      d.context = undefined
+      const earlier = transcript(d.messages)
+      if (earlier) d.history = earlier
+      else delete d.history
+    }, 'all')
+    get().persist(id)
+    await get().send(id, text, attachments)
+  },
+
+  async regenerate(id, messageId) {
+    const t = get().byId(id)
+    const i = t?.messages.findIndex(m => m.id === messageId) ?? -1
+    if (!t || i < 0 || t.parentId || isBusy(t)) return
+    let ask = i
+    while (ask >= 0 && t.messages[ask]!.role !== 'user') ask--
+    const old = t.messages[ask]
+    if (!old || old.fromAgent) return
+    const text = old.parts.map(p => (p.type === 'text' ? p.text : '')).join('')
+    await get().editMessage(id, old.id, text)
+  },
+
+  branchFrom(id, messageId) {
+    const src = get().byId(id)
+    const i = src?.messages.findIndex(m => m.id === messageId) ?? -1
+    if (!src || i < 0 || src.parentId) return null
+    const now = Date.now()
+    const kept = src.messages.slice(0, i + 1).map((m): Message => {
+      const copy = JSON.parse(JSON.stringify(m)) as Message
+      delete copy.pinned
+      // A question or approval that was still open stays open only in the chat it was asked in.
+      copy.parts = copy.parts.filter(p => !awaitsUser(p))
+      return { ...copy, id: uid('m') }
+    }).filter(m => m.parts.length || m.attachments?.length)
+    const t: Thread = {
+      id: uid('t'),
+      projectPath: src.projectPath,
+      title: `${src.title} (branch)`,
+      agent: src.agent,
+      model: src.model,
+      mode: src.mode,
+      effort: src.effort ?? null,
+      status: 'working',
+      messages: kept,
+      createdAt: now,
+      updatedAt: now,
+      seen: true,
+      branch: src.branch ?? null,
+      ...(src.worktree ? { worktree: src.worktree } : {}),
+    }
+    const earlier = transcript(kept)
+    if (earlier) t.history = earlier
+    set(s => ({ threads: { ...s.threads, [t.id]: t } }))
+    get().persist(t.id)
+    return t
+  },
+
   /** A user message into the chat (the title follows the first one). */
-  _appendUser(id, text, attachments) {
+  _appendUser(id, text, attachments, writtenAt) {
+    const now = Date.now()
     const msg: Message = {
       id: uid('m'),
       role: 'user',
       parts: text ? [{ type: 'text', text }] : [],
-      createdAt: Date.now(),
+      createdAt: now,
+      // Only worth a note when it waited a while for the turn before it.
+      ...(writtenAt && now - writtenAt > 5000 ? { writtenAt } : {}),
     }
     if (attachments.length) msg.attachments = attachments.map(a => ({ ...a }))
     get().edit(id, (d) => {
       d.messages.push(msg)
-      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? 'Create a pull request' : titleFrom(text.trim() || attachments[0]!.name)
+      if (d.title === 'New chat' && !isClear(text)) d.title = createPrPrompt(text) ? (knownProvider(d.projectPath) === 'gitlab' ? 'Create a merge request' : 'Create a pull request') : createReleasePrompt(text) ? 'Create a release' : titleFrom(text.trim() || attachments[0]!.name)
       d.updatedAt = Date.now()
     })
     get().persist(id)
   },
 
-  /** One turn for a message already in the chat, or Mango's own `/clear` and `/create-pr`. */
+  /** One turn for a message already in the chat, or Mango's own `/clear`, `/create-pr` and `/create-release`. */
   async _runTurn(id, text, attachments) {
     const t = get().byId(id)
     if (!t) return
     if (isClear(text) && !attachments.length) {
       // The CLI's conversation is left behind; the next message starts a fresh one.
-      get().edit(id, (d) => { d.sessionId = null })
+      get().edit(id, (d) => { d.sessionId = null; d.context = undefined })
       const m = get()._pushAgentMessage(id)
       if (m) get()._pushPart(id, m.id, { type: 'notice', level: 'info', text: `New conversation. ${AGENTS[t.agent].name} no longer sees the messages above.` })
       get().persist(id)
@@ -554,8 +707,16 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       // Stopped while the worktree was being made: the chat is ready there, the turn does not start.
       if (get().byId(id)?.status !== 'queued') return
     }
-    // Mango's own `/create-pr`: the chat keeps the command, the agent gets the instructions.
-    await runAgentTurn(id, createPrPrompt(text) ?? text, attachments)
+    // Mango's own `/create-pr` and `/create-release`: the chat keeps the command, the agent gets the instructions.
+    // On GitLab the instructions are GitLab's (`glab`, merge requests, pipelines), as on the desktop.
+    const own = createPrPrompt(text) !== null || createReleasePrompt(text) !== null
+    const forge = own ? (await forgeOfProject(t.projectPath))?.provider ?? 'github' : 'github'
+    const prompt = createPrPrompt(text, forge) ?? createReleasePrompt(text, forge) ?? text
+    // A chat cut back or branched: the agent has no session to remember it by, so the earlier part goes along as text.
+    const handOver = t.history && !t.sessionId
+    await runAgentTurn(id, handOver ? `${t.history}\n\n${prompt}` : prompt, attachments)
+    const after = get().byId(id)
+    if (after?.history && (after.sessionId || after.status !== 'error')) get().edit(id, (d) => { delete d.history })
   },
 
   /** Messages written while the last turn ran: one turn answers all the plain ones in a row. */
@@ -575,7 +736,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
         else delete queue[id]
         return { queue }
       })
-      for (const w of batch) if (!w.shown) get()._appendUser(id, w.text, w.attachments)
+      for (const w of batch) if (!w.shown) get()._appendUser(id, w.text, w.attachments, w.queuedAt)
       await get()._runTurn(id, batch.map(w => w.text).filter(Boolean).join('\n\n'), batch.flatMap(w => w.attachments))
     }
   },
@@ -719,11 +880,11 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     return t
   },
 
-  /** A tool call finished: when it created a pull request or issue, link it to the chat. */
+  /** A tool call finished: when it created a pull request, merge request or issue, link it to the chat. */
   _linkCreated(id, part) {
     const root = get().rootOf(id)
     if (!root) return
-    for (const ref of createdBy(part)) get().link(root.id, { ...ref, source: 'agent', linkedAt: Date.now() })
+    for (const ref of createdBy(part)) get().link(root.id, linkFromRef(ref, 'agent'))
   },
 
   _taskStart(id, task) {
@@ -793,6 +954,7 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
     if (!t) return
     // A run just ended: note on its message how long the whole turn took.
     const wasBusy = isBusy(t)
+    const before = t.status
     const last = t.messages[t.messages.length - 1]
     get().edit(id, (d) => {
       d.status = status
@@ -808,6 +970,10 @@ export const useThreads = create<ThreadsState>()((set, get) => ({
       d.updatedAt = Date.now()
     }, last ? [last.id] : [])
     get().persist(id)
+    const now = get().byId(id)
+    if (now && statusHook) {
+      try { statusHook(now, before, outcome, { viewing: get().viewing, queued: get().queue[id]?.length ?? 0 }) } catch { /* a notification must never break the chat */ }
+    }
   },
 
   _touch(id) {

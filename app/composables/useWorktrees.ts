@@ -4,6 +4,7 @@ import { useThreads } from '~/stores/threads'
 import { useGit } from '~/stores/git'
 import { worktreeName } from '~/utils/worktrees'
 import { vcsTerms } from '~/utils/vcs'
+import { t } from '~/i18n'
 
 /**
  * The active project's working trees, for the sidebar's new-chat menu and the command palette: the
@@ -28,7 +29,7 @@ export function useWorktrees() {
   /** Top-level chats of the project working in `w` (the project folder: those with no worktree). */
   function chatsIn(w: GitWorktree) {
     const path = project.value
-    return path ? threads.forProject(path).filter(t => (isProject(w) ? !t.worktree : t.worktree === w.path)) : []
+    return path ? threads.forProject(path).filter(c => (isProject(w) ? !c.worktree : c.worktree === w.path)) : []
   }
 
   /** Show the latest chat that works in `w`; start one there when there is none. */
@@ -42,13 +43,13 @@ export function useWorktrees() {
   }
 
   function label(w: GitWorktree) {
-    return isProject(w) ? 'Project folder' : w.isMain ? `${worktreeName(w.path)} (main)` : worktreeName(w.path)
+    return isProject(w) ? t('chat.worktrees.project') : w.isMain ? t('chat.worktrees.main', { name: worktreeName(w.path) }) : worktreeName(w.path)
   }
 
   function hint(w: GitWorktree) {
     const n = chatsIn(w).length
-    const branch = w.branch ?? (w.head ? `${w.head} detached` : 'detached')
-    return w.prunable ? `${branch} · folder is gone` : `${branch}${n ? ` · ${n} chat${n === 1 ? '' : 's'}` : ''}`
+    const branch = w.branch ?? (w.head ? t('chat.worktrees.detachedAt', { head: w.head }) : t('chat.worktrees.detached'))
+    return w.prunable ? t('chat.worktrees.gone', { branch }) : n ? t('chat.worktrees.chats', { branch }, n) : branch
   }
 
   return { supported, term, list, linked, chatsIn, goTo, label, hint }

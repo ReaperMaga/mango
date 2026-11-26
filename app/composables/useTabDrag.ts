@@ -4,9 +4,11 @@ import { useWindows } from '~/stores/windows'
 import { holdOverlay } from '~/composables/useOverlay'
 import { insertionIndex, isTerminalTab, paneZone, parseTerminalTab } from '~/utils/terminalTabs'
 import { dragPlace, tearOffPlace } from '~/utils/windows'
+import { parsePanelEditorTab } from '~/plugin-host/ids'
+import { findPanelTab } from '~/composables/panelTabs'
 
 /*
- * Dragging a tab: a terminal (between the docked panel and the main area) or a chat (within the tab
+ * Dragging a tab: a terminal or a panel tab (between the docked panel and the main area) or a chat (within the tab
  * strip, into a pane, or out of the window into a window of its own). Pointer events only, never
  * HTML5 drag and drop, which the desktop webview takes over on Windows. The pointer is captured once
  * a drag starts, so moves and the release outside the window still arrive.
@@ -15,7 +17,7 @@ import { dragPlace, tearOffPlace } from '~/utils/windows'
  *   "strip"  a pane's tab strip in the main area (`data-pane-id`; its tabs carry `data-tab-id`)
  *   "pane"   a main-area pane (`data-pane-id`)
  *   "panel"  the terminal panel (its tabs carry `data-term-id`), or the dock zone shown while it is
- *            hidden: terminals only
+ *            hidden: terminals and panel tabs only
  * A chat let go outside the window opens in a new window there (`stores/windows.ts`); terminals stay
  * in their window.
  */
@@ -25,6 +27,8 @@ export interface Box { left: number; top: number; width: number; height: number 
 export type DragItem =
   /** A terminal (a TerminalTab id), from the panel or its tab in the main area. */
   | { kind: 'terminal'; id: string; from: 'panel' | 'editor' }
+  /** A panel tab (its ref), from the panel or its tab in the main area. */
+  | { kind: 'panelTab'; id: string; from: 'panel' | 'editor' }
   /** A chat (a thread id), from its tab or its row in the sidebar. */
   | { kind: 'chat'; id: string; from: 'tab' | 'sidebar' }
 
@@ -50,6 +54,8 @@ export const tabDrag = reactive({
 
 /** The terminal being dragged, or null: what the terminal panel and its tabs look at. */
 export const draggedTerminal = () => (tabDrag.item?.kind === 'terminal' ? tabDrag.item : null)
+/** What the panel takes, being dragged: a terminal or a panel tab, or null. */
+export const draggedPanelItem = () => (tabDrag.item?.kind === 'terminal' || tabDrag.item?.kind === 'panelTab' ? tabDrag.item : null)
 /** The chat being dragged, or null. */
 export const draggedChat = () => (tabDrag.item?.kind === 'chat' ? tabDrag.item : null)
 
@@ -75,6 +81,10 @@ export function pressTab(e: PointerEvent, item: DragItem) {
 export const pressTerminalTab = (e: PointerEvent, terminalId: string, from: 'panel' | 'editor') =>
   pressTab(e, { kind: 'terminal', id: terminalId, from })
 
+/** Press on a panel tab (in the panel, or its tab in the main area). */
+export const pressPanelTab = (e: PointerEvent, ref: string, from: 'panel' | 'editor') =>
+  pressTab(e, { kind: 'panelTab', id: ref, from })
+
 /** Press on a chat's tab. */
 export const pressChatTab = (e: PointerEvent, threadId: string) => pressTab(e, { kind: 'chat', id: threadId, from: 'tab' })
 
@@ -84,10 +94,15 @@ function begin(item: DragItem): boolean {
     if (!tab) return false
     tabDrag.title = tab.title
     tabDrag.remote = !!tab.cwd?.startsWith('env://')
+  } else if (item.kind === 'panelTab') {
+    const tab = findPanelTab(item.id)
+    if (!tab) return false
+    tabDrag.title = tab.title
+    tabDrag.remote = false
   } else {
     const t = useThreads().byId(item.id)
     if (!t) return false
-    tabDrag.title = t.title
+    tabDrag.title = chatTitle(t.title)
     tabDrag.remote = false
   }
   tabDrag.item = item
@@ -122,6 +137,7 @@ function onUp(e: PointerEvent) {
   finish()
   if (!item || !drop) return
   if (item.kind === 'terminal') return dropTerminal(item.id, drop)
+  if (item.kind === 'panelTab') return dropPanelTab(item.id, drop)
   dropChat(item.id, drop, e)
 }
 
@@ -130,6 +146,13 @@ function dropTerminal(id: string, drop: TabDrop) {
   if (drop.kind === 'panel') ws.moveTerminalToPanel(id, drop.before)
   else if (drop.kind === 'strip') ws.moveTerminalToEditor(id, { before: drop.before, paneId: drop.paneId })
   else if (drop.kind === 'pane') ws.moveTerminalToEditor(id, drop.split ? { split: true } : { paneId: drop.paneId })
+}
+
+function dropPanelTab(ref: string, drop: TabDrop) {
+  const ws = useWorkspace()
+  if (drop.kind === 'panel') ws.movePanelTabToPanel(ref, drop.before)
+  else if (drop.kind === 'strip') ws.movePanelTabToEditor(ref, { before: drop.before, paneId: drop.paneId })
+  else if (drop.kind === 'pane') ws.movePanelTabToEditor(ref, drop.split ? { split: true } : { paneId: drop.paneId })
 }
 
 function dropChat(id: string, drop: TabDrop, e: PointerEvent) {
@@ -232,6 +255,7 @@ function lineAt(row: Box, tabs: Box[], index: number): Box {
 /** Whether a tab of the main area's strip is the dragged item's own (left out of the gaps). */
 function isDraggedTab(item: DragItem, tabId: string | undefined): boolean {
   if (item.kind === 'chat') return tabId === item.id
+  if (item.kind === 'panelTab') return parsePanelEditorTab(tabId)?.ref === item.id
   return parseTerminalTab(tabId)?.terminalId === item.id
 }
 
@@ -245,7 +269,7 @@ function dropAt(x: number, y: number): TabDrop | null {
   const ws = useWorkspace()
 
   if (kind === 'panel') {
-    if (item.kind !== 'terminal') return null
+    if (item.kind !== 'terminal' && item.kind !== 'panelTab') return null
     const strip = el.querySelector<HTMLElement>('[data-term-strip]')
     const row = strip ? boxOf(strip) : null
     if (row && y >= row.top && y <= row.top + row.height) {
@@ -270,7 +294,9 @@ function dropAt(x: number, y: number): TabDrop | null {
   if (kind === 'pane' && el.dataset.paneId) {
     const box = boxOf(el)
     const shown = threads.panes.find(p => p.id === el.dataset.paneId)?.threadId
-    const own = item.kind === 'chat' ? shown === item.id : isTerminalTab(shown) && parseTerminalTab(shown)!.terminalId === item.id
+    const own = item.kind === 'chat' ? shown === item.id
+      : item.kind === 'panelTab' ? parsePanelEditorTab(shown)?.ref === item.id
+      : isTerminalTab(shown) && parseTerminalTab(shown)!.terminalId === item.id
     // Splitting needs something to stay on the left.
     const canSplit = threads.panes.length === 1 && !!shown && !own
     if (paneZone(box, x, canSplit) === 'right') {

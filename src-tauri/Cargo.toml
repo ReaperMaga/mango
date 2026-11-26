@@ -1,6 +1,6 @@
 [package]
 name = "mango"
-version = "0.1.22"
+version = "0.7.0"
 description = "Mango, a desktop agent workbench"
 edition = "2021"
 rust-version = "1.90"
@@ -43,6 +43,24 @@ ring = "0.17"
 base64 = "0.23"
 # Chat history: SQLite compiled in (no system library to find on Windows or macOS).
 rusqlite = { version = "0.37", features = ["bundled"] }
+# Language servers that leave watching to their client hear of files changed on disk (lsp/watch.rs).
+notify = "8"
+
+# Deleting in the Files view goes to the Recycle Bin through our own shell calls: the trash crate
+# deletes for good what does not fit the bin (trash_bin.rs). Language servers run in a job object,
+# so their whole process tree ends with them and with Mango (lsp/tree.rs).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Environment", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem"] }
+# The `implement` macro's output names it.
+windows-core = "0.62"
+
+# The trash on macOS and Linux.
+[target.'cfg(not(windows))'.dependencies]
+trash = { version = "5.4", default-features = false, features = ["freedesktop"] }
+
+# Signals and waitid for a language server's process group (lsp/tree.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # The browser on Linux: Tauri packs child webviews into the window's GTK box, so browser.rs moves
 # them into an overlay above Mango's own webview, and takes screenshots through WebKitGTK.

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react'
-import { Animated, Linking, ScrollView, StyleSheet, View } from 'react-native'
-import { Check } from 'lucide-react-native'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Animated, Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
+import { Check, Copy } from 'lucide-react-native'
 import { lexer, type Token, type Tokens } from 'marked'
-import { fonts, fontSize, makeStyles, radius, space, useReducedMotion, type, useTheme } from '@/theme'
-import { Text } from '@/ui'
+import { makeStyles, space, useReducedMotion, useTheme } from '@/theme'
+import { Text, haptic } from '@/ui'
 import { localImagePath } from '~/utils/imagePaths'
 import { ChatPicture } from './ChatPicture'
 
@@ -141,6 +142,7 @@ function block(tk: Token, key: string, c: Ctx, caret: boolean, first: boolean, l
           <ScrollView horizontal showsHorizontalScrollIndicator={false} bounces={false} contentContainerStyle={s.preScroll}>
             <Text selectable style={s.code}>{t.text.replace(/\n$/, '')}</Text>
           </ScrollView>
+          {caret ? null : <CopyCode text={t.text.replace(/\n$/, '')} />}
           {caret ? <Caret /> : null}
         </View>
       )
@@ -284,6 +286,29 @@ function TaskBox({ checked }: { checked: boolean }) {
   )
 }
 
+/** A code block's own copy button, at its top right corner. */
+function CopyCode({ text }: { text: string }) {
+  const t = useTheme()
+  const s = useStyles()
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    if (!done) return
+    const id = setTimeout(() => setDone(false), 1600)
+    return () => clearTimeout(id)
+  }, [done])
+  return (
+    <Pressable
+      onPress={() => { void Clipboard.setStringAsync(text).then(() => { haptic('success'); setDone(true) }) }}
+      hitSlop={8}
+      accessibilityRole="button"
+      accessibilityLabel={done ? 'Copied' : 'Copy code'}
+      style={({ pressed }) => [s.copy, pressed && s.copyPressed]}
+    >
+      {done ? <Check size={14} strokeWidth={2.2} color={t.colors.fg} /> : <Copy size={14} strokeWidth={1.85} color={t.colors.fgSubtle} />}
+    </Pressable>
+  )
+}
+
 /** The streaming caret at the end of a line of text: a Ripe Mango block, blinking. */
 function CaretText() {
   const s = useStyles()
@@ -320,39 +345,53 @@ const useStyles = makeStyles(t => ({
   root: {},
   first: { marginTop: 0 },
   last: { marginBottom: 0 },
-  p: { marginBottom: Math.round(fontSize.body * 0.7) },
-  h: { ...type.title, fontFamily: fonts.semibold, color: t.colors.fg, marginTop: Math.round(fontSize.body * 1.2), marginBottom: Math.round(fontSize.body * 0.4) },
-  h4: { ...type.chat, fontFamily: fonts.semibold, color: t.colors.fg, marginTop: space[3], marginBottom: space[1] },
-  strong: { fontFamily: fonts.semibold },
-  em: { fontFamily: fonts.italic },
+  p: { marginBottom: Math.round(t.fontSize.body * 0.7) },
+  h: { ...t.type.title, ...t.fonts.semibold, color: t.colors.fg, marginTop: Math.round(t.fontSize.body * 1.2), marginBottom: Math.round(t.fontSize.body * 0.4) },
+  h4: { ...t.type.chat, ...t.fonts.semibold, color: t.colors.fg, marginTop: space[3], marginBottom: space[1] },
+  strong: { ...t.fonts.semibold },
+  em: { ...t.fonts.italic },
   del: { textDecorationLine: 'line-through', color: t.colors.fgMuted },
   codespan: {
-    fontFamily: fonts.mono,
-    fontSize: Math.round(fontSize.body * 0.88),
+    ...t.fonts.mono,
+    fontSize: Math.round(t.fontSize.body * 0.88),
     backgroundColor: t.colors.bgHover,
     color: t.colors.fg,
   },
   link: { color: t.colors.accentInk, textDecorationLine: 'underline', textDecorationColor: t.colors.accentLine },
-  alt: { color: t.colors.fgSubtle, fontSize: fontSize.bodySm },
+  alt: { color: t.colors.fgSubtle, fontSize: t.fontSize.bodySm },
   pre: {
-    marginBottom: Math.round(fontSize.body * 0.8),
+    marginBottom: Math.round(t.fontSize.body * 0.8),
     backgroundColor: t.colors.bgInset,
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     overflow: 'hidden',
   },
+  copy: {
+    position: 'absolute',
+    top: space[1],
+    right: space[1],
+    width: 28,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: t.radius.sm,
+    backgroundColor: t.colors.bgRaised,
+    borderWidth: 1,
+    borderColor: t.colors.lineSoft,
+  },
+  copyPressed: { backgroundColor: t.colors.bgActive },
   preScroll: { paddingVertical: space[3], paddingHorizontal: space[4] },
-  code: { ...type.code, color: t.colors.fg },
+  code: { ...t.type.code, color: t.colors.fg },
   quote: {
-    marginBottom: Math.round(fontSize.body * 0.8),
+    marginBottom: Math.round(t.fontSize.body * 0.8),
     paddingLeft: space[3],
     borderLeftWidth: 1,
     borderLeftColor: t.colors.lineStrong,
     opacity: 0.92,
   },
-  list: { marginBottom: Math.round(fontSize.body * 0.8) },
+  list: { marginBottom: Math.round(t.fontSize.body * 0.8) },
   item: { flexDirection: 'row', alignItems: 'flex-start', marginVertical: 2 },
   marker: { minWidth: 20, paddingRight: 6, color: t.colors.fgFaint },
   box: {
@@ -360,7 +399,7 @@ const useStyles = makeStyles(t => ({
     height: 14,
     marginTop: 6,
     marginRight: space[2],
-    borderRadius: radius.xs,
+    borderRadius: t.radius.xs,
     borderWidth: 1.5,
     borderColor: t.colors.lineStrong,
     backgroundColor: t.colors.bgInset,
@@ -369,12 +408,12 @@ const useStyles = makeStyles(t => ({
   },
   boxOn: { backgroundColor: t.colors.accent, borderColor: t.colors.accent },
   itemBody: { flex: 1, minWidth: 0 },
-  table: { marginBottom: Math.round(fontSize.body * 0.8), flexGrow: 0 },
+  table: { marginBottom: Math.round(t.fontSize.body * 0.8), flexGrow: 0 },
   tr: { flexDirection: 'row', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.colors.lineSoft },
   th: { borderBottomColor: t.colors.line },
   td: { paddingVertical: 6, paddingHorizontal: 10 },
-  thText: { fontFamily: fonts.semibold },
-  hr: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.lineSoft, marginVertical: Math.round(fontSize.body * 1.2) },
+  thText: { ...t.fonts.semibold },
+  hr: { height: StyleSheet.hairlineWidth, backgroundColor: t.colors.lineSoft, marginVertical: Math.round(t.fontSize.body * 1.2) },
   caretText: { backgroundColor: t.colors.accent },
   caretBlock: { width: 7, height: 17, borderRadius: 1, backgroundColor: t.colors.accent, marginTop: 2 },
 }))

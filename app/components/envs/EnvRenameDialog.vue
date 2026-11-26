@@ -9,6 +9,7 @@ import { useEnvironments } from '~/stores/environments'
 const props = defineProps<{ open: boolean; hostId: string; name: string; running: boolean }>()
 const emit = defineEmits<{ close: []; renamed: [name: string, note: string | null] }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const value = ref('')
 const touched = ref(false)
@@ -27,9 +28,9 @@ watch(() => props.open, (o) => {
 const next = computed(() => value.value.trim())
 const nameError = computed(() => {
   const n = next.value
-  if (!n) return 'Enter a name.'
-  if (!/^[A-Za-z][A-Za-z0-9-]{0,62}$/.test(n) || n.endsWith('-')) return 'Use a letter, then letters, digits and dashes (up to 63), not ending in a dash.'
-  if (n !== props.name && (envs.instances[props.hostId] ?? []).some(i => i.name === n)) return `There is already an environment called ${n} on this server.`
+  if (!n) return t('envs.rename.empty')
+  if (!/^[A-Za-z][A-Za-z0-9-]{0,62}$/.test(n) || n.endsWith('-')) return t('envs.common.nameRule')
+  if (n !== props.name && (envs.instances[props.hostId] ?? []).some(i => i.name === n)) return t('envs.common.nameTaken', { name: n })
   return null
 })
 const unchanged = computed(() => next.value === props.name)
@@ -55,9 +56,9 @@ function close() {
 </script>
 
 <template>
-  <UiDialog :open="open" :title="`Rename ${name}`" :dismissible="!busy" @close="close">
+  <UiDialog :open="open" :title="t('envs.rename.title', { name })" :dismissible="!busy" @close="close">
     <form id="env-rename-form" class="ren" novalidate @submit.prevent="submit">
-      <UiField label="Name" for="ren-name" :error="touched ? nameError : null">
+      <UiField :label="t('envs.common.name')" for="ren-name" :error="touched ? nameError : null">
         <input
           id="ren-name"
           v-model="value"
@@ -71,21 +72,20 @@ function close() {
       </UiField>
       <p class="ren__lede">
         <template v-if="running">
-          Incus renames only stopped environments, so Mango stops {{ name }}, renames it and starts it again. Chats,
-          shells and its desktop working in it are interrupted.
+          {{ t('envs.rename.running', { name }) }}
         </template>
-        <template v-else>The environment stays stopped.</template>
-        Its projects and chats in Mango move to the new name.
+        <template v-else>{{ t('envs.rename.stopped') }}</template>
+        {{ t('envs.rename.moves') }}
       </p>
       <p v-if="error" class="ren__error" role="alert">
         <CircleAlert aria-hidden="true" />
-        <span class="selectable">Couldn't rename it. {{ error }}.</span>
+        <span class="selectable">{{ t('envs.rename.failed', { error }) }}</span>
       </p>
     </form>
     <template #footer>
-      <UiButton variant="ghost" :disabled="busy" @click="close">Cancel</UiButton>
+      <UiButton variant="ghost" :disabled="busy" @click="close">{{ t('common.actions.cancel') }}</UiButton>
       <UiButton variant="primary" type="submit" form="env-rename-form" :disabled="unchanged" :loading="busy">
-        {{ running ? 'Stop and rename' : 'Rename' }}
+        {{ running ? t('envs.rename.stopAndRename') : t('common.actions.rename') }}
       </UiButton>
     </template>
   </UiDialog>

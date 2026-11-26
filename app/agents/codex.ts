@@ -2,6 +2,7 @@ import type { AgentAdapter, AgentEvent, AgentQuestion, AgentRun, QuestionAnswers
 import type { AgentCommand, AgentModel, DiffLine, ToolKind } from '~/types/chat'
 import { elicitationForm, elicitationLink } from './questions.ts'
 import { BROWSER_SERVER, codexMcp } from './mcp.ts'
+import { codexContext, codexTurnUsage } from './context.ts'
 
 /**
  * Codex adapter: drives `codex app-server` (JSON-RPC 2.0 over stdio, one JSON
@@ -82,7 +83,6 @@ const POLICIES: Record<PermissionMode, Policy> = {
 
 /** Notifications this adapter has no use for; the server skips sending them. */
 const UNUSED_NOTIFICATIONS = [
-  'thread/tokenUsage/updated',
   'account/rateLimits/updated',
   'mcpServer/startupStatus/updated',
   'remoteControl/status/changed',
@@ -297,6 +297,8 @@ function run(options: AgentRunOptions): AgentRun {
   let turnId: string | null = null
   let lastStderr = ''
   let lastError: Json = null
+  /** The conversation's token totals just before this turn's first request. */
+  let usageBase: { input: number; output: number } | null = null
   let stopTimer: ReturnType<typeof setTimeout> | null = null
 
   let nextRpcId = 1
@@ -605,6 +607,13 @@ function run(options: AgentRunOptions): AgentRun {
     if (closing && method !== 'item/completed') return
 
     switch (method) {
+      case 'thread/tokenUsage/updated': {
+        const usage = codexContext(p.tokenUsage)
+        if (usage) emit({ type: 'context', usage })
+        const spent = codexTurnUsage(p.tokenUsage, usageBase)
+        if (spent) { usageBase = spent.base; emit({ type: 'usage', usage: spent.usage }) }
+        break
+      }
       case 'turn/started':
         if (p.turn?.id && !turnId) { turnId = p.turn.id; if (stopRequested) sendInterrupt() }
         break
@@ -867,6 +876,7 @@ function run(options: AgentRunOptions): AgentRun {
         approvalsReviewer: 'user',
         sandbox: policy.sandbox,
         ...(model && model !== 'default' ? { model } : {}),
+        ...(options.appendSystemPrompt ? { developerInstructions: options.appendSystemPrompt } : {}),
         // Codex reviews with its own review model unless told otherwise: use the chat's.
         ...(builtin === 'review' && model && model !== 'default' ? { config: { review_model: model } } : {}),
       }

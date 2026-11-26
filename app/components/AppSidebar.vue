@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, CreditCard, FolderGit2, FolderMinus, Gauge, History, LogOut, MessageSquarePlus, MoreHorizontal, Plus, Rocket, Settings, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
-import AgentIcon from '~/components/ui/AgentIcon.vue'
-import { call } from '~/composables/useBackend'
-import { isEnvPath } from '~/utils/envPath'
+import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
+import { pluginMenuItems } from '~/plugin-host/menus'
+import { Archive, ArchiveRestore, ArrowDown, ArrowUp, ChevronDown, ChevronRight, CircleCheck, CircleDot, FolderGit2, FolderMinus, MessageSquarePlus, MoreHorizontal, PanelLeftClose, Plus, X, Pencil, Trash2, Columns2, AppWindow } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
-import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type AgentId, type Thread } from '~/types/chat'
+import { AGENTS, displayStatus, hasUnreadResult, waitingFor, type Thread } from '~/types/chat'
 import { isBusy } from '~/stores/threads'
 import { shortAgo, useNow } from '~/utils/time'
 import { stateOf } from '~/utils/linkState'
+import { itemNumber } from '~/utils/forge'
 import type { MenuItem } from '~/types/ui'
 import { holdOverlay } from '~/composables/useOverlay'
 import { worktreeName } from '~/utils/worktrees'
@@ -18,6 +18,7 @@ import { useGit } from '~/stores/git'
 import { useWindows } from '~/stores/windows'
 import { cancelSidebarChat, sidebarChatAt, sidebarChatDrop } from '~/composables/useTabDrag'
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const win = useWindows()
@@ -49,9 +50,9 @@ const sections = computed(() => {
   const path = ws.activeProjectPath
   const live = path ? threads.forProject(path) : []
   const all = [
-    { id: 'active' as const, title: 'Working', foldable: false, threads: live.filter(t => t.status !== 'done') },
-    { id: 'settled' as const, title: 'Settled', foldable: true, threads: live.filter(t => t.status === 'done') },
-    { id: 'archived' as const, title: 'Archived', foldable: true, threads: path ? threads.archivedFor(path) : [] },
+    { id: 'active' as const, title: t('shell.status.working'), foldable: false, threads: live.filter(t => t.status !== 'done') },
+    { id: 'settled' as const, title: t('shell.status.done'), foldable: true, threads: live.filter(t => t.status === 'done') },
+    { id: 'archived' as const, title: t('shell.status.archived'), foldable: true, threads: path ? threads.archivedFor(path) : [] },
   ]
   // The top section is always there (it holds the "start a chat" row); the others only when they have something.
   return all.filter(sec => sec.id === 'active' || sec.threads.length).map(sec => ({
@@ -78,15 +79,15 @@ const canWorktree = wts.supported
 const newChatItems = computed<MenuItem[]>(() => {
   const path = ws.activeProjectPath
   if (!path) return []
-  const items: MenuItem[] = [{ label: 'New chat', icon: Plus, kbd: ws.keyLabel('new-chat'), onSelect: () => newChat() }]
+  const items: MenuItem[] = [{ label: t('shell.chat.new'), icon: Plus, kbd: ws.keyLabel('new-chat'), onSelect: () => newChat() }]
   if (!canWorktree.value) return items
-  items.push({ label: `New chat in a ${wts.term.value}`, icon: FolderGit2, kbd: ws.keyLabel('new-chat-worktree'), onSelect: () => threads.createAwaitingWorktree(path) })
+  items.push({ label: t('shell.chat.newInTerm', { term: wts.term.value }), icon: FolderGit2, kbd: ws.keyLabel('new-chat-worktree'), onSelect: () => threads.createAwaitingWorktree(path) })
   wts.linked.value.forEach((w, i) => items.push({
     label: worktreeName(w.path),
     hint: wts.hint(w),
     icon: FolderGit2,
     disabled: w.prunable,
-    group: i === 0 ? 'Continue in' : undefined,
+    group: i === 0 ? t('shell.sidebar.continueIn') : undefined,
     divider: i === 0,
     // A new chat there, even when chats already work in it (going to those is the sidebar's job).
     onSelect: () => void threads.createInWorktree(path, { existing: w.path }).catch(() => {}),
@@ -194,40 +195,39 @@ onBeforeUnmount(() => onDragEnd())
 
 /** Status first when it says something; otherwise who the chat is with. */
 /**
- * The pull request (or, without one, the issue) a chat is linked to, for the mark on its row:
+ * The pull request or merge request (or, without one, the issue) a chat is linked to, for the mark on its row:
  * the newest one, plus how many others there are.
  */
-function linkMark(t: Thread) {
-  const links = t.links
+function linkMark(chat: Thread) {
+  const links = chat.links
   if (!links?.length) return null
   const main = [...links].reverse().find(l => l.kind === 'pr') ?? links[links.length - 1]!
-  const state = stateOf(main.kind, main.state)
+  const state = stateOf(main.kind, main.state, null, main.provider)
   const others = links.length - 1
-  const what = `${main.kind === 'pr' ? 'Pull request' : 'Issue'} #${main.number}${main.state ? `, ${state.word.toLowerCase()}` : ''}`
+  const what = `${state.noun} ${itemNumber(main)}${main.state ? `, ${state.word}` : ''}`
   return {
-    number: main.number,
+    number: itemNumber(main),
     icon: state.icon,
     tone: state.tone,
     others,
-    label: `${what}${main.title ? `: ${main.title}` : ''}${others ? ` (and ${others} more)` : ''}`,
+    label: `${what}${main.title ? `: ${main.title}` : ''}${others ? ` ${t('shell.sidebar.andMore', { n: others })}` : ''}`,
   }
 }
 
 const linkMarks = computed(() => new Map(threads.threads.filter(t => t.links?.length).map(t => [t.id, linkMark(t)!])))
 
-function subtitle(t: Thread) {
-  const agent = t.simulated ? `${AGENTS[t.agent].name} · simulated` : AGENTS[t.agent].name
-  const live = threads.live[t.id]
+function subtitle(chat: Thread) {
+  const agent = chat.simulated ? `${AGENTS[chat.agent].name} · ${t('shell.sidebar.simulated')}` : AGENTS[chat.agent].name
+  const live = threads.live[chat.id]
   const background = live?.tasks.filter(x => x.status === 'running').length ?? 0
-  const tasks = `${background} background task${background === 1 ? '' : 's'}`
-  switch (displayStatus(t)) {
-    case 'waiting': return `Needs your ${waitingFor(t)}`
+  switch (displayStatus(chat)) {
+    case 'waiting': return t(waitingFor(chat) === 'answer' ? 'shell.chat.needsAnswer' : 'shell.chat.needsApproval')
     case 'working':
-      if (t.status === 'running' && background) return live?.idle ? `Waiting on ${tasks}` : `Working… · ${background} in background`
-      return t.status === 'queued' ? 'Starting…' : t.status === 'running' ? 'Working…' : `Working · ${agent}`
-    case 'error': return 'Failed'
-    case 'done': return `Settled · ${agent}`
-    case 'archived': return `Archived · ${agent}`
+      if (chat.status === 'running' && background) return live?.idle ? t('shell.sidebar.waitingOnTasks', background) : t('shell.sidebar.inBackground', { n: background })
+      return chat.status === 'queued' ? t('shell.chat.starting') : chat.status === 'running' ? t('shell.chat.working') : `${t('shell.status.working')} · ${agent}`
+    case 'error': return t('shell.status.error')
+    case 'done': return `${t('shell.status.done')} · ${agent}`
+    case 'archived': return `${t('shell.status.archived')} · ${agent}`
     default: return agent
   }
 }
@@ -245,10 +245,16 @@ function subsOpen(t: Thread) {
   if (chosen !== undefined) return chosen
   return descendants(t.id).some(c => c.status === 'running' || c.status === 'queued' || visibleIds.value.has(c.id))
 }
-function subsLabel(t: Thread) {
-  const all = descendants(t.id)
+function subsLabel(chat: Thread) {
+  const all = descendants(chat.id)
   const working = all.filter(c => c.status === 'running' || c.status === 'queued').length
-  return { count: `${all.length} sub-agent${all.length === 1 ? '' : 's'}`, working }
+  const forks = all.filter(c => c.forkOf).length
+  const agents = all.length - forks
+  const count = [
+    forks ? t('shell.sidebar.forks', forks) : '',
+    agents ? t('shell.sidebar.subAgents', agents) : '',
+  ].filter(Boolean).join(' · ')
+  return { count, working }
 }
 
 /* inline rename */
@@ -272,23 +278,24 @@ function openContextMenu(t: Thread, e: MouseEvent) {
   menus.value[t.id]?.showAt(e.clientX, e.clientY)
 }
 
-function threadMenu(t: Thread): MenuItem[] {
-  const shown = displayStatus(t)
-  const busy = isBusy(t)
-  const order = threads.forProject(t.projectPath).map(x => x.id)
+function threadMenu(chat: Thread): MenuItem[] {
+  const shown = displayStatus(chat)
+  const busy = isBusy(chat)
+  const order = threads.forProject(chat.projectPath).map(x => x.id)
   return [
-    { label: 'Rename', icon: Pencil, onSelect: () => startRename(t) },
-    { label: 'Open to the side', icon: Columns2, onSelect: () => { ws.setActiveProject(t.projectPath); threads.split(t.id) } },
-    { ...win.moveChatAction(t.id), icon: AppWindow, divider: false },
-    ...(t.archived ? [] : [
-      { label: 'Move up', icon: ArrowUp, kbd: 'Alt+↑', divider: true, disabled: order.indexOf(t.id) <= 0, onSelect: () => threads.move(t.id, -1) },
-      { label: 'Move down', icon: ArrowDown, kbd: 'Alt+↓', disabled: order.indexOf(t.id) === order.length - 1, onSelect: () => threads.move(t.id, 1) },
+    { label: t('common.actions.rename'), icon: Pencil, onSelect: () => startRename(chat) },
+    { label: t('shell.chat.toSide'), icon: Columns2, onSelect: () => threads.split(chat.id) },
+    { ...win.moveChatAction(chat.id), icon: AppWindow, divider: false },
+    ...(chat.archived ? [] : [
+      { label: t('shell.chat.moveUp'), icon: ArrowUp, kbd: 'Alt+↑', divider: true, disabled: order.indexOf(chat.id) <= 0, onSelect: () => threads.move(chat.id, -1) },
+      { label: t('shell.chat.moveDown'), icon: ArrowDown, kbd: 'Alt+↓', disabled: order.indexOf(chat.id) === order.length - 1, onSelect: () => threads.move(chat.id, 1) },
     ]),
     // Status. Settled is only set with the row's mark.
-    { label: 'Working', icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(t.id, 'working') },
-    { label: 'Archived', icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!t.archived) ws.confirmThen('archive', { title: 'Archive chat?', body: `“${t.title}” moves to Archived. You can bring it back any time.`, label: 'Archive' }, () => threads.archive(t.id)) } },
-    ...(t.worktree ? [{ label: `Remove ${termOf(t)}…`, icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(t) }] : []),
-    { label: 'Delete chat', icon: Trash2, danger: true, divider: !t.worktree, onSelect: () => ws.confirmThen('delete', { title: 'Delete chat?', body: `“${t.title}” and its messages are deleted for good.`, label: 'Delete chat', danger: true }, () => threads.remove(t.id)) },
+    { label: t('shell.status.working'), icon: CircleDot, divider: true, checked: shown === 'working' || shown === 'waiting', disabled: busy, onSelect: () => threads.setStatus(chat.id, 'working') },
+    { label: t('shell.status.archived'), icon: Archive, checked: shown === 'archived', disabled: busy, onSelect: () => { if (!chat.archived) ws.confirmThen('archive', { title: t('shell.chat.archiveTitle'), body: t('shell.chat.archiveBody', { title: chatTitle(chat.title) }), label: t('shell.chat.archiveLabel') }, () => threads.archive(chat.id)) } },
+    ...(chat.worktree ? [{ label: t('shell.remove.menu', { term: termOf(chat) }), icon: FolderMinus, divider: true, disabled: busy, onSelect: () => askRemoveWorktree(chat) }] : []),
+    { label: t('shell.chat.delete'), icon: Trash2, danger: true, divider: !chat.worktree, onSelect: () => ws.confirmThen('delete', { title: t('shell.chat.deleteTitle'), body: t('shell.chat.deleteBody', { title: chatTitle(chat.title) }), label: t('shell.chat.delete'), danger: true }, () => threads.remove(chat.id)) },
+    ...pluginMenuItems('thread', { threadId: chat.id }),
   ]
 }
 
@@ -309,9 +316,9 @@ const removeOthers = computed(() => {
   return r ? threads.threads.filter(x => x.worktree === r.worktree && x.id !== r.id && !x.parentId).length : 0
 })
 
-const removeTerm = computed(() => (removing.value ? termOf(removing.value) : 'worktree'))
-/** "commit", or "changeset" for Unity VCS. */
-const removeUnit = computed(() => vcsTerms(ws.openProjects.find(p => p.path === removing.value?.projectPath)?.vcs).unit)
+const removeTerm = computed(() => (removing.value ? termOf(removing.value) : vcsTerms('git').worktree))
+/** "commits", or "changesets" for Unity VCS. */
+const removeUnits = computed(() => vcsTerms(ws.openProjects.find(p => p.path === removing.value?.projectPath)?.vcs).units)
 
 function askRemoveWorktree(t: Thread) {
   removing.value = t
@@ -354,73 +361,17 @@ function endResize() {
   release()
   ws.persist()
 }
-
-/** Only speak up in the footer when no agent is installed; details live in Settings. */
-const noAgentInstalled = computed(() => ws.agents.length > 0 && ws.agents.every(a => !a.installed))
-
-/* ---------- footer: Settings, and Code settings (which agent, its usage and plan) ---------- */
-
-const settingsItems = computed<MenuItem[]>(() => [
-  { label: 'Settings', icon: Settings, kbd: ws.keyLabel('settings'), onSelect: () => ws.openSettings() },
-  { label: 'Get started…', icon: Rocket, onSelect: () => ws.openSetup() },
-  { label: 'Changelog', icon: History, onSelect: () => ws.openSettings('changelog') },
-  { label: 'Log out', icon: LogOut, divider: true, onSelect: askLogout },
-])
-
-/* ---------- log out: ends the sign-in of the agent on screen, after asking ---------- */
-
-const logoutOpen = ref(false)
-const loggingOut = ref(false)
-const logoutError = ref('')
-
-function askLogout() {
-  logoutError.value = ''
-  logoutOpen.value = true
-}
-
-async function logout() {
-  if (loggingOut.value) return
-  loggingOut.value = true
-  logoutError.value = ''
-  try {
-    await call('agent_logout', { agent: currentAgent.value })
-    logoutOpen.value = false
-  } catch (err) {
-    const why = err instanceof Error ? err.message : String(err)
-    logoutError.value = `Couldn't log out of ${AGENTS[currentAgent.value].name}: ${why.replace(/\.$/, '')}.`
-  } finally {
-    loggingOut.value = false
-  }
-}
-
-/** The agent of the chat on screen, or the one new chats start with. */
-const currentAgent = computed<AgentId>(() => threads.activeThread?.agent ?? threads.defaultAgent)
-
-const codeItems = computed<MenuItem[]>(() => [
-  ...(Object.keys(AGENTS) as AgentId[]).map((id): MenuItem => {
-    const info = ws.agents.find(a => a.id === id)
-    return {
-      label: AGENTS[id].name,
-      icon: () => h(AgentIcon, { agent: id }),
-      // A remote project runs the CLI in its instance: whether it is installed here does not matter.
-      hint: info && !info.installed && !isEnvPath(ws.activeProjectPath) ? 'Not installed. See Settings > Agents.' : undefined,
-      checked: currentAgent.value === id,
-      onSelect: () => threads.chooseAgent(id),
-    }
-  }),
-  { label: 'Usage limits', icon: Gauge, divider: true, kbd: ws.keyLabel('usage'), onSelect: () => ws.openUsage() },
-  { label: 'Subscription', icon: CreditCard, onSelect: () => ws.openSettings('agents', 'subscription') },
-])
 </script>
 
 <template>
-  <aside ref="rail" class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" aria-label="Threads">
+  <aside ref="rail" class="sb" :style="{ width: `${width}px`, '--rail-w': `${width}px` }" :aria-label="t('shell.sidebar.label')">
     <div class="sb__top">
       <button type="button" class="sb__new" @click="newChat()">
         <MessageSquarePlus />
-        <span>New chat</span>
+        <span>{{ t('shell.chat.new') }}</span>
         <kbd v-for="k in ws.keyParts('new-chat')" :key="k">{{ k }}</kbd>
       </button>
+      <UiIconButton class="sb__hide" :label="t('shell.sidebar.hide')" :shortcut="ws.keyLabel('sidebar')" @click="ws.toggleSidebar()"><PanelLeftClose /></UiIconButton>
     </div>
 
     <nav class="sb__scroll">
@@ -437,20 +388,20 @@ const codeItems = computed<MenuItem[]>(() => [
             <ChevronRight v-if="sec.foldable" class="sb__caret" :class="{ 'is-open': sec.open }" />
             <span class="sb__group-name">{{ sec.title }}</span>
             <span v-if="sec.threads.length" class="sb__count tabular">{{ sec.threads.length }}</span>
-            <span v-if="!sec.open && sec.unseen" class="sb__unseen" :title="`${sec.unseen} new result${sec.unseen === 1 ? '' : 's'}`" />
+            <span v-if="!sec.open && sec.unseen" class="sb__unseen" :title="t('shell.sidebar.newResults', sec.unseen)" />
           </component>
           <div v-if="sec.id === 'active'" class="sb__group-actions">
-            <UiMenu :items="newChatItems" placement="bottom-end" :width="280" label="New chat">
+            <UiMenu :items="newChatItems" placement="bottom-end" :width="280" :label="t('shell.chat.new')">
               <template #default="{ open: menuOpen, toggle }">
                 <div class="sb__split" :class="{ 'is-open': menuOpen }">
-                  <button type="button" class="sb__split-main" :aria-label="ws.withKey('New chat', 'new-chat')" :title="ws.withKey('New chat', 'new-chat')" @click="newChat()"><Plus /></button>
+                  <button type="button" class="sb__split-main" :aria-label="ws.withKey(t('shell.chat.new'), 'new-chat')" :title="ws.withKey(t('shell.chat.new'), 'new-chat')" @click="newChat()"><Plus /></button>
                   <button
                     type="button"
                     class="sb__split-more"
-                    aria-label="More ways to start a chat"
+                    :aria-label="t('shell.sidebar.moreWays')"
                     aria-haspopup="menu"
                     :aria-expanded="menuOpen"
-                    :title="menuOpen ? undefined : 'More ways to start a chat'"
+                    :title="menuOpen ? undefined : t('shell.sidebar.moreWays')"
                     @click="toggleNewChatMenu(toggle, menuOpen)"
                   >
                     <ChevronDown />
@@ -471,37 +422,37 @@ const codeItems = computed<MenuItem[]>(() => [
           class="sb__list"
           role="list"
         >
-          <li v-for="t in sec.threads" :key="t.id">
+          <li v-for="chat in sec.threads" :key="chat.id">
             <div
               class="sb__thread"
               :class="{
-                'is-archived': t.archived,
-                'is-current': t.id === threads.activePane.threadId,
-                'is-visible': visibleIds.has(t.id),
-                'is-unseen': !t.seen,
-                'is-dragging': drag.id === t.id,
-                'is-drop-before': drag.overId === t.id && drag.where === 'before',
-                'is-drop-after': drag.overId === t.id && drag.where === 'after',
+                'is-archived': chat.archived,
+                'is-current': chat.id === threads.activePane.threadId,
+                'is-visible': visibleIds.has(chat.id),
+                'is-unseen': !chat.seen,
+                'is-dragging': drag.id === chat.id,
+                'is-drop-before': drag.overId === chat.id && drag.where === 'before',
+                'is-drop-after': drag.overId === chat.id && drag.where === 'after',
               }"
               role="button"
               tabindex="0"
-              :data-thread-id="t.id"
+              :data-thread-id="chat.id"
               :data-group="sec.id"
-              @pointerdown="onRowPointerDown(t, $event)"
-              @keydown.alt.up.prevent="threads.move(t.id, -1)"
-              @keydown.alt.down.prevent="threads.move(t.id, 1)"
-              @click="open(t)"
-              @keydown.enter.prevent="open(t)"
-              @dblclick="startRename(t)"
-              @contextmenu.prevent="openContextMenu(t, $event)"
+              @pointerdown="onRowPointerDown(chat, $event)"
+              @keydown.alt.up.prevent="threads.move(chat.id, -1)"
+              @keydown.alt.down.prevent="threads.move(chat.id, 1)"
+              @click="open(chat)"
+              @keydown.enter.prevent="open(chat)"
+              @dblclick="startRename(chat)"
+              @contextmenu.prevent="openContextMenu(chat, $event)"
             >
-              <UiRipenessDot :status="t.archived ? 'archived' : t.status" :unseen="hasUnreadResult(t) || (!t.archived && !t.seen && t.status === 'waiting')" />
+              <UiRipenessDot :status="chat.archived ? 'archived' : chat.status" :unseen="hasUnreadResult(chat) || (!chat.archived && !chat.seen && chat.status === 'waiting')" />
               <div class="sb__thread-text">
                 <input
-                  v-if="renaming === t.id"
+                  v-if="renaming === chat.id"
                   v-model="renameText"
                   class="sb__rename"
-                  aria-label="Chat title"
+                  :aria-label="t('shell.sidebar.chatTitle')"
                   @click.stop
                   @keydown.enter.prevent="commitRename"
                   @keydown.esc.prevent="renaming = null"
@@ -509,135 +460,108 @@ const codeItems = computed<MenuItem[]>(() => [
                 >
                 <span v-else class="sb__titleline">
                   <component
-                    :is="linkMarks.get(t.id)!.icon"
-                    v-if="linkMarks.has(t.id)"
+                    :is="linkMarks.get(chat.id)!.icon"
+                    v-if="linkMarks.has(chat.id)"
                     class="sb__link-icon"
-                    :class="`is-${linkMarks.get(t.id)!.tone}`"
+                    :class="`is-${linkMarks.get(chat.id)!.tone}`"
                     aria-hidden="true"
                   />
-                  <span class="sb__title">{{ t.title }}</span>
+                  <span class="sb__title">{{ chatTitle(chat.title) }}</span>
                 </span>
                 <span class="sb__subline">
-                  <span class="sb__sub" :class="`sb__sub--${displayStatus(t)}`">{{ subtitle(t) }}</span>
-                  <span v-if="t.worktree" class="sb__wt" :title="`Works in its own ${termOf(t)}: ${t.worktree}${t.branch ? `\nBranch: ${t.branch}` : ''}`">
-                    <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ t.branch ? chipBranch(t.branch) : worktreeName(t.worktree) }}</span>
-                    <span class="sr-only">, in {{ termOf(t) }} {{ worktreeName(t.worktree) }}</span>
+                  <span class="sb__sub" :class="`sb__sub--${displayStatus(chat)}`">{{ subtitle(chat) }}</span>
+                  <span v-if="chat.worktree" class="sb__wt" :title="`${t('shell.sidebar.ownTerm', { term: termOf(chat), path: chat.worktree })}${chat.branch ? `\n${t('shell.sidebar.branch', { branch: chat.branch })}` : ''}`">
+                    <FolderGit2 aria-hidden="true" /><span class="sb__wt-name">{{ chat.branch ? chipBranch(chat.branch) : worktreeName(chat.worktree) }}</span>
+                    <span class="sr-only">{{ t('shell.sidebar.inTerm', { term: termOf(chat), name: worktreeName(chat.worktree) }) }}</span>
                   </span>
-                  <span v-else-if="t.awaitingWorktree" class="sb__wt" :title="`Gets its own ${termOf(t)} and branch when you send the first message`">
-                    <FolderGit2 aria-hidden="true" /><span class="sr-only">, {{ termOf(t) }} made on the first message</span>
+                  <span v-else-if="chat.awaitingWorktree" class="sb__wt" :title="t('shell.sidebar.awaiting', { term: termOf(chat) })">
+                    <FolderGit2 aria-hidden="true" /><span class="sr-only">{{ t('shell.sidebar.awaitingShort', { term: termOf(chat) }) }}</span>
                   </span>
-                  <span v-for="m in linkMarks.has(t.id) ? [linkMarks.get(t.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
-                    #{{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
+                  <span v-for="m in linkMarks.has(chat.id) ? [linkMarks.get(chat.id)!] : []" :key="m.number" class="sb__link tabular" :class="`is-${m.tone}`" :title="m.label">
+                    {{ m.number }}<span v-if="m.others" class="sb__link-more">+{{ m.others }}</span>
                     <span class="sr-only">, {{ m.label }}</span>
                   </span>
                 </span>
               </div>
-              <span class="sb__time tabular">{{ shortAgo(t.updatedAt, now) }}</span>
+              <span class="sb__time tabular">{{ shortAgo(chat.updatedAt, now) }}</span>
               <div class="sb__actions" @click.stop @dblclick.stop>
                 <UiIconButton
-                  v-if="t.archived"
+                  v-if="chat.archived"
                   size="sm"
-                  label="Unarchive"
-                  @click.stop="threads.unarchive(t.id)"
+                  :label="t('shell.chat.unarchive')"
+                  @click.stop="threads.unarchive(chat.id)"
                 >
                   <ArchiveRestore />
                 </UiIconButton>
                 <UiIconButton
                   v-else
                   size="sm"
-                  :label="isBusy(t) ? 'Still working' : t.status === 'done' ? 'Mark as working' : 'Mark as settled'"
-                  :active="t.status === 'done'"
-                  :disabled="isBusy(t)"
-                  @click.stop="threads.setStatus(t.id, t.status === 'done' ? 'working' : 'done')"
+                  :label="isBusy(chat) ? t('shell.chat.stillWorking') : chat.status === 'done' ? t('shell.chat.markWorking') : t('shell.chat.markSettled')"
+                  :active="chat.status === 'done'"
+                  :disabled="isBusy(chat)"
+                  @click.stop="threads.setStatus(chat.id, chat.status === 'done' ? 'working' : 'done')"
                 >
                   <CircleCheck />
                 </UiIconButton>
-                <UiMenu :ref="(el: any) => { menus[t.id] = el }" :items="threadMenu(t)" placement="bottom-end" :width="220" label="Chat actions">
+                <UiMenu :ref="(el: any) => { menus[chat.id] = el }" :items="threadMenu(chat)" placement="bottom-end" :width="220" :label="t('shell.chat.actions')">
                   <template #default="{ toggle }">
-                    <UiIconButton size="sm" label="Chat actions" @click.stop="toggle"><MoreHorizontal /></UiIconButton>
+                    <UiIconButton size="sm" :label="t('shell.chat.actions')" @click.stop="toggle"><MoreHorizontal /></UiIconButton>
                   </template>
                 </UiMenu>
               </div>
             </div>
-            <template v-if="threads.childrenOf(t.id).length">
-              <button type="button" class="sb__subs" :aria-expanded="subsOpen(t)" @click="subsChoice.set(t.id, !subsOpen(t))">
-                <ChevronRight class="sb__caret" :class="{ 'is-open': subsOpen(t) }" aria-hidden="true" />
-                <span>{{ subsLabel(t).count }}</span>
-                <span v-if="subsLabel(t).working" class="sb__subs-live">· {{ subsLabel(t).working }} working</span>
+            <template v-if="threads.childrenOf(chat.id).length">
+              <button type="button" class="sb__subs" :aria-expanded="subsOpen(chat)" @click="subsChoice.set(chat.id, !subsOpen(chat))">
+                <ChevronRight class="sb__caret" :class="{ 'is-open': subsOpen(chat) }" aria-hidden="true" />
+                <span>{{ subsLabel(chat).count }}</span>
+                <span v-if="subsLabel(chat).working" class="sb__subs-live">{{ t('shell.sidebar.subsWorking', { n: subsLabel(chat).working }) }}</span>
               </button>
-              <AppSidebarSubagents v-if="subsOpen(t)" :parent-id="t.id" />
+              <AppSidebarSubagents v-if="subsOpen(chat)" :parent-id="chat.id" />
             </template>
           </li>
           <li v-if="sec.id === 'active' && !sec.threads.length" key="sb-empty">
             <button type="button" class="sb__empty" @click="newChat()">
-              <Plus /> {{ threads.forProject(ws.activeProjectPath ?? '').length || threads.archivedFor(ws.activeProjectPath ?? '').length ? 'Start a new chat' : 'Start the first chat' }}
+              <Plus /> {{ threads.forProject(ws.activeProjectPath ?? '').length || threads.archivedFor(ws.activeProjectPath ?? '').length ? t('shell.sidebar.startNew') : t('shell.sidebar.startFirst') }}
             </button>
           </li>
         </TransitionGroup>
       </section>
     </nav>
 
-    <footer class="sb__foot">
-      <UiMenu :items="settingsItems" placement="top-start" :width="230" label="Settings">
-        <template #default="{ toggle, open }">
-          <button type="button" class="sb__btn" :class="{ 'is-open': open }" :title="ws.withKey('Settings', 'settings')" @click="toggle">
-            <Settings />
-            <span class="sb__btn-text">Settings</span>
-            <span v-if="noAgentInstalled" class="sb__dot" title="No agent installed" />
-            <ChevronDown class="sb__chev" />
-          </button>
-        </template>
-      </UiMenu>
-      <UiMenu :items="codeItems" placement="top-end" :width="270" label="Code settings">
-        <template #default="{ toggle, open }">
-          <button
-            type="button"
-            class="sb__btn sb__btn--agent"
-            :class="{ 'is-open': open }"
-            :title="`Code settings: ${AGENTS[currentAgent].name}`"
-            :aria-label="`Code settings, ${AGENTS[currentAgent].name}`"
-            @click="toggle"
-          >
-            <UiAgentIcon :agent="currentAgent" class="sb__agent-icon" />
-          </button>
-        </template>
-      </UiMenu>
-    </footer>
+    <PluginStatusItems location="sidebar" />
+    <AppSidebarFoot />
 
-    <UiDialog :open="!!removing" :title="`Remove ${removeTerm}`" :width="440" :dismissible="!removeBusy" @close="removing = null">
+    <UiDialog :open="!!removing" :title="t('shell.remove.title', { term: removeTerm })" :width="440" :dismissible="!removeBusy" @close="removing = null">
       <template v-if="removing">
         <p class="sb__logout">
-          Remove the {{ removeTerm }} folder <code class="sb__code selectable">{{ removing.worktree }}</code>?
-          The branch{{ removing.branch ? ' ' : '' }}<code v-if="removing.branch" class="sb__code">{{ removing.branch }}</code> and its {{ removeUnit }}s stay.
-          {{ removeOthers ? `This chat and ${removeOthers} other${removeOthers === 1 ? '' : 's'} that worked there` : 'The chat' }}
-          will work in the project folder from then on.
+          <i18n-t keypath="shell.remove.folder" scope="global">
+            <template #term>{{ removeTerm }}</template>
+            <template #path><code class="sb__code selectable">{{ removing.worktree }}</code></template>
+          </i18n-t>
+          {{ ' ' }}
+          <i18n-t v-if="removing.branch" keypath="shell.remove.keepsBranch" scope="global">
+            <template #branch><code class="sb__code">{{ removing.branch }}</code></template>
+            <template #units>{{ removeUnits }}</template>
+          </i18n-t>
+          <template v-else>{{ t('shell.remove.keeps', { units: removeUnits }) }}</template>
+          {{ removeOthers ? t('shell.remove.chats', removeOthers) : t('shell.remove.chat') }}
         </p>
         <p v-if="removeError" class="sb__logout sb__logout--error selectable" role="alert">
-          {{ removeError }}<template v-if="removeForce"> Removing it anyway throws those changes away.</template>
+          {{ removeError }}<template v-if="removeForce"> {{ t('shell.remove.force') }}</template>
         </p>
       </template>
       <template #footer>
-        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">Cancel</UiButton>
-        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? 'Remove anyway' : `Remove ${removeTerm}` }}</UiButton>
+        <UiButton variant="ghost" data-autofocus :disabled="removeBusy" @click="removing = null">{{ t('common.actions.cancel') }}</UiButton>
+        <UiButton variant="danger" :loading="removeBusy" @click="removeWorktree">{{ removeForce ? t('shell.remove.anyway') : t('shell.remove.title', { term: removeTerm }) }}</UiButton>
       </template>
     </UiDialog>
 
-    <UiDialog :open="logoutOpen" title="Log out" :width="420" :dismissible="!loggingOut" @close="logoutOpen = false">
-      <p class="sb__logout">
-        Log out of {{ AGENTS[currentAgent].name }}? Chats that use it stop until you sign in again in Settings > Agents.
-      </p>
-      <p v-if="logoutError" class="sb__logout sb__logout--error selectable" role="alert">{{ logoutError }}</p>
-      <template #footer>
-        <UiButton variant="ghost" data-autofocus :disabled="loggingOut" @click="logoutOpen = false">Cancel</UiButton>
-        <UiButton variant="danger" :loading="loggingOut" @click="logout">Log out</UiButton>
-      </template>
-    </UiDialog>
 
     <div
       class="sb__resize"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize sidebar"
+      :aria-label="t('shell.sidebar.resize')"
       @pointerdown="startResize"
       @pointermove="onResize"
       @pointerup="endResize"
@@ -656,12 +580,14 @@ const codeItems = computed<MenuItem[]>(() => [
   min-height: 0;
   background: var(--bg-app);
 }
-.sb__top { padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.sb__top { display: flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); }
+.sb__hide { width: 32px; height: 32px; }
 .sb__new {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 32px;
   padding: 0 6px 0 10px;
   border-radius: var(--radius-sm);
@@ -674,7 +600,8 @@ const codeItems = computed<MenuItem[]>(() => [
 }
 .sb__new:hover { background: var(--bg-raised); border-color: var(--line); }
 .sb__new svg { width: 15px; height: 15px; color: var(--accent-ink); stroke-width: 1.85; }
-.sb__new span { flex: 1; text-align: left; }
+.sb__new span { flex: 1; min-width: 0; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sb__new kbd { flex: none; white-space: nowrap; }
 .sb__new kbd + kbd { margin-left: -4px; }
 
 .sb__scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; padding: var(--space-1) var(--space-2) var(--space-3) var(--space-3); }
@@ -897,43 +824,9 @@ const codeItems = computed<MenuItem[]>(() => [
 .sb__empty:hover { color: var(--fg-muted); background: var(--bg-hover); }
 .sb__empty svg { width: 13px; height: 13px; }
 
-.sb__foot {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 40px;
-  padding: 0 var(--space-2) 0 var(--space-2);
-  border-top: 1px solid var(--line-soft);
-}
-.sb__foot :deep(.menu) { flex: 0 1 auto; min-width: 0; }
-.sb__foot :deep(.menu:first-child) { flex-shrink: 0; }
-/* Code settings sits alone in the corner: just the current agent's logo. */
-.sb__foot :deep(.menu:last-child) { flex: none; margin-left: auto; }
-.sb__btn {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  max-width: 100%;
-  height: 28px;
-  padding: 0 var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
-  color: var(--fg-subtle);
-  text-align: left;
-  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
-}
-.sb__btn:hover, .sb__btn.is-open { background: var(--bg-hover); color: var(--fg); }
-.sb__btn svg { width: 15px; height: 15px; stroke-width: 1.75; flex: none; }
-.sb__btn .sb__chev { width: 12px; height: 12px; stroke-width: 2; opacity: 0.6; }
-.sb__btn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* The agent is the chat's own, so it reads a step stronger than the generic Settings button. */
-.sb__btn--agent { width: 28px; justify-content: center; padding: 0; color: var(--fg-muted); }
-.sb__btn .sb__agent-icon { width: 15px; height: 15px; stroke-width: initial; }
-.sb__btn .sb__agent-icon.agent-icon--codex { color: var(--fg); }
 .sb__logout { margin: 0; font-size: var(--text-sm); color: var(--fg-muted); text-wrap: pretty; }
 .sb__logout--error { margin-top: var(--space-2); color: var(--ripe-error-fg); }
 .sb__code { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg); word-break: break-all; }
-.sb__dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--ripe-waiting); }
 
 .sb__resize {
   position: absolute;

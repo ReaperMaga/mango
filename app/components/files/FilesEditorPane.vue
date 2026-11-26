@@ -1,17 +1,27 @@
 <script setup lang="ts">
 import type * as Monaco from 'monaco-editor'
-import { CircleAlert, Code, Eye, FileWarning, FolderTree, Save, X } from 'lucide-vue-next'
+import { CircleAlert, Code, Eye, FileWarning, FolderTree, Save, ShieldQuestion, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
 import { closeFileTab, useFiles } from '~/stores/files'
+import { failureText } from '~/utils/autoSave'
 import { parseFileTab } from '~/utils/fileTabs'
-import { editorModel, setEditorModel } from '~/utils/editorModels'
+import { editorModel, type EditorModel } from '~/utils/editorModels'
 import { cssVar } from '~/utils/cssColor'
 import { MONACO_THEME, languageFor, loadMonaco, type MonacoApi } from '~/composables/monaco'
+import { pluginLanguage } from '~/plugin-host/fileHooks'
 import { imageKind, svgSize, svgUrl } from '~/utils/imageFiles'
 import { changeMarkers, type ChangeMarkers } from '~/composables/changeMarkers'
 import { useGit } from '~/stores/git'
 import { call } from '~/composables/useBackend'
+import { baseName } from '~/utils/paths'
+import { documentFor, needsNewModel, takePosition } from '~/composables/editorDocuments'
+import { COMPLETION_OPTIONS, caretGlide, quickSuggestions, widgetsOverBrowsers } from '~/composables/editorFeel'
+import { languageService } from '~/lsp/service'
+import { lspLanguage } from '~/lsp/languages'
+import { useLanguageServers } from '~/lsp/store'
+import { isEnvPath } from '~/utils/envPath'
+import FilesLanguageStatus from './FilesLanguageStatus.vue'
 
 /**
  * A project file open in the main pane, edited with Monaco. Pictures open in
@@ -22,10 +32,12 @@ import { call } from '~/composables/useBackend'
  */
 const props = defineProps<{ tabId: string; paneId: string; split: boolean; active: boolean }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 const threads = useThreads()
 const files = useFiles()
 const git = useGit()
+const servers = useLanguageServers()
 
 const tab = computed(() => parseFileTab(props.tabId))
 const file = computed(() => files.file(props.tabId))
@@ -61,60 +73,111 @@ let monaco: MonacoApi | null = null
 let editor: Monaco.editor.IStandaloneCodeEditor | null = null
 let fontObserver: MutationObserver | null = null
 let shownTab: string | null = null
+/** The model entry behind `shownTab`; held itself, as a rename gives it another tab id. */
+let shownEntry: EditorModel | null = null
 let contentSub: Monaco.IDisposable | null = null
 let markers: ChangeMarkers | null = null
+let caret: ReturnType<typeof caretGlide> | null = null
+let widgets: ReturnType<typeof widgetsOverBrowsers> | null = null
 const failed = ref<string | null>(null)
 
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+/** Mango's Animations setting, as resolved on the root (`ws.applyTheme`): "Full" is full whatever the OS says. */
+const motion = ref(true)
+const readMotion = () => { motion.value = document.documentElement.dataset.motion !== 'reduced' }
+readMotion()
+const glides = computed(() => ws.editorSmoothCaret && motion.value)
+/** The fade is motion too. */
+const blinking = () => (motion.value ? 'smooth' : 'blink')
+watch(motion, () => editor?.updateOptions({ cursorBlinking: blinking() }))
 
 function fontFamily() {
   return cssVar('--font-mono') || 'ui-monospace, monospace'
 }
 
-/** The model for this tab, created (or refilled after a reload from disk) as needed. */
-function modelFor(tabId: string): Monaco.editor.ITextModel | null {
-  const f = files.file(tabId)
-  if (!monaco || !f || f.disk === null) return null
-  let entry = editorModel(tabId)
-  if (!entry || entry.model.isDisposed()) {
-    const model = monaco.editor.createModel(f.disk, languageFor(monaco, f.file))
-    entry = { model, savedVersion: model.getAlternativeVersionId(), loadedVersion: f.version, viewState: null }
-    setEditorModel(tabId, entry)
-  } else if (entry.loadedVersion !== f.version) {
-    // Read again from disk (opened again, reverted, or changed by an agent while clean).
-    entry.model.setValue(f.disk)
-    entry.savedVersion = entry.model.getAlternativeVersionId()
-    entry.loadedVersion = f.version
-  }
-  return entry.model
+/** The shown model's Monaco language. */
+const language = ref<string | null>(null)
+function applyLanguage(model: Monaco.editor.ITextModel) {
+  language.value = model.getLanguageId()
+  editor?.updateOptions({ quickSuggestions: quickSuggestions(language.value) })
 }
+
+/** A clean file renamed to another kind of script waits for a model with the new name. */
+const modelDue = computed(() => {
+  const f = file.value
+  const entry = f && !f.dirty && !f.saving ? editorModel(props.tabId) : null
+  return !!entry && needsNewModel(entry, f!.file)
+})
+
+/* A plugin gave this kind of file a language (or took it back): plugins start after the tabs are back. */
+watch(() => (tab.value ? pluginLanguage(tab.value.file) : null), () => {
+  const model = editorModel(props.tabId)?.model
+  if (!monaco || !tab.value || !model || model.isDisposed()) return
+  monaco.editor.setModelLanguage(model, languageFor(monaco, tab.value.file))
+  if (editor?.getModel() === model) applyLanguage(model)
+})
 
 function syncDirty() {
   const entry = shownTab ? editorModel(shownTab) : null
   if (!entry || !shownTab) return
+  // Still being brought up to date with the disk (`reloadDocument`): that is no edit.
+  if (entry.loadedVersion !== files.file(shownTab)?.version) return
   files.setDirty(shownTab, entry.model.getAlternativeVersionId() !== entry.savedVersion)
 }
 
-/** Put the current tab's model in the editor, keeping the previous one's scroll and cursor. */
+/**
+ * A field has the keyboard (a name in the Files tree, the commit message). An editor can arrive seconds
+ * after it was asked for: what is being typed would end up in its file.
+ */
+function typingElsewhere() {
+  const el = document.activeElement
+  return !!el?.matches('input, textarea, [contenteditable="true"]') && !el.closest('.monaco-editor')
+}
+
+/**
+ * Put the current tab's model in the editor, keeping the previous one's scroll and cursor. Also after
+ * a reload from disk: then scroll, cursor and keyboard focus stay as they are.
+ */
 function show() {
   if (!editor || !monaco) return
-  if (shownTab && shownTab !== props.tabId) {
-    const prev = editorModel(shownTab)
-    if (prev && !prev.model.isDisposed()) prev.viewState = editor.saveViewState()
-  }
-  const model = editable.value ? modelFor(props.tabId) : null
-  if (editor.getModel() !== model) editor.setModel(model)
+  const before = editor.getModel()
+  if (shownEntry && before && shownEntry.model === before) shownEntry.viewState = editor.saveViewState()
+  caret?.still()
+  const doc = editable.value && file.value ? documentFor(monaco, props.tabId, file.value) : null
+  const model = doc?.entry.model ?? null
+  const switched = before !== model || shownTab !== props.tabId
+  if (before !== model) editor.setModel(model)
+  // It may have been hidden until just now: measure it, or a line is revealed in a viewport of nothing.
+  if (switched && model) editor.layout()
   shownTab = model ? props.tabId : null
-  if (model) {
-    const entry = editorModel(props.tabId)
-    if (entry?.viewState) editor.restoreViewState(entry.viewState)
-    syncDirty()
-    readSvg()
-    void loadBase()
-    // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
-    if (props.active && !svgPreview.value) editor.focus()
-  }
+  shownEntry = doc?.entry ?? null
+  doc?.replaced?.dispose()
+  if (!model) return
+  languageService()?.track()
+  applyLanguage(model)
+  if (switched && doc!.entry.viewState) editor.restoreViewState(doc!.entry.viewState)
+  syncDirty()
+  readSvg()
+  void loadBase()
+  revealAsked()
+  // A hidden editor must not take the keyboard: typing would change a file nobody is looking at.
+  if (switched && props.active && !svgPreview.value && !files.deleting.length && !typingElsewhere()) editor.focus()
 }
+
+/** A line someone asked to see (`files.revealLine`, a plugin's `openFile`): scroll there and put the cursor on it. */
+function revealAsked() {
+  const line = files.lines[props.tabId]
+  const model = editor?.getModel()
+  if (!editor || !line || !model || shownTab !== props.tabId) return
+  delete files.lines[props.tabId]
+  // A jump to a definition knows the column too.
+  const exact = takePosition(props.tabId, line)
+  const at = model.validatePosition(exact ?? { lineNumber: line, column: 1 })
+  editor.setPosition(at)
+  if (exact) editor.revealPositionInCenterIfOutsideViewport(at)
+  else editor.revealPositionInCenter(at)
+}
+watch(() => files.lines[props.tabId], revealAsked)
 
 async function setUp() {
   if (editor || !host.value) return
@@ -135,11 +198,17 @@ async function setUp() {
       scrollBeyondLastLine: false,
       renderLineHighlight: 'line',
       bracketPairColorization: { enabled: false },
+      // The models colour the brackets, and standalone Monaco tells them only under the flat key.
+      ...{ 'bracketPairColorization.enabled': false },
       guides: { indentation: true, bracketPairs: false },
+      // A language server's word on what names are (a class, a method), coloured by the theme.
+      ...{ 'semanticHighlighting.enabled': true },
       padding: { top: 10, bottom: 10 },
       smoothScrolling: !reducedMotion(),
-      cursorSmoothCaretAnimation: reducedMotion() ? 'off' : 'on',
-      cursorBlinking: 'smooth',
+      // Mango's own glide (`caretGlide`): Monaco's is too short to see, and runs while the page moves.
+      cursorSmoothCaretAnimation: 'off',
+      cursorBlinking: blinking(),
+      ...COMPLETION_OPTIONS,
       fixedOverflowWidgets: true,
       overviewRulerBorder: false,
       hideCursorInOverviewRuler: true,
@@ -148,6 +217,8 @@ async function setUp() {
       lineDecorationsWidth: 14,
     })
     markers = changeMarkers(monaco, editor)
+    caret = caretGlide(monaco, editor, () => glides.value)
+    widgets = widgetsOverBrowsers(editor)
     monaco.editor.remeasureFonts()
     contentSub = editor.onDidChangeModelContent(() => {
       syncDirty()
@@ -156,6 +227,7 @@ async function setUp() {
     editor.onDidFocusEditorText(() => threads.focusPane(props.paneId))
     // A new code font (Settings > Appearance) reaches the open editor too.
     fontObserver = new MutationObserver(async () => {
+      caret?.still()
       await document.fonts?.load(`12.5px ${fontFamily()}`).catch(() => {})
       editor?.updateOptions({ fontFamily: fontFamily() })
     })
@@ -166,21 +238,26 @@ async function setUp() {
   }
 }
 
+const motionObserver = new MutationObserver(readMotion)
 onMounted(() => {
+  motionObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-motion'] })
   if (editable.value) void setUp()
 })
 
 // Opened before the read finished, switched to another file tab in this pane, or reloaded from disk.
-watch(() => [props.tabId, editable.value, file.value?.version] as const, () => {
+watch(() => [props.tabId, editable.value, file.value?.version, modelDue.value] as const, async () => {
   if (!editable.value) {
-    if (editor) { editor.setModel(null); shownTab = null }
+    if (editor) { editor.setModel(null); shownTab = null; shownEntry = null }
     return
   }
-  if (!editor) void setUp()
-  else show()
+  if (!editor) return setUp()
+  // Once `v-show` has shown it: the editor of a file that was still loading cannot take the keyboard before.
+  await nextTick()
+  if (editable.value) show()
 })
 
-watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value) editor.focus() })
+// Not for a pane that comes forward because a file was deleted: the next Delete would edit this one.
+watch(() => props.active, (active) => { if (active && editor && shownTab && !svgPreview.value && !files.deleting.length) editor.focus() })
 
 /* ---------- change markers ---------- */
 
@@ -193,14 +270,14 @@ const head = computed(() => (tab.value ? git.status(tab.value.projectPath)?.head
 
 async function loadBase() {
   const id = props.tabId
-  const t = tab.value
-  if (!markers || !t || shownTab !== id) return
-  const at = head.value
+  const at = tab.value
+  if (!markers || !at || shownTab !== id) return
+  const now = head.value
   let entry = bases.get(id)
-  if (!entry || entry.head !== at) {
+  if (!entry || entry.head !== now) {
     // No committed version, or none readable: no markers.
-    const text = await call('git_base', { path: t.projectPath, file: t.file }).catch(() => null)
-    entry = { head: at, text }
+    const text = await call('git_base', { path: at.projectPath, file: at.file }).catch(() => null)
+    entry = { head: now, text }
     bases.set(id, entry)
   }
   if (markers && shownTab === id) markers.setBase(entry.text)
@@ -213,13 +290,15 @@ function setView(view: 'preview' | 'code') {
 }
 
 onBeforeUnmount(() => {
-  if (editor && shownTab) {
-    const entry = editorModel(shownTab)
-    if (entry && !entry.model.isDisposed()) entry.viewState = editor.saveViewState()
-  }
+  if (editor && shownEntry && !shownEntry.model.isDisposed()) shownEntry.viewState = editor.saveViewState()
   contentSub?.dispose()
   markers?.dispose()
   markers = null
+  caret?.dispose()
+  caret = null
+  widgets?.dispose()
+  widgets = null
+  motionObserver.disconnect()
   // The model stays (the tab is still open); only this view of it goes.
   editor?.setModel(null)
   fontObserver?.disconnect()
@@ -242,7 +321,8 @@ async function save() {
   if (f.value?.dirty) await files.save(props.tabId)
 }
 async function saveAndClose() {
-  if (await files.save(props.tabId)) closeFileTab(props.tabId)
+  // Text typed while it saved is not saved: then it stays open.
+  if (await files.save(props.tabId) && !files.isDirty(props.tabId)) closeFileTab(props.tabId)
 }
 function discardAndClose() {
   closeFileTab(props.tabId)
@@ -250,8 +330,11 @@ function discardAndClose() {
 async function overwrite() {
   await files.save(props.tabId, true)
 }
-function reload() {
-  void files.revert(props.tabId)
+async function reload() {
+  await files.revert(props.tabId)
+  // The bar that had the keyboard is gone.
+  await nextTick()
+  if (props.active && !typingElsewhere()) editor?.focus()
 }
 function revealInTree() {
   if (!tab.value) return
@@ -260,61 +343,124 @@ function revealInTree() {
 }
 
 function formatSize(n: number) {
-  if (n < 1024) return `${n} bytes`
+  if (n < 1024) return t('files.editor.bytes', n)
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
   return `${(n / 1024 / 1024).toFixed(1)} MB`
 }
 
+/* ---------- saving, as the header tells it */
+
+/** With autosave only a save slow enough to wonder about gets a word. */
+const SLOW_SAVE_MS = 1500
+const savingSlowly = ref(false)
+let slowTimer: ReturnType<typeof setTimeout> | undefined
+watch(() => [props.tabId, !!file.value?.saving] as const, ([, saving]) => {
+  clearTimeout(slowTimer)
+  savingSlowly.value = false
+  if (saving) slowTimer = setTimeout(() => (savingSlowly.value = true), SLOW_SAVE_MS)
+}, { immediate: true })
+onBeforeUnmount(() => clearTimeout(slowTimer))
+
 const state = computed(() => {
   const x = f.value
   if (!x || x.loading && x.disk === null) return ''
-  if (x.saving) return 'Saving…'
-  if (x.dirty) return 'Modified'
+  if (x.saving && (!ws.editorAutoSave || savingSlowly.value)) return t('files.editor.saving')
+  if (files.showsUnsaved(props.tabId)) return t('files.editor.modified')
   return ''
 })
+
+/* ---------- the language server */
+
+const server = computed(() => {
+  const at = tab.value
+  if (!at || !editable.value || !language.value || isEnvPath(at.projectPath) || !ws.editorLanguageServers) return null
+  return servers.serverFor(lspLanguage(at.file, language.value))
+})
+/** What an answer binds (`setConsent`): the project, or a folder that is no worktree of it. Not known until looked at. */
+const consentFor = computed(() => (tab.value ? servers.folders[tab.value.projectPath]?.project : undefined))
+/** An installed server fits this file and that project has not answered yet. */
+const asksConsent = computed(() =>
+  !!server.value && !!tab.value && !!consentFor.value && !svgPreview.value && !failed.value && servers.consentOf(tab.value.projectPath) === null)
+
+/** A yes is for every language server there: the question names where, not this file's server. */
+const consent = computed(() => {
+  const path = consentFor.value
+  const root = tab.value?.projectPath
+  if (!path || !root) return null
+  const project = ws.openProjects.find(p => p.path === path)
+  // A chat's folder that is no git worktree of the project answers for itself alone.
+  const alone = path === root && threads.ownerOf(root) !== root
+  const scope = alone ? 'folder' : 'project'
+  const worktrees = !alone && project?.isGit && project.vcs !== 'plastic'
+  return {
+    scope,
+    name: project?.name ?? baseName(path),
+    covers: alone
+      ? t('files.consent.coversFolder')
+      : !worktrees
+          ? t('files.consent.coversProject')
+          // A yes given in a worktree binds that one too.
+          : path === root ? t('files.consent.coversWorktrees') : t('files.consent.coversWorktree'),
+  }
+})
+
+function answerConsent(on: boolean) {
+  if (tab.value) servers.setConsent(tab.value.projectPath, on)
+  nextTick(() => editor?.focus())
+}
 </script>
 
 <template>
-  <section class="fe" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? `Editing ${tab.file}` : 'Editor'">
+  <section class="fe" :class="{ 'is-active': active, 'is-split': split }" :aria-label="tab ? t('files.editor.editing', { file: tab.file }) : t('files.editor.label')">
     <header v-if="tab" class="fe__head">
       <h2 class="fe__name" :title="tab.file">{{ tab.name }}</h2>
       <span v-if="tab.dir" class="fe__dir selectable"><bdi>{{ tab.dir }}</bdi></span>
       <span v-if="state" class="fe__state" :class="{ 'is-dirty': f?.dirty && !f?.saving }">{{ state }}</span>
       <span class="fe__spacer" />
-      <div v-if="kind === 'svg' && editable" class="fe__view" role="radiogroup" aria-label="Show the SVG as">
+      <FilesLanguageStatus v-if="server" :key="server.id" :server="server" :root="tab.projectPath" />
+      <div v-if="kind === 'svg' && editable" class="fe__view" role="radiogroup" :aria-label="t('files.editor.svgAs')">
         <button type="button" role="radio" :aria-checked="svgPreview" :class="{ 'is-on': svgPreview }" @click="setView('preview')">
-          <Eye />Preview
+          <Eye />{{ t('files.editor.preview') }}
         </button>
         <button type="button" role="radio" :aria-checked="!svgPreview" :class="{ 'is-on': !svgPreview }" @click="setView('code')">
-          <Code />Code
+          <Code />{{ t('files.editor.code') }}
         </button>
       </div>
-      <UiButton v-if="kind !== 'raster'" size="sm" :disabled="!f?.dirty || f?.saving" :title="ws.withKey('Save', 'save-file')" @click="save"><Save />Save</UiButton>
-      <UiIconButton size="sm" label="Show in Files" @click="revealInTree"><FolderTree /></UiIconButton>
-      <UiIconButton v-if="split" size="sm" label="Close pane" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
+      <UiButton v-if="kind !== 'raster' && !ws.editorAutoSave" size="sm" :disabled="!f?.dirty || f?.saving" :title="ws.withKey(t('common.actions.save'), 'save-file')" @click="save"><Save />{{ t('common.actions.save') }}</UiButton>
+      <UiIconButton size="sm" :label="t('files.editor.showInFiles')" @click="revealInTree"><FolderTree /></UiIconButton>
+      <UiIconButton v-if="split" size="sm" :label="t('files.editor.closePane')" @click.stop="threads.closePane(paneId)"><X /></UiIconButton>
     </header>
 
-    <div v-if="f?.closing" class="fe__bar" role="alertdialog" :aria-label="`Unsaved changes in ${tab?.name}`" @keydown.esc.stop.prevent="files.cancelClose(tabId)">
+    <div v-if="f?.closing" class="fe__bar" role="alertdialog" :aria-label="t('files.editor.unsavedIn', { name: tab?.name })" @keydown.esc.stop.prevent="files.cancelClose(tabId)">
       <FileWarning class="fe__bar-icon is-waiting" aria-hidden="true" />
-      <span class="fe__bar-text">Save the changes to <strong>{{ tab?.name }}</strong> before closing?</span>
-      <UiButton ref="closeSave" size="sm" variant="primary" :loading="f.saving" @click="saveAndClose">Save</UiButton>
-      <UiButton size="sm" variant="danger" @click="discardAndClose">Don't save</UiButton>
-      <UiButton size="sm" variant="ghost" @click="files.cancelClose(tabId)">Cancel</UiButton>
+      <span v-if="f.saveError" class="fe__bar-text is-error selectable">{{ t('files.editor.notSaved', { name: tab?.name, error: failureText(f.saveError) }) }}</span>
+      <i18n-t v-else keypath="files.editor.saveBeforeClosing" tag="span" scope="global" class="fe__bar-text"><template #name><strong>{{ tab?.name }}</strong></template></i18n-t>
+      <UiButton ref="closeSave" size="sm" variant="primary" :loading="f.saving" @click="saveAndClose">{{ t('common.actions.save') }}</UiButton>
+      <UiButton size="sm" variant="danger" @click="discardAndClose">{{ t('files.editor.dontSave') }}</UiButton>
+      <UiButton size="sm" variant="ghost" @click="files.cancelClose(tabId)">{{ t('common.actions.cancel') }}</UiButton>
     </div>
     <div v-else-if="f?.conflict" class="fe__bar" role="alert">
       <FileWarning class="fe__bar-icon is-waiting" aria-hidden="true" />
-      <span class="fe__bar-text">{{ tab?.name }} changed on disk while you were editing it.</span>
-      <UiButton size="sm" variant="danger" @click="reload">Discard my edits</UiButton>
-      <UiButton size="sm" variant="danger" :loading="f.saving" @click="overwrite">Overwrite the file</UiButton>
+      <span class="fe__bar-text">{{ t('files.editor.changedOnDisk', { name: tab?.name }) }}</span>
+      <UiButton size="sm" variant="danger" @click="reload">{{ t('files.editor.discardEdits') }}</UiButton>
+      <UiButton size="sm" variant="danger" :loading="f.saving" @click="overwrite">{{ t('files.editor.overwrite') }}</UiButton>
     </div>
     <div v-else-if="f?.saveError" class="fe__bar" role="alert">
       <CircleAlert class="fe__bar-icon is-error" aria-hidden="true" />
-      <span class="fe__bar-text is-error selectable">{{ f.saveError }}</span>
-      <UiButton size="sm" variant="ghost" @click="f.saveError = null">Dismiss</UiButton>
+      <span class="fe__bar-text is-error selectable">{{ failureText(f.saveError) }}</span>
+      <!-- With autosave it stays until the text is saved: nothing else says it is not. -->
+      <UiButton v-if="ws.editorAutoSave" size="sm" :loading="f.saving" @click="save">{{ t('common.actions.retry') }}</UiButton>
+      <UiButton v-else size="sm" variant="ghost" @click="f.saveError = null">{{ t('files.editor.dismiss') }}</UiButton>
+    </div>
+    <div v-else-if="asksConsent && consent" class="fe__bar" role="region" :aria-label="t('files.consent.label', { name: consent.name })">
+      <ShieldQuestion class="fe__bar-icon is-quiet" aria-hidden="true" />
+      <i18n-t :keypath="consent.scope === 'folder' ? 'files.consent.askFolder' : 'files.consent.askProject'" tag="span" scope="global" class="fe__bar-text"><template #name><strong>{{ consent.name }}</strong></template></i18n-t>
+      <UiButton size="sm" :title="consent.covers" @click="answerConsent(true)">{{ consent.scope === 'folder' ? t('files.consent.onFolder') : t('files.consent.onProject') }}</UiButton>
+      <UiButton size="sm" variant="ghost" :title="t('files.consent.offTitle')" @click="answerConsent(false)">{{ consent.scope === 'folder' ? t('files.consent.offFolder') : t('files.consent.offProject') }}</UiButton>
     </div>
 
     <div class="fe__body">
-      <div v-show="editable && !failed && !svgPreview" ref="host" class="fe__editor" />
+      <div v-show="editable && !failed && !svgPreview" ref="host" class="fe__editor" :data-motion-full="motion ? '' : null" />
       <FilesImageView
         v-if="picture && tab"
         :src="picture.src"
@@ -324,25 +470,25 @@ const state = computed(() => {
         :intrinsic="picture.intrinsic"
       />
       <div v-else-if="failed" class="fe__note" role="alert">
-        <p class="fe__note-title">The editor could not start</p>
+        <p class="fe__note-title">{{ t('files.editor.couldNotStart') }}</p>
         <p class="fe__note-sub selectable">{{ failed }}</p>
       </div>
       <template v-else-if="!editable">
-        <div v-if="!f || f.loading" class="fe__skeleton" aria-busy="true" aria-label="Opening file">
+        <div v-if="!f || f.loading" class="fe__skeleton" aria-busy="true" :aria-label="t('files.editor.opening')">
           <span v-for="w in [62, 44, 71, 38, 55, 66, 30]" :key="w" :style="{ width: `${w}%` }" />
         </div>
         <div v-else-if="f.error" class="fe__note" role="alert">
-          <p class="fe__note-title">Could not open {{ tab?.name }}</p>
+          <p class="fe__note-title">{{ t('files.editor.couldNotOpen', { name: tab?.name }) }}</p>
           <p class="fe__note-sub selectable">{{ f.error }}</p>
-          <UiButton size="sm" @click="files.read(tabId)">Try again</UiButton>
+          <UiButton size="sm" @click="files.read(tabId)">{{ t('common.actions.retry') }}</UiButton>
         </div>
         <div v-else-if="f.tooLarge" class="fe__note">
-          <p class="fe__note-title">{{ tab?.name }} is too large to edit here</p>
-          <p class="fe__note-sub">It is {{ formatSize(f.size) }}; the editor opens files up to 5 MB.</p>
+          <p class="fe__note-title">{{ t('files.editor.tooLarge', { name: tab?.name }) }}</p>
+          <p class="fe__note-sub">{{ t('files.editor.tooLargeHint', { size: formatSize(f.size) }) }}</p>
         </div>
         <div v-else-if="f.binary" class="fe__note">
-          <p class="fe__note-title">{{ tab?.name }} is not a text file</p>
-          <p class="fe__note-sub">{{ formatSize(f.size) }} of binary data, or text in an encoding other than UTF-8.</p>
+          <p class="fe__note-title">{{ t('files.editor.binary', { name: tab?.name }) }}</p>
+          <p class="fe__note-sub">{{ t('files.editor.binaryHint', { size: formatSize(f.size) }) }}</p>
         </div>
       </template>
     </div>
@@ -422,6 +568,7 @@ const state = computed(() => {
 .fe__bar {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-height: 40px;
@@ -433,9 +580,18 @@ const state = computed(() => {
 .fe__bar-icon { flex: none; width: 15px; height: 15px; stroke-width: 1.85; }
 .fe__bar-icon.is-waiting { color: var(--ripe-waiting); }
 .fe__bar-icon.is-error { color: var(--ripe-error); }
-.fe__bar-text { flex: 1; min-width: 0; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fe__bar-icon.is-quiet { color: var(--fg-subtle); }
+/* What is asked is never cut off: the buttons go below it, and it stays beside its icon. */
+.fe__bar-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: calc(100% - 15px - var(--space-2));
+  color: var(--fg-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .fe__bar-text strong { color: var(--fg); font-weight: 600; }
-.fe__bar-text.is-error { color: var(--ripe-error-fg); white-space: normal; }
+.fe__bar-text.is-error { color: var(--ripe-error-fg); }
 
 .fe__body { position: relative; flex: 1; min-height: 0; }
 .fe__editor { position: absolute; inset: 0; }
@@ -489,4 +645,52 @@ const state = computed(() => {
 }
 .monaco-editor .mango-change--del.is-end::before { top: auto; bottom: -4px; }
 .monaco-editor .mango-change-peek { box-sizing: border-box; padding: 4px 0; z-index: 3; }
+
+/*
+ * The caret's glide, on only while `caretGlide` says it was sent somewhere. Long enough to see across
+ * one character, quick enough at the start to keep up with key repeat. `!important` outdoes base.css's
+ * rule for the OS's reduced motion: the class is never set when Mango's motion is reduced.
+ */
+.fe__editor.is-caret-gliding .monaco-editor .cursors-layer > .cursor {
+  transition-property: top, left;
+  transition-duration: var(--dur-med) !important;
+  transition-timing-function: var(--ease-out);
+}
+/* The same rule would freeze the blink when Animations is Full over the OS's setting. */
+.fe__editor[data-motion-full] .monaco-editor .cursors-layer.cursor-smooth {
+  animation-duration: 0.5s !important;
+  animation-iteration-count: 20 !important;
+}
+
+/* Monaco's floating widgets, as Mango's floating layers. */
+.fe__editor .monaco-editor {
+  font-family: var(--font-ui);
+  --monaco-monospace-font: var(--font-mono);
+  --vscode-cornerRadius-large: var(--radius-md);
+  --vscode-cornerRadius-medium: var(--radius-sm);
+  --vscode-cornerRadius-small: var(--radius-xs);
+}
+.fe__editor .monaco-editor .suggest-widget:not(.message),
+.fe__editor .monaco-editor .suggest-widget.message,
+.fe__editor .monaco-editor .suggest-details-container .suggest-details,
+.fe__editor .monaco-editor .monaco-hover.workbench-hover,
+.fe__editor .monaco-editor .monaco-resizable-hover,
+.fe__editor .monaco-editor .parameter-hints-widget {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+}
+.fe__editor .monaco-editor .suggest-widget,
+.fe__editor .monaco-editor .suggest-details-container,
+.fe__editor .monaco-editor .monaco-hover,
+.fe__editor .monaco-editor .parameter-hints-widget {
+  font-variant-ligatures: none;
+}
+/* Peek's list is lines of code. */
+.fe__editor .monaco-editor .ref-tree .monaco-tl-contents > .monaco-highlighted-label {
+  font-family: var(--monaco-monospace-font);
+  font-variant-ligatures: none;
+}
+/* Peek's close is a button, if an <a> to Monaco. */
+.fe__editor .monaco-editor .peekview-widget .head .peekview-actions a.action-label { color: var(--fg-subtle); }
+.fe__editor .monaco-editor .peekview-widget .head .peekview-actions a.action-label:hover { color: var(--fg); }
 </style>

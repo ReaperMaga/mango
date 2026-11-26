@@ -1,8 +1,11 @@
 import type { AgentId } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
 import type { SshEndpoint } from '@/ssh/types'
-import type { GhRef, GhState } from './github'
+import type { GhJob, GhMergeMethod, GhRepoLink, GhRunAction, GhRunDetail } from '~/types/ipc'
+import type { GhDetail, GhRef, GhState } from './github'
 import type { ChatPicture } from './images'
+import type { Releases } from './releases'
+import type { AgentAuth } from './auth'
 
 /**
  * The contract between the app's state/screens and a remote environment. Implemented over SSH
@@ -133,6 +136,8 @@ export interface RemoteBackend {
   projects(env: Env, instance: string): Promise<RemoteProject[]>
   /** Which agent CLIs are installed in the instance. */
   agentsInstalled(env: Env, instance: string): Promise<AgentId[]>
+  /** Whether the installed agent CLIs are signed in (their own status commands; Claude Code and Codex, always both). */
+  agentAuth(env: Env, instance: string): Promise<AgentAuth[]>
 
   /* Chats kept in the environment: exactly the desktop's `chats_remote_*` scripts and files. */
   chatsList(at: EnvRemote): Promise<RemoteChatEntry[]>
@@ -166,11 +171,67 @@ export interface RemoteBackend {
   gitWorktreeAdd(projectPath: string, branch: string): Promise<GitWorktree>
 
   /**
-   * A linked pull request's or issue's title and state, read with the GitHub CLI inside the
-   * project's environment (`github.ts`). Rejects with a message a person can act on when gh is
-   * missing or signed out there, or the item is not on github.com.
+   * A linked pull request's, merge request's or issue's title and state, read with the GitHub CLI
+   * (`github.ts`) or the GitLab CLI (`gitlabItems.ts`) inside the project's environment. Rejects with
+   * a message a person can act on when the CLI is missing or signed out there, or the item is not on
+   * github.com or a GitLab server glab knows there.
    */
   ghItem(projectPath: string, ref: GhRef): Promise<GhState>
+
+  /*
+   * The pull request screen: the desktop's `gh_item`, `gh_merge`, `gh_job` and `gh_pr_create`, with gh
+   * (github.com) or glab (a GitLab server; merge requests are `kind: 'pr'`) run inside the project's
+   * environment (the phone has neither of its own). Each rejects with a message a person can act on
+   * (the CLI missing or signed out there, no such item, a refused merge).
+   */
+
+  /** One pull request or issue in full: state, branches, checks, reviews, labels, description, merge options. */
+  ghDetail(projectPath: string, ref: GhRef): Promise<GhDetail>
+  /**
+   * The item `reference` names, to link it to a chat: a github.com or GitLab link, `owner/repo#12`,
+   * `group/project!12`, or `#12` / `!12` / `12` in the project's own repository (read from its git remotes
+   * inside the environment; on GitLab a bare number is the merge request, else the issue).
+   */
+  ghResolve(projectPath: string, reference: string): Promise<GhDetail>
+  /**
+   * Merge a pull request on GitHub with `method`, only while its branch still points at `headSha`
+   * (GitHub refuses with 409 otherwise). Nothing in the environment's checkout changes.
+   */
+  ghMerge(projectPath: string, ref: GhRef, method: GhMergeMethod, headSha: string): Promise<void>
+  /**
+   * A GitHub Actions job by its details link (`https://github.com/o/r/actions/runs/<run>/job/<job>`):
+   * its steps, and once it finished, its log split into them (the desktop's `split_log`). Or a GitLab CI
+   * job (`https://host/group/project/-/jobs/<id>`): its log so far, its sections as steps (`split_trace`).
+   */
+  ghJob(projectPath: string, url: string): Promise<GhJob>
+  /**
+   * Open a pull request from the branch checked out in `projectPath` (pushed already) into `base`
+   * (null: the repository's default branch), titled and described from its commits (`gh pr create
+   * --fill`; on GitLab a merge request, `glab mr create --fill --yes`), or find the one already open
+   * for the branch; then read it.
+   */
+  ghPrCreate(projectPath: string, base: string | null): Promise<GhDetail>
+
+  /*
+   * The Releases screen: the desktop's `gh_releases`, `gh_tag_run`, `gh_run` and `gh_run_action`, with gh run
+   * inside the project's environment against the repository its git remotes name (github.com), or glab
+   * against its GitLab project (its pipelines are the runs).
+   */
+
+  /**
+   * The project's repository on github.com or its project on a GitLab server, from its git remotes in
+   * the folder and the servers glab knows there (the desktop's `gh_repo_link`), for the link to it;
+   * null when the folder is no git repository or no remote is on either.
+   */
+  ghRepo(projectPath: string): Promise<GhRepoLink | null>
+  /** The project's GitHub releases, newest first, up to `count`, with the repository's recent workflow runs. */
+  ghReleases(projectPath: string, count: number): Promise<Releases>
+  /** The newest workflow run for a release's tag, with its jobs; null when no workflow ran for it. */
+  ghTagRun(projectPath: string, tag: string): Promise<GhRunDetail | null>
+  /** A workflow run by id, with its jobs. */
+  ghRun(projectPath: string, id: number): Promise<GhRunDetail>
+  /** Re-run a run's failed jobs (`rerun-failed`), the whole run (`rerun`), or cancel it (`cancel`). */
+  ghRunAction(projectPath: string, id: number, action: GhRunAction): Promise<void>
 
   /**
    * A picture an agent's reply points at (`![alt](path)`): a file inside the project's environment,

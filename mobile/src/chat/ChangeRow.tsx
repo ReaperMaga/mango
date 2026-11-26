@@ -1,6 +1,6 @@
 import { Pressable, View } from 'react-native'
 import { ChevronRight } from 'lucide-react-native'
-import { fonts, fontSize, makeStyles, radius, space, touch, useTheme, type Colors } from '@/theme'
+import { makeStyles, space, touch, useTheme, type Colors } from '@/theme'
 import { Text } from '@/ui'
 
 export type ChangeKind = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflicted'
@@ -102,8 +102,8 @@ const useStyles = makeStyles(t => ({
     paddingRight: space[3],
   },
   on: { backgroundColor: t.colors.bgActive },
-  chip: { width: 20, height: 20, borderRadius: radius.xs, alignItems: 'center', justifyContent: 'center' },
-  letter: { fontFamily: fonts.monoSemibold, fontSize: fontSize.monoSm, lineHeight: 14 },
+  chip: { width: 20, height: 20, borderRadius: t.radius.xs, alignItems: 'center', justifyContent: 'center' },
+  letter: { ...t.fonts.monoSemibold, fontSize: t.fontSize.monoSm, lineHeight: 14 },
   names: { flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'baseline', gap: space[2] },
   name: { flexShrink: 0, maxWidth: '70%', color: t.colors.fg },
   deleted: { color: t.colors.fgSubtle, textDecorationLine: 'line-through', textDecorationColor: t.colors.fgFaint },

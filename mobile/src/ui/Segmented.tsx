@@ -1,7 +1,7 @@
 import type { ComponentType } from 'react'
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native'
 import type { LucideProps } from 'lucide-react-native'
-import { makeStyles, radius, space, useTheme } from '@/theme'
+import { makeStyles, space, useTheme } from '@/theme'
 import { Text } from './Text'
 import { haptic } from './haptics'
 
@@ -60,7 +60,7 @@ const useStyles = makeStyles(t => ({
     flexDirection: 'row',
     padding: 2,
     gap: 2,
-    borderRadius: radius.md,
+    borderRadius: t.radius.md,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: t.colors.lineSoft,
@@ -74,7 +74,7 @@ const useStyles = makeStyles(t => ({
     gap: 6,
     minHeight: 32,
     paddingHorizontal: space[3],
-    borderRadius: radius.sm,
+    borderRadius: t.radius.sm,
     borderCurve: 'continuous',
     borderWidth: 1,
     borderColor: 'transparent',

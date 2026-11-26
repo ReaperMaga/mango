@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import type {
   EnvComponent, EnvComponentId, EnvCreateInput, EnvDesktop, EnvHost, EnvInstance, EnvInstanceAction, EnvJoinPreview, EnvLoginTool,
-  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia,
+  EnvDirListing, EnvProbe, EnvResizeInput, EnvShare, EnvShareVia, EnvVersion, EnvVersions,
 } from '~/types/ipc'
 import { call } from '~/composables/useBackend'
+import { formatLocale, t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
+import { useFiles } from '~/stores/files'
 
 /** `${hostId}/${instance}`: the key for per-instance state. */
 export const instanceKey = (hostId: string, instance: string) => `${hostId}/${instance}`
@@ -27,20 +29,30 @@ export const ENV_HOME_DIR = '/home/agent'
 
 /**
  * The one-click components, for choosing them before an instance exists (the create dialog).
- * Once an instance runs, `env_components` is the source of truth for names, versions and requirements.
+ * Once an instance runs, `env_components` is the source of truth for versions and requirements.
  */
-export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; name: string; description: string; requires: EnvComponentId[] }> = [
+export const ENV_COMPONENTS: ReadonlyArray<{ id: EnvComponentId; requires: EnvComponentId[]; versioned?: boolean }> = [
   // Same order and requirements as the backend's recipes (src-tauri/src/envs/recipes.rs).
-  { id: 'base', name: 'Base system', description: 'The agent user, git, curl, build tools and a work folder.', requires: [] },
-  { id: 'node', name: 'Node.js', description: 'The current LTS release, with npm.', requires: ['base'] },
-  { id: 'gh', name: 'GitHub CLI', description: 'Pull requests, issues and git sign-in.', requires: ['base'] },
-  { id: 'claude', name: 'Claude Code', description: "Anthropic's coding agent.", requires: ['base'] },
-  { id: 'codex', name: 'Codex', description: "OpenAI's coding agent.", requires: ['base'] },
-  { id: 'chromium', name: 'Chromium for agents', description: 'A headless Chromium the agents use to open pages and take screenshots.', requires: ['base', 'node'] },
-  { id: 'desktop', name: 'Desktop', description: 'An XFCE desktop you can open from Mango.', requires: ['base'] },
-  { id: 'docker', name: 'Docker', description: 'Docker Engine with Compose, for the agent user. A container gets nesting turned on.', requires: ['base'] },
-  { id: 'tailscale', name: 'Tailscale', description: 'Joins your tailnet, with Tailscale SSH.', requires: ['base'] },
+  { id: 'base', requires: [] },
+  { id: 'node', requires: ['base'], versioned: true },
+  { id: 'java', requires: ['base'], versioned: true },
+  { id: 'gh', requires: ['base'] },
+  { id: 'glab', requires: ['base'] },
+  { id: 'claude', requires: ['base'] },
+  { id: 'codex', requires: ['base'] },
+  { id: 'chromium', requires: ['base', 'node'] },
+  { id: 'desktop', requires: ['base'] },
+  { id: 'docker', requires: ['base'] },
+  { id: 'tailscale', requires: ['base'] },
 ]
+
+/** A component's name, in the interface language. */
+export const envComponentName = (id: EnvComponentId) => t(`envs.components.${id}.name`)
+
+/** What a versioned component installs when no version is picked. */
+export function envDefaultVersion(id: EnvComponentId) {
+  return id === 'node' ? t('envs.versions.node') : id === 'java' ? t('envs.versions.java') : t('envs.common.default')
+}
 
 /**
  * Where Settings > Environments is: a server's page, or one instance on it.
@@ -59,20 +71,20 @@ export type EnvDialog =
  * after creating it, or asked for from elsewhere (the chat's place menu, the clone dialog);
  * for a server (keyed by its id) leading to the Incus setup after adding it.
  */
-export type EnvIntent = 'login-claude' | 'login-gh' | 'open-project' | 'open-desktop' | 'setup-incus'
+export type EnvIntent = 'login-claude' | 'login-gh' | `login-glab:${string}` | 'open-project' | 'open-desktop' | 'setup-incus'
 
 /** How a server is doing, for its row and its page: reachability first, then Incus. */
 export type HostTone = 'ready' | 'setup' | 'bad' | 'checking' | 'unknown'
 export function hostState(probe: EnvProbe | null | undefined, probing: boolean): { tone: HostTone; label: string } {
-  if (probing && !probe) return { tone: 'checking', label: 'Checking…' }
-  if (!probe) return { tone: 'unknown', label: 'Not checked' }
-  if (!probe.reachable) return { tone: 'bad', label: 'Can\'t reach it' }
+  if (probing && !probe) return { tone: 'checking', label: t('envs.state.checking') }
+  if (!probe) return { tone: 'unknown', label: t('envs.state.notChecked') }
+  if (!probe.reachable) return { tone: 'bad', label: t('envs.state.cantReach') }
   switch (probe.incus) {
-    case 'ready': return { tone: 'ready', label: probe.incusVersion ? `Incus ${probe.incusVersion}` : 'Ready' }
-    case 'missing': return { tone: 'setup', label: 'Incus not installed' }
-    case 'uninitialised': return { tone: 'setup', label: 'Incus not set up' }
-    case 'no-access': return { tone: 'setup', label: 'No access to Incus' }
-    default: return { tone: probe.ok ? 'ready' : 'setup', label: probe.ok ? 'Ready' : 'Incus not ready' }
+    case 'ready': return { tone: 'ready', label: probe.incusVersion ? `Incus ${probe.incusVersion}` : t('envs.state.ready') }
+    case 'missing': return { tone: 'setup', label: t('envs.state.incusMissing') }
+    case 'uninitialised': return { tone: 'setup', label: t('envs.state.incusNotSetUp') }
+    case 'no-access': return { tone: 'setup', label: t('envs.state.incusNoAccess') }
+    default: return { tone: probe.ok ? 'ready' : 'setup', label: probe.ok ? t('envs.state.ready') : t('envs.state.incusNotReady') }
   }
 }
 
@@ -89,7 +101,7 @@ export const shareExpired = (expiresAt: number | null | undefined, now = Date.no
 export function shareDay(ms: number, now = Date.now()) {
   const d = new Date(ms)
   const sameYear = d.getFullYear() === new Date(now).getFullYear()
-  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })
+  return d.toLocaleDateString(formatLocale(), { day: 'numeric', month: 'short', ...(sameYear ? {} : { year: 'numeric' }) })
 }
 
 /**
@@ -110,15 +122,15 @@ export function directProblem(host: EnvHost, probe: EnvProbe | null | undefined,
 /** How a joined environment is doing, for its row and its page. */
 export function directState(host: EnvHost, probe: EnvProbe | null | undefined, probing: boolean): { tone: HostTone; label: string } {
   const problem = directProblem(host, probe)
-  if (problem === 'expired') return { tone: 'setup', label: 'Access ended' }
-  if (probing && !probe) return { tone: 'checking', label: 'Checking…' }
-  if (!probe) return { tone: 'unknown', label: 'Not checked' }
+  if (problem === 'expired') return { tone: 'setup', label: t('envs.state.accessEnded') }
+  if (probing && !probe) return { tone: 'checking', label: t('envs.state.checking') }
+  if (!probe) return { tone: 'unknown', label: t('envs.state.notChecked') }
   switch (problem) {
-    case 'host-key': return { tone: 'bad', label: 'Identity changed' }
-    case 'refused': return { tone: 'setup', label: 'Access refused' }
-    case 'unreachable': return { tone: 'bad', label: 'Can\'t reach it' }
+    case 'host-key': return { tone: 'bad', label: t('envs.state.identityChanged') }
+    case 'refused': return { tone: 'setup', label: t('envs.state.accessRefused') }
+    case 'unreachable': return { tone: 'bad', label: t('envs.state.cantReach') }
   }
-  return { tone: 'ready', label: 'Connected' }
+  return { tone: 'ready', label: t('envs.state.connected') }
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -156,6 +168,10 @@ export const useEnvironments = defineStore('environments', {
     errors: {} as Record<string, string | null>,
     /** Per instance (see `instanceKey`). */
     components: {} as Record<string, EnvComponent[]>,
+    /** What Node.js and Java can install, by component id (fetched once per session, on demand). */
+    versions: {} as Partial<Record<EnvComponentId, EnvVersion[]>>,
+    loadingVersions: {} as Partial<Record<EnvComponentId, boolean>>,
+    versionErrors: {} as Partial<Record<EnvComponentId, string | null>>,
     loadingComponents: {} as Record<string, boolean>,
     componentErrors: {} as Record<string, string | null>,
     /** Instances with an action in flight, and which. */
@@ -176,6 +192,8 @@ export const useEnvironments = defineStore('environments', {
     dialog: null as EnvDialog | null,
     /** Per instance (see `instanceKey`) or server (its id): picked up by its page when it shows. */
     intents: {} as Record<string, EnvIntent>,
+    /** The self-managed GitLab servers Mango knows (`gitlab_hosts`), offered for a glab sign-in; null until read. */
+    gitlabHosts: null as string[] | null,
   }),
 
   getters: {
@@ -328,10 +346,13 @@ export const useEnvironments = defineStore('environments', {
       this.busy[key] = 'rename'
       // Its desktop tunnel points at the old name and dies with the stop anyway.
       await this.closeDesktop(hostId, instance)
+      const files = useFiles()
+      const release = await files.holdInstance(hostId, instance, name)
       let note: string | null
       try {
         note = await call('env_rename', { hostId, instance, newName: name })
       } catch (e) {
+        release()
         this.busy[key] = null
         await this.refreshInstances(hostId)
         throw e
@@ -341,8 +362,14 @@ export const useEnvironments = defineStore('environments', {
         if (key in map) { map[to] = map[key]; delete map[key] }
       }
       this.busy[key] = null
-      useWorkspace().moveEnvInstance(hostId, instance, name)
-      useThreads().moveEnvInstance(hostId, instance, name)
+      try {
+        // Before the tabs with nothing unsaved close.
+        files.moveUnsaved(hostId, instance, name)
+        useWorkspace().moveEnvInstance(hostId, instance, name)
+        useThreads().moveEnvInstance(hostId, instance, name)
+      } finally {
+        release()
+      }
       await this.refreshInstances(hostId)
       return note
     },
@@ -372,6 +399,20 @@ export const useEnvironments = defineStore('environments', {
       }
     },
 
+    /** The versions a component can install; fetched once, again with `force` (or after a failure). */
+    async loadVersions(component: EnvComponentId, force = false) {
+      if (this.loadingVersions[component] || (!force && this.versions[component])) return
+      this.loadingVersions[component] = true
+      this.versionErrors[component] = null
+      try {
+        this.versions[component] = await call('env_versions', { component })
+      } catch (e) {
+        this.versionErrors[component] = message(e)
+      } finally {
+        this.loadingVersions[component] = false
+      }
+    },
+
     /* Terminal-based: each returns the pty id to attach a terminal view to. */
     /** Install, initialise or update Incus on the server, in a terminal. Probe again when it exits. */
     setupServer(hostId: string, cols: number, rows: number) {
@@ -380,14 +421,23 @@ export const useEnvironments = defineStore('environments', {
     create(input: EnvCreateInput, cols: number, rows: number) {
       return call('env_create', { input, cols, rows })
     },
-    install(hostId: string, instance: string, components: EnvComponentId[], cols: number, rows: number) {
-      return call('env_install', { hostId, instance, components, cols, rows })
+    install(hostId: string, instance: string, components: EnvComponentId[], cols: number, rows: number, versions?: EnvVersions) {
+      return call('env_install', { hostId, instance, components, ...(versions && Object.keys(versions).length ? { versions } : {}), cols, rows })
     },
     shell(hostId: string, instance: string, cwd: string | null, cols: number, rows: number) {
       return call('env_shell', { hostId, instance, cwd, cols, rows })
     },
-    login(hostId: string, instance: string, tool: EnvLoginTool, cols: number, rows: number) {
-      return call('env_login', { hostId, instance, tool, cols, rows })
+    /** `host`: the GitLab server a glab sign-in is for (gitlab.com when none). */
+    login(hostId: string, instance: string, tool: EnvLoginTool, cols: number, rows: number, host?: string | null) {
+      return call('env_login', { hostId, instance, tool, ...(host ? { host } : {}), cols, rows })
+    },
+    /** Read the GitLab servers again (a glab sign-in menu opening); an unreadable list counts as empty. */
+    async loadGitlabHosts() {
+      try {
+        this.gitlabHosts = await call('gitlab_hosts', {})
+      } catch {
+        this.gitlabHosts ??= []
+      }
     },
 
     /**

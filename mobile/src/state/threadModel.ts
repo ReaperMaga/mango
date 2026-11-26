@@ -1,5 +1,7 @@
 import type { AgentId, Part, Thread } from '~/types/chat'
 import { AGENTS } from '~/types/chat'
+import { normalizeCache, normalizeContext } from '~/agents/context'
+import { savedWorktree } from '~/agents/workdir'
 
 /**
  * Pure helpers about chats, ported 1:1 from the desktop's `app/stores/threads.ts` (where they are
@@ -15,6 +17,26 @@ export const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 
 /** Running, starting or waiting for an approval: its status belongs to the run. */
 export const isBusy = (t: Thread) => t.status === 'running' || t.status === 'queued' || t.status === 'waiting'
+
+/**
+ * A run of this chat that another computer is driving, as the copy it saved says. Loading a chat
+ * turns `running`, `queued` and `waiting` into plain Working (nothing runs *here*), so this is
+ * read from the copy before that. Never saved: the phone only remembers it while it knows.
+ */
+export interface ElsewhereRun {
+  status: 'queued' | 'running' | 'waiting'
+  /** When that computer last saved the chat (ms): a run that stopped saving long ago may be gone. */
+  at: number
+}
+
+/** The run another computer has going in this copy of a chat, if it has one. */
+export function runElsewhere(raw: Pick<Thread, 'status' | 'updatedAt'>): ElsewhereRun | null {
+  if (raw.status !== 'running' && raw.status !== 'queued' && raw.status !== 'waiting') return null
+  return { status: raw.status, at: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0 }
+}
+
+/** A saving run writes at least every 15 s; a long tool call may go quiet, so only this long a silence is called out. */
+export const ELSEWHERE_QUIET_MS = 5 * 60 * 1000
 
 /**
  * List order is the user's: chats placed by hand (on the desktop) keep their place; chats without
@@ -55,12 +77,21 @@ export function normalizeLoaded(t: Thread): Thread {
     }),
   }))
   const links = Array.isArray(t.links)
-    ? t.links.filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+    ? t.links
+      .filter(l => l && typeof l.key === 'string' && typeof l.url === 'string' && typeof l.number === 'number')
+      // No provider (older builds) is GitHub; only GitLab is written out (as the desktop's `normalizeLoaded`).
+      .map(({ provider, ...l }) => (provider === 'gitlab' ? { ...l, provider } : l))
     : []
-  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId ? t.worktree : undefined
+  // Older builds took an agent's `cd` into a folder of its project for a worktree: that chat works in the project.
+  const worktree = typeof t.worktree === 'string' && t.worktree && !t.parentId && typeof t.projectPath === 'string'
+    ? savedWorktree(t.projectPath, t.worktree) ?? undefined
+    : undefined
   // Still waiting for its worktree only while it has none (a top-level chat).
   const awaitingWorktree = t.awaitingWorktree === true && !worktree && !t.parentId ? true as const : undefined
-  return { ...t, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree }
+  const context = normalizeContext(t.context)
+  const cache = normalizeCache(t.cache)
+  const keepContext = t.keepContext === true ? true as const : undefined
+  return { ...t, cache, keepContext, agent, model, mode, effort, messages, status: interrupted ? after : t.status, links: links.length ? links : undefined, worktree, awaitingWorktree, context, history: typeof t.history === 'string' && t.history ? t.history : undefined }
 }
 
 /** The reason in a rejected call or a thrown error, without a trailing period. */

@@ -8,19 +8,24 @@ import { useGit } from '~/stores/git'
 import { useWorkspace } from '~/stores/workspace'
 import { openExternal } from '~/composables/useBackend'
 import { stateOf } from '~/utils/linkState'
+import { useForge } from '~/stores/forge'
+import { itemNumber, providerOf, siteName } from '~/utils/forge'
 
 /**
- * The Pull requests tool window: the pull requests and issues linked to the chat in front of
- * the user. The agent links the ones it opens (`gh pr create`); the user can link others by
+ * The Pull requests tool window (Merge requests for a project on GitLab): the pull requests or merge
+ * requests and issues linked to the chat in front of the user. The agent links the ones it opens
+ * (`gh pr create`, `glab mr create`); the user can link others by
  * hand. With one linked item it opens straight away, with several the list comes first.
+ * With no chat in front it browses the project's open ones: picking one opens it, linked to nothing.
  */
 
+const { t } = useI18n()
 const threads = useThreads()
 const links = useLinks()
 const git = useGit()
 const workspace = useWorkspace()
 
-/** A Unity VCS workspace in view has code reviews, not GitHub pull requests: LinksReviews takes the window. */
+/** A Unity VCS workspace in view has code reviews, not pull requests: LinksReviews takes the window. */
 const reviewsPath = computed(() => {
   const dir = threads.workdir
   if (!dir) return null
@@ -34,11 +39,26 @@ const chat = computed(() => {
   return id && threads.byId(id) ? threads.rootOf(id) : null
 })
 const list = computed<LinkedItem[]>(() => chat.value?.links ?? [])
-const current = computed(() =>
-  list.value.find(l => l.key === links.focused) ?? (list.value.length === 1 ? list.value[0]! : null))
+/** Where items are read from: the chat's project, or with no chat the project in view. */
+const projectPath = computed(() => chat.value?.projectPath ?? workspace.activeProjectPath ?? null)
+/** The project's forge, for the words: GitHub's pull requests or GitLab's merge requests. */
+const forge = useForge()
+watch(projectPath, p => forge.ensure(p), { immediate: true })
+const provider = computed(() => forge.providerOf(projectPath.value))
+/** An item's noun, by its key under `links.noun` and `links.panel.back`. */
+const nounOf = (l: LinkedItem) => (l.kind === 'issue' ? 'issue' : providerOf(l) === 'gitlab' ? 'mergeRequest' : 'pullRequest')
+/** Where the item in front lives, for "Open on …". */
+const site = (l: LinkedItem) => siteName(providerOf(l), l.host)
+/** With no chat in front: the item opened from the project's open ones (linked to nothing). */
+const browsed = ref<LinkedItem | null>(null)
+// Another project: what was opened from the last one does not follow.
+watch(() => workspace.activeProjectPath, () => { browsed.value = null })
+const current = computed(() => (chat.value
+  ? list.value.find(l => l.key === links.focused) ?? (list.value.length === 1 ? list.value[0]! : null)
+  : browsed.value))
 
 watch(() => current.value?.key, () => {
-  if (current.value && chat.value) void links.load(current.value, chat.value.projectPath)
+  if (current.value && projectPath.value) void links.load(current.value, projectPath.value)
 }, { immediate: true })
 // Titles and states of the list come from the last read; read the ones never read.
 watch(list, (items) => {
@@ -56,7 +76,7 @@ const mergeable = computed(() => {
 })
 
 /* ---------- keeping an open pull request current ---------- */
-/** While checks run or GitHub works out mergeability, look often; otherwise now and then. */
+/** While checks run or the forge works out mergeability, look often; otherwise now and then. */
 const POLL_BUSY_MS = 10_000
 const POLL_IDLE_MS = 60_000
 let poller: ReturnType<typeof setTimeout> | undefined
@@ -82,11 +102,15 @@ function schedule() {
 function poll() {
   // Nobody is looking at a hidden window: try again later rather than spend requests.
   if (document.hidden) { schedule(); return }
-  if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true, true)
+  if (current.value && projectPath.value) void links.load(current.value, projectPath.value, true, true)
 }
 watch(() => [current.value?.key, currentDetail.value?.loading, currentDetail.value?.fetchedAt], schedule, { immediate: true })
 onBeforeUnmount(() => clearTimeout(poller))
-function back() { links.focused = null }
+function back() {
+  if (chat.value) links.focused = null
+  else browsed.value = null
+}
+function browse(l: LinkedItem) { browsed.value = l }
 
 /* ---------- a check's log, over its pull request ---------- */
 /** The check whose log is open, while its pull request is the one in front. */
@@ -103,8 +127,8 @@ function closeCheck() { links.closeCheck() }
 // Another item or another chat: the log does not follow.
 watch(() => current.value?.key, (key) => { if (links.check && links.check.linkKey !== key) links.closeCheck() })
 const jobRefreshing = computed(() => !!(job.value?.loading && job.value.job))
-function refreshJob() { if (check.value) void links.loadJob(check.value.url) }
-function refresh() { if (current.value && chat.value) void links.load(current.value, chat.value.projectPath, true) }
+function refreshJob() { if (check.value) void links.loadJob(check.value.url, projectPath.value) }
+function refresh() { if (current.value && projectPath.value) void links.load(current.value, projectPath.value, true) }
 function unlink(l: LinkedItem) {
   if (!chat.value) return
   threads.unlink(chat.value.id, l.key)
@@ -112,105 +136,76 @@ function unlink(l: LinkedItem) {
 }
 
 /* ---------- linking by hand ---------- */
+/** The link form under the header, for a chat that has links already (an empty chat shows the picker itself). */
 const adding = ref(false)
-const reference = ref('')
-const addError = ref<string | null>(null)
-const addBusy = ref(false)
-const input = ref<HTMLInputElement | null>(null)
 
-async function startAdd() {
-  adding.value = !adding.value
-  addError.value = null
-  if (adding.value) { await nextTick(); input.value?.focus() }
-}
-function cancelAdd() {
-  adding.value = false
-  reference.value = ''
-  addError.value = null
-}
-async function submitAdd() {
-  if (!chat.value || !reference.value.trim() || addBusy.value) return
-  addBusy.value = true
-  addError.value = null
-  try {
-    await links.linkByReference(chat.value.id, reference.value)
-    cancelAdd()
-  } catch (e) {
-    addError.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    addBusy.value = false
-  }
-}
-// Another chat, another list: a half-typed link does not follow.
+function startAdd() { adding.value = !adding.value }
+function cancelAdd() { adding.value = false }
+// Another chat, another list: an open link form does not follow.
 watch(() => chat.value?.id, cancelAdd)
+const linkedKeys = computed(() => list.value.map(l => l.key))
 </script>
 
 <template>
   <!-- Shown in the tool window on the right (see AppToolPanel), which owns width and resizing. -->
   <LinksReviews v-if="reviewsPath" :path="reviewsPath" />
-  <section v-else class="lp" aria-label="Pull requests and issues" @keydown.esc="check && closeCheck()">
+  <section v-else class="lp" :aria-label="t(`links.panel.label.${provider}`)" @keydown.esc="check && closeCheck()">
     <header class="lp__head">
       <button
         v-if="check && current"
         ref="backButton"
         type="button"
         class="lp__back"
-        :aria-label="`Back to pull request #${current.number}`"
-        :title="`Back to pull request #${current.number} (Esc)`"
+        :aria-label="t(`links.panel.back.${nounOf(current)}`, { number: itemNumber(current) })"
+        :title="`${t(`links.panel.back.${nounOf(current)}`, { number: itemNumber(current) })} (Esc)`"
         @click="closeCheck"
       >
         <ArrowLeft aria-hidden="true" />
-        <span class="lp__back-num tabular">#{{ current.number }}</span>
-        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? 'Pull request' }}</span>
+        <span class="lp__back-num tabular">{{ itemNumber(current) }}</span>
+        <span class="lp__back-title">{{ currentDetail?.item?.title ?? current.title ?? t(`links.noun.${nounOf(current)}`) }}</span>
       </button>
       <template v-else>
-        <UiIconButton v-if="current && list.length > 1" label="All linked items" size="sm" @click="back"><ArrowLeft /></UiIconButton>
-        <h2 class="lp__title" :title="chat ? `Linked to “${chat.title}”` : undefined">Pull requests</h2>
+        <UiIconButton v-if="current && list.length > 1" :label="t('links.panel.allLinked')" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <UiIconButton v-else-if="current && !chat" :label="t(`links.panel.allOpen.${provider}`)" size="sm" @click="back"><ArrowLeft /></UiIconButton>
+        <h2 class="lp__title" :title="chat ? t('links.panel.linkedTo', { title: chat.title }) : undefined">{{ t(`links.panel.title.${provider}`) }}</h2>
       </template>
-      <div v-if="chat && !check" class="lp__tools">
-        <UiIconButton label="Link a pull request or issue" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
+      <div v-if="chat && list.length && !check" class="lp__tools">
+        <UiIconButton :label="t(`links.panel.link.${provider}`)" :active="adding" @click="startAdd"><Link2 /></UiIconButton>
       </div>
     </header>
 
-    <form v-if="adding && chat" class="lp__add" @submit.prevent="submitAdd">
-      <label class="lp__label" for="lp-add-ref">Pull request or issue</label>
-      <div class="lp__add-row">
-        <input
-          id="lp-add-ref"
-          ref="input"
-          v-model="reference"
-          class="lp__input"
-          :class="{ 'is-invalid': addError }"
-          placeholder="Link, owner/repo#12 or #12"
-          :aria-invalid="!!addError || undefined"
-          :aria-describedby="addError ? 'lp-add-error' : 'lp-add-hint'"
-          spellcheck="false"
-          autocomplete="off"
-          @keydown.esc.prevent="cancelAdd"
-        >
-        <UiButton type="submit" variant="primary" :loading="addBusy" :disabled="!reference.trim() || undefined">Link</UiButton>
-      </div>
-      <p v-if="addError" id="lp-add-error" class="lp__add-error selectable" role="alert">{{ addError }}</p>
-      <p v-else id="lp-add-hint" class="lp__add-hint">A number is looked up in this project's GitHub repository.</p>
-    </form>
-
-    <div v-if="!chat" class="lp__quiet">
-      <p>Open a chat to see the pull requests and issues linked to it.</p>
+    <div v-if="adding && chat && list.length" class="lp__add">
+      <LinksPicker
+        :key="chat.id"
+        :chat-id="chat.id"
+        :project-path="chat.projectPath"
+        :linked="linkedKeys"
+        autofocus
+        @linked="cancelAdd"
+        @cancel="cancelAdd"
+      />
     </div>
 
-    <div v-else-if="!list.length" class="lp__quiet">
-      <p class="lp__quiet-title">Nothing linked to this chat</p>
-      <p>When the agent opens a pull request or an issue in this chat, it shows up here with its description and pictures. Ask it to “open a pull request” when the work is done.</p>
-      <UiButton v-if="!adding" size="sm" @click="startAdd"><Link2 aria-hidden="true" />Link one by hand</UiButton>
+    <div v-if="!projectPath" class="lp__quiet">
+      <p>{{ t('links.panel.noProject') }}</p>
     </div>
+
+    <LinksPicker
+      v-else-if="!current && !list.length"
+      :key="chat?.id ?? projectPath"
+      :chat-id="chat?.id"
+      :project-path="projectPath"
+      fill
+      @pick="browse"
+    />
 
     <template v-else-if="current && check">
       <div class="lp__scroll">
-        <LinksCheckLog :key="check.url" :check="check" />
+        <LinksCheckLog :key="check.url" :check="check" :project-path="projectPath" />
       </div>
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />Refresh</UiButton>
+        <UiButton size="sm" @click="openExternal(job?.job?.url || check.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site: site(current) }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="jobRefreshing" @click="refreshJob"><RefreshCw v-if="!jobRefreshing" aria-hidden="true" />{{ t('common.actions.refresh') }}</UiButton>
       </footer>
     </template>
 
@@ -218,28 +213,28 @@ watch(() => chat.value?.id, cancelAdd)
       <div class="lp__scroll">
         <LinksItem :key="current.key" :link="current" :detail="currentDetail" @open-check="openCheck" />
       </div>
-      <LinksMerge v-if="mergeable && chat" :key="current.key" :link="current" :item="mergeable" :project-path="chat.projectPath" />
+      <LinksMerge v-if="mergeable && projectPath" :key="current.key" :link="current" :item="mergeable" :project-path="projectPath" />
       <footer class="lp__foot">
-        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />Open on GitHub</UiButton>
-        <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />Refresh</UiButton>
-        <UiButton size="sm" variant="ghost" class="lp__unlink" title="Remove it from this chat; nothing changes on GitHub" @click="unlink(current)"><Unlink aria-hidden="true" />Unlink</UiButton>
+        <UiButton size="sm" @click="openExternal(currentDetail?.item?.url ?? current.url)"><ExternalLink aria-hidden="true" />{{ t('links.openOn', { site: site(current) }) }}</UiButton>
+        <UiButton size="sm" variant="ghost" :loading="refreshing" @click="refresh"><RefreshCw v-if="!refreshing" aria-hidden="true" />{{ t('common.actions.refresh') }}</UiButton>
+        <UiButton v-if="chat" size="sm" variant="ghost" class="lp__unlink" :title="t('links.panel.unlinkHint', { site: site(current) })" @click="unlink(current)"><Unlink aria-hidden="true" />{{ t('links.panel.unlink') }}</UiButton>
       </footer>
     </template>
 
-    <ul v-else class="lp__scroll lp__list" aria-label="Linked to this chat">
+    <ul v-else class="lp__scroll lp__list" :aria-label="t('links.panel.linked')">
       <li v-for="l in list" :key="l.key" class="lp__row">
         <button type="button" class="lp__open" :title="l.url" @click="open(l)">
-          <component :is="stateOf(l.kind, l.state).icon" class="lp__icon" :class="`is-${stateOf(l.kind, l.state).tone}`" aria-hidden="true" />
+          <component :is="stateOf(l.kind, l.state, null, l.provider).icon" class="lp__icon" :class="`is-${stateOf(l.kind, l.state, null, l.provider).tone}`" aria-hidden="true" />
           <span class="lp__text">
-            <span class="lp__name">{{ l.title ?? `${l.owner}/${l.repo} #${l.number}` }}</span>
+            <span class="lp__name">{{ l.title ?? `${l.owner}/${l.repo} ${itemNumber(l)}` }}</span>
             <span class="lp__sub">
-              <span :class="`is-${stateOf(l.kind, l.state).tone}`">{{ stateOf(l.kind, l.state).word }}</span>
-              <span class="tabular">#{{ l.number }}</span>
+              <span :class="`is-${stateOf(l.kind, l.state, null, l.provider).tone}`">{{ stateOf(l.kind, l.state, null, l.provider).word }}</span>
+              <span class="tabular">{{ itemNumber(l) }}</span>
               <span class="lp__repo">{{ l.owner }}/{{ l.repo }}</span>
             </span>
           </span>
         </button>
-        <UiIconButton class="lp__remove" size="sm" :label="`Unlink #${l.number}`" @click="unlink(l)"><X /></UiIconButton>
+        <UiIconButton class="lp__remove" size="sm" :label="t('links.panel.unlinkItem', { number: itemNumber(l) })" @click="unlink(l)"><X /></UiIconButton>
       </li>
     </ul>
   </section>
@@ -291,28 +286,7 @@ watch(() => chat.value?.id, cancelAdd)
 .lp__back-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .lp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
-.lp__add { flex: none; display: grid; gap: 6px; padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--line-soft); }
-.lp__label { font-size: var(--text-xs); font-weight: 560; color: var(--fg-muted); }
-.lp__add-row { display: flex; align-items: center; gap: var(--space-2); }
-.lp__input {
-  flex: 1;
-  min-width: 0;
-  height: 32px;
-  padding: 0 var(--space-3);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--bg-inset);
-  font-size: var(--text-sm);
-  color: var(--fg);
-  caret-color: var(--accent);
-  outline: none;
-  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
-}
-.lp__input::placeholder { color: var(--fg-faint); }
-.lp__input:focus { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
-.lp__input.is-invalid { border-color: color-mix(in oklch, var(--ripe-error) 60%, transparent); }
-.lp__add-hint, .lp__add-error { margin: 0; font-size: var(--text-xs); color: var(--fg-faint); overflow-wrap: anywhere; }
-.lp__add-error { color: var(--ripe-error-fg); }
+.lp__add { flex: none; border-top: 1px solid var(--line-soft); }
 
 .lp__quiet {
   display: grid;
@@ -324,8 +298,6 @@ watch(() => chat.value?.id, cancelAdd)
   color: var(--fg-subtle);
 }
 .lp__quiet p { margin: 0; max-width: 46ch; }
-.lp__quiet-title { color: var(--fg); font-weight: 600; }
-.lp__quiet :deep(svg) { width: 14px; height: 14px; stroke-width: 1.85; }
 
 .lp__foot {
   flex: none;

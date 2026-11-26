@@ -1,7 +1,20 @@
 import type { AgentId, Thread } from '~/types/chat'
 import type { SpawnFn } from '~/agents/types'
-import { MOCK_GITHUB, mockChats } from './mockChats'
-import { ghFailure, ghItemArgv } from './github'
+import type { AgentAuth } from './auth'
+import { mockChats } from './mockChats'
+import {
+  ghDetailArgv, ghFailure, ghItemArgv, ghMergeArgv, ghPrCreateArgv, parseJobUrl, parseReference, targetOf, targetOfRef,
+} from './github'
+import { createMockGithub, mockRepoOf, stateOf } from './mockGithub'
+import { MOCK_GITLAB, createMockGitlab } from './mockGitlab'
+import { NO_FORGE } from './gitlab'
+import { glMergeArgv, glTargetOfRef, isGlJobUrl, parseGlJobUrl, route } from './gitlabItems'
+import { runActionArgv as glRunActionArgv } from './gitlabReleases'
+import { providerOf } from '~/utils/forge'
+import type { GhRepoLink } from '~/types/ipc'
+import { mockGhJob } from '~/composables/mockGithub'
+import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
+import { NO_GITHUB, checkRunId, checkTag, runActionArgv, type Release } from './releases'
 import { envPath } from '~/utils/envPath'
 import { simulatedSpawn } from '@/agents/simulated'
 import { toShared } from './chatSyncCore'
@@ -164,6 +177,19 @@ index 0000000..e69de29
 `,
 }
 
+/** A release's notes, as Markdown (the phone reads the source, not GitHub's HTML). */
+const mockNotes = (tag: string) => `Installers for Windows, macOS and Linux are attached below. [Install notes](https://mango.dev/guide/install)
+
+## What's Changed
+
+- feat(links): pick an open pull request or issue to link in #77
+- feat(mobile): pull requests on the phone, as on the desktop in #75
+- fix(git): keep the branch popup inside the window in #76
+
+**Full Changelog**: \`v0.1.27...${tag}\`
+
+_Simulated: the preview cannot ask GitHub. In the app this is read with the GitHub CLI inside the environment._`
+
 /* ---------- the backend ---------- */
 
 export function createMockBackend(): RemoteBackend {
@@ -173,6 +199,10 @@ export function createMockBackend(): RemoteBackend {
   const worktrees = new Map<string, { dir: string; branch: string }[]>()
   /** Chats "in the environment", per `<hostId>/<instance>`: revision and shared JSON, or a tombstone. */
   const kept = new Map<string, Map<string, { rev: number; json: string } | { rev: null }>>()
+  /** Its GitHub: a merge or a new pull request stays for this backend's life. */
+  const github = createMockGithub()
+  /** Its GitLab, for the one project on gitlab.com (`scratch`): the same. */
+  const gitlab = createMockGitlab()
 
   const envOf = (hostId: string) => {
     const env = lookup(hostId)
@@ -224,6 +254,19 @@ export function createMockBackend(): RemoteBackend {
       repos.set(key, repo)
     }
     return repo
+  }
+
+  /** The `scratch` project lives on gitlab.com (in a nested group), every other one on github.com/acme. */
+  function onGitlab(projectPath: string): boolean {
+    try { return mainOf(projectPath).dir.split('/').pop() === MOCK_GITLAB.repo } catch { return false }
+  }
+
+  /** What the real backend reads from a project's remotes. */
+  function forgeOfMock(projectPath: string): GhRepoLink | null {
+    if (!repoOf(projectPath)) return null
+    if (onGitlab(projectPath)) return { ...MOCK_GITLAB }
+    const r = mockRepoOf(mainOf(projectPath).dir.split('/').pop() ?? parseProjectPath(projectPath).dir)
+    return { provider: 'github', host: 'github.com', ...r }
   }
 
   /** The main working tree of the repository `projectPath` is in (a worktree's too); throws outside one. */
@@ -296,6 +339,16 @@ export function createMockBackend(): RemoteBackend {
       await wait(60, 160)
       running(env, instance)
       return ['claude', 'codex']
+    },
+
+    async agentAuth(env, instance): Promise<AgentAuth[]> {
+      await wait(200, 500)
+      running(env, instance)
+      const blank = { installed: true, loggedIn: false, account: null, plan: null, organization: null, method: null, detail: null }
+      return [
+        { ...blank, agent: 'claude', loggedIn: true, account: 'you@example.com', plan: 'max', method: 'claude.ai' },
+        { ...blank, agent: 'codex', detail: 'Not logged in' },
+      ]
     },
 
     async chatsList(at): Promise<RemoteChatEntry[]> {
@@ -413,12 +466,148 @@ export function createMockBackend(): RemoteBackend {
     },
 
     async ghItem(projectPath, ref) {
-      ghItemArgv(ref) // the same validation as the real one
       const { instance } = parseProjectPath(projectPath)
+      if (providerOf(ref) === 'gitlab') {
+        const t = glTargetOfRef(ref)
+        await wait(300, 700)
+        return gitlab.state(t, instance)
+      }
+      ghItemArgv(ref) // the same validation as the real one
       await wait(300, 700)
-      const found = MOCK_GITHUB[`github.com/${ref.owner}/${ref.repo}#${ref.number}`.toLowerCase()]
-      if (!found) throw new Error(ghFailure(instance, ref, 4, 'To get started with GitHub CLI, please run:  gh auth login'))
-      return { ...found }
+      // What the pull request screen changed (a merge, a new one) shows in the list too.
+      try {
+        return stateOf(github.detail(targetOfRef(ref), instance))
+      } catch {
+        throw new Error(ghFailure(instance, ref, 4, 'To get started with GitHub CLI, please run:  gh auth login'))
+      }
+    },
+
+    async ghDetail(projectPath, ref) {
+      const { instance } = parseProjectPath(projectPath)
+      if (providerOf(ref) === 'gitlab') {
+        const t = glTargetOfRef(ref)
+        await wait(300, 800)
+        return gitlab.detail(t, instance)
+      }
+      const t = targetOfRef(ref)
+      ghDetailArgv(t) // the same validation as the real one
+      await wait(300, 800)
+      return github.detail(t, instance)
+    },
+
+    async ghResolve(projectPath, reference) {
+      const { instance, dir } = parseProjectPath(projectPath)
+      const project = forgeOfMock(projectPath)
+      const where = route(reference, [], project, instance)
+      await wait(300, 800)
+      if (where.to === 'gitlab') return gitlab.detail(where.target, instance)
+      const parsed = parseReference(reference)
+      let repo = { owner: '', repo: '' }
+      if (parsed.kind === 'number') {
+        // The real one reads the project's git remotes: every other mock project is on github.com/acme.
+        if (!repoOf(projectPath)) throw new Error(`${NO_FORGE} (The project folder is not a git repository.)`)
+        repo = mockRepoOf(mainOf(projectPath).dir.split('/').pop() ?? dir)
+      }
+      const t = targetOf(parsed, repo)
+      ghDetailArgv(t)
+      return github.detail(t, instance)
+    },
+
+    async ghRepo(projectPath) {
+      await wait(100, 300)
+      return forgeOfMock(projectPath)
+    },
+
+    async ghMerge(projectPath, ref, method, headSha) {
+      const { instance } = parseProjectPath(projectPath)
+      if (providerOf(ref) === 'gitlab') {
+        const t = glTargetOfRef(ref)
+        if (ref.kind !== 'pr') throw new Error('Only merge requests can be merged; that is an issue.')
+        glMergeArgv(t, method, headSha) // the same validation as the real one
+        await wait(700, 1400)
+        gitlab.merge(t, method, headSha, instance)
+        return
+      }
+      const t = targetOfRef(ref)
+      if (ref.kind !== 'pr') throw new Error('Only a pull request can be merged.')
+      ghMergeArgv(t, method, headSha) // the same validation as the real one
+      await wait(700, 1400)
+      github.merge(t, method, headSha, instance)
+    },
+
+    async ghJob(projectPath, url) {
+      parseProjectPath(projectPath)
+      if (isGlJobUrl(url)) {
+        parseGlJobUrl(url)
+        await wait(400, 900)
+        return gitlab.job(url)
+      }
+      parseJobUrl(url)
+      await wait(400, 900)
+      try {
+        return github.job(url)
+      } catch (e) {
+        // The release builds' jobs come from the desktop preview's story, which registered them.
+        try { return mockGhJob(url) } catch { throw e }
+      }
+    },
+
+    // The desktop preview's releases story (`~/composables/mockReleases`), the same for every GitHub repository.
+    async ghReleases(projectPath, count) {
+      await wait(400, 900)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      if (onGitlab(projectPath)) return gitlab.releases(count)
+      const data = mockGhReleases(mainOf(projectPath).dir, count)
+      const releases = data.releases.map((r): Release => ({ ...r, bodyHtml: '', body: r.bodyHtml ? mockNotes(r.tag) : '' }))
+      return { ...data, provider: 'github', releases }
+    },
+
+    async ghTagRun(projectPath, tag) {
+      checkTag(tag)
+      await wait(300, 700)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      if (onGitlab(projectPath)) return gitlab.run({ tag })
+      return mockGhTagRun(mainOf(projectPath).dir, tag)
+    },
+
+    async ghRun(projectPath, id) {
+      checkRunId(id)
+      await wait(300, 700)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      if (onGitlab(projectPath)) {
+        const d = gitlab.run({ id })
+        if (!d) throw new Error(`There is no run ${id}.`)
+        return d
+      }
+      return mockGhRun(mainOf(projectPath).dir, id)
+    },
+
+    async ghRunAction(projectPath, id, action) {
+      if (onGitlab(projectPath)) {
+        glRunActionArgv(MOCK_GITLAB, id, action, 'main') // the same validation as the real one
+        await wait(500, 1000)
+        gitlab.runAction(id, action)
+        return
+      }
+      runActionArgv({ owner: 'acme', repo: 'app' }, id, action) // the same validation as the real one
+      await wait(500, 1000)
+      if (!repoOf(projectPath)) throw new Error(NO_GITHUB)
+      mockGhRunAction(mainOf(projectPath).dir, id, action)
+    },
+
+    async ghPrCreate(projectPath, base) {
+      ghPrCreateArgv(base) // the same validation as the real one
+      await wait(900, 1600)
+      const repo = repoOf(projectPath)
+      const { instance } = parseProjectPath(projectPath)
+      const gl = onGitlab(projectPath)
+      const noun = gl ? 'merge request' : 'pull request'
+      if (!repo) throw new Error(`The project folder in ${instance} is not a git repository.`)
+      if (!repo.branch) throw new Error(`HEAD is detached, so there is no branch to open a ${noun} from. Switch to a branch first.`)
+      if (!repo.upstream) throw new Error(`${repo.branch} is not on ${gl ? 'GitLab' : 'GitHub'} yet. Push it first, then open the ${noun}.`)
+      if (gl) return gitlab.mrCreate(repo.branch, base === null ? null : base.trim())
+      const name = mainOf(projectPath).dir.split('/').pop() ?? 'project'
+      return github.prCreate(mockRepoOf(name), repo.branch, base === null ? null : base.trim(), instance)
     },
 
     spawnFor(agent, projectPath): SpawnFn {

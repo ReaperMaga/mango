@@ -12,6 +12,7 @@ import EnvTerminal from './EnvTerminal.vue'
  */
 const props = defineProps<{ hostId: string }>()
 
+const { t } = useI18n()
 const envs = useEnvironments()
 const host = computed(() => envs.host(props.hostId))
 const probe = computed(() => envs.probes[props.hostId] ?? null)
@@ -63,11 +64,9 @@ const needsSetup = computed(() => !!mode.value && mode.value !== 'update')
 /** The SSH login that gets access, when the destination names one (an ssh_config alias doesn't). */
 const user = computed(() => (host.value ? sshUser(host.value.ssh) : null))
 
-const COPY: Record<SetupMode, { action: string; running: string; done: string; failed: string }> = {
-  install: { action: 'Install Incus', running: 'Installing Incus…', done: 'Incus is installed', failed: 'Installing Incus didn\'t finish' },
-  init: { action: 'Set up Incus', running: 'Setting up Incus…', done: 'Incus is set up', failed: 'Setting up Incus didn\'t finish' },
-  access: { action: 'Set up Incus', running: 'Setting up Incus…', done: 'Incus is set up', failed: 'Setting up Incus didn\'t finish' },
-  update: { action: 'Update Incus', running: 'Updating Incus…', done: 'Incus is up to date', failed: 'Updating Incus didn\'t finish' },
+/** What the setup and its terminal say; giving access reads like setting up. */
+function copy(m: SetupMode, what: 'action' | 'running' | 'done' | 'failed') {
+  return t(`envs.server.setup.${m === 'access' ? 'init' : m}.${what}`)
 }
 
 interface Job { id: number; mode: SetupMode }
@@ -131,11 +130,11 @@ const sshCommand = computed(() => {
 const addresses = (i: EnvInstance) => [i.tailscaleIp, ...i.ipv4].filter(Boolean).join(', ')
 const size = (i: EnvInstance) => {
   const parts = []
-  if (i.cpus) parts.push(`${i.cpus} CPU${i.cpus === 1 ? '' : 's'}`)
+  if (i.cpus) parts.push(t('envs.server.cpuCount', i.cpus))
   if (i.memory) parts.push(i.memory.replace(/([0-9])([A-Za-z])/, '$1 $2'))
   return parts.join(' · ')
 }
-const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
+const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? t('envs.common.vmShort') : t('envs.common.container'))
 </script>
 
 <template>
@@ -144,24 +143,24 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
       <div class="sp__title-row">
         <h2 class="sp__title" data-page-title tabindex="-1">{{ host.name }}</h2>
         <span class="sp__actions">
-          <UiIconButton label="Check again" :disabled="probing || loading" @click="refresh">
+          <UiIconButton :label="t('envs.common.checkAgain')" :disabled="probing || loading" @click="refresh">
             <RefreshCw :class="{ 'is-turning': probing || loading }" />
           </UiIconButton>
-          <UiButton variant="ghost" size="sm" @click="envs.dialog = { kind: 'host', id: host.id }"><Pencil />Edit</UiButton>
-          <UiButton v-if="!confirming" variant="ghost" size="sm" @click="confirming = true">Remove</UiButton>
+          <UiButton variant="ghost" size="sm" @click="envs.dialog = { kind: 'host', id: host.id }"><Pencil />{{ t('common.actions.edit') }}</UiButton>
+          <UiButton v-if="!confirming" variant="ghost" size="sm" @click="confirming = true">{{ t('envs.server.remove') }}</UiButton>
         </span>
       </div>
       <p class="sp__meta">
         <span class="sp__mono selectable" :title="sshLine">{{ sshLine }}</span>
-        <template v-if="host.incusRemote"><span aria-hidden="true">·</span><span>remote <span class="sp__mono">{{ host.incusRemote }}</span></span></template>
-        <template v-if="host.identityFile"><span aria-hidden="true">·</span><span class="sp__clip" :title="host.identityFile">key <span class="sp__mono">{{ host.identityFile }}</span></span></template>
+        <template v-if="host.incusRemote"><span aria-hidden="true">·</span><i18n-t keypath="envs.server.remote" tag="span" scope="global"><template #name><span class="sp__mono">{{ host.incusRemote }}</span></template></i18n-t></template>
+        <template v-if="host.identityFile"><span aria-hidden="true">·</span><i18n-t keypath="envs.server.key" tag="span" scope="global" class="sp__clip" :title="host.identityFile"><template #path><span class="sp__mono">{{ host.identityFile }}</span></template></i18n-t></template>
       </p>
 
-      <div v-if="confirming" class="sp__confirm" role="group" aria-label="Confirm removing the server">
-        <span>Remove {{ host.name }} from Mango? Its environments keep running on the server.</span>
+      <div v-if="confirming" class="sp__confirm" role="group" :aria-label="t('envs.server.confirmLabel')">
+        <span>{{ t('envs.server.confirm', { name: host.name }) }}</span>
         <span class="sp__confirm-actions">
-          <UiButton variant="ghost" size="sm" :disabled="removing" @click="confirming = false">Cancel</UiButton>
-          <UiButton variant="danger" size="sm" :loading="removing" data-autofocus @click="remove">Remove server</UiButton>
+          <UiButton variant="ghost" size="sm" :disabled="removing" @click="confirming = false">{{ t('common.actions.cancel') }}</UiButton>
+          <UiButton variant="danger" size="sm" :loading="removing" data-autofocus @click="remove">{{ t('envs.server.removeServer') }}</UiButton>
         </span>
       </div>
       <p v-if="removeError" class="sp__error" role="alert">{{ removeError }}.</p>
@@ -172,18 +171,18 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
       <span class="sp__state-main" role="status">
         <template v-if="state.tone === 'checking'">
           <span class="ring" aria-hidden="true" />
-          <span class="sp__word">Connecting…</span>
+          <span class="sp__word">{{ t('envs.server.connecting') }}</span>
         </template>
         <template v-else-if="state.tone === 'unknown'">
-          <span class="sp__word">Not checked yet</span>
+          <span class="sp__word">{{ t('envs.server.notChecked') }}</span>
         </template>
         <template v-else-if="!reachable">
           <TriangleAlert class="sp__icon sp__icon--bad" aria-hidden="true" />
-          <span class="sp__word sp__word--bad">Can't reach it</span>
+          <span class="sp__word sp__word--bad">{{ t('envs.state.cantReach') }}</span>
         </template>
         <template v-else>
           <CircleCheck class="sp__icon sp__icon--ok" aria-hidden="true" />
-          <span class="sp__word sp__word--ok">Reachable</span>
+          <span class="sp__word sp__word--ok">{{ t('envs.server.reachable') }}</span>
           <template v-if="probe?.os"><span class="sp__dot" aria-hidden="true">·</span><span class="sp__more">{{ probe.os }}</span></template>
           <span class="sp__dot" aria-hidden="true">·</span>
           <span class="sp__more" :class="{ 'sp__more--setup': needsSetup }">{{ state.label }}</span>
@@ -194,82 +193,94 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
         variant="ghost"
         size="sm"
         :disabled="jobRunning"
-        :title="jobRunning ? 'Running below' : 'Upgrade the Incus packages on the server'"
+        :title="jobRunning ? t('envs.server.runningBelow') : t('envs.server.updateTitle')"
         @click="setup"
       >
-        Update Incus
+        {{ copy('update', 'action') }}
       </UiButton>
     </div>
 
     <dl class="sp__facts">
       <div class="sp__fact">
         <dt>Tailscale</dt>
-        <dd v-if="host.tailscale">
-          Joins as <span class="sp__mono">{{ host.tailscale.tags.join(' ') || 'untagged' }}</span>,
-          <template v-if="host.tailscale.authKeyFile">auth key from <span class="sp__mono selectable">{{ host.tailscale.authKeyFile }}</span> on the server</template>
-          <template v-else>signed in with a link</template>
-        </dd>
-        <dd v-else class="sp__off">Off</dd>
+        <i18n-t v-if="host.tailscale?.authKeyFile" keypath="envs.server.joinsKey" tag="dd" scope="global">
+          <template #tags><span class="sp__mono">{{ host.tailscale.tags.join(' ') || t('envs.server.untagged') }}</span></template>
+          <template #file><span class="sp__mono selectable">{{ host.tailscale.authKeyFile }}</span></template>
+        </i18n-t>
+        <i18n-t v-else-if="host.tailscale" keypath="envs.server.joinsLink" tag="dd" scope="global">
+          <template #tags><span class="sp__mono">{{ host.tailscale.tags.join(' ') || t('envs.server.untagged') }}</span></template>
+        </i18n-t>
+        <dd v-else class="sp__off">{{ t('envs.server.off') }}</dd>
       </div>
       <div class="sp__fact">
-        <dt>Public address</dt>
-        <dd v-if="host.publicAddress"><span class="sp__mono selectable">{{ host.publicAddress }}</span>, for share links over the internet</dd>
-        <dd v-else class="sp__off">The SSH host, for share links over the internet</dd>
+        <dt>{{ t('envs.common.publicAddress') }}</dt>
+        <i18n-t v-if="host.publicAddress" keypath="envs.server.publicFor" tag="dd" scope="global">
+          <template #address><span class="sp__mono selectable">{{ host.publicAddress }}</span></template>
+        </i18n-t>
+        <dd v-else class="sp__off">{{ t('envs.server.publicDefault') }}</dd>
       </div>
     </dl>
     <div v-if="probe && !probe.reachable" class="sp__problem">
-      <p class="sp__problem-text selectable">{{ probe.error ?? 'The server did not answer.' }}</p>
-      <p class="sp__problem-help">
-        Check that <code class="selectable">{{ sshCommand }}</code> works in a terminal without asking for anything, then
-        check again.
-      </p>
-      <UiButton size="sm" :loading="probing" @click="refresh">Check again</UiButton>
+      <p class="sp__problem-text selectable">{{ probe.error ?? t('envs.common.noAnswer') }}</p>
+      <i18n-t keypath="envs.server.checkSsh" tag="p" class="sp__problem-help" scope="global">
+        <template #command><code class="selectable">{{ sshCommand }}</code></template>
+      </i18n-t>
+      <UiButton size="sm" :loading="probing" @click="refresh">{{ t('envs.common.checkAgain') }}</UiButton>
     </div>
 
     <!-- Incus needs work: what Mango will do, and the one action -->
     <section v-if="needsSetup && probe" class="setup" aria-labelledby="sp-setup">
       <template v-if="probe.canSetup">
         <h3 id="sp-setup" class="setup__title">
-          {{ mode === 'install' ? 'Install Incus' : mode === 'init' ? 'Set up Incus' : 'Give your SSH user access to Incus' }}
+          {{ mode === 'install' ? t('envs.server.titleInstall') : mode === 'init' ? t('envs.server.titleInit') : t('envs.server.titleAccess') }}
         </h3>
         <p class="setup__text">
           <template v-if="mode === 'install'">
-            Incus runs the containers and VMs. It isn't on this server yet; Mango can install it over SSH:
+            {{ t('envs.server.textInstall') }}
           </template>
           <template v-else-if="mode === 'init'">
-            Incus is installed but has no storage pool or network yet, so it can't run containers or VMs. Mango can set it up:
+            {{ t('envs.server.textInit') }}
           </template>
-          <template v-else>
-            Incus is installed, but <template v-if="user">the SSH user <code>{{ user }}</code></template><template v-else>your SSH user</template>
-            may not use it. Mango can fix that:
-          </template>
+          <i18n-t v-else-if="user" keypath="envs.server.textAccessUser" scope="global">
+            <template #user><code>{{ user }}</code></template>
+          </i18n-t>
+          <template v-else>{{ t('envs.server.textAccess') }}</template>
         </p>
         <ul class="setup__steps">
-          <li v-if="mode === 'install'">Installs Incus from its packages.</li>
-          <li v-if="mode !== 'access'">Creates a storage pool and a network for the instances.</li>
-          <li>
-            Adds <template v-if="user">the SSH user <code>{{ user }}</code></template><template v-else>your SSH user</template>
-            to the <code>incus-admin</code> group.
-          </li>
+          <li v-if="mode === 'install'">{{ t('envs.server.stepInstall') }}</li>
+          <li v-if="mode !== 'access'">{{ t('envs.server.stepInit') }}</li>
+          <i18n-t v-if="user" keypath="envs.server.stepGroupUser" tag="li" scope="global">
+            <template #user><code>{{ user }}</code></template>
+            <template #group><code>incus-admin</code></template>
+          </i18n-t>
+          <i18n-t v-else keypath="envs.server.stepGroup" tag="li" scope="global">
+            <template #group><code>incus-admin</code></template>
+          </i18n-t>
         </ul>
         <div class="setup__actions">
           <span ref="setupButton">
-            <UiButton variant="primary" :disabled="jobRunning" @click="setup">{{ COPY[mode!].action }}</UiButton>
+            <UiButton variant="primary" :disabled="jobRunning" @click="setup">{{ copy(mode!, 'action') }}</UiButton>
           </span>
-          <span v-if="jobRunning" class="setup__note">Running below.</span>
-          <span v-else class="setup__note">It runs in a terminal below. <code>sudo</code> may ask for your password there.</span>
+          <span v-if="jobRunning" class="setup__note">{{ t('envs.server.runningBelowNote') }}</span>
+          <i18n-t v-else keypath="envs.server.sudoNote" tag="span" class="setup__note" scope="global">
+            <template #sudo><code>sudo</code></template>
+          </i18n-t>
         </div>
       </template>
       <template v-else>
         <h3 id="sp-setup" class="setup__title">{{ state.label }}</h3>
-        <p class="setup__text selectable">{{ probe.setupNote ?? 'Mango can\'t set up Incus on this server.' }}</p>
-        <p class="setup__text setup__text--quiet">
-          Install and initialise Incus there yourself (<code>incus admin init</code>), add
-          <template v-if="user"><code>{{ user }}</code></template><template v-else>your SSH user</template> to the
-          <code>incus-admin</code> group, then check again.
-        </p>
+        <p class="setup__text selectable">{{ probe.setupNote ?? t('envs.server.cantSetUp') }}</p>
+        <i18n-t v-if="user" keypath="envs.server.yourselfUser" tag="p" class="setup__text setup__text--quiet" scope="global">
+          <template #command><code>incus admin init</code></template>
+          <template #user><code>{{ user }}</code></template>
+          <template #group><code>incus-admin</code></template>
+        </i18n-t>
+        <i18n-t v-else keypath="envs.server.yourself" tag="p" class="setup__text setup__text--quiet" scope="global">
+          <template #command><code>incus admin init</code></template>
+          <template #group><code>incus-admin</code></template>
+        </i18n-t>
         <div class="setup__actions">
-          <UiButton size="sm" :loading="probing" @click="refresh">Check again</UiButton>
+          <UiButton size="sm" :loading="probing" @click="refresh">{{ t('envs.common.checkAgain') }}</UiButton>
         </div>
       </template>
     </section>
@@ -278,16 +289,19 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
       <EnvTerminal
         :key="job.id"
         :start="startSetup"
-        :title="COPY[job.mode].running"
-        :done-title="COPY[job.mode].done"
-        :failed-title="COPY[job.mode].failed"
-        :label="`${COPY[job.mode].action} on ${host.name}`"
+        :title="copy(job.mode, 'running')"
+        :done-title="copy(job.mode, 'done')"
+        :failed-title="copy(job.mode, 'failed')"
+        :label="t('envs.server.jobLabel', { action: copy(job.mode, 'action'), name: host.name })"
         :rows="14"
         @exit="onJobExit"
         @close="closeJob"
       >
         <template #hint>
-          If <code>sudo</code> asks for your password, type it here and press <kbd>Enter</kbd>. It stays hidden as you type.
+          <i18n-t keypath="envs.server.passwordHint" scope="global">
+            <template #sudo><code>sudo</code></template>
+            <template #enter><kbd>Enter</kbd></template>
+          </i18n-t>
         </template>
       </EnvTerminal>
     </div>
@@ -297,16 +311,16 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
     <section v-if="ready || (probing && !probe)" class="sp__list" aria-labelledby="sp-instances">
       <header class="sp__list-head">
         <h3 id="sp-instances" class="sp__h3">
-          Environments
+          {{ t('envs.common.title') }}
           <span v-if="instances?.length" class="sp__count tabular">{{ instances.length }}</span>
         </h3>
         <UiButton v-if="ready" variant="primary" size="sm" @click="envs.dialog = { kind: 'create', hostId }">
-          <Plus />New environment
+          <Plus />{{ t('envs.common.newEnvironment') }}
         </UiButton>
       </header>
 
       <p v-if="listError" class="sp__error" role="alert">
-        Couldn't list them. <span class="selectable">{{ listError }}</span>
+        {{ t('envs.server.listFailed') }} <span class="selectable">{{ listError }}</span>
       </p>
 
       <ul v-if="instances?.length" class="rows">
@@ -318,21 +332,21 @@ const kindLabel = (i: EnvInstance) => (i.kind === 'vm' ? 'VM' : 'Container')
             </span>
             <EnvStatus class="row__status" :status="i.status" :busy="envs.busy[instanceKey(hostId, i.name)]" word />
             <span class="row__addr selectable" :title="addresses(i)">{{ addresses(i) || '–' }}</span>
-            <span class="row__size tabular" :class="{ 'is-default': !size(i) }">{{ size(i) || 'Default size' }}</span>
+            <span class="row__size tabular" :class="{ 'is-default': !size(i) }">{{ size(i) || t('envs.server.defaultSize') }}</span>
             <ChevronRight class="row__go" aria-hidden="true" />
           </button>
         </li>
       </ul>
-      <ul v-else-if="loading || (probing && !probe)" class="rows" aria-busy="true" aria-label="Loading environments">
+      <ul v-else-if="loading || (probing && !probe)" class="rows" aria-busy="true" :aria-label="t('envs.server.loading')">
         <li v-for="n in 3" :key="n" class="row row--skeleton" aria-hidden="true">
           <span class="bone bone--name" /><span class="bone bone--status" /><span class="bone bone--addr" />
         </li>
       </ul>
       <p v-else-if="instances" class="sp__empty">
-        No environments on this server yet. Create one to get a container or VM with the agents installed.
+        {{ t('envs.server.none') }}
       </p>
     </section>
-    <p v-else-if="reachable && !needsSetup" class="sp__empty">Environments show here once Incus is ready.</p>
+    <p v-else-if="reachable && !needsSetup" class="sp__empty">{{ t('envs.server.notReady') }}</p>
   </div>
 </template>
 

@@ -1,15 +1,27 @@
 <script setup lang="ts">
 import { useWorkspace } from '~/stores/workspace'
+import { useForge } from '~/stores/forge'
 import { holdOverlay } from '~/composables/useOverlay'
+import { pluginToolWindow } from '~/plugin-host/registry'
+import { isPluginRef } from '~/plugin-host/ids'
+import PluginToolWindow from '~/plugin-host/ui/PluginToolWindow.vue'
 
 /**
  * The open tool window on the right of the chats: where the project runs, its files,
- * source control, or the chat's pull requests and issues. Owns the width; the panel
+ * source control, the chat's pull requests and issues, or the project's releases. Owns the width; the panel
  * inside owns its own header.
  */
 
+const { t } = useI18n()
 const ws = useWorkspace()
-const LABELS = { env: 'Environment', files: 'Files', changes: 'Changes', links: 'Pull requests' } as const
+const labels = computed<Record<string, string>>(() => ({ env: t('shell.tools.env'), files: t('shell.tools.files'), changes: t('shell.tools.changes'), links: t('shell.tools.links'), releases: t('shell.tools.releases') }))
+/** A plugin's tool window, while its plugin runs (see `plugin-host/`). */
+const pluginWin = computed(() => pluginToolWindow(ws.toolPanel))
+/** The Pull requests window is Merge requests for a project on GitLab. */
+const forge = useForge()
+const label = computed(() => pluginWin.value?.title
+  ?? (ws.toolPanel === 'links' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.mergeRequests') : null)
+  ?? labels.value[ws.toolPanel ?? 'files'] ?? t('shell.tools.fallback'))
 const root = ref<HTMLElement | null>(null)
 
 let dragging = false
@@ -33,19 +45,21 @@ function endResize() {
 </script>
 
 <template>
-  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="LABELS[ws.toolPanel ?? 'files']">
+  <aside ref="root" class="tp" :style="{ width: `${ws.toolWidth}px`, '--tool-w': `${ws.toolWidth}px`, '--left-w': `${ws.sidebarOpen ? ws.sidebarWidth : 0}px` }" :aria-label="label">
     <!-- Switching tools: the old one goes at once, the new one settles in. Not on open: the window itself slides then. -->
     <Transition name="tp-swap">
       <AppToolEnv v-if="ws.toolPanel === 'env'" />
       <FilesPanel v-else-if="ws.toolPanel === 'files'" />
       <LinksPanel v-else-if="ws.toolPanel === 'links'" />
+      <ReleasesPanel v-else-if="ws.toolPanel === 'releases'" />
+      <PluginToolWindow v-else-if="isPluginRef(ws.toolPanel)" :key="ws.toolPanel" :win="pluginWin" />
       <GitPanel v-else />
     </Transition>
     <div
       class="tp__resize"
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize tool window"
+      :aria-label="t('shell.tools.resize')"
       @pointerdown="startResize"
       @pointermove="onResize"
       @pointerup="endResize"

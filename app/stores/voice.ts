@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import type { Transcript, VoiceModel, VoiceModelId, VoiceProgress } from '~/types/ipc'
 import { call, on } from '~/composables/useBackend'
+import { t } from '~/i18n'
 
 /**
  * Voice input: which Whisper model to use, its download, and transcription.
@@ -10,25 +11,9 @@ import { call, on } from '~/composables/useBackend'
 
 const KEY = 'mango.voice'
 
-/** Languages offered in Settings. Whisper knows ~100; these are the common ones, null detects it. */
-export const VOICE_LANGUAGES: Array<{ code: string | null; label: string }> = [
-  { code: null, label: 'Detect automatically' },
-  { code: 'en', label: 'English' },
-  { code: 'de', label: 'German' },
-  { code: 'fr', label: 'French' },
-  { code: 'es', label: 'Spanish' },
-  { code: 'it', label: 'Italian' },
-  { code: 'pt', label: 'Portuguese' },
-  { code: 'nl', label: 'Dutch' },
-  { code: 'pl', label: 'Polish' },
-  { code: 'uk', label: 'Ukrainian' },
-  { code: 'ru', label: 'Russian' },
-  { code: 'tr', label: 'Turkish' },
-  { code: 'sv', label: 'Swedish' },
-  { code: 'ja', label: 'Japanese' },
-  { code: 'zh', label: 'Chinese' },
-  { code: 'ko', label: 'Korean' },
-  { code: 'hi', label: 'Hindi' },
+/** Languages offered in Settings. Whisper knows ~100; these are the common ones, null detects it. Named in `agents.voice.languages`. */
+export const VOICE_LANGUAGES: Array<string | null> = [
+  null, 'en', 'de', 'fr', 'es', 'it', 'pt', 'nl', 'pl', 'uk', 'ru', 'tr', 'sv', 'ja', 'zh', 'ko', 'hi',
 ]
 
 const MODEL_IDS: VoiceModelId[] = ['tiny', 'base', 'small']
@@ -39,7 +24,7 @@ function loadPrefs(): Prefs {
     const p = JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}
     return {
       model: MODEL_IDS.includes(p.model) ? p.model : undefined,
-      language: VOICE_LANGUAGES.some(l => l.code === p.language) ? p.language : null,
+      language: VOICE_LANGUAGES.includes(p.language) ? p.language : null,
       micId: typeof p.micId === 'string' ? p.micId : null,
       sendAfter: p.sendAfter === true,
     }
@@ -94,7 +79,7 @@ export const useVoice = defineStore('voice', {
         const devices = await navigator.mediaDevices.enumerateDevices()
         this.mics = devices
           .filter(d => d.kind === 'audioinput' && d.deviceId && d.deviceId !== 'default' && d.deviceId !== 'communications')
-          .map((d, i) => ({ id: d.deviceId, label: d.label || `Microphone ${i + 1}` }))
+          .map((d, i) => ({ id: d.deviceId, label: d.label || t('agents.voice.micNumber', { n: i + 1 }) }))
       } catch {
         this.mics = []
       }

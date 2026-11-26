@@ -4,36 +4,36 @@ import type { VoiceModelId } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
 import { useVoice, VOICE_LANGUAGES } from '~/stores/voice'
 import { modLabel } from '~/composables/useShortcuts'
+import { formatLocale } from '~/i18n'
 import SettingsSection from './SettingsSection.vue'
 import SettingsRow from './SettingsRow.vue'
 
+const { t } = useI18n()
 const voice = useVoice()
 
-const about: Record<VoiceModelId, string> = {
-  tiny: 'Fastest. Good for short, clearly spoken English.',
-  base: 'A good balance for everyday dictation in most languages.',
-  small: 'Most accurate, especially in languages other than English. Slower on older computers.',
-}
-
-const size = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`
+const oneDigit: Intl.NumberFormatOptions = { minimumFractionDigits: 1, maximumFractionDigits: 1 }
+const size = (bytes: number) => bytes >= 1e9
+  ? t('agents.voice.gb', { n: (bytes / 1e9).toLocaleString(formatLocale(), oneDigit) })
+  : t('agents.voice.mb', { n: Math.round(bytes / 1e6) })
 const percent = (id: VoiceModelId) => Math.round((voice.fraction(id) ?? 0) * 100)
 
-const languageItems = computed<MenuItem[]>(() => VOICE_LANGUAGES.map(l => ({
-  label: l.label,
-  checked: voice.language === l.code,
-  onSelect: () => voice.setLanguage(l.code),
+const languageName = (code: string | null) => t(`agents.voice.languages.${code ?? 'auto'}`)
+const languageItems = computed<MenuItem[]>(() => VOICE_LANGUAGES.map(code => ({
+  label: languageName(code),
+  checked: voice.language === code,
+  onSelect: () => voice.setLanguage(code),
 })))
-const languageLabel = computed(() => VOICE_LANGUAGES.find(l => l.code === voice.language)?.label ?? 'Detect automatically')
+const languageLabel = computed(() => languageName(voice.language))
 
 /* ---------- microphone ---------- */
 
 const micItems = computed<MenuItem[]>(() => [
-  { label: 'System default', checked: voice.micId === null, onSelect: () => pickMic(null) },
+  { label: t('agents.voice.micDefault'), checked: voice.micId === null, onSelect: () => pickMic(null) },
   ...voice.mics.map(m => ({ label: m.label, checked: voice.micId === m.id, onSelect: () => pickMic(m.id) })),
 ])
 const micLabel = computed(() => {
-  if (voice.micId === null) return 'System default'
-  return voice.mics.find(m => m.id === voice.micId)?.label ?? 'Unavailable, using default'
+  if (voice.micId === null) return t('agents.voice.micDefault')
+  return voice.mics.find(m => m.id === voice.micId)?.label ?? t('agents.voice.micUnavailable')
 })
 
 /** A live level meter so the chosen microphone can be checked without dictating. */
@@ -71,14 +71,14 @@ async function startTest() {
   } catch (e) {
     stopTest()
     testError.value = e instanceof DOMException && e.name === 'NotAllowedError'
-      ? 'Mango is not allowed to use the microphone. Allow it in your system\'s privacy settings.'
-      : 'That microphone could not be opened. Pick another one or check that it is connected.'
+      ? t('agents.voice.micDenied')
+      : t('agents.voice.micFailed')
   }
 }
 
 function stopTest() {
   cancelAnimationFrame(testFrame)
-  testStream?.getTracks().forEach(t => t.stop())
+  testStream?.getTracks().forEach(track => track.stop())
   testStream = null
   void testCtx?.close().catch(() => {})
   testCtx = null
@@ -110,14 +110,14 @@ onBeforeUnmount(() => {
 
 <template>
   <SettingsSection
-    title="Voice"
-    description="Dictate messages instead of typing them. Speech is turned into text on this computer with OpenAI's Whisper, so your recordings never leave it."
+    :title="t('settings.nav.voice')"
+    :description="t('agents.voice.description')"
   >
     <div class="group">
       <div class="group__head">
-        <h3 :id="labelId" class="group__title">Speech model</h3>
+        <h3 :id="labelId" class="group__title">{{ t('agents.voice.model') }}</h3>
         <p :id="hintId" class="group__hint">
-          Larger models understand more and take longer to answer. The one you pick downloads once from Hugging Face.
+          {{ t('agents.voice.modelHint') }}
         </p>
       </div>
 
@@ -139,44 +139,44 @@ onBeforeUnmount(() => {
                 <span class="model__label">
                   {{ m.name }}
                   <span class="model__size tabular">{{ size(m.sizeBytes) }}</span>
-                  <span v-if="m.downloaded" class="model__tag">Downloaded</span>
+                  <span v-if="m.downloaded" class="model__tag">{{ t('agents.voice.downloaded') }}</span>
                 </span>
-                <span :id="`${name}-${m.id}`" class="model__hint">{{ about[m.id] }}</span>
+                <span :id="`${name}-${m.id}`" class="model__hint">{{ t(`agents.voice.about.${m.id}`) }}</span>
                 <span v-if="m.downloading" class="model__progress">
-                  <span class="model__track" role="progressbar" :aria-valuenow="percent(m.id)" aria-valuemin="0" aria-valuemax="100" :aria-label="`Downloading ${m.name}`">
+                  <span class="model__track" role="progressbar" :aria-valuenow="percent(m.id)" aria-valuemin="0" aria-valuemax="100" :aria-label="t('agents.voice.downloading', { name: m.name })">
                     <span class="model__fill" :style="{ transform: `scaleX(${voice.fraction(m.id) ?? 0})` }" />
                   </span>
-                  <span class="model__pct tabular">{{ percent(m.id) }}%</span>
+                  <span class="model__pct tabular">{{ t('agents.voice.percent', { n: percent(m.id) }) }}</span>
                 </span>
                 <span v-if="voice.errors[m.id]" class="model__error" role="alert">{{ voice.errors[m.id] }}</span>
               </span>
             </span>
           </label>
           <div class="model__actions">
-            <UiButton v-if="m.downloading" size="sm" variant="ghost" @click="voice.cancel(m.id)"><X />Cancel</UiButton>
-            <UiButton v-else-if="m.downloaded" size="sm" variant="ghost" :aria-label="`Delete the ${m.name} model`" @click="voice.remove(m.id)"><Trash2 />Delete</UiButton>
-            <UiButton v-else size="sm" :variant="voice.model === m.id ? 'primary' : 'secondary'" :aria-label="`Download the ${m.name} model`" @click="voice.download(m.id)"><Download />Download</UiButton>
+            <UiButton v-if="m.downloading" size="sm" variant="ghost" @click="voice.cancel(m.id)"><X />{{ t('common.actions.cancel') }}</UiButton>
+            <UiButton v-else-if="m.downloaded" size="sm" variant="ghost" :aria-label="t('agents.voice.deleteModel', { name: m.name })" @click="voice.remove(m.id)"><Trash2 />{{ t('common.actions.delete') }}</UiButton>
+            <UiButton v-else size="sm" :variant="voice.model === m.id ? 'primary' : 'secondary'" :aria-label="t('agents.voice.downloadModel', { name: m.name })" @click="voice.download(m.id)"><Download />{{ t('agents.voice.download') }}</UiButton>
           </div>
         </div>
       </div>
-      <p v-else class="note" role="status">Looking for speech models…</p>
+      <p v-else class="note" role="status">{{ t('agents.voice.looking') }}</p>
     </div>
 
     <div class="rows">
-      <SettingsRow label="Microphone">
+      <SettingsRow :label="t('agents.voice.mic')">
         <template #hint>
           <span v-if="testError" class="mic__error">{{ testError }}</span>
-          <template v-else>Speak while testing; the bars should move.</template>
+          <template v-else>{{ t('agents.voice.micHint') }}</template>
         </template>
         <template #default="{ labelId: id }">
           <div class="mic">
-            <span v-if="testing" class="mic__meter" role="meter" aria-label="Input level" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(testLevel * 100)">
+            <span v-if="testing" class="mic__meter" role="meter" :aria-label="t('agents.voice.level')" aria-valuemin="0" aria-valuemax="100" :aria-valuenow="Math.round(testLevel * 100)">
               <span class="mic__fill" :style="{ transform: `scaleX(${testLevel})` }" />
             </span>
             <UiButton size="sm" variant="ghost" :aria-pressed="testing" @click="testing ? stopTest() : startTest()">
-              <Square v-if="testing" /><Mic v-else />{{ testing ? 'Stop' : 'Test' }}
+              <Square v-if="testing" /><Mic v-else />{{ testing ? t('agents.voice.stop') : t('agents.voice.test') }}
             </UiButton>
-            <UiMenu :items="micItems" placement="bottom-end" :width="280" label="Microphone">
+            <UiMenu :items="micItems" placement="bottom-end" :width="280" :label="t('agents.voice.mic')">
               <template #default="{ toggle, open }">
                 <UiButton size="sm" class="mic__pick" :class="{ 'is-open': open }" :aria-labelledby="id" aria-haspopup="menu" @click="toggle">
                   <span class="mic__name">{{ micLabel }}</span><ChevronDown />
@@ -187,9 +187,9 @@ onBeforeUnmount(() => {
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Language" hint="Whisper hears which language you speak. Pick one if it guesses wrong on short phrases.">
+      <SettingsRow :label="t('agents.voice.language')" :hint="t('agents.voice.languageHint')">
         <template #default="{ labelId: id }">
-          <UiMenu :items="languageItems" placement="bottom-end" :width="220" label="Language">
+          <UiMenu :items="languageItems" placement="bottom-end" :width="220" :label="t('agents.voice.language')">
             <template #default="{ toggle, open }">
               <UiButton size="sm" :class="{ 'is-open': open }" :aria-labelledby="id" aria-haspopup="menu" @click="toggle">
                 {{ languageLabel }}<ChevronDown />
@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Send after dictating" hint="Send the message as soon as it is transcribed, instead of leaving it in the box to check.">
+      <SettingsRow :label="t('agents.voice.sendAfter')" :hint="t('agents.voice.sendAfterHint')">
         <template #default="{ labelId: id }">
           <button
             type="button"
@@ -214,7 +214,7 @@ onBeforeUnmount(() => {
         </template>
       </SettingsRow>
 
-      <SettingsRow label="Dictate" hint="In the message box, or click the microphone. Press it again to transcribe, Esc to discard.">
+      <SettingsRow :label="t('agents.voice.dictate')" :hint="t('agents.voice.dictateHint')">
         <kbd class="keys">{{ modLabel() }}+Shift+Space</kbd>
       </SettingsRow>
     </div>

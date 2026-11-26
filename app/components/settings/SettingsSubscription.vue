@@ -16,12 +16,13 @@ const props = defineProps<{
   infoOf: (agent: AgentId) => AgentInfo | null
 }>()
 
+const { t } = useI18n()
 const ws = useWorkspace()
 
 /** Where each vendor manages a plan. */
-const MANAGE: Record<string, { label: string; url: string }> = {
-  claude: { label: 'Manage on claude.ai', url: 'https://claude.ai/settings/billing' },
-  codex: { label: 'Manage on ChatGPT', url: 'https://chatgpt.com/#settings/Account' },
+const MANAGE: Record<string, { site: string; url: string }> = {
+  claude: { site: 'claude.ai', url: 'https://claude.ai/settings/billing' },
+  codex: { site: 'ChatGPT', url: 'https://chatgpt.com/#settings/Account' },
 }
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
@@ -41,28 +42,28 @@ const cards = computed(() => props.ids.map((id) => {
   else kind = status.plan ? 'plan' : 'no-plan'
 
   const title = {
-    plan: `${cap(status?.plan ?? '')} plan`,
-    'no-plan': 'No subscription',
-    'signed-out': 'Not signed in',
-    missing: 'Not installed',
-    checking: 'Checking…',
-    error: 'Couldn\'t check',
+    plan: t('agents.subscription.plan', { plan: cap(status?.plan ?? '') }),
+    'no-plan': t('agents.subscription.none'),
+    'signed-out': t('agents.cli.notSignedIn'),
+    missing: t('agents.cli.notInstalled'),
+    checking: t('agents.subscription.checking'),
+    error: t('agents.subscription.error'),
   }[kind]
 
   const note = {
-    plan: `Included with ${AGENTS[id].name} on this account.`,
-    'no-plan': status?.method ? `Signed in with ${status.method}, which is billed by usage.` : 'This sign-in has no subscription plan.',
-    'signed-out': 'Sign in to see the plan.',
-    missing: `Install ${AGENTS[id].name} to see its plan.`,
+    plan: t('agents.subscription.planNote', { name: AGENTS[id].name }),
+    'no-plan': status?.method ? t('agents.subscription.noneMethod', { method: status.method }) : t('agents.subscription.noneNote'),
+    'signed-out': t('agents.subscription.signedOutNote'),
+    missing: t('agents.subscription.missingNote', { name: AGENTS[id].name }),
     checking: '',
     error: entry?.error ?? '',
   }[kind]
 
   const details = status?.loggedIn
     ? [
-        status.account && { label: 'Account', value: status.account },
-        status.organization && { label: 'Organization', value: status.organization },
-        status.method && { label: 'Signed in with', value: status.method },
+        status.account && { label: t('agents.subscription.account'), value: status.account },
+        status.organization && { label: t('agents.subscription.organization'), value: status.organization },
+        status.method && { label: t('agents.subscription.method'), value: status.method },
       ].filter((d): d is { label: string; value: string } => !!d)
     : []
 
@@ -76,7 +77,7 @@ function fix(kind: Kind) {
 </script>
 
 <template>
-  <ul class="subs" aria-label="Subscriptions">
+  <ul class="subs" :aria-label="t('agents.subscription.label')">
     <li v-for="c in cards" :key="c.id" class="plan" :class="`plan--${c.kind}`">
       <div class="plan__main">
         <UiAgentIcon :agent="c.id" class="plan__mark" aria-hidden="true" />
@@ -87,10 +88,10 @@ function fix(kind: Kind) {
         </div>
         <div class="plan__actions">
           <UiButton v-if="c.kind === 'plan' && c.manage" size="sm" @click="openExternal(c.manage.url)">
-            <ExternalLink />{{ c.manage.label }}
+            <ExternalLink />{{ t('agents.subscription.manage', { site: c.manage.site }) }}
           </UiButton>
           <UiButton v-else-if="c.kind === 'missing' || c.kind === 'signed-out' || c.kind === 'error'" size="sm" @click="fix(c.kind)">
-            {{ c.kind === 'missing' ? 'Install…' : c.kind === 'signed-out' ? 'Sign in' : 'See Agents' }}
+            {{ c.kind === 'missing' ? t('agents.cli.installMore') : c.kind === 'signed-out' ? t('common.actions.signIn') : t('agents.subscription.seeAgents') }}
           </UiButton>
         </div>
       </div>
@@ -103,7 +104,7 @@ function fix(kind: Kind) {
       </dl>
 
       <div v-if="c.kind === 'plan' || c.kind === 'no-plan'" class="plan__foot">
-        <UiButton variant="ghost" size="sm" @click="ws.agentsTab = 'usage'"><Gauge />Usage limits and resets</UiButton>
+        <UiButton variant="ghost" size="sm" @click="ws.agentsTab = 'usage'"><Gauge />{{ t('agents.subscription.limits') }}</UiButton>
       </div>
     </li>
   </ul>

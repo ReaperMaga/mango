@@ -101,6 +101,87 @@ pub struct GitCommit {
     pub time: u64,
 }
 
+/// What a [`GitRef`] names.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GitRefKind {
+    Branch,
+    Remote,
+    Tag,
+    /// A detached HEAD.
+    Head,
+}
+
+/// A ref pointing at a commit of the history graph.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitRef {
+    /// Short name: "main", "origin/main", "v1.2.0", "HEAD".
+    pub name: String,
+    pub kind: GitRefKind,
+    /// The checked-out branch, or the detached HEAD.
+    pub current: bool,
+}
+
+/// One commit of the history graph.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitGraphCommit {
+    pub hash: String,
+    pub short_hash: String,
+    /// First parent first; empty for a root commit.
+    pub parents: Vec<String>,
+    pub subject: String,
+    pub author: String,
+    pub author_email: String,
+    /// Author date, unix ms.
+    pub time: i64,
+    pub refs: Vec<GitRef>,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GitGraph {
+    /// Full hash of HEAD; None on an unborn branch.
+    pub head: Option<String>,
+    /// None when detached.
+    pub branch: Option<String>,
+    pub commits: Vec<GitGraphCommit>,
+    pub more: bool,
+}
+
+/// One file a commit changed against its first parent.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitFile {
+    pub path: String,
+    pub old_path: Option<String>,
+    /// A, M, D, R, C or T.
+    pub status: String,
+    /// None for binary files.
+    pub additions: Option<u64>,
+    pub deletions: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitCommitDetail {
+    pub hash: String,
+    pub short_hash: String,
+    pub parents: Vec<String>,
+    pub subject: String,
+    pub body: String,
+    pub author: String,
+    pub author_email: String,
+    /// Author date, unix ms.
+    pub time: i64,
+    pub committer: String,
+    /// Committer date, unix ms.
+    pub commit_time: i64,
+    pub refs: Vec<GitRef>,
+    pub files: Vec<GitCommitFile>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitBranches {
@@ -291,6 +372,157 @@ pub(crate) fn rename_source(name_status: &[u8], file: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// The refs in a `%D` decoration printed with `--decorate=full`
+/// (`HEAD -> refs/heads/main, tag: refs/tags/v1, refs/remotes/origin/main`).
+/// Stashes, notes, `origin/HEAD` and anything else that is not a branch or tag are left out.
+pub(crate) fn parse_decorations(text: &str) -> Vec<GitRef> {
+    let mut refs = Vec::new();
+    for part in text.split(", ").map(str::trim).filter(|p| !p.is_empty()) {
+        let (full, current) = match part.strip_prefix("HEAD -> ") {
+            Some(branch) => (branch, true),
+            None if part == "HEAD" => {
+                refs.push(GitRef { name: "HEAD".into(), kind: GitRefKind::Head, current: true });
+                continue;
+            }
+            None => (part.strip_prefix("tag: ").unwrap_or(part), false),
+        };
+        let (name, kind) = if let Some(name) = full.strip_prefix("refs/heads/") {
+            (name, GitRefKind::Branch)
+        } else if let Some(name) = full.strip_prefix("refs/remotes/") {
+            // "origin/HEAD" points at the default branch; it is not one.
+            if name.ends_with("/HEAD") || !name.contains('/') {
+                continue;
+            }
+            (name, GitRefKind::Remote)
+        } else if let Some(name) = full.strip_prefix("refs/tags/") {
+            (name, GitRefKind::Tag)
+        } else {
+            continue;
+        };
+        if !name.is_empty() {
+            refs.push(GitRef { name: name.to_string(), kind, current });
+        }
+    }
+    refs
+}
+
+/// The `--pretty` format [`parse_graph`] reads: the subject last, so a stray separator in it is harmless.
+const GRAPH_FORMAT: &str = "--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s%x1e";
+
+fn parents_of(field: &str) -> Vec<String> {
+    field.split_whitespace().map(str::to_string).collect()
+}
+
+fn unix_ms(field: &str) -> Option<i64> {
+    field.trim().parse::<i64>().ok().map(|s| s.saturating_mul(1000))
+}
+
+/// Parse `git log` output in [`GRAPH_FORMAT`].
+pub(crate) fn parse_graph(text: &str) -> Vec<GitGraphCommit> {
+    text.split('\x1e')
+        .filter_map(|record| {
+            let record = record.trim_start_matches(['\n', '\r']);
+            let f: Vec<&str> = record.splitn(8, '\x1f').collect();
+            let [hash, short, parents, author, email, time, decorations, subject] = f[..] else { return None };
+            if hash.is_empty() {
+                return None;
+            }
+            Some(GitGraphCommit {
+                hash: hash.to_string(),
+                short_hash: short.to_string(),
+                parents: parents_of(parents),
+                subject: subject.trim_end_matches(['\n', '\r']).to_string(),
+                author: author.to_string(),
+                author_email: email.to_string(),
+                time: unix_ms(time)?,
+                refs: parse_decorations(decorations),
+            })
+        })
+        .collect()
+}
+
+/// The `--format` [`parse_commit_meta`] reads: the body last, as it may hold anything.
+const DETAIL_FORMAT: &str = "--format=%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%cn%x1f%ct%x1f%D%x1f%s%x1f%b";
+
+/// Parse `git show -s` output in [`DETAIL_FORMAT`]; `files` is left empty.
+pub(crate) fn parse_commit_meta(text: &str) -> Option<GitCommitDetail> {
+    let f: Vec<&str> = text.trim_start_matches(['\n', '\r']).splitn(11, '\x1f').collect();
+    let [hash, short, parents, author, email, time, committer, commit_time, decorations, subject, body] = f[..] else {
+        return None;
+    };
+    if hash.is_empty() {
+        return None;
+    }
+    Some(GitCommitDetail {
+        hash: hash.to_string(),
+        short_hash: short.to_string(),
+        parents: parents_of(parents),
+        subject: subject.to_string(),
+        body: body.trim().to_string(),
+        author: author.to_string(),
+        author_email: email.to_string(),
+        time: unix_ms(time)?,
+        committer: committer.to_string(),
+        commit_time: unix_ms(commit_time)?,
+        refs: parse_decorations(decorations),
+        files: Vec::new(),
+    })
+}
+
+/// The files of `--name-status -z` output (`M\0path\0`, `R100\0old\0new\0`), joined with
+/// the line counts of `--numstat -z` output (`1\t2\tpath\0`, `1\t2\t\0old\0new\0`, `-\t-\tpath\0` for binary).
+pub(crate) fn parse_commit_files(name_status: &[u8], numstat: &[u8]) -> Vec<GitCommitFile> {
+    let count = |n: &[u8]| std::str::from_utf8(n).ok()?.trim().parse::<u64>().ok();
+    let mut counts: HashMap<Vec<u8>, (Option<u64>, Option<u64>)> = HashMap::new();
+    let mut tokens = numstat.split(|&b| b == 0);
+    while let Some(token) = tokens.next() {
+        let token = token.strip_prefix(b"\n").unwrap_or(token);
+        let mut parts = token.splitn(3, |&b| b == b'\t');
+        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
+        // A rename names both paths in the next two tokens.
+        let path = if path.is_empty() {
+            let (Some(_old), Some(new)) = (tokens.next(), tokens.next()) else { break };
+            new
+        } else {
+            path
+        };
+        counts.insert(path.to_vec(), (count(added), count(deleted)));
+    }
+
+    let mut files = Vec::new();
+    let mut tokens = name_status.split(|&b| b == 0);
+    while let Some(token) = tokens.next() {
+        let token = token.strip_prefix(b"\n").unwrap_or(token);
+        let Some(&letter) = token.first() else { continue };
+        let (old, path) = if matches!(letter, b'R' | b'C') {
+            let (Some(old), Some(new)) = (tokens.next(), tokens.next()) else { break };
+            (Some(old), new)
+        } else {
+            let Some(path) = tokens.next() else { break };
+            (None, path)
+        };
+        let (additions, deletions) = counts.get(path).copied().unwrap_or((None, None));
+        files.push(GitCommitFile {
+            path: lossy(path),
+            old_path: old.map(lossy),
+            status: (letter as char).to_string(),
+            additions,
+            deletions,
+        });
+    }
+    files
+}
+
+/// A commit hash from the UI: 4 to 64 hex digits.
+pub(crate) fn safe_hash(hash: &str) -> Result<&str, String> {
+    let hash = hash.trim();
+    if (4..=64).contains(&hash.len()) && hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        Ok(hash)
+    } else {
+        Err(format!("\"{hash}\" is not a commit hash"))
+    }
 }
 
 /// Turn captured diff bytes into text, cutting at a line boundary and adding
@@ -1638,7 +1870,7 @@ fn explain_sync_failure(detail: String) -> String {
         || lower.contains("authentication failed")
         || lower.contains("permission denied (publickey")
     {
-        "The remote asked for credentials Mango can't enter. Sign in from a terminal first (a credential helper, `gh auth login`, or an SSH key), then try again."
+        "The remote asked for credentials Mango can't enter. Sign in first (Settings > Git hosting for GitHub or GitLab, a credential helper, or an SSH key), then try again."
     } else if lower.contains("non-fast-forward") || lower.contains("fetch first") {
         "The remote has commits you don't have yet. Pull, then push again."
     } else if lower.contains("could not resolve host") || lower.contains("could not read from remote") {
@@ -1699,47 +1931,44 @@ fn head_oid(root: &At) -> Option<String> {
 
 /// Commits reachable from `to` but not from `from`, merges left out.
 fn commits_between(root: &At, from: &str, to: &str) -> u64 {
-    git(root)
-        .read_only()
-        .args(["rev-list", "--count", "--no-merges"])
-        .arg(format!("{from}..{to}"))
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .and_then(|o| o.line().parse().ok())
-        .unwrap_or(0)
+    parse_count(commits_between_cmd(root, from, to).run().ok())
+}
+
+fn commits_between_cmd<'a>(root: &'a At, from: &str, to: &str) -> Git<'a> {
+    git(root).read_only().args(["rev-list", "--count", "--no-merges"]).arg(format!("{from}..{to}"))
+}
+
+fn parse_count(out: Option<Output>) -> u64 {
+    out.filter(Output::ok).and_then(|o| o.line().parse().ok()).unwrap_or(0)
 }
 
 fn diff_size(root: &At, from: &str, to: &str) -> DiffSize {
-    git(root)
-        .read_only()
-        .args(["diff", "--numstat", "--no-color", "--no-ext-diff"])
-        .arg(from)
-        .arg(to)
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .map(|o| parse_numstat(&o.text()))
-        .unwrap_or_default()
+    parse_diff_size(diff_size_cmd(root, from, to).run().ok())
+}
+
+fn diff_size_cmd<'a>(root: &'a At, from: &str, to: &str) -> Git<'a> {
+    git(root).read_only().args(["diff", "--numstat", "--no-color", "--no-ext-diff"]).arg(from).arg(to)
+}
+
+fn parse_diff_size(out: Option<Output>) -> DiffSize {
+    out.filter(Output::ok).map(|o| parse_numstat(&o.text())).unwrap_or_default()
 }
 
 /// Every remote-tracking ref and the commit it points at.
-fn remote_refs(root: &At) -> HashMap<String, String> {
-    git(root)
-        .read_only()
-        .args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
-        .run()
-        .ok()
-        .filter(Output::ok)
-        .map(|o| {
-            o.text()
-                .lines()
-                .filter_map(|l| l.split_once(' '))
-                .filter(|(_, name)| !name.ends_with("/HEAD"))
-                .map(|(oid, name)| (name.to_string(), oid.to_string()))
-                .collect()
-        })
-        .unwrap_or_default()
+fn remote_refs_cmd(root: &At) -> Git<'_> {
+    git(root).read_only().args(["for-each-ref", "--format=%(objectname) %(refname)", "refs/remotes"])
+}
+
+fn parse_remote_refs(out: &Output) -> HashMap<String, String> {
+    if !out.ok() {
+        return HashMap::new();
+    }
+    out.text()
+        .lines()
+        .filter_map(|l| l.split_once(' '))
+        .filter(|(_, name)| !name.ends_with("/HEAD"))
+        .map(|(oid, name)| (name.to_string(), oid.to_string()))
+        .collect()
 }
 
 /// What a fetch changed among the remote-tracking branches.
@@ -1772,30 +2001,59 @@ fn describe_behind(status: &ParsedStatus) -> Option<String> {
     })
 }
 
+/// The fetch runs in one batch with the reads around it ([`run_all`]): in an environment that is
+/// one SSH call instead of five. Without a remote git refuses the fetch by itself.
 pub(crate) fn fetch(at: &At) -> Result<String, String> {
     let root = require_root(at)?;
-    if remotes(&root)?.is_empty() {
+    let [names, before, out, after, status]: [Output; 5] = run_all(vec![
+        remotes_cmd(&root),
+        remote_refs_cmd(&root),
+        git(&root).slow().arg("fetch"),
+        remote_refs_cmd(&root),
+        status_cmd(&root, false),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    if !names.ok() {
+        return Err(names.error("git remote"));
+    }
+    if parse_remotes(&names).is_empty() {
         return Err(NO_REMOTE.into());
     }
-    let before = remote_refs(&root);
-    let out = git(&root).slow().arg("fetch").run()?;
     if !out.ok() {
         return Err(explain_sync_failure(out.error("git fetch")));
     }
-    let title = describe_fetch(&before, &remote_refs(&root));
-    let behind = read_status(&root, false).ok().as_ref().and_then(describe_behind);
+    let title = describe_fetch(&parse_remote_refs(&before), &parse_remote_refs(&after));
+    let behind = status.ok().then(|| parse_status(&status.stdout)).as_ref().and_then(describe_behind);
     Ok(match behind {
         Some(line) => format!("{title}\n{line}"),
         None => title,
     })
 }
 
+/// Like [`fetch`], the pull goes in one batch with the reads around it. Git refuses it by itself
+/// in each case refused here (no remote, a detached HEAD, no upstream), leaving the repository as
+/// it was. Only when commits came in does a second batch read what they changed.
 pub(crate) fn pull(at: &At) -> Result<String, String> {
     let root = require_root(at)?;
-    if remotes(&root)?.is_empty() {
+    let [names, before, out, after]: [Output; 4] = run_all(vec![
+        remotes_cmd(&root),
+        status_cmd(&root, false),
+        git(&root).slow().arg("pull"),
+        status_cmd(&root, false),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    if !names.ok() {
+        return Err(names.error("git remote"));
+    }
+    if parse_remotes(&names).is_empty() {
         return Err(NO_REMOTE.into());
     }
-    let before = read_status(&root, false)?;
+    if !before.ok() {
+        return Err(before.error("git status"));
+    }
+    let before = parse_status(&before.stdout);
     let Some(branch) = before.branch else {
         return Err("HEAD is detached, so there is no branch to pull into. Switch to a branch first.".into());
     };
@@ -1804,24 +2062,32 @@ pub(crate) fn pull(at: &At) -> Result<String, String> {
             "{branch} isn't tracking a remote branch yet. Publish it first, then pull."
         ));
     };
-    let out = git(&root).slow().arg("pull").run()?;
+    let after = after.ok().then(|| parse_status(&after.stdout));
     if out.ok() {
-        let after = head_oid(&root);
-        return Ok(match (before.oid, after) {
+        return Ok(match (before.oid, after.and_then(|s| s.oid)) {
             (Some(from), Some(to)) if from == to => format!("{branch} is already up to date with {upstream}."),
             (Some(from), Some(to)) => {
-                let commits = commits_between(&root, &from, &upstream);
+                let (commits, size) = match run_all(vec![
+                    commits_between_cmd(&root, &from, &upstream),
+                    diff_size_cmd(&root, &from, &to),
+                ]) {
+                    Ok(outs) => {
+                        let mut outs = outs.into_iter();
+                        (parse_count(outs.next()), parse_diff_size(outs.next()))
+                    }
+                    Err(_) => (0, DiffSize::default()),
+                };
                 let title = if commits > 0 {
                     format!("Pulled {} into {branch}.", count(commits, "commit", "commits"))
                 } else {
                     format!("Updated {branch} from {upstream}.")
                 };
-                format!("{title}\n{}", describe_size(&diff_size(&root, &from, &to)))
+                format!("{title}\n{}", describe_size(&size))
             }
             _ => format!("Pulled {upstream} into {branch}."),
         });
     }
-    let conflicted: Vec<String> = read_status(&root, false)
+    let conflicted: Vec<String> = after
         .map(|s| s.files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect())
         .unwrap_or_default();
     if !conflicted.is_empty() {
@@ -1901,6 +2167,167 @@ pub(crate) fn log(at: &At, limit: u32) -> Result<Vec<GitCommit>, String> {
     Ok(parse_log(&out.text()))
 }
 
+/// What to show of the history graph (`git_graph`).
+#[derive(Debug, Default)]
+pub(crate) struct GraphQuery {
+    /// None (or empty): every local branch, remote branch, tag and HEAD.
+    pub refs: Option<Vec<String>>,
+    pub skip: u32,
+    pub limit: u32,
+    pub text: Option<String>,
+    pub author: Option<String>,
+    pub paths: Option<Vec<String>>,
+}
+
+/// A page of the history graph, newest first in `--date-order`.
+pub(crate) fn graph(at: &At, q: &GraphQuery) -> Result<GitGraph, String> {
+    let root = require_root(at)?;
+    let limit = q.limit.clamp(1, 1000);
+    let text = q.text.as_deref().map(str::trim).filter(|t| !t.is_empty());
+    let author = q.author.as_deref().map(str::trim).filter(|a| !a.is_empty());
+    let refs: Vec<&str> =
+        q.refs.iter().flatten().map(|r| r.trim()).filter(|r| !r.is_empty()).map(safe_ref).collect::<Result<_, _>>()?;
+    let paths: Vec<&str> =
+        q.paths.iter().flatten().map(|p| p.trim()).filter(|p| !p.is_empty()).map(clean_rel).collect::<Result<_, _>>()?;
+
+    let log_cmd = |with_head: bool| {
+        let mut cmd = git(&root)
+            .read_only()
+            .args(["log", "--date-order", "--no-show-signature", "--no-color", "--decorate=full", GRAPH_FORMAT])
+            .arg(format!("--skip={}", q.skip))
+            .arg(format!("--max-count={}", limit + 1));
+        if !paths.is_empty() {
+            // Parents rewritten to the nearest commit that touches the paths, so the graph stays connected.
+            cmd = cmd.arg("--parents");
+        }
+        if text.is_some() || author.is_some() {
+            // Literal, case-insensitive "contains" for both; together they must both match.
+            cmd = cmd.args(["--regexp-ignore-case", "--fixed-strings"]);
+        }
+        if let Some(text) = text {
+            cmd = cmd.arg(format!("--grep={text}"));
+        }
+        if let Some(author) = author {
+            cmd = cmd.arg(format!("--author={author}"));
+        }
+        if refs.is_empty() {
+            cmd = cmd.args(["--branches", "--remotes", "--tags"]);
+            if with_head {
+                cmd = cmd.arg("HEAD");
+            }
+        } else {
+            cmd = cmd.args(refs.iter().copied());
+        }
+        cmd.arg("--").args(paths.iter().copied())
+    };
+    // All three at once: one round trip to an environment.
+    let [head, branch, out]: [Output; 3] = run_all(vec![
+        has_head_cmd(&root),
+        git(&root).read_only().args(["symbolic-ref", "-q", "--short", "HEAD"]),
+        log_cmd(true),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    let head = Some(head.line()).filter(|h| head.ok() && !h.is_empty());
+    let branch = Some(branch.line()).filter(|b| branch.ok() && !b.is_empty());
+    let out = match (&head, refs.is_empty()) {
+        // An unborn branch: "HEAD" names nothing yet, but other branches may have commits.
+        (None, true) => {
+            let out = log_cmd(false).run()?;
+            if !out.ok() {
+                return Ok(GitGraph { head, branch, ..Default::default() });
+            }
+            out
+        }
+        // The current branch alone, with no commit on it yet: an empty history, not a bad revision.
+        (None, false) if refs == ["HEAD"] => return Ok(GitGraph { head, branch, ..Default::default() }),
+        _ => out,
+    };
+    if !out.ok() {
+        return Err(out.error("git log"));
+    }
+    let mut commits = parse_graph(&out.text());
+    let more = commits.len() > limit as usize;
+    commits.truncate(limit as usize);
+    Ok(GitGraph { head, branch, commits, more })
+}
+
+/// `git show` of one commit, its diff against the first parent (a root commit: against nothing).
+fn show_cmd<'a>(root: &'a At, hash: &str) -> Git<'a> {
+    git(root)
+        .read_only()
+        .args(["show", "--no-color", "--no-ext-diff", "--no-show-signature", "--format=", "-M", "-m", "--first-parent", "--root"])
+        .arg(format!("{hash}^{{commit}}"))
+}
+
+/// Git's complaint about a commit it doesn't have, said plainly.
+fn commit_error(out: &Output, hash: &str, what: &str) -> String {
+    let err = lossy(&out.stderr);
+    if ["unknown revision", "bad revision", "bad object", "Not a valid object name"].iter().any(|m| err.contains(m)) {
+        format!("There is no commit {hash} in this repository")
+    } else {
+        out.error(what)
+    }
+}
+
+/// One commit with its full message and the files it changed against its first parent.
+pub(crate) fn commit_show(at: &At, hash: &str) -> Result<GitCommitDetail, String> {
+    let hash = safe_hash(hash)?;
+    let root = require_root(at)?;
+    let [meta, names, counts]: [Output; 3] = run_all(vec![
+        git(&root)
+            .read_only()
+            .args(["show", "-s", "--no-color", "--no-show-signature", "--decorate=full", DETAIL_FORMAT])
+            .arg(format!("{hash}^{{commit}}"))
+            .arg("--"),
+        show_cmd(&root, hash).args(["-z", "--name-status", "--"]),
+        show_cmd(&root, hash).args(["-z", "--numstat", "--"]),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    if !meta.ok() {
+        return Err(commit_error(&meta, hash, "git show"));
+    }
+    let mut detail = parse_commit_meta(&meta.text()).ok_or_else(|| format!("Could not read commit {hash}"))?;
+    for out in [&names, &counts] {
+        if !out.ok() {
+            return Err(out.error("git show"));
+        }
+    }
+    detail.files = parse_commit_files(&names.stdout, &counts.stdout);
+    Ok(detail)
+}
+
+/// Unified diff of one file of a commit against its first parent (a root commit: against nothing).
+pub(crate) fn commit_diff(at: &At, hash: &str, file: &str) -> Result<String, String> {
+    let hash = safe_hash(hash)?;
+    let file = clean_rel(file)?;
+    let root = require_root(at)?;
+    let diff_cmd = |paths: &[&str]| show_cmd(&root, hash).cap(DIFF_CAP).arg("--").args(paths.iter().copied());
+    let diff_text = |out: Output| -> Result<String, String> {
+        // A capped diff ends git with a broken pipe; that is still a result.
+        if !out.ok() && !out.truncated {
+            return Err(commit_error(&out, hash, "git show"));
+        }
+        Ok(finish_diff(out.stdout, out.truncated))
+    };
+    // A rename limited to its new path looks like a brand-new file; the renames come
+    // along in the same round trip so the diff can be asked again with both paths.
+    let [out, renames]: [Output; 2] = run_all(vec![
+        diff_cmd(&[file]),
+        show_cmd(&root, hash).args(["-z", "--name-status", "--diff-filter=RC", "--"]),
+    ])?
+    .try_into()
+    .map_err(|_| "git gave no answer")?;
+    let text = diff_text(out)?;
+    if is_new_file_diff(&text) && renames.ok() {
+        if let Some(old) = rename_source(&renames.stdout, file) {
+            return diff_text(diff_cmd(&[old.as_str(), file]).run()?);
+        }
+    }
+    Ok(text)
+}
+
 pub(crate) fn branches(at: &At) -> Result<GitBranches, String> {
     let root = require_root(at)?;
     let [head, out]: [Output; 2] = run_all(vec![
@@ -1946,6 +2373,15 @@ pub(crate) fn checkout(at: &At, branch: &str, create: bool) -> Result<(), String
     } else {
         git(&root).arg("switch").arg(branch).run_ok("git switch")?;
     }
+    Ok(())
+}
+
+/// Check out one commit as a detached HEAD (`git switch --detach`). Git refuses when uncommitted
+/// changes would be overwritten, so nothing is lost.
+pub(crate) fn checkout_commit(at: &At, hash: &str) -> Result<(), String> {
+    let root = require_root(at)?;
+    let hash = safe_hash(hash)?;
+    git(&root).args(["switch", "--detach"]).arg(format!("{hash}^{{commit}}")).run_ok("git switch")?;
     Ok(())
 }
 
@@ -2112,15 +2548,50 @@ pub(crate) fn branch_rename(at: &At, from: &str, to: &str) -> Result<(), String>
 /// Delete a local branch. Without `force`, git refuses branches whose commits
 /// are not merged anywhere; that refusal comes back as an error mentioning
 /// "not fully merged" so the UI can offer to delete anyway.
-pub(crate) fn branch_delete(at: &At, branch: &str, force: bool) -> Result<(), String> {
+///
+/// Git refuses a branch checked out in a linked worktree. With `with_worktree` that
+/// worktree goes too, but only once git has agreed to delete the branch, and never one
+/// with uncommitted or untracked changes (`force` is about commits, not about those) or
+/// the one `at` is in. Returns the removed worktree's folder, in the form [`worktrees`] gives.
+pub(crate) fn branch_delete(at: &At, branch: &str, force: bool, with_worktree: bool) -> Result<Option<String>, String> {
     let root = require_root(at)?;
     let branch = safe_ref(branch)?;
-    git(&root)
-        .arg("branch")
-        .arg(if force { "-D" } else { "-d" })
-        .arg(branch)
-        .run_ok("git branch -d")?;
-    Ok(())
+    let delete = || {
+        git(&root)
+            .arg("branch")
+            .arg(if force { "-D" } else { "-d" })
+            .arg(branch)
+            .run_ok("git branch -d")
+            .map(|_| ())
+    };
+    let list = if with_worktree { worktree_list(&root)? } else { Vec::new() };
+    let Some(entry) = list.iter().skip(1).find(|w| !w.bare && w.branch.as_deref() == Some(branch)) else {
+        delete()?;
+        return Ok(None);
+    };
+    let folder = worktree_path(&root, &entry.path);
+    if folder_key(&root, &entry.path) == folder_key(&root, &root_dir(&root)) {
+        return Err(format!("{branch} is checked out in this worktree; switch to another branch first"));
+    }
+    if entry.prunable {
+        // The folder is gone already: forget it, then the branch is free.
+        worktree_remove(&root, &folder, false)?;
+        delete()?;
+        return Ok(Some(folder));
+    }
+    let place = root.moved(entry.path.clone());
+    let status = git(&place).read_only().args(["status", "--porcelain", "-z"]).run_ok("git status")?;
+    if !status.stdout.is_empty() {
+        return Err(format!("{branch} has uncommitted changes in its worktree {folder}; commit or discard them first"));
+    }
+    // Let go of the branch so git can judge it (merged or not) and delete it; put it back if git refuses.
+    git(&place).args(["checkout", "--quiet", "--detach"]).run_ok("git checkout --detach")?;
+    if let Err(e) = delete() {
+        let _ = git(&place).args(["checkout", "--quiet"]).arg(branch).arg("--").run();
+        return Err(e);
+    }
+    worktree_remove(&root, &folder, false).map_err(|e| format!("Deleted {branch}, but its worktree {folder} stays: {e}"))?;
+    Ok(Some(folder))
 }
 
 // ---------------------------------------------------------------------------
@@ -2637,11 +3108,11 @@ mod tests {
         sh(&work, &["add", "."]);
         sh(&work, &["commit", "-q", "-m", "unmerged work"]);
         checkout(path, "main", false).unwrap();
-        let refused = branch_delete(path, "spike-2", false).unwrap_err();
+        let refused = branch_delete(path, "spike-2", false, false).unwrap_err();
         assert!(refused.contains("not fully merged"), "{refused}");
-        branch_delete(path, "spike-2", true).unwrap();
+        branch_delete(path, "spike-2", true, false).unwrap();
         assert!(!branch_list(path).unwrap().local.iter().any(|b| b.name == "spike-2"));
-        assert!(branch_delete(path, "-D", false).is_err());
+        assert!(branch_delete(path, "-D", false, false).is_err());
 
         // A detached HEAD lists the branches with none current.
         sh(&work, &["switch", "-q", "--detach", "main"]);
@@ -2649,6 +3120,20 @@ mod tests {
         assert_eq!(list.current, None);
         assert!(list.local.iter().any(|b| b.name == "main") && !list.local.iter().any(|b| b.is_current));
         assert_eq!(list.remotes, ["origin"]);
+        // Pull refuses there with its own words (git refused it in the same batch).
+        assert!(pull(path).unwrap_err().contains("HEAD is detached"));
+
+        // A pull that conflicts names the files from the status read after it.
+        sh(&work, &["switch", "-q", "main"]);
+        sh(&work, &["config", "pull.rebase", "false"]);
+        sh(&other, &["pull", "-q"]);
+        std::fs::write(other.join("a.txt"), "one\ntheirs\n").unwrap();
+        sh(&other, &["commit", "-q", "-am", "theirs"]);
+        sh(&other, &["push", "-q"]);
+        std::fs::write(work.join("a.txt"), "one\nmine\n").unwrap();
+        sh(&work, &["commit", "-q", "-am", "mine"]);
+        let stopped = pull(path).unwrap_err();
+        assert!(stopped.starts_with("Pull stopped: merge conflicts in 1 file.\n  a.txt\n"), "{stopped}");
 
         let _ = std::fs::remove_dir_all(&base);
     }
@@ -2862,6 +3347,74 @@ mod tests {
     }
 
     #[test]
+    fn decorations_become_refs() {
+        let r = |name: &str, kind, current| GitRef { name: name.into(), kind, current };
+        assert_eq!(
+            parse_decorations("HEAD -> refs/heads/main, refs/remotes/origin/main, refs/remotes/origin/HEAD, tag: refs/tags/v1.0, refs/stash, refs/notes/commits, grafted"),
+            [r("main", GitRefKind::Branch, true), r("origin/main", GitRefKind::Remote, false), r("v1.0", GitRefKind::Tag, false)]
+        );
+        assert_eq!(
+            parse_decorations("HEAD, refs/heads/feat/x, refs/remotes/up/feat/x"),
+            [r("HEAD", GitRefKind::Head, true), r("feat/x", GitRefKind::Branch, false), r("up/feat/x", GitRefKind::Remote, false)]
+        );
+        assert!(parse_decorations("").is_empty());
+    }
+
+    #[test]
+    fn graph_records() {
+        let text = "aaaa\x1faa\x1fpp1 pp2\x1fAda\x1fada@x.org\x1f1700000000\x1fHEAD -> refs/heads/main\x1fMerge a | b\x1e\n\
+bbbb\x1fbb\x1f\x1fBob\x1fbob@x.org\x1f1700000060\x1f\x1fsub\x1fwith a stray separator\x1e";
+        let g = parse_graph(text);
+        assert_eq!(g.len(), 2);
+        assert_eq!((g[0].hash.as_str(), g[0].short_hash.as_str()), ("aaaa", "aa"));
+        assert_eq!(g[0].parents, ["pp1", "pp2"]);
+        assert_eq!((g[0].author.as_str(), g[0].author_email.as_str(), g[0].time), ("Ada", "ada@x.org", 1_700_000_000_000));
+        assert_eq!(g[0].subject, "Merge a | b");
+        assert_eq!(g[0].refs.len(), 1);
+        assert!(g[1].parents.is_empty() && g[1].refs.is_empty());
+        assert_eq!(g[1].subject, "sub\x1fwith a stray separator");
+        assert!(parse_graph("").is_empty());
+        assert!(parse_graph("short\x1frecord\x1e").is_empty());
+    }
+
+    #[test]
+    fn commit_meta_and_files() {
+        let meta = "cccc\x1fcc\x1fp1\x1fAda\x1fada@x.org\x1f1700000000\x1fCy\x1f1700000100\x1ftag: refs/tags/v2\x1fSubject\x1f\nBody line\n\nmore\n\n";
+        let d = parse_commit_meta(meta).unwrap();
+        assert_eq!((d.subject.as_str(), d.body.as_str()), ("Subject", "Body line\n\nmore"));
+        assert_eq!((d.committer.as_str(), d.time, d.commit_time), ("Cy", 1_700_000_000_000, 1_700_000_100_000));
+        assert_eq!(d.parents, ["p1"]);
+        assert_eq!(d.refs[0].kind, GitRefKind::Tag);
+        assert!(parse_commit_meta("").is_none());
+
+        let names = b"M\0src/a b.rs\0R087\0old/x.txt\0new/x.txt\0A\0img.png\0D\0gone.txt\0C100\0c1\0c2\0";
+        let counts = b"3\t1\tsrc/a b.rs\x002\t2\t\0old/x.txt\0new/x.txt\0-\t-\timg.png\x000\t4\tgone.txt\x000\t0\t\0c1\0c2\0";
+        let files = parse_commit_files(names, counts);
+        let f = |path: &str, old: Option<&str>, status: &str, add: Option<u64>, del: Option<u64>| GitCommitFile {
+            path: path.into(), old_path: old.map(str::to_string), status: status.into(), additions: add, deletions: del,
+        };
+        assert_eq!(files, [
+            f("src/a b.rs", None, "M", Some(3), Some(1)),
+            f("new/x.txt", Some("old/x.txt"), "R", Some(2), Some(2)),
+            f("img.png", None, "A", None, None),
+            f("gone.txt", None, "D", Some(0), Some(4)),
+            f("c2", Some("c1"), "C", Some(0), Some(0)),
+        ]);
+        assert!(parse_commit_files(b"", b"").is_empty());
+    }
+
+    #[test]
+    fn commit_hashes() {
+        assert!(safe_hash("abcd").is_ok());
+        assert_eq!(safe_hash(" 0123456789ABCDEFabcdef0123456789abcdef01 ").unwrap(), "0123456789ABCDEFabcdef0123456789abcdef01");
+        for bad in ["", "abc", "xyz1", "-abcd", "abcd^", "HEAD", &"a".repeat(65)] {
+            assert!(safe_hash(bad).is_err(), "{bad}");
+        }
+        // Hashes are refs from the UI too.
+        assert!(safe_ref("0123456789abcdef0123456789abcdef01234567").is_ok());
+    }
+
+    #[test]
     fn rename_lookup() {
         let out = b"R100\0a.txt\0b.txt\0R090\0old name.rs\0new name.rs\0";
         assert_eq!(rename_source(out, "new name.rs").as_deref(), Some("old name.rs"));
@@ -2986,16 +3539,24 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
 
     // -- against a real repository ------------------------------------------
 
-    struct Scratch(PathBuf);
+    /// A scratch folder, and its path spelt the way git reports it back.
+    struct Scratch(PathBuf, String);
     impl Scratch {
         fn new() -> Self {
             let dir = std::env::temp_dir().join(format!("mango-git-{}", uuid::Uuid::new_v4()));
             fs::create_dir_all(&dir).unwrap();
-            // The canonical path is what git reports back as the root.
-            Scratch(dir.canonicalize().unwrap())
+            // The canonical path is what git reports back as the root. On Windows it comes verbatim
+            // (`\\?\C:\…`), which git neither gives back (`C:/…`) nor takes as a remote.
+            let real = dir.canonicalize().unwrap().to_str().unwrap().to_string();
+            let shown = if cfg!(windows) {
+                real.strip_prefix(r"\\?\").unwrap_or(&real).replace('\\', "/")
+            } else {
+                real
+            };
+            Scratch(PathBuf::from(&shown), shown)
         }
         fn path(&self) -> &str {
-            self.0.to_str().unwrap()
+            &self.1
         }
         fn at(&self) -> At {
             At::local(&self.0)
@@ -3020,6 +3581,8 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
             s.git(&["config", "user.name", "Mango Test"]);
             s.git(&["config", "user.email", "test@mango.invalid"]);
             s.git(&["config", "commit.gpgsign", "false"]);
+            // Git for Windows turns autocrlf on system-wide: files must come back byte for byte.
+            s.git(&["config", "core.autocrlf", "false"]);
             s
         }
         fn entry(&self, rel: &str) -> Option<GitFile> {
@@ -3121,6 +3684,58 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         // A folder that is already gone is just pruned.
         fs::remove_dir_all(beside.0.join("other")).unwrap();
         worktree_remove(&s.at(), &other.path, false).unwrap();
+        assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn deleting_a_branch_can_take_its_worktree() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        struct Gone(PathBuf);
+        impl Drop for Gone {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let _beside = Gone(PathBuf::from(format!("{}.worktrees", s.path())));
+        s.write("a.txt", "base\n");
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "base", false).unwrap();
+        let has = |name: &str| branches(&s.at()).unwrap().local.iter().any(|b| b == name);
+
+        // Merged: without the flag git refuses (as before); with it, branch and worktree go.
+        let merged = worktree_add(&s.at(), "feat/merged", None, true).unwrap();
+        assert!(branch_delete(&s.at(), "feat/merged", false, false).unwrap_err().contains("worktree"));
+        assert_eq!(branch_delete(&s.at(), "feat/merged", false, true).unwrap(), Some(merged.path.clone()));
+        assert!(!has("feat/merged") && !PathBuf::from(&merged.path).exists());
+
+        // Unmerged: refused and left exactly as it was, then forced.
+        let ahead = worktree_add(&s.at(), "feat/ahead", None, true).unwrap();
+        let place = At::local(PathBuf::from(&ahead.path));
+        fs::write(PathBuf::from(&ahead.path).join("b.txt"), "b\n").unwrap();
+        stage(&place, &[]).unwrap();
+        commit(&place, "ahead", false).unwrap();
+        assert!(branch_delete(&s.at(), "feat/ahead", false, true).unwrap_err().contains("not fully merged"));
+        assert_eq!(status_of(&place).unwrap().branch.as_deref(), Some("feat/ahead"));
+
+        // Uncommitted changes: refused even when forced, nothing touched.
+        fs::write(PathBuf::from(&ahead.path).join("c.txt"), "c\n").unwrap();
+        assert!(branch_delete(&s.at(), "feat/ahead", true, true).unwrap_err().contains("uncommitted"));
+        assert!(has("feat/ahead") && PathBuf::from(&ahead.path).exists());
+        fs::remove_file(PathBuf::from(&ahead.path).join("c.txt")).unwrap();
+        assert_eq!(branch_delete(&s.at(), "feat/ahead", true, true).unwrap(), Some(ahead.path.clone()));
+        assert!(!has("feat/ahead") && !PathBuf::from(&ahead.path).exists());
+
+        // A worktree whose folder is gone is pruned on the way; a plain branch returns no folder.
+        let gone = worktree_add(&s.at(), "feat/gone", None, true).unwrap();
+        fs::remove_dir_all(&gone.path).unwrap();
+        assert_eq!(branch_delete(&s.at(), "feat/gone", false, true).unwrap(), Some(gone.path));
+        let main_branch = status_of(&s.at()).unwrap().branch.unwrap();
+        checkout(&s.at(), "plain", true).unwrap();
+        checkout(&s.at(), &main_branch, false).unwrap();
+        assert_eq!(branch_delete(&s.at(), "plain", false, true).unwrap(), None);
         assert_eq!(worktrees(&s.at()).unwrap().len(), 1);
     }
 
@@ -3554,5 +4169,136 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         pull(&s.at()).unwrap();
         assert_eq!(s.read("b.txt").as_deref(), Some("from other\n"));
         assert_eq!(status_of(&s.at()).unwrap().behind, 0);
+    }
+
+    #[test]
+    fn history_graph_against_a_real_repository() {
+        if !have_git() {
+            return;
+        }
+        let s = Scratch::repo();
+        let query = |f: &dyn Fn(&mut GraphQuery)| {
+            let mut q = GraphQuery { limit: 50, ..Default::default() };
+            f(&mut q);
+            graph(&s.at(), &q)
+        };
+        let subjects = |g: &GitGraph| g.commits.iter().map(|c| c.subject.clone()).collect::<Vec<_>>();
+
+        // Unborn: nothing yet, but the branch is known.
+        let g = query(&|_| {}).unwrap();
+        assert!(g.head.is_none() && g.commits.is_empty() && !g.more && g.branch.is_some());
+        // The Git log asks for the current branch alone: empty, not a bad revision.
+        let current = query(&|q| q.refs = Some(vec!["HEAD".into()])).unwrap();
+        assert!(current.head.is_none() && current.commits.is_empty() && !current.more);
+        assert_eq!(current.branch, g.branch);
+        let main = g.branch.unwrap();
+
+        s.write("a.txt", "one\n");
+        fs::write(s.0.join("bin.dat"), [0u8, 1, 2, 0]).unwrap();
+        s.git(&["add", "-A"]);
+        s.git(&["commit", "-qm", "root"]);
+        s.git(&["checkout", "-qb", "side"]);
+        s.git(&["mv", "a.txt", "c.txt"]);
+        s.write("b.txt", "bee\n");
+        s.git(&["add", "-A"]);
+        s.git(&["commit", "-qm", "side work\n\nBody text"]);
+        s.git(&["checkout", "-q", &main]);
+        s.write("m.txt", "em\n");
+        s.git(&["add", "-A"]);
+        s.git(&["commit", "-qm", "main work"]);
+        s.git(&["merge", "-q", "--no-ff", "side", "-m", "merge side"]);
+        s.git(&["tag", "v1"]);
+        // A stash is not history.
+        s.write("m.txt", "dirty\n");
+        s.git(&["stash", "-q"]);
+
+        let g = query(&|_| {}).unwrap();
+        assert_eq!(g.commits.len(), 4, "{:?}", subjects(&g));
+        assert_eq!(g.branch.as_deref(), Some(main.as_str()));
+        let merge = &g.commits[0];
+        assert_eq!(merge.subject, "merge side");
+        assert_eq!(g.head.as_deref(), Some(merge.hash.as_str()));
+        assert_eq!(merge.parents.len(), 2);
+        assert_eq!(merge.author_email, "test@mango.invalid");
+        assert!(merge.refs.contains(&GitRef { name: main.clone(), kind: GitRefKind::Branch, current: true }));
+        assert!(merge.refs.contains(&GitRef { name: "v1".into(), kind: GitRefKind::Tag, current: false }));
+        let side = g.commits.iter().find(|c| c.subject == "side work").unwrap();
+        assert_eq!(side.refs, [GitRef { name: "side".into(), kind: GitRefKind::Branch, current: false }]);
+        let root = g.commits.last().unwrap();
+        assert!(root.subject == "root" && root.parents.is_empty());
+
+        // Pages.
+        let first = query(&|q| q.limit = 1).unwrap();
+        assert!(first.more && first.commits.len() == 1);
+        let last = query(&|q| {
+            q.limit = 1;
+            q.skip = 3;
+        })
+        .unwrap();
+        assert!(!last.more && subjects(&last) == ["root"]);
+        // An empty list means everything.
+        assert_eq!(query(&|q| q.refs = Some(vec![])).unwrap().commits.len(), 4);
+
+        // Filters.
+        assert_eq!(subjects(&query(&|q| q.refs = Some(vec!["side".into()])).unwrap()), ["side work", "root"]);
+        assert_eq!(query(&|q| q.refs = Some(vec![root.hash.clone()])).unwrap().commits.len(), 1);
+        assert!(query(&|q| q.refs = Some(vec!["a..b".into()])).is_err());
+        assert!(query(&|q| q.refs = Some(vec!["no-such-branch".into()])).is_err());
+        assert_eq!(query(&|q| q.text = Some("SIDE".into())).unwrap().commits.len(), 2);
+        assert_eq!(query(&|q| q.text = Some("[".into())).unwrap().commits.len(), 0, "literal, not a pattern");
+        assert_eq!(query(&|q| q.author = Some("nobody".into())).unwrap().commits.len(), 0);
+        assert_eq!(query(&|q| q.author = Some("MANGO test".into())).unwrap().commits.len(), 4);
+        let both = query(&|q| {
+            q.text = Some("work".into());
+            q.author = Some("@mango.invalid".into());
+        })
+        .unwrap();
+        assert_eq!(both.commits.len(), 2);
+        assert_eq!(query(&|q| q.text = Some("  ".into())).unwrap().commits.len(), 4, "blank is no filter");
+        assert_eq!(subjects(&query(&|q| q.paths = Some(vec!["m.txt".into()])).unwrap()), ["main work"]);
+        assert!(query(&|q| q.paths = Some(vec!["../x".into()])).is_err());
+
+        // A commit's details.
+        let d = commit_show(&s.at(), &merge.hash).unwrap();
+        assert_eq!((d.subject.as_str(), d.body.as_str(), d.parents.len()), ("merge side", "", 2));
+        assert_eq!(d.committer, "Mango Test");
+        let mut files: Vec<_> = d.files.iter().map(|f| (f.path.as_str(), f.old_path.as_deref(), f.status.as_str())).collect();
+        files.sort();
+        assert_eq!(files, [("b.txt", None, "A"), ("c.txt", Some("a.txt"), "R")], "against the first parent");
+        let d = commit_show(&s.at(), &side.short_hash).unwrap();
+        assert_eq!(d.body, "Body text");
+        let d = commit_show(&s.at(), &root.hash).unwrap();
+        let bin = d.files.iter().find(|f| f.path == "bin.dat").unwrap();
+        assert_eq!((bin.status.as_str(), bin.additions, bin.deletions), ("A", None, None));
+        let a = d.files.iter().find(|f| f.path == "a.txt").unwrap();
+        assert_eq!((a.additions, a.deletions), (Some(1), Some(0)));
+        assert!(commit_show(&s.at(), "deadbeef").unwrap_err().contains("no commit"));
+        assert!(commit_show(&s.at(), "HEAD").is_err());
+
+        // One file's diff.
+        let diff = commit_diff(&s.at(), &merge.hash, "c.txt").unwrap();
+        assert!(diff.contains("rename from a.txt") && !diff.contains("new file mode"), "{diff}");
+        let diff = commit_diff(&s.at(), &merge.hash, "b.txt").unwrap();
+        assert!(diff.starts_with("diff --git a/b.txt b/b.txt") && diff.contains("+bee"), "{diff}");
+        assert!(commit_diff(&s.at(), &root.hash, "a.txt").unwrap().contains("+one"));
+        assert!(commit_diff(&s.at(), &root.hash, "../a.txt").is_err());
+
+        // Detached: HEAD is its own ref, and no branch is current.
+        assert!(checkout_commit(&s.at(), "HEAD").unwrap_err().contains("not a commit hash"));
+        assert!(checkout_commit(&s.at(), "--orphan").is_err());
+        checkout_commit(&s.at(), &merge.parents[0][..10]).unwrap();
+        let g = query(&|_| {}).unwrap();
+        assert_eq!(g.branch, None);
+        let at = g.commits.iter().find(|c| Some(&c.hash) == g.head.as_ref()).unwrap();
+        assert_eq!(at.subject, "main work");
+        assert!(at.refs.contains(&GitRef { name: "HEAD".into(), kind: GitRefKind::Head, current: true }));
+        assert!(g.commits.iter().flat_map(|c| &c.refs).all(|r| !r.current || r.kind == GitRefKind::Head));
+
+        // An orphan branch: HEAD is unborn, the other branches still show.
+        s.git(&["checkout", "-q", "--orphan", "fresh"]);
+        let g = query(&|_| {}).unwrap();
+        assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 4));
+        let g = query(&|q| q.refs = Some(vec!["HEAD".into()])).unwrap();
+        assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 0));
     }
 }

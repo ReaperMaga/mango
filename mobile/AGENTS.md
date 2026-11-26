@@ -22,6 +22,9 @@ CI=1 npx expo export --platform ios --output-dir /tmp/mango-ios   # proves the H
 npx eas-cli@latest build --profile development --platform ios     # a development build in the cloud (eas.json)
 ```
 
+TestFlight builds come from `.github/workflows/mobile.yml` (a `mobile-vX.Y.Z` tag matching `expo.version` in `app.json`,
+or a manual run); see `docs/development/mobile-release.md`.
+
 `npx expo install <pkg>` to add a dependency (it picks the SDK-compatible version). pnpm runs with
 `node-linker=hoisted` (`.npmrc`), as Expo needs.
 
@@ -30,19 +33,33 @@ npx eas-cli@latest build --profile development --platform ios     # a developmen
 ```
 modules/mango-ssh/   local Expo module: SSH in Swift (SwiftNIO SSH via spm_dependency), keys in the Keychain; Android is a stub
 src/ssh/             types.ts (the contract), native.ts (wrapper), mock.ts, index.ts (`ssh`)
-src/remote/          the environment: shell.ts (quoting, command lines, validators: ports of envs/ssh.rs and envs/mod.rs),
+src/remote/          the environment: auth.ts (agent sign-in status: the desktop's `auth.rs`, read-only), shell.ts (quoting, command lines, validators: ports of envs/ssh.rs and envs/mod.rs),
                      shareLink.ts (envs/token.rs, join.rs), git.ts, sshBackend.ts (chats_remote.rs, git.rs, agent_proc.rs),
                      agentRun.ts (a run that reattaches after a dropped connection),
-                     mockBackend.ts, chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
+                     github.ts + releases.ts (gh inside the environment: pull requests, jobs, releases; ports of github.rs, releases.rs),
+                     gitlab.ts + gitlabItems.ts + gitlabReleases.ts (glab inside the environment: forge detection, merge requests, CI job traces,
+                     releases and pipelines; ports of gitlab.rs, gitlab_items.rs, gitlab_releases.rs), forge.ts (links on either forge),
+                     mockGitlab.ts (the preview's `scratch` project is on gitlab.com); `state/forges.ts`: each project's forge, for words and `/create-pr`
+                     mockBackend.ts (its releases are the desktop preview's story, `~/composables/mockReleases`), chatSync*.ts (app/utils/remoteChats.ts), index.ts (`backend`)
 src/attachments/     picking (Photos, camera, Files), previews, pictures fitted for the model, upload into the
                      environment (`~/.local/share/mango/attachments/<id>/`); input.ts: what a run gets (pure)
 src/voice/           dictation: transcript.ts (merging, locales, messages: pure), engine.native.ts (Apple's recognizer via
                      expo-speech-recognition, on-device required where offered), engine.ts (Web Speech API or simulated), useDictation
-src/agents/          run.ts + turn.ts (app/agents/index.ts: drives the desktop's own adapters), simulated.ts (fake CLI for web)
-src/state/           envs.ts, threads.ts, network.ts (zustand), chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
-src/theme/           tokens.ts (from app/assets/css/tokens.css, both themes), ThemeProvider, fonts
+src/notify/          notifications: index.ts (when and what; the desktop's wording from `~/utils/notifications`), kind.ts (pure),
+                     system.native.ts (expo-notifications, local only), system.ts (web: shows nothing), taps*.ts (a tap opens its chat)
+src/agents/          run.ts + turn.ts (app/agents/index.ts: drives the desktop's own adapters), simulated.ts (fake CLI for web),
+                     usage.ts (plan limits through the adapters' `readUsage`), commands.ts
+src/state/           envs.ts, threads.ts, network.ts, prefs.ts (zustand), prefsModel.ts (Settings choices, pure),
+                     chatHistory.ts + chatFiles*.ts (the phone's working copy of chats)
+                     `threads.elsewhere`: a run another computer has going, read from the copy it saved (loading turns `running` into Working, so it is
+                     noted in `_adoptRemote` before that; never saved). `screens/livePoll.ts` + `useLiveChats.ts`: an open chat / project list syncs its env every 4 / 8 s
+src/theme/           tokens.ts + schemes.generated.ts (every colour scheme of app/assets/css/tokens.css, dark and light: generated
+                     by scripts/schemes.ts, do not edit), look.ts (Settings > Appearance as data), fonts.ts + fontAssets.ts,
+                     ThemeProvider (the `Theme` a component reads: colours, fonts, sizes, radii, all per look)
+scripts/             schemes.ts + oklch.ts: tokens.css -> schemes.generated.ts (`pnpm schemes`, `pnpm schemes:check`)
 src/ui/, src/chat/   the component kit and chat components (presentational)
-src/app/             routes (expo-router); src/screens/ shared screen code and the app lifecycle
+src/app/             routes (expo-router); settings/ is one screen per category (SettingsPage: tab strip + page)
+src/screens/         shared screen code and the app lifecycle; settings/ holds the category list and the tab strip
 ```
 
 `~/…` imports resolve to the desktop's `../app/…` (tsconfig `paths`, `metro.config.js`, `vitest.config.mts`): the
@@ -68,6 +85,9 @@ agent adapters and chat types are shared, not copied. Only import types and plai
   environment. The native module reports each line's byte size (`LineInfo`) so the offsets are exact.
 - **Design:** tokens only (`src/theme/tokens.ts`, kept in step with `tokens.css`), the impeccable process from the
   root `AGENTS.md`, iOS idioms (44pt targets, safe areas, sheets, back swipe). Check both themes.
+  Colours, fonts, sizes and radii come from the theme (`t.colors`, `t.fonts`, `t.fontSize`, `t.type`, `t.radius`), never
+  from constants, because Settings > Appearance changes them: spread a font face (`...t.fonts.semibold`), do not name a
+  family. Change `tokens.css`, then run `pnpm schemes` (`pnpm schemes:check` must pass: a test also pins the Mango palette).
 - Never create or edit `ios/` or `android/` by hand (Continuous Native Generation): configure through `app.json`,
   config plugins and the module's podspec.
 - Expo changes every SDK: read the versioned docs (https://docs.expo.dev/versions/v58.0.0/,

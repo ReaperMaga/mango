@@ -4,8 +4,10 @@ import { useUpdater } from '~/stores/updater'
 import { openExternal } from '~/composables/useBackend'
 import { releaseUrl, RELEASES_URL } from '~/utils/releases'
 import { useNow } from '~/utils/time'
+import { formatLocale } from '~/i18n'
 
 /** Settings > Maintenance: check for, and install, a newer release from GitHub. */
+const { t } = useI18n()
 const up = useUpdater()
 const build = useBuildInfo()
 const now = useNow()
@@ -14,24 +16,28 @@ const autoId = useId()
 
 function ago(ts: number) {
   const m = Math.round((now.value - ts) / 60_000)
-  if (m < 1) return 'just now'
-  if (m < 60) return `${m} min ago`
+  if (m < 1) return t('common.time.justNow')
+  if (m < 60) return t('common.time.minAgo', { n: m })
   const h = Math.round(m / 60)
-  return h < 24 ? `${h} h ago` : new Date(ts).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+  return h < 24 ? t('common.time.hAgo', { n: h }) : new Date(ts).toLocaleDateString(formatLocale(), { day: 'numeric', month: 'short' })
 }
 const released = computed(() => up.update?.dateMs
-  ? new Date(up.update.dateMs).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  ? new Date(up.update.dateMs).toLocaleDateString(formatLocale(), { year: 'numeric', month: 'short', day: 'numeric' })
   : null)
 
 const status = computed(() => {
   switch (up.phase) {
-    case 'checking': return 'Checking GitHub for a newer release…'
-    case 'downloading': return up.fraction === null ? 'Downloading the update…' : `Downloading the update, ${Math.round(up.fraction * 100)}%…`
-    case 'restarting': return 'Installing. Mango restarts in a moment.'
+    case 'checking': return t('settings.updates.checking')
+    case 'downloading': return up.fraction === null ? t('settings.updates.downloading') : t('settings.updates.downloadingPercent', { percent: Math.round(up.fraction * 100) })
+    case 'restarting': return t('settings.updates.installing')
   }
-  if (up.update) return `Mango ${up.update.version} is available${released.value ? `, released ${released.value}` : ''}.`
-  if (up.lastChecked) return `Mango ${build.version} is the latest version. Checked ${ago(up.lastChecked)}.`
-  return `You have Mango ${build.version}.`
+  if (up.update) {
+    return released.value
+      ? t('settings.updates.availableReleased', { version: up.update.version, date: released.value })
+      : t('settings.updates.available', { version: up.update.version })
+  }
+  if (up.lastChecked) return t('settings.updates.latest', { version: build.version, ago: ago(up.lastChecked) })
+  return t('settings.updates.current', { version: build.version })
 })
 const working = computed(() => up.phase === 'downloading' || up.phase === 'restarting')
 </script>
@@ -39,16 +45,16 @@ const working = computed(() => up.phase === 'downloading' || up.phase === 'resta
 <template>
   <div class="group updates" role="group" :aria-labelledby="titleId">
     <div class="updates__head">
-      <h3 :id="titleId" class="group__title">Updates</h3>
+      <h3 :id="titleId" class="group__title">{{ t('settings.updates.title') }}</h3>
       <UiButton size="sm" variant="ghost" :loading="up.phase === 'checking'" :disabled="working || undefined" @click="up.check(true)">
-        <RotateCw v-if="up.phase !== 'checking'" />Check now
+        <RotateCw v-if="up.phase !== 'checking'" />{{ t('settings.updates.checkNow') }}
       </UiButton>
     </div>
 
     <p class="updates__status" role="status" aria-live="polite">{{ status }}</p>
     <p v-if="up.phase === 'error' && up.error" class="updates__error">{{ up.error }}</p>
     <p v-if="build.dev" class="updates__hint">
-      This is a development build: Mango does not check on its own, and installing replaces it with the released app.
+      {{ t('settings.updates.dev') }}
     </p>
 
     <div v-if="working" class="updates__track" aria-hidden="true">
@@ -57,22 +63,21 @@ const working = computed(() => up.phase === 'downloading' || up.phase === 'resta
 
     <div v-if="up.update && !working" class="updates__actions">
       <UiButton size="sm" variant="primary" @click="up.install()">
-        <CircleArrowUp />{{ up.installFailed ? 'Try again' : 'Update and restart' }}
+        <CircleArrowUp />{{ up.installFailed ? t('common.actions.retry') : t('settings.updates.install') }}
       </UiButton>
       <UiButton size="sm" variant="ghost" @click="openExternal(releaseUrl(up.update.version))">
-        <ExternalLink />Release notes
+        <ExternalLink />{{ t('settings.updates.notes') }}
       </UiButton>
     </div>
-    <p v-if="up.update && !working" class="updates__hint">Running chats and terminals stop when Mango restarts.</p>
-    <p v-if="up.installFailed" class="updates__hint">
-      You can also download the installer from
-      <a :href="RELEASES_URL" class="updates__link" @click.prevent="openExternal(RELEASES_URL)">GitHub releases</a>.
-    </p>
+    <p v-if="up.update && !working" class="updates__hint">{{ t('settings.updates.stops') }}</p>
+    <i18n-t v-if="up.installFailed" keypath="settings.updates.manual" tag="p" scope="global" class="updates__hint">
+      <template #link><a :href="RELEASES_URL" class="updates__link" @click.prevent="openExternal(RELEASES_URL)">{{ t('settings.updates.githubReleases') }}</a></template>
+    </i18n-t>
 
     <div class="updates__auto">
       <div class="updates__auto-text">
-        <span :id="autoId" class="updates__auto-label">Check for updates automatically</span>
-        <span class="updates__hint">At launch and every hour, from the latest release on GitHub.</span>
+        <span :id="autoId" class="updates__auto-label">{{ t('settings.updates.auto') }}</span>
+        <span class="updates__hint">{{ t('settings.updates.autoHint') }}</span>
       </div>
       <button
         type="button"

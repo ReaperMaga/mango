@@ -1,13 +1,19 @@
-import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServer, LspServerId, SetupTool, SetupToolId, VoiceModel, VoiceModelId } from '~/types/ipc'
+import { t } from '~/i18n'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
 import { mockGit } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
-import { mockGhItem, mockGhJob, mockGhMerge, mockGhPrCreate } from '~/composables/mockGithub'
+import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate, mockGhRepoLink } from '~/composables/mockGithub'
+import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
 import { mockPlasticReviewCreate, mockPlasticReviews } from '~/composables/mockReviews'
 import { createMockEnvs } from '~/composables/mockEnvs'
 import { mockMcpSave, mockMcpServers } from '~/composables/mockMcp'
+import { mockGitlabHosts, mockGitlabHostsSave, mockHostingInstall, mockHostingLogin, mockHostingLogout, mockHostingStatus } from '~/composables/mockHosting'
+import { mockPlugins } from '~/composables/mockPlugins'
+import { followMockPluginData, mockPluginData } from '~/composables/mockPluginData'
 import { isEnvPath } from '~/utils/envPath'
+import { invoke } from '@tauri-apps/api/core'
 
 /**
  * Typed bridge to the Rust backend. Inside Tauri it calls real commands;
@@ -89,7 +95,7 @@ function refuseRemote(cmd: string, args: unknown): Error | null {
   if (!LOCAL_ONLY.test(cmd) || !args || typeof args !== 'object') return null
   const a = args as Record<string, unknown>
   return [a.path, a.root, a.cwd].some(v => typeof v === 'string' && isEnvPath(v))
-    ? new Error('Not available for remote environments yet.')
+    ? new Error(t('shell.backend.remote'))
     : null
 }
 
@@ -97,7 +103,7 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
   const refused = refuseRemote(cmd, args)
   if (refused) throw refused
   if (isTauri()) {
-    const { invoke } = await import('@tauri-apps/api/core')
+    // Sent before the caller's task ends, so no dynamic import: the page may hang right after (`tellUnsaved`).
     return invoke<Result<K>>(cmd, (args ?? {}) as Record<string, unknown>)
   }
   return mock.call(cmd, args ?? ({} as Args<K>))
@@ -106,13 +112,16 @@ export async function call<K extends keyof Commands>(cmd: K, args?: Args<K>): Pr
 export async function on<E extends keyof Events>(event: E, handler: (payload: Events[E]) => void): Promise<Unlisten> {
   if (isTauri()) {
     const { listen } = await import('@tauri-apps/api/event')
-    return listen<Events[E]>(event, e => handler(e.payload))
+    // Language servers and a window's close talk only to their own window, and Tauri gives a listener
+    // without a target every event.
+    const target = event.startsWith('lsp://') || event === 'window://close' ? tauriLabel() : undefined
+    return listen<Events[E]>(event, e => handler(e.payload), target ? { target } : undefined)
   }
   return mock.on(event, handler)
 }
 
 /** Native folder picker. Returns null when cancelled. */
-export async function pickFolder(title = 'Open folder', defaultPath?: string): Promise<string | null> {
+export async function pickFolder(title = t('shell.shortcuts.labels.open-folder'), defaultPath?: string): Promise<string | null> {
   if (isTauri()) {
     const { open } = await import('@tauri-apps/plugin-dialog')
     const res = await open({ directory: true, multiple: false, title, defaultPath })
@@ -123,7 +132,7 @@ export async function pickFolder(title = 'Open folder', defaultPath?: string): P
 }
 
 /** Native file picker (several files). Inside the app only; returns [] when cancelled or in the browser. */
-export async function pickFiles(title = 'Attach files'): Promise<string[]> {
+export async function pickFiles(title = t('shell.backend.attach')): Promise<string[]> {
   if (!isTauri()) return []
   const { open } = await import('@tauri-apps/plugin-dialog')
   const res = await open({ multiple: true, directory: false, title })
@@ -151,6 +160,25 @@ export const appWindow = {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().toggleMaximize()
   },
+  /** Calls back with whether the window is maximized now and after every resize; returns a stop function. */
+  async watchMaximized(cb: (maximized: boolean) => void): Promise<() => void> {
+    if (!isTauri()) return () => {}
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    const w = getCurrentWindow()
+    const read = () => { w.isMaximized().then(cb).catch(() => {}) }
+    read()
+    const off = await w.onResized(read)
+    return off
+  },
+  /** The window's title: what the taskbar, Alt+Tab and window previews show. */
+  async setTitle(title: string) {
+    if (!isTauri()) {
+      document.title = title
+      return
+    }
+    const { getCurrentWindow } = await import('@tauri-apps/api/window')
+    await getCurrentWindow().setTitle(title)
+  },
   async close() {
     if (!isTauri()) {
       // The browser preview: a window Mango opened (window.open) can close itself.
@@ -159,21 +187,6 @@ export const appWindow = {
     }
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
     await getCurrentWindow().close()
-  },
-  /**
-   * Run `before` when the window is asked to close (titlebar, the OS, the main window closing),
-   * then close it. In the browser preview, when the tab goes (best effort: the page may be gone first).
-   */
-  async onClose(before: () => Promise<void>) {
-    if (!isTauri()) {
-      window.addEventListener('pagehide', () => { void before() })
-      return
-    }
-    const { getCurrentWindow } = await import('@tauri-apps/api/window')
-    await getCurrentWindow().onCloseRequested(async () => {
-      // Never keep a window open because saving failed: it closes either way.
-      await Promise.race([before().catch(() => {}), new Promise(r => setTimeout(r, 4000))])
-    })
   },
 }
 
@@ -253,19 +266,38 @@ const mock = (() => {
   ]
   /** Play a fake installer into a fake terminal, then mark the tool installed. */
   function fakeInstall(id: string, tool: SetupToolId) {
-    const t = setupTools.find(x => x.id === tool)!
+    const found = setupTools.find(x => x.id === tool)!
     const lines = [
-      `\x1b[2m$ ${t.install?.command}\x1b[0m`,
-      `Downloading ${t.name}…`,
+      `\x1b[2m$ ${found.install?.command}\x1b[0m`,
+      `Downloading ${found.name}…`,
       'Verifying checksum… ok',
       `Installing to ${home}/.local/bin`,
-      `\x1b[32m✓\x1b[0m ${t.name} installed \x1b[2m(simulated: the browser preview installs nothing)\x1b[0m`,
+      `\x1b[32m✓\x1b[0m ${found.name} installed \x1b[2m(simulated: the browser preview installs nothing)\x1b[0m`,
     ]
     lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
     setTimeout(() => {
-      Object.assign(t, { installed: true, version: tool === 'codex' ? 'codex-cli 0.98.0' : '1.0.0', path: `${home}/.local/bin/${tool}` })
+      Object.assign(found, { installed: true, version: tool === 'codex' ? 'codex-cli 0.98.0' : '1.0.0', path: `${home}/.local/bin/${tool}` })
       emit('pty://exit', { id, code: 0 })
     }, 250 + lines.length * 420)
+  }
+
+  /* Language servers: none runs or installs here, so the editor shows what it shows without one. */
+  const lspServers: LspServer[] = ([
+    ['typescript', 'typescript-language-server', ['typescript', 'typescriptreact', 'javascript', 'javascriptreact'], 'npm install -g typescript-language-server typescript@6', 'https://github.com/typescript-language-server/typescript-language-server#installing'],
+    ['rust', 'rust-analyzer', ['rust'], 'rustup component add rust-analyzer', 'https://rust-analyzer.github.io/book/installation.html'],
+    ['python', 'pyright', ['python'], 'npm install -g pyright', 'https://microsoft.github.io/pyright/#/installation'],
+    ['go', 'gopls', ['go'], 'go install golang.org/x/tools/gopls@latest', 'https://go.dev/gopls/#installation'],
+    ['clangd', 'clangd', ['c', 'cpp'], null, 'https://clangd.llvm.org/installation'],
+    ['csharp', 'csharp-ls', ['csharp'], 'dotnet tool install --global csharp-ls', 'https://github.com/razzmatazz/csharp-language-server'],
+  ] satisfies [LspServerId, string, string[], string | null, string][])
+    .map(([id, name, languages, install, helpUrl]) => ({ id, name, languages, installed: false, path: null, install, helpUrl }))
+  function fakeLspInstall(id: string, server: LspServerId) {
+    const lines = [
+      `\x1b[2m$ ${lspServers.find(s => s.id === server)?.install}\x1b[0m`,
+      'Simulated: the browser preview installs nothing. In the Mango app this runs the installer.',
+    ]
+    lines.forEach((line, i) => setTimeout(() => emit('pty://data', { id, data: `${line}\r\n` }), 250 + i * 420))
+    setTimeout(() => emit('pty://exit', { id, code: 1 }), 250 + lines.length * 420)
   }
 
   /* Voice: models "download" in a few seconds; transcription answers with a labelled stand-in. */
@@ -329,6 +361,7 @@ const mock = (() => {
       for (const id of args.remove) delete threads[id]
       localStorage.setItem(MOCK_CHATS, JSON.stringify({ threads, ui: args.ui ?? raw.ui ?? null }))
     }
+    if (cmd === 'plugin_data_write') return mockPluginData(cmd, args, emit)
     await new Promise(r => setTimeout(r, 60))
     switch (cmd) {
       case 'recent_projects': return [...recent]
@@ -351,6 +384,10 @@ const mock = (() => {
       case 'window_list': return []
       // Browser windows cannot see each other's place on the screen.
       case 'window_at': return null
+      case 'window_alone': return true
+      // The browser asks nobody before a tab closes (composables/windowClose.ts).
+      case 'window_close_heard': return true
+      case 'window_close_answer': case 'window_unsaved': return
       case 'chats_remote_list':
         return Object.entries(mockEnvChats(args)).map(([id, c]) => ({ id, rev: 'gone' in c ? null : c.at }))
       case 'chats_remote_fetch': {
@@ -425,24 +462,47 @@ const mock = (() => {
       case 'setup_check': return setupTools.map(t => ({ ...t }))
       case 'setup_install': {
         const id = newPtyId()
-        fakeInstall(id, args.tool)
+        if (args.tool === 'gh' || args.tool === 'glab') mockHostingInstall(emit, id, args.tool)
+        else fakeInstall(id, args.tool)
         return id
       }
+      case 'hosting_status': await new Promise(r => setTimeout(r, 400)); return mockHostingStatus()
+      case 'hosting_login': {
+        const id = newPtyId()
+        mockHostingLogin(emit, id, args.tool, args.host)
+        return id
+      }
+      case 'hosting_logout': await new Promise(r => setTimeout(r, 300)); return mockHostingLogout(args.tool, args.host, args.user)
+      case 'gitlab_hosts': return mockGitlabHosts()
+      case 'gitlab_hosts_save': return mockGitlabHostsSave(args.hosts)
+      case 'lsp_servers': return lspServers.map(s => ({ ...s }))
+      case 'lsp_folder': return isEnvPath(args.project) ? null : `preview:${args.project}`
+      case 'lsp_install': {
+        const id = newPtyId()
+        fakeLspInstall(id, args.server)
+        return id
+      }
+      case 'lsp_start': throw new Error('Language servers run only inside the Mango desktop app; the browser preview has none.')
+      case 'lsp_send': case 'lsp_stop': return
       // Local or in a remote environment (`remote`), the preview has no CLI: runAgentTurn simulates instead.
       case 'agent_spawn': throw new Error('Agents run only inside the Mango desktop app; the browser preview simulates replies.')
       case 'agent_write': case 'agent_close_stdin': case 'agent_kill': case 'agent_reconnect_now': return
+      case 'agent_transcript': return null
       case 'update_check': return {
         version: '0.2.0',
         currentVersion: '0.1.0',
         notes: 'Simulated update: the browser preview has no releases to install.',
         dateMs: now - 1000 * 60 * 60 * 3,
       }
-      case 'update_install': {
+      case 'update_download': {
         const total = 18_400_000
         for (let downloaded = 0; downloaded < total; downloaded += 1_150_000) {
           await new Promise(r => setTimeout(r, 120))
           emit('update://progress', { downloaded, total })
         }
+        return
+      }
+      case 'update_install': {
         throw new Error('Simulated: the browser preview cannot install updates. Inside the Mango app this restarts into the new version.')
       }
       case 'attachment_save': return fakeAttachment(args.name, args.data)
@@ -451,6 +511,11 @@ const mock = (() => {
         const data = attachments.get(args.path)
         if (data === undefined) throw new Error('The attachment is gone from disk.')
         return data
+      }
+      case 'attachment_put_remote': {
+        if (!attachments.has(args.path)) throw new Error('The attachment is gone from disk.')
+        const [id, name] = args.path.split('/').slice(-2)
+        return `/home/agent/.local/share/mango/attachments/${id}/${name}`
       }
       case 'chat_image': return mockChatImage(args.path, args.base)
       case 'notify': {
@@ -462,8 +527,14 @@ const mock = (() => {
         return
       }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
+      case 'gh_open_items': await new Promise(r => setTimeout(r, 600)); return mockGhOpenItems(args.path)
+      case 'gh_repo_link': await new Promise(r => setTimeout(r, 150)); return mockGhRepoLink(args.path)
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
+      case 'gh_releases': await new Promise(r => setTimeout(r, 650)); return mockGhReleases(args.path, args.count)
+      case 'gh_tag_run': await new Promise(r => setTimeout(r, 400)); return mockGhTagRun(args.path, args.tag)
+      case 'gh_run': await new Promise(r => setTimeout(r, 400)); return mockGhRun(args.path, args.id)
+      case 'gh_run_action': await new Promise(r => setTimeout(r, 700)); return mockGhRunAction(args.path, args.id, args.action)
       case 'gh_pr_create': await new Promise(r => setTimeout(r, 1100)); return mockGhPrCreate(args.path, args.base, await mockGit('git_status', { path: args.path }))
       case 'plastic_reviews': await new Promise(r => setTimeout(r, 500)); return mockPlasticReviews(args.path)
       case 'plastic_review_create': await new Promise(r => setTimeout(r, 900)); return mockPlasticReviewCreate(args.path, args.title, args.reviewers)
@@ -498,10 +569,14 @@ const mock = (() => {
     if (cmd.startsWith('git_') || cmd.startsWith('vcs_')) return mockGit(cmd, args)
     if (cmd.startsWith('fs_')) return mockFiles(cmd, args)
     if (cmd.startsWith('env_')) return envs(cmd, args)
+    // Plugins: the catalog and official plugins from this repository's plugins/ folder (mockPlugins.ts).
+    if (cmd.startsWith('plugins_')) return mockPlugins(cmd, args, emit)
+    if (cmd.startsWith('plugin_data_')) return mockPluginData(cmd, args, emit)
     throw new Error(`mock: unknown command ${cmd}`)
   }
 
   function on(event: string, handler: (p: any) => void): Unlisten {
+    if (event === 'plugins://data') followMockPluginData(emit)
     if (!listeners.has(event)) listeners.set(event, new Set())
     listeners.get(event)!.add(handler)
     return () => listeners.get(event)?.delete(handler)
