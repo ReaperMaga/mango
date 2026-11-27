@@ -592,6 +592,14 @@ function createLore() {
   if (!at || isEnvPath(at)) return
   useLore().initFor = { path: at, name: at === ws.activeProjectPath ? (ws.activeProject?.name ?? baseName(at)) : baseName(at) }
 }
+
+/** "Initialize repository": which version control to start here. Lore only for folders on this computer. */
+const initMenu = computed<MenuItem[]>(() => {
+  const at = path.value
+  const items: MenuItem[] = [{ label: t('git.panel.initGit'), hint: t('git.panel.initGitHint'), onSelect: () => { if (at) void git.init(at) } }]
+  if (at && !isEnvPath(at)) items.push({ label: t('git.panel.initLore'), hint: t('git.panel.initLoreHint'), onSelect: createLore })
+  return items
+})
 </script>
 
 <template>
@@ -932,8 +940,13 @@ function createLore() {
       <div v-else-if="status" class="gp__empty">
         <i18n-t keypath="git.panel.notRepo" tag="p" scope="global"><template #name><strong>{{ ws.activeProject?.name ?? t('git.panel.thisFolder') }}</strong></template></i18n-t>
         <div class="gp__empty-actions">
-          <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">{{ t('git.panel.init') }}</UiButton>
-          <UiButton v-if="path && !isEnvPath(path)" size="sm" variant="ghost" @click="createLore">{{ t('git.panel.loreInit') }}</UiButton>
+          <UiMenu :items="initMenu" :width="248" :label="t('git.panel.init')">
+            <template #default="{ toggle: toggleInit, open: initOpen }">
+              <UiButton size="sm" :loading="running('init')" :aria-expanded="initOpen" aria-haspopup="menu" @click="toggleInit">
+                {{ t('git.panel.init') }}<ChevronDown class="gp__init-chev" aria-hidden="true" />
+              </UiButton>
+            </template>
+          </UiMenu>
         </div>
       </div>
 
@@ -1345,6 +1358,7 @@ function createLore() {
 .gp__empty p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--fg-subtle); }
 .gp__empty strong { font-weight: 600; color: var(--fg-muted); }
 .gp__empty-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.gp__init-chev { width: 14px; height: 14px; margin-inline: var(--space-1) calc(-1 * var(--space-1)); stroke-width: 2; color: var(--fg-muted); }
 .gp__error {
   width: 100%;
   max-height: 160px;
