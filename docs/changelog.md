@@ -2,6 +2,22 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.11.0
+
+### New
+
+- Resolve merge conflicts in a three-pane merge editor, for git and Lore: accept yours, theirs or both per block, then mark the file resolved.
+- Changes shows a merge, rebase, cherry-pick or revert in progress, with Continue, Skip and Abort, and can hand the conflicts to the chat's agent ("Solve with agent").
+- Create a Lore repository in an existing folder, with a `.loreignore` suggested from `.gitignore`, Unity VCS or a Unity template. "Initialize repository" in Changes offers Git or Lore.
+- Changes and the titlebar show which version control a folder uses (Git, Unity VCS or Lore).
+- Lore can be installed from Get started.
+- The Git log opens on all branches.
+
+### Fixes
+
+- The Git log works for Lore repositories instead of showing "Detached HEAD".
+- Changes stays responsive with tens of thousands of changed files, in Lore and git.
+
 ## 0.10.3
 
 ### New
