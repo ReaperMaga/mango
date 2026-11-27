@@ -2,6 +2,14 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.12.3
+
+### Performance
+
+- Large Unity and Lore projects no longer make the window lag: the Git log's file list and the Files tree draw only the rows in view, and Lore reads status, history and branches from the local copy instead of asking the server each time.
+- A large chat history no longer slows the app down: only the chats that changed are saved, and a streaming reply redraws only what changed.
+- An open browser tab no longer keeps the app busy while nothing happens.
+
 ## 0.12.2
 
 ### Fixes
