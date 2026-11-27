@@ -9,7 +9,7 @@ import { formatLocale } from '~/i18n'
 
 /**
  * Project hub: shown when no project is open. Four ways in (open, new,
- * clone, a remote environment), then the recent list. Arrow keys walk every row; Enter opens;
+ * clone, a remote environment) and Settings, then the recent list. Arrow keys walk every row; Enter opens;
  * Delete forgets the focused recent project. With environments saved, "Where" above the actions
  * says where open, new and clone put the project (this computer or an environment).
  */
@@ -66,6 +66,14 @@ const actions = computed<Action[]>(() => [
     icon: Server,
     keys: [],
     run: () => envs.openView(),
+  },
+  {
+    id: 'settings',
+    title: t('start.hub.settings'),
+    description: t('start.hub.settingsHint'),
+    icon: Settings,
+    keys: ws.keyParts('settings'),
+    run: () => ws.openSettings(),
   },
 ])
 
@@ -307,14 +315,10 @@ onBeforeUnmount(() => {
         <p v-else class="recent__empty">{{ t('start.hub.empty') }}</p>
       </section>
 
-      <footer class="agents">
-        <button v-if="noAgents" type="button" class="agents__settings" @click="ws.openSetup()">
+      <footer v-if="noAgents" class="agents">
+        <button type="button" class="agents__settings" @click="ws.openSetup()">
           <Download />
           <span>{{ t('start.hub.noAgents') }}</span>
-        </button>
-        <button v-else type="button" class="agents__settings" @click="ws.openSettings('agents')">
-          <Settings />
-          <span>{{ t('settings.title') }}</span>
         </button>
       </footer>
     </div>

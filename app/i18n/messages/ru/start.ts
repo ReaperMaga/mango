@@ -41,6 +41,8 @@ export const start: Messages['start'] = {
     cloneHintIn: 'Клонировать репозиторий с GitHub или любого git remote в {place}.',
     remote: 'Удалённое окружение',
     remoteHint: 'Работать в контейнере или ВМ на собственном сервере.',
+    settings: 'Настройки',
+    settingsHint: 'Агенты, оформление, терминал и сочетания клавиш.',
     hoursAgo: '{n} час назад | {n} часа назад | {n} часов назад',
     openFailed: 'Не удалось открыть {path}.',
     openFailedPlain: 'Не удалось открыть эту папку.',

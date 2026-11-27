@@ -39,6 +39,8 @@ export const start = {
     cloneHintIn: 'Clone a repo from GitHub or any git remote into {place}.',
     remote: 'Remote environment',
     remoteHint: 'Work in a container or VM on your own server.',
+    settings: 'Settings',
+    settingsHint: 'Agents, appearance, terminal and shortcuts.',
     hoursAgo: '{n} hour ago | {n} hours ago',
     openFailed: 'Couldn\'t open {path}.',
     openFailedPlain: 'Couldn\'t open that folder.',
