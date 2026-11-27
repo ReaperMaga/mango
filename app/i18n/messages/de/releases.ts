@@ -95,6 +95,7 @@ export const releases: Messages['releases'] = {
   onSite: 'Releases auf {site}',
   plastic: 'Unity-VCS-Projekte haben keine GitHub- oder GitLab-Releases.',
   lore: 'Lore-Projekte haben keine GitHub- oder GitLab-Releases.',
+  noRemote: 'Die Git-Remotes dieses Projekts liegen nicht auf GitHub oder GitLab, daher gibt es keine Releases.',
   noProject: 'Öffne ein Projekt, um seine Releases zu sehen.',
   stopAgain: {
     github: 'Noch einmal klicken, um den Lauf auf {site} zu stoppen',

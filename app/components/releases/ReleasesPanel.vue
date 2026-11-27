@@ -30,12 +30,16 @@ const links = useLinks()
 const now = useNow(1000)
 
 /** A project with no GitHub or GitLab behind it (Unity VCS, Lore): what to say instead of a list. */
+const forge = useForge()
+watch(() => ws.activeProjectPath, p => forge.ensure(p), { immediate: true })
 const noForge = computed(() => {
   const vcs = ws.activeProject?.vcs
-  if (vcsTerms(vcs).forge) return null
-  return vcs === 'lore' ? t('releases.lore') : t('releases.plastic')
+  const p = ws.activeProjectPath
+  if (!vcsTerms(vcs).forge) return vcs === 'lore' ? t('releases.lore') : t('releases.plastic')
+  // A git project whose remotes name no GitHub or GitLab repository has no releases to read.
+  return p && p in forge.links && !forge.connected(p) ? t('releases.noRemote') : null
 })
-const path = computed(() => (noForge.value ? null : ws.activeProjectPath))
+const path = computed(() => (noForge.value || !forge.connected(ws.activeProjectPath) ? null : ws.activeProjectPath))
 const list = computed(() => (path.value ? releases.lists[path.value] : undefined))
 const data = computed(() => list.value?.data ?? null)
 const sorted = computed(() => releases.sorted(path.value))
@@ -43,8 +47,6 @@ const latestTag = computed(() => (data.value ? latestRelease(data.value.releases
 const repoName = computed(() => (data.value ? `${data.value.owner}/${data.value.repo}` : ''))
 const webBase = computed(() => (data.value ? `https://${data.value.host}/${data.value.owner}/${data.value.repo}` : null))
 /** GitHub or GitLab: from the list once read, from the project's remotes before. */
-const forge = useForge()
-watch(path, p => forge.ensure(p), { immediate: true })
 const provider = computed(() => data.value?.provider ?? forge.providerOf(path.value))
 const gitlab = computed(() => provider.value === 'gitlab')
 const site = computed(() => siteName(provider.value, data.value?.host))

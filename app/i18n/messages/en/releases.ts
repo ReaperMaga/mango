@@ -93,6 +93,7 @@ export const releases = {
   onSite: 'Releases on {site}',
   plastic: 'Unity VCS projects have no GitHub or GitLab releases.',
   lore: 'Lore projects have no GitHub or GitLab releases.',
+  noRemote: 'This project\'s git remotes are not on GitHub or GitLab, so it has no releases to show.',
   noProject: 'Open a project to see its releases.',
   stopAgain: {
     github: 'Click again to stop the run on {site}',

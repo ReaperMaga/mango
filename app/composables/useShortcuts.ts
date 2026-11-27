@@ -82,7 +82,7 @@ export function useShortcuts() {
     changes: () => { if (ws.hasProject) ws.toggleGit() },
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleLinks() },
-    releases: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleReleases() },
+    releases: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge && useForge().connected(ws.activeProjectPath)) ws.toggleReleases() },
     actions: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge && useForge().connected(ws.activeProjectPath)) ws.toggleActions() },
     'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
