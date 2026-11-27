@@ -42,6 +42,7 @@ export function sameStatus(a: GitStatus | null | undefined, b: GitStatus | null 
   if (!a || !b) return false
   if (a.vcs !== b.vcs || a.repository !== b.repository || a.isRepo !== b.isRepo || a.root !== b.root || a.mainRoot !== b.mainRoot
     || a.branch !== b.branch || a.head !== b.head || a.upstream !== b.upstream || a.ahead !== b.ahead || a.behind !== b.behind) return false
+  if (JSON.stringify(a.operation ?? null) !== JSON.stringify(b.operation ?? null)) return false
   if (a.files.length !== b.files.length) return false
   for (let i = 0; i < a.files.length; i++) if (!sameFile(a.files[i]!, b.files[i]!)) return false
   return true

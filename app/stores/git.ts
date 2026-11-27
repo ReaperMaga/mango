@@ -9,7 +9,7 @@ import { vcsTerms } from '~/utils/vcs'
 import { sameStatus } from '~/utils/rowWindow'
 
 /** The one action that can run at a time. */
-export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve'
+export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve' | 'abort' | 'continue' | 'skip' | 'take'
 
 export interface GitDiffEntry {
   /** Unified diff text; null until the first load finishes. */
@@ -198,6 +198,9 @@ export const useGit = defineStore('git', {
         // thousands of files, and making each one reactive costs more than everything that reads them.
         if (!sameStatus(before, status)) repo.status = markRaw(status)
         repo.error = null
+        // A merge that just stopped: its commit message is ready in the box (git's MERGE_MSG, Lore's own).
+        const op = status.operation
+        if (op?.kind === 'merge' && op.message && !before?.operation && !repo.message.trim()) repo.message = op.message
         this.syncProject(path, status)
         if (!status.isRepo) {
           Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null })
@@ -501,6 +504,30 @@ export const useGit = defineStore('git', {
       })
       await this.loadShelves(path)
       return ok
+    },
+
+    /* ---------- a merge, rebase, cherry-pick or revert in progress ---------- */
+
+    /** Go back to before it started. Destroys the resolutions made so far: the UI asks first. */
+    async abortOperation(path: string) {
+      const ok = await this.run(path, 'abort', () => call('git_operation_abort', { path }))
+      if (ok) this.ensure(path).message = ''
+      return ok
+    },
+    /** A rebase, cherry-pick or revert goes on once its conflicts are resolved. */
+    continueOperation(path: string) {
+      return this.run(path, 'continue', () => call('git_operation_continue', { path }))
+    },
+    /** A rebase leaves out the commit it is applying. */
+    skipOperation(path: string) {
+      return this.run(path, 'skip', () => call('git_operation_skip', { path }))
+    },
+    /**
+     * Take one side of a conflicted file whole (git: into the working tree, to be marked resolved after;
+     * Lore: resolved at once). Open files are saved first and reloaded after.
+     */
+    takeSide(path: string, file: string, side: 'ours' | 'theirs') {
+      return this.run(path, 'take', () => call('git_conflict_take', { path, file, side }))
     },
 
     fetch(path: string) {

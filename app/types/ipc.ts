@@ -367,6 +367,58 @@ export interface GitStatus {
   /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */
   behind: number
   files: GitFile[]
+  /**
+   * A merge, rebase, cherry-pick or revert that stopped half way (on conflicts, or a rebase's `edit`);
+   * Lore: a merge waiting to be committed. Null when nothing is in progress, and for Unity VCS.
+   */
+  operation: GitOperation | null
+}
+
+export type GitOperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+
+export interface GitOperation {
+  kind: GitOperationKind
+  /** The branch the result lands on: merged into, or being rebased. Null when detached. */
+  branch: string | null
+  /** What comes in: the merged branch (or a short hash), a rebase's new base, the picked or reverted commit. */
+  incoming: string | null
+  /** The commit being applied now (rebase, cherry-pick, revert), short hash. */
+  commit: string | null
+  subject: string | null
+  /** Rebase: which of its commits is being applied (from 1), and how many there are. */
+  step: number | null
+  steps: number | null
+  /** The message the commit that finishes it gets (git's `MERGE_MSG` without comments; Lore: "Merge x into y"). */
+  message: string | null
+}
+
+/** One side of a conflicted file (`git_conflict`). */
+export interface GitConflictSide {
+  /** The side has the file at all (it may have deleted it). */
+  present: boolean
+  /** Its text; null when absent, binary or too large. */
+  text: string | null
+}
+
+/**
+ * The sides of a conflicted file. `ours` is the current branch, or for a rebase the branch being rebased
+ * onto (git's stage 2); `theirs` is what comes in, or the commit a rebase is applying (stage 3).
+ * Lore: its `~base`, `~mine` and `~theirs` files beside the conflicted one.
+ */
+export interface GitConflict {
+  base: GitConflictSide
+  ours: GitConflictSide
+  theirs: GitConflictSide
+  /** A side isn't text: only taking one side whole works. */
+  binary: boolean
+  /** A side is larger than the editor opens. */
+  tooLarge: boolean
+}
+
+/** Commit subjects on each side of the operation since the sides met, newest first (`git_conflict_history`). */
+export interface GitConflictHistory {
+  ours: string[]
+  theirs: string[]
 }
 
 /* ---------- history graph (`git_graph`, `git_commit_show`, `git_commit_diff`) ----------
@@ -1685,6 +1737,24 @@ export interface Commands {
   git_merge_preview: [{ path: string; branch: string }, MergePreview]
   /** Rebase the current branch onto `onto`. Returns git's output. */
   git_rebase: [{ path: string; onto: string }, string]
+  /**
+   * Abort the operation in progress (`git merge|rebase|cherry-pick|revert --abort`; Lore: `branch merge abort`).
+   * Destroys the resolutions made so far: the UI asks first. Returns a line to show.
+   */
+  git_operation_abort: [{ path: string }, string]
+  /** Go on with a rebase, cherry-pick or revert once its conflicts are resolved (no editor opens). Lore: refused. */
+  git_operation_continue: [{ path: string }, string]
+  /** Rebase (or cherry-pick): leave out the commit being applied and go on. */
+  git_operation_skip: [{ path: string }, string]
+  /** The sides of a conflicted file, `file` relative to the repository root. */
+  git_conflict: [{ path: string; file: string }, GitConflict]
+  /**
+   * Take one side of a conflicted file whole. Git: written to the working tree (a side that deleted the file
+   * deletes it), still in conflict until marked resolved. Lore: resolved at once (`branch merge resolve mine|theirs`).
+   */
+  git_conflict_take: [{ path: string; file: string; side: 'ours' | 'theirs' }, void]
+  /** Commit subjects on each side of the operation in progress, at most 30 each. Lore and Unity VCS: none. */
+  git_conflict_history: [{ path: string }, GitConflictHistory]
   git_branch_rename: [{ path: string; from: string; to: string }, void]
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".
