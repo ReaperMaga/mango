@@ -241,6 +241,8 @@ export const shell = {
   },
   tabs: {
     changesIn: 'Changes in {file}',
+    mergeOf: 'Merge conflicts in {file}',
+    merge: 'merge',
     changesAt: 'Changes in {file} at {commit}',
     decompiledFrom: 'Decompiled from {assembly}, read-only',
     decompiledReadOnly: 'Decompiled, read-only',

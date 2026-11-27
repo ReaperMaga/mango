@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
-  FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
+  Bot, FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
 } from 'lucide-vue-next'
 import type { GitFile, VcsLock } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
@@ -25,6 +25,8 @@ import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
 import { baseName } from '~/utils/paths'
 import { useLore } from '~/stores/lore'
+import { mergeTabFor, openMergeEditor } from '~/composables/mergeEditor'
+import { chatForConflicts, solveConflicts } from '~/composables/solveConflicts'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
@@ -56,6 +58,8 @@ const conflicts = computed(() => changes.value.filter(f => f.conflicted).length)
 const discardable = computed(() => changes.value.filter(f => !f.conflicted))
 const newFiles = computed(() => discardable.value.filter(f => f.worktree === '?').length)
 const clean = computed(() => isRepo.value && !staged.value.length && !changes.value.length)
+/** A merge, rebase, cherry-pick or revert waiting half way (the banner over the lists). */
+const operation = computed(() => status.value?.operation ?? null)
 
 const running = (action: GitAction) => git.isBusy(path.value, action)
 /** Staging takes milliseconds; only the slow actions are worth greying controls out for. */
@@ -326,13 +330,14 @@ watch([message, messageBox], async () => {
 
 /** Nothing staged: the button stages everything first, like "Commit all" elsewhere. */
 const commitsAll = computed(() => staged.value.length === 0 && changes.value.length > 0)
-const canCommit = computed(() => !git.busy && !!message.value.trim() && conflicts.value === 0 && (staged.value.length > 0 || changes.value.length > 0))
+const canCommit = computed(() => !git.busy && !!message.value.trim() && conflicts.value === 0 && (staged.value.length > 0 || changes.value.length > 0 || operation.value?.kind === 'merge'))
 /** Unity VCS: files the next checkin takes that someone else has locked. It will likely be refused; warn, don't block. */
 const lockedOut = computed(() => (terms.value.locks
   ? (staged.value.length ? staged.value : changes.value).map(f => lockOf(f.path)).filter((l): l is VcsLock => !!l && !l.mine)
   : []))
-const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title?: string }>(() => {
-  if (conflicts.value) return { text: t('git.panel.resolveConflicts', conflicts.value), warn: true }
+const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; waiting?: boolean; title?: string }>(() => {
+  // Conflicts wait for you (the banner's grade), they are no failure.
+  if (conflicts.value) return { text: t('git.panel.resolveConflicts', conflicts.value), warn: false, waiting: true }
   const out = lockedOut.value
   if (out.length) {
     const first = out[0]!
@@ -344,6 +349,7 @@ const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title
       title: `${out.map(l => `${l.path}: ${lockSummary(l)}`).join('\n')}\n${t('git.panel.refused')}`,
     }
   }
+  if (operation.value?.kind === 'merge') return { text: t('git.merge.commitHint'), warn: false }
   if (staged.value.length) return { text: t('git.panel.stagedFiles', staged.value.length), warn: false }
   if (changes.value.length) return { text: terms.value.amend ? t('git.panel.stagesAll', changes.value.length) : t('git.panel.checksInAll', changes.value.length), warn: false }
   return { text: isUnity.value ? t('git.panel.nothingToCheckIn') : t('git.panel.nothingToCommit'), warn: false }
@@ -352,7 +358,8 @@ const commitTitle = computed(() => {
   if (isUnity.value) return commitsAll.value ? t('git.panel.stageAndCheckIn') : t('git.panel.checkInStaged')
   return commitsAll.value ? t('git.panel.stageAndCommit') : t('git.panel.commitStaged')
 })
-const showCommit = computed(() => isRepo.value && (!clean.value || !!message.value))
+/** A rebase, cherry-pick or revert makes its own commits (Continue, in the banner). */
+const showCommit = computed(() => isRepo.value && (!operation.value || operation.value.kind === 'merge') && (!clean.value || !!message.value || !!operation.value))
 
 function commit() {
   if (canCommit.value && path.value) animated(git.commit(path.value))
@@ -399,9 +406,14 @@ function animated(work: Promise<unknown>) {
 /* Another chat's folder: its lists replace these without motion. */
 watch(path, () => acting.value.clear(), { flush: 'sync' })
 
-/** Show the file's diff as a tab in the main pane. */
+/** Show the file's diff as a tab in the main pane; a conflicted one opens in the merge editor. */
 function toggle(file: GitFile, isStaged: boolean) {
   if (!path.value) return
+  if (file.conflicted && !isStaged) {
+    git.selected = gitFileKey(file.path, false)
+    openMergeEditor(path.value, file.path)
+    return
+  }
   const key = gitFileKey(file.path, isStaged)
   git.openDiff(path.value, key)
   const threads = useThreads()
@@ -457,8 +469,34 @@ function unlockFile(file: string) {
   if (path.value) void git.unlock(path.value, [file])
 }
 
+/** Whether the merge editor in front shows this conflicted file. */
+function mergeShown(file: string) {
+  return !!path.value && useThreads().activePane.threadId === mergeTabFor(path.value, file)
+}
+
+/** A conflicted row's menu: the merge editor, the agent, one side whole, resolved. */
+function conflictMenu(file: GitFile): MenuItem[] {
+  const at = path.value!
+  const rebase = operation.value?.kind === 'rebase'
+  const chat = chatForConflicts(at)
+  return [
+    { label: t('git.merge.openEditor'), icon: GitMerge, onSelect: () => openMergeEditor(at, file.path) },
+    {
+      label: t('git.merge.solveFile'),
+      icon: Bot,
+      hint: chat ? t('git.merge.solveIn', { chat: chat.title }) : t('git.merge.solveNew'),
+      disabled: !!git.busy,
+      onSelect: () => void solveConflicts(at, [file.path]),
+    },
+    { label: rebase ? t('git.merge.use.onto') : t('git.merge.use.ours'), divider: true, disabled: !!git.busy, onSelect: () => void git.takeSide(at, file.path, 'ours') },
+    { label: rebase ? t('git.merge.use.applied') : t('git.merge.use.theirs'), disabled: !!git.busy, onSelect: () => void git.takeSide(at, file.path, 'theirs') },
+    { label: t('git.merge.markResolved'), icon: Plus, divider: true, hint: t('git.merge.markResolvedHint'), disabled: waiting.value, onSelect: () => stage(file) },
+  ]
+}
+
 /** A file row's context menu: open, stage, and (Unity VCS) lock or release it. */
 function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
+  if (file.conflicted && !isStaged && path.value && status.value?.vcs !== 'plastic') return conflictMenu(file)
   if (!terms.value.locks) return null
   const code = isStaged ? file.index : file.worktree
   const lock = lockOf(file.path)
@@ -716,6 +754,8 @@ const initMenu = computed<MenuItem[]>(() => {
       </template>
     </div>
 
+    <GitMergeBanner v-if="isRepo && path && status && operation" :path="path" :status="status" :operation="operation" />
+
     <div v-if="notice" class="gp__notice" :class="{ 'is-error': notice.error }" :role="notice.error ? 'alert' : 'status'">
       <CircleAlert v-if="notice.error" class="gp__notice-icon" aria-hidden="true" />
       <Check v-else class="gp__notice-icon" aria-hidden="true" />
@@ -738,7 +778,7 @@ const initMenu = computed<MenuItem[]>(() => {
         @keydown="onMessageKey"
       />
       <div class="gp__commit-row">
-        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn, 'is-lock': commitHint.lock }" :title="commitHint.title">
+        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn, 'is-lock': commitHint.lock, 'is-waiting': commitHint.waiting }" :title="commitHint.title">
           <Lock v-if="commitHint.lock" class="gp__hint-icon" aria-hidden="true" />{{ commitHint.text }}
         </span>
         <div class="gp__commit-btns">
@@ -852,7 +892,7 @@ const initMenu = computed<MenuItem[]>(() => {
               :data-row="`changes:${changesRange.start + i}`"
               :file="f"
               :staged="false"
-              :expanded="git.isExpanded(path!, gitFileKey(f.path, false))"
+              :expanded="git.isExpanded(path!, gitFileKey(f.path, false)) || (f.conflicted && mergeShown(f.path))"
               :diff="repo?.diffs[gitFileKey(f.path, false)] ?? null"
               :confirming="confirming === gitFileKey(f.path, false)"
               :disabled="waiting"
@@ -1228,7 +1268,7 @@ const initMenu = computed<MenuItem[]>(() => {
 }
 .gp__commit-hint.is-warn { color: var(--ripe-error-fg); }
 /* Someone else's lock: a word with them, not an error. */
-.gp__commit-hint.is-lock { color: var(--ripe-waiting-fg); }
+.gp__commit-hint.is-lock, .gp__commit-hint.is-waiting { color: var(--ripe-waiting-fg); }
 .gp__hint-icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -1.5px; stroke-width: 1.85; }
 .gp__commit-btns { flex: none; display: flex; align-items: center; gap: 2px; }
 .gp__commit-btns .gp__commit-more { height: 26px; }

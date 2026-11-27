@@ -1,5 +1,6 @@
 import { parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { parseDiffTab } from '~/utils/diffTabs'
+import { parseMergeTab } from '~/utils/mergeTabs'
 import { parseDecompiledTab } from '~/utils/decompiledTabs'
 import { parseBrowserTab } from '~/utils/browserTabs'
 import { parseTerminalTab } from '~/utils/terminalTabs'
@@ -22,7 +23,7 @@ export function parseFileTab(id: string | null | undefined) {
   return { projectPath, file, name: file.slice(cut + 1) || file, dir: cut > 0 ? file.slice(0, cut) : '' }
 }
 
-/** The project a diff, file, decompiled source, browser, terminal or plugin tab belongs to; null for chats (ask the threads store). */
+/** The project a diff, merge, file, decompiled source, browser, terminal or plugin tab belongs to; null for chats (ask the threads store). */
 export const tabProject = (id: string | null | undefined) =>
-  parseFileTab(id)?.projectPath ?? parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseBrowserTab(id)?.projectPath
+  parseFileTab(id)?.projectPath ?? parseDiffTab(id)?.projectPath ?? parseMergeTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseBrowserTab(id)?.projectPath
   ?? parseDecompiledTab(id)?.projectPath ?? parseTerminalTab(id)?.projectPath ?? parsePluginTab(id)?.projectPath ?? parsePanelEditorTab(id)?.projectPath ?? null

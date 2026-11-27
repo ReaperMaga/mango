@@ -1,3 +1,4 @@
+import { mergeResultTab } from '~/utils/mergeTabs'
 import { t } from '~/i18n'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads } from '~/stores/threads'
@@ -86,7 +87,9 @@ export function useShortcuts() {
     // Never the browser's "save page"; only a file tab has something to save.
     'save-file': () => {
       const id = threads.activePane.threadId
-      if (isFileTab(id)) void useFiles().save(id)
+      // The merge editor saves its Result, which is the file's own open copy.
+      const target = isFileTab(id) ? id : mergeResultTab(id)
+      if (target && useFiles().file(target)) void useFiles().save(target)
     },
     'find-chat': () => { findRequest.value++ },
     'new-terminal': () => ws.newTerminal(),

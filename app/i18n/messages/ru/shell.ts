@@ -243,6 +243,8 @@ export const shell: Messages['shell'] = {
   },
   tabs: {
     changesIn: 'Изменения в {file}',
+    mergeOf: 'Конфликты слияния в {file}',
+    merge: 'слияние',
     changesAt: 'Изменения в {file} в {commit}',
     decompiledFrom: 'Декомпилировано из {assembly}, только чтение',
     decompiledReadOnly: 'Декомпилировано, только чтение',
