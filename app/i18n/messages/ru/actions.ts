@@ -1,0 +1,67 @@
+import type { Messages } from '../en/index.ts'
+
+export const actions: Messages['actions'] = {
+  title: {
+    github: 'Actions',
+    gitlab: 'Пайплайны',
+  },
+  all: 'Все запуски',
+  scope: {
+    all: 'Все ветки',
+    branch: 'Эта ветка',
+  },
+  scopeLabel: 'Какие запуски показывать',
+  workflow: 'Workflow',
+  allWorkflows: 'Все workflow',
+  noBranch: 'Ветка не выбрана: перейдите на ветку или покажите все ветки.',
+  running: 'Выполняются',
+  recent: 'Недавние',
+  state: {
+    pending: 'Выполняется',
+    queued: 'Ожидает',
+    success: 'Успешно',
+    failure: 'Ошибка',
+    cancelled: 'Отменён',
+    skipped: 'Пропущен',
+    neutral: 'Завершён',
+  },
+  event: {
+    push: 'push',
+    pull_request: 'pull request',
+    merge_request_event: 'merge request',
+    schedule: 'расписанию',
+    workflow_dispatch: 'вручную',
+    web: 'вручную',
+    release: 'релизу',
+    api: 'API',
+    trigger: 'триггеру',
+  },
+  attempt: 'попытка {n}',
+  noTitle: 'Запуск #{n}',
+  none: {
+    github: 'Запусков workflow пока нет',
+    gitlab: 'Пайплайнов пока нет',
+  },
+  noneBranch: {
+    github: 'В {branch} пока нет запусков.',
+    gitlab: 'Для {branch} пока нет пайплайнов.',
+  },
+  noneHint: {
+    github: 'Workflow лежат в .github/workflows. Их запуски появятся здесь, как только начнутся.',
+    gitlab: 'Пайплайны описаны в .gitlab-ci.yml. Они появятся здесь, как только начнутся.',
+  },
+  noForge: 'У этого проекта нет GitHub или GitLab, поэтому запусков workflow нет.',
+  noProject: 'Откройте проект, чтобы увидеть его запуски.',
+  showMore: 'Показать ещё',
+  onSite: 'Открыть на {site}',
+  readAgain: 'Обновить',
+  back: 'Назад к запуску {name}',
+  fact: {
+    started: 'Запущен',
+    took: 'Длился',
+    running: 'Идёт',
+  },
+  jobs: 'Задачи',
+  noJobs: 'Задач пока нет.',
+  reading: 'Чтение задач…',
+}

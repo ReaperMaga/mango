@@ -66,16 +66,17 @@ app/
     browser/         BrowserPane (a browser tab: toolbar over the placeholder its native webview covers)
     links/           LinksPanel (Pull requests tool window: the chat's linked pull requests and issues), LinksItem, LinksCheckLog (a GitHub Actions job's log), LinksPicker (pick an open pull request or issue to link)
     releases/        ReleasesPanel (Releases tool window: the project's GitHub releases and the workflow runs building them), ReleasesItem
+    actions/         ActionsPanel (Actions tool window: the project's recent workflow runs or GitLab pipelines, all branches or the current one), ActionsRun (one run's jobs)
     plugins/         Settings > Plugins: PluginsBrowse (the official catalog: search, filters), PluginsInstalled, PluginDetail (+ PluginSettingsForm), PluginAddDialog (from a git link or a local folder), PluginViewHost (renders any plugin-provided view)
     settings/        SettingsView and its sections (General, Agents, Environments, Lore (SettingsLore + SettingsLoreServer, SettingsLoreForm, SettingsLoreMachine: setting a server up on a machine over SSH), Terminal, Editor + SettingsLanguageServers, Voice, Appearance), and project settings: ProjectEnv (+ ProjectEnvFields), a project's .env files
     envs/            remote environments inside Settings: server and instance pages, dialogs, EnvTerminal, EnvDesktop
     setup/           GettingStarted: the first-run dialog that installs and signs in to agents
     terminal/        TerminalPanel, TerminalView (xterm.js)
     ui/              UiButton, IconButton, UiMenu, UiDialog, UiField, RipenessDot, MangoMark
-  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), useIdleCompaction.ts (compacts large chats by themselves, when chosen), windowClose.ts (saves before a window goes), useShortcuts.ts
+  composables/       useBackend.ts (typed IPC + browser mock), useOverlay.ts (HTML layers that hide the browsers' native views), mockGit.ts, mockFiles.ts, mockGithub.ts, mockReleases.ts, useReleaseWatch.ts (keeps the Releases button's mark current), useActionsWatch.ts (the same for the Actions window), panelTabs.ts (the bottom panel's tabs: built-in and plugins'), useGitLogView.ts (the Git log's loading, search and selection), monaco.ts (lazy Monaco + token theme, text-only markdown), editorDocuments.ts (model URIs, reloads as edits, jumps between files), editorCompletion.ts, editorFeel.ts (caret, suggestions), useAutoSave.ts (when the app asks for saves), useIdleCompaction.ts (compacts large chats by themselves, when chosen), windowClose.ts (saves before a window goes), useShortcuts.ts
   i18n/              interface languages: locales.ts (which one shows), messages/ (en is the source and the type de and ru must fill); plugins/i18n.ts applies the `locale` pref
   lsp/               the language server client: protocol, rpc, uri, sync, watched, convert, semanticTokens, languages, session, pool (plain-Node testable); store, service, providers wire it to Pinia and Monaco; decompiled (library source a server decompiled for go to definition); builtins + tsWorker (Monaco's workers held to one file), modelUris, editGuard
-  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), updater.ts,
+  stores/            workspace.ts (projects, layout, prefs), threads.ts (chats, tabs, panes, linked items), git.ts, gitLog.ts (jumps and the actions on a commit), files.ts, links.ts, releases.ts (GitHub releases and their runs, per project), actions.ts (the Actions window's run lists; runs' jobs are read through releases.ts), updater.ts,
                      browser.ts (browser tabs: webviews, bounds sync, agent-opened browsers),
                      projectEnv.ts (Settings > Projects > Environment variables: env files, in-memory drafts; values never persisted)
                      plugins.ts (installed plugins, the catalog, each plugin's settings values), lore.ts (the Lore CLI, saved servers, their last checks)
@@ -86,7 +87,7 @@ app/
                      shortcuts.ts (keyboard shortcuts as data: defaults, matching, conflicts), notifications.ts (what a notification says),
                      githubLinks.ts (find created PRs/issues), linkState.ts, linkPicker.ts (filtering the open ones to link), safeHtml.ts (sanitise outside HTML),
                      chatImages.ts (pictures in agent replies), chatHistory.ts (saving chats: debounced, incremental), idleCompaction.ts (when a large chat after a break is asked about or compacted; plain-Node testable), remoteChats.ts (remote projects' chats mirrored into their environment), actionsLog.ts (GitHub Actions log lines: groups, markers, ANSI),
-                     releaseRuns.ts (which runs build which release, job summaries, files by platform), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable),
+                     releaseRuns.ts (which runs build which release, job summaries, files by platform), actionRuns.ts (the Actions window's grouping and stripe mark; plain-Node testable), lore.ts (Lore server addresses and repository names, as the backend checks them; plain-Node testable),
                      lorePublish.ts (publishing a Lore server: the address offered first, typed values checked as the backend does),
                      loreMachine.ts (a Lore server on a machine over SSH: the destination as the backend checks it, the client address; plain-Node testable)
 src-tauri/src/
@@ -104,7 +105,8 @@ src-tauri/src/
   file_ops.rs        the Files view's new folder, rename, duplicate, delete and show in file manager: the entry itself (never a link's target), never replacing
   trash_bin.rs       moving to the system's trash, and never deleting for good instead (Windows: its own shell sink, the trash crate does delete for good there)
   github.rs          `gh_item`: a pull request or issue read through the GitHub CLI (`gh` owns the sign-in); `gh_job`: an Actions job's log
-  releases.rs        `gh_releases`, `gh_tag_run`, `gh_run`, `gh_run_action`: releases and their workflow runs (re-run, cancel), through `gh` too
+  releases.rs        `gh_releases`, `gh_tag_run`, `gh_run`, `gh_run_action`: releases and their workflow runs (re-run, cancel), through `gh` too;
+                     `gh_runs`: the recent runs (optionally one branch's) for the Actions window
   gitlab.rs          GitLab: which hosts are GitLab servers (gitlab.com, `gitlab.*`, the user's list in gitlab-hosts.json), the project's forge
                      from its git remotes (`project_forge`, nested groups), running `glab`. The `gh_*` commands dispatch here by forge
   gitlab_items.rs    merge requests (as `kind: 'pr'`), issues, merging, MR create and CI job logs through `glab` (GraphQL + REST)

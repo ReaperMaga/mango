@@ -1,0 +1,67 @@
+import type { Messages } from '../en/index.ts'
+
+export const actions: Messages['actions'] = {
+  title: {
+    github: 'Actions',
+    gitlab: 'Pipelines',
+  },
+  all: 'Alle Läufe',
+  scope: {
+    all: 'Alle Branches',
+    branch: 'Dieser Branch',
+  },
+  scopeLabel: 'Welche Läufe angezeigt werden',
+  workflow: 'Workflow',
+  allWorkflows: 'Alle Workflows',
+  noBranch: 'Kein Branch ausgecheckt: Wechsle zu einem oder zeige alle Branches.',
+  running: 'Laufend',
+  recent: 'Zuletzt',
+  state: {
+    pending: 'Läuft',
+    queued: 'Wartet',
+    success: 'Bestanden',
+    failure: 'Fehlgeschlagen',
+    cancelled: 'Abgebrochen',
+    skipped: 'Übersprungen',
+    neutral: 'Fertig',
+  },
+  event: {
+    push: 'Push',
+    pull_request: 'Pull Request',
+    merge_request_event: 'Merge Request',
+    schedule: 'Zeitplan',
+    workflow_dispatch: 'Hand',
+    web: 'Hand',
+    release: 'Release',
+    api: 'API',
+    trigger: 'Trigger',
+  },
+  attempt: 'Versuch {n}',
+  noTitle: 'Lauf #{n}',
+  none: {
+    github: 'Noch keine Workflow-Läufe',
+    gitlab: 'Noch keine Pipelines',
+  },
+  noneBranch: {
+    github: 'Noch keine Läufe auf {branch}.',
+    gitlab: 'Noch keine Pipelines für {branch}.',
+  },
+  noneHint: {
+    github: 'Workflows liegen in .github/workflows. Ihre Läufe erscheinen hier, sobald sie starten.',
+    gitlab: 'Pipelines kommen aus .gitlab-ci.yml. Sie erscheinen hier, sobald sie starten.',
+  },
+  noForge: 'Hinter diesem Projekt steht kein GitHub oder GitLab, daher gibt es keine Workflow-Läufe.',
+  noProject: 'Öffne ein Projekt, um seine Läufe zu sehen.',
+  showMore: 'Mehr anzeigen',
+  onSite: 'Auf {site} öffnen',
+  readAgain: 'Neu laden',
+  back: 'Zurück zum Lauf {name}',
+  fact: {
+    started: 'Gestartet',
+    took: 'Dauer',
+    running: 'Läuft seit',
+  },
+  jobs: 'Jobs',
+  noJobs: 'Noch keine Jobs.',
+  reading: 'Jobs werden gelesen…',
+}

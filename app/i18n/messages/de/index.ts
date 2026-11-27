@@ -1,4 +1,5 @@
 import type { Messages } from '../en/index.ts'
+import { actions } from './actions.ts'
 import { agents } from './agents.ts'
 import { appearance } from './appearance.ts'
 import { behavior } from './behavior.ts'
@@ -20,6 +21,7 @@ import { start } from './start.ts'
 import { terminal } from './terminal.ts'
 
 export const de: Messages = {
+  actions,
   agents,
   appearance,
   behavior,

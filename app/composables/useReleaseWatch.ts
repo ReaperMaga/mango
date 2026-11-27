@@ -1,5 +1,6 @@
 import { useWorkspace } from '~/stores/workspace'
 import { useReleases } from '~/stores/releases'
+import { useForge } from '~/stores/forge'
 import { vcsTerms } from '~/utils/vcs'
 import { focusGate } from '~/utils/focusGate'
 
@@ -8,13 +9,24 @@ import { focusGate } from '~/utils/focusGate'
  * tool window: read when the project comes to the front or the window gets focus (at most every 30
  * seconds), then while a release builds every 15 seconds with the window open and every 30 without,
  * and every two minutes while the window is open otherwise. Never while the app is hidden, and not
- * again after a failed read until the project or the focus changes. Unity VCS projects have no releases.
+ * again after a failed read until the project or the focus changes. Only projects whose git remotes name a
+ * GitHub or GitLab repository have releases: no button and no reads for the others (Unity VCS and Lore included).
  */
 export function useReleaseWatch() {
   const ws = useWorkspace()
   const releases = useReleases()
 
-  const path = computed(() => (ws.activeProjectPath && vcsTerms(ws.activeProject?.vcs).forge ? ws.activeProjectPath : null))
+  const forge = useForge()
+
+  /** The git project in view, whatever its remotes say. */
+  const project = computed(() => (ws.activeProjectPath && vcsTerms(ws.activeProject?.vcs).forge ? ws.activeProjectPath : null))
+  watch(project, p => forge.ensure(p), { immediate: true })
+  /** The project, only while its remotes name a GitHub or GitLab repository (the forges with releases). */
+  const path = computed(() => (forge.connected(project.value) ? project.value : null))
+  // The window open for a project with no such repository: put it away.
+  watch(() => [ws.toolPanel, project.value, project.value ? project.value in forge.links : false, path.value] as const, ([tool, p, read, connected]) => {
+    if (tool === 'releases' && p && read && !connected) ws.closeTool()
+  }, { immediate: true })
   const open = computed(() => ws.toolPanel === 'releases')
   const mark = computed(() => releases.mark(path.value))
 

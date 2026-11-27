@@ -71,7 +71,7 @@ export interface TerminalPlacement {
  * The tool windows that open on the right: where the project runs (this computer or an environment),
  * the project's files, source control, and the chat's pull requests and issues.
  */
-export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases' | PluginRef
+export type ToolView = 'env' | 'files' | 'changes' | 'links' | 'releases' | 'actions' | PluginRef
 /** Enter sends (Shift+Enter breaks the line), or Ctrl/Cmd+Enter sends (Enter breaks the line). */
 /** Interface and code fonts (see tokens.css). */
 export const UI_FONTS = ['inter', 'geist', 'dm-sans', 'manrope', 'system'] as const
@@ -230,7 +230,7 @@ function envExtraOf(v: unknown): Record<string, string[]> {
 }
 
 /** A plugin's tool window (`plugin:<pluginId>.<id>`) is kept while it is not loaded: the panel shows it once the plugin is back. */
-const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' || isPluginRef(v) ? v : null)
+const toolView = (v: unknown): ToolView | null => (v === 'env' || v === 'files' || v === 'changes' || v === 'links' || v === 'releases' || v === 'actions' || isPluginRef(v) ? v : null)
 
 /** A remembered place for new projects: an environment, or null for this computer (and for anything unreadable). */
 const whereOf = (v: unknown): EnvRemote | null => {
@@ -994,6 +994,10 @@ export const useWorkspace = defineStore('workspace', {
     /** Show the project's GitHub releases and the runs that build them on the right; again to close it. */
     toggleReleases(force?: boolean) {
       this.toggleTool('releases', force)
+    },
+    /** Show the project's workflow runs (GitHub Actions, GitLab pipelines) on the right; again to close it. */
+    toggleActions(force?: boolean) {
+      this.toggleTool('actions', force)
     },
     /** Show where the project runs (this computer or an environment) on the right; again to close it. */
     toggleEnv(force?: boolean) {

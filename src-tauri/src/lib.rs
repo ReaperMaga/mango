@@ -227,6 +227,7 @@ pub fn run() {
             lore_machines::lore_machine_probe,
             lore_machines::lore_machine_run,
             releases::gh_releases,
+            releases::gh_runs,
             releases::gh_tag_run,
             releases::gh_run,
             releases::gh_run_action,

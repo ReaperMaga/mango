@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { CircleDashed, Files, GitBranch, GitPullRequest, Laptop, Server, SquareTerminal, Tag, X } from 'lucide-vue-next'
+import { CircleDashed, Files, GitBranch, GitPullRequest, Laptop, Server, SquareTerminal, Tag, Workflow, X } from 'lucide-vue-next'
 import { useWorkspace, type ToolView } from '~/stores/workspace'
 import { useForge } from '~/stores/forge'
 import { useGit, refreshGit } from '~/stores/git'
@@ -56,6 +56,10 @@ watch(() => place.value?.hostId, (id) => { if (id) void refreshEnv(id) }, { imme
 const releaseWatch = useReleaseWatch()
 const releaseMark = releaseWatch.mark
 const releaseMarks = computed(() => ({ running: t('shell.tools.releaseRunning'), failed: t('shell.tools.releaseFailed') }))
+/** Actions: a corner mark while a workflow runs, or after the branch's newest run of one failed (see useActionsWatch). */
+const actionsWatch = useActionsWatch()
+const actionMarks = computed(() => ({ running: t('shell.tools.actionsRunning'), failed: t('shell.tools.actionsFailed') }))
+const markWords = (id: ToolView, mark: 'running' | 'failed') => (id === 'actions' ? actionMarks.value : releaseMarks.value)[mark]
 
 /** The bottom panel's tabs (the Git log, then plugins'): a button each at the foot, above the terminal's (bottom-docked tools sit low, as in an IDE). */
 const panelTabs = computed(() => allPanelTabs().filter(panelTabOffered).map(tab => ({
@@ -90,6 +94,9 @@ const tools = computed(() => [
     : []),
   ...(releaseWatch.path.value
     ? [{ id: 'releases' as ToolView, label: t('shell.tools.releases'), icon: Tag, keys: ws.keyLabel('releases'), count: 0, counts: null, mark: releaseMark.value }]
+    : []),
+  ...(actionsWatch.path.value
+    ? [{ id: 'actions' as ToolView, label: forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.pipelines') : t('shell.tools.actions'), icon: Workflow, keys: ws.keyLabel('actions'), count: 0, counts: null, mark: actionsWatch.mark.value }]
     : []),
   // Plugins' tool windows, after Mango's own.
   ...reg.toolWindows.filter(w => shown(w)).map((w) => {
@@ -146,8 +153,8 @@ watch(() => ws.toolPanel, async (id) => {
       class="ts__btn"
       :class="{ 'is-active': ws.toolPanel === tool.id }"
       :aria-pressed="ws.toolPanel === tool.id"
-      :aria-label="tool.count ? t(`shell.tools.${tool.counts}`, { label: tool.label }, tool.count) : 'mark' in tool && tool.mark ? `${tool.label}, ${releaseMarks[tool.mark]}` : tool.label"
-      :title="'mark' in tool && tool.mark ? `${tool.label}: ${releaseMarks[tool.mark]}${tool.keys ? ` (${tool.keys})` : ''}` : `${tool.label}${tool.keys ? ` (${tool.keys})` : ''}`"
+      :aria-label="tool.count ? t(`shell.tools.${tool.counts}`, { label: tool.label }, tool.count) : 'mark' in tool && tool.mark ? `${tool.label}, ${markWords(tool.id, tool.mark)}` : tool.label"
+      :title="'mark' in tool && tool.mark ? `${tool.label}: ${markWords(tool.id, tool.mark)}${tool.keys ? ` (${tool.keys})` : ''}` : `${tool.label}${tool.keys ? ` (${tool.keys})` : ''}`"
       @click="ws.toggleTool(tool.id)"
     >
       <component :is="tool.icon" />

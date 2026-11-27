@@ -21,6 +21,8 @@ export const useForge = defineStore('forge', {
     /** The provider of `path`'s repository; GitHub while unknown, the wording Mango always had. */
     providerOf: state => (path: string | null | undefined): ForgeProvider =>
       (path && state.links[path]?.provider === 'gitlab' ? 'gitlab' : 'github'),
+    /** Whether `path`'s git remotes name a GitHub or GitLab repository; false while unread. */
+    connected: state => (path: string | null | undefined): boolean => !!(path && state.links[path]),
   },
 
   actions: {

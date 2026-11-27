@@ -1,3 +1,4 @@
+import { actions } from './actions.ts'
 import { agents } from './agents.ts'
 import { appearance } from './appearance.ts'
 import { behavior } from './behavior.ts'
@@ -20,6 +21,7 @@ import { terminal } from './terminal.ts'
 
 /** English: the source, and the shape every other language has to fill. */
 export const en = {
+  actions,
   agents,
   appearance,
   behavior,

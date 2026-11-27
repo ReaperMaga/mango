@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::github::{some_text, text, GhAuthor};
 use crate::gitlab::{self, Forge, Glab, GlabAt};
-use crate::releases::{GhAsset, GhRelease, GhReleases, GhRun, GhRunDetail, GhRunJob};
+use crate::releases::{GhAsset, GhRelease, GhReleases, GhRun, GhRunDetail, GhRunJob, GhRunList};
 
 /// How many releases the window lists at most (the same limit as GitHub's).
 const MAX_RELEASES: u32 = 100;
@@ -227,6 +227,20 @@ pub(crate) fn releases(at: &GlabAt, f: Forge, count: u32) -> Result<GhReleases, 
     let tags = tags.map(|v| runs_from_json(&f, &v, true)).unwrap_or_default();
     let runs = merge_runs(recent, tags, &commit_titles(&list));
     Ok(GhReleases { provider: f.provider.id(), host: f.host, owner: f.owner, repo: f.repo, releases, runs })
+}
+
+/// The project's recent pipelines, newest first; only a branch's (or tag's) when `branch` names one.
+/// Tag pipelines are known as such only when asked for by tag; the list says nothing, so none is.
+pub(crate) fn runs(at: &GlabAt, f: Forge, branch: Option<&str>, count: u32) -> Result<GhRunList, String> {
+    let mut tail = format!("pipelines?per_page={count}");
+    if let Some(b) = branch {
+        let b = crate::git::safe_ref(b)?;
+        tail.push_str(&format!("&ref={}", gitlab::encode_path(b)));
+    }
+    let v = run_json(&f, api(at, &f, &tail))?;
+    let mut runs = runs_from_json(&f, &v, false);
+    runs.sort_by(|a, b| b.id.cmp(&a.id));
+    Ok(GhRunList { provider: f.provider.id(), host: f.host, owner: f.owner, repo: f.repo, runs })
 }
 
 /// A pipeline by id, with its jobs (the ones that count: no retried ones).
