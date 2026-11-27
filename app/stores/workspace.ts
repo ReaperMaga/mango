@@ -294,6 +294,8 @@ const initialState = () => {
       terminalHeight: (prefs.terminalHeight ?? 0.34) as number,
       /** Width of the commit details beside the Git log's list. */
       gitLogWidth: gitLogWidthOf(prefs.gitLogWidth),
+      /** The Changes view's commit button pushes after committing (chosen in its menu, kept). */
+      commitAndPush: prefs.commitAndPush === true,
       terminalTabs: [] as TerminalTab[],
       activeTerminalId: null as string | null,
       /**
@@ -467,6 +469,7 @@ export const useWorkspace = defineStore('workspace', {
           panelTabPlaces: this.panelTabPlaces,
           [KNOWN_TABS_KEY]: BUILT_IN_TABS,
           gitLogWidth: this.gitLogWidth,
+          commitAndPush: this.commitAndPush,
           toolPanel: this.toolPanel,
           toolWidth: this.toolWidth,
           lastToolPanel: this.lastToolPanel,

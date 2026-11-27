@@ -365,15 +365,25 @@ const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; waiti
   if (changes.value.length) return { text: terms.value.amend ? t('git.panel.stagesAll', changes.value.length) : t('git.panel.checksInAll', changes.value.length), warn: false }
   return { text: isUnity.value ? t('git.panel.nothingToCheckIn') : t('git.panel.nothingToCommit'), warn: false }
 })
+/** The button pushes after committing: chosen in its menu and kept, where the system has remotes to push to. */
+const pushesToo = computed(() => terms.value.remotes && ws.commitAndPush)
+const commitLabel = computed(() => {
+  if (pushesToo.value) return commitsAll.value ? t('git.panel.commitAllPush') : t('git.panel.commitPush')
+  return commitsAll.value ? terms.value.commitAll : terms.value.commit
+})
 const commitTitle = computed(() => {
   if (isUnity.value) return commitsAll.value ? t('git.panel.stageAndCheckIn') : t('git.panel.checkInStaged')
-  return commitsAll.value ? t('git.panel.stageAndCommit') : t('git.panel.commitStaged')
+  const action = commitsAll.value ? t('git.panel.stageAndCommit') : t('git.panel.commitStaged')
+  return pushesToo.value ? t('git.panel.andPush', { action }) : action
 })
 /** A rebase, cherry-pick or revert makes its own commits (Continue, in the banner). */
 const showCommit = computed(() => isRepo.value && (!operation.value || operation.value.kind === 'merge') && (!clean.value || !!message.value || !!operation.value))
 
 function commit() {
-  if (canCommit.value && path.value) animated(git.commit(path.value))
+  const at = path.value
+  if (!canCommit.value || !at) return
+  const push = pushesToo.value
+  animated(git.commit(at).then(ok => (ok && push ? git.push(at) : ok)))
 }
 function onMessageKey(e: KeyboardEvent) {
   if (e.key === 'Enter' && isMod(e)) {
@@ -391,7 +401,20 @@ const shelveMenu = computed<MenuItem[]>(() => [{
   onSelect: () => shelvesView.value?.start(message.value),
 }])
 const commitMenu = computed<MenuItem[]>(() => [{
+  label: terms.value.commit,
+  hint: t('git.panel.commitOnlyHint'),
+  check: 'radio',
+  checked: !ws.commitAndPush,
+  onSelect: () => { ws.commitAndPush = false; ws.persist() },
+}, {
+  label: t('git.panel.commitPush'),
+  hint: t('git.panel.commitPushHint'),
+  check: 'radio',
+  checked: ws.commitAndPush,
+  onSelect: () => { ws.commitAndPush = true; ws.persist() },
+}, {
   label: t('git.panel.amend'),
+  divider: true,
   hint: message.value.trim() ? t('git.panel.amendReplace') : t('git.panel.amendKeep'),
   disabled: !status.value?.head || !!git.busy || conflicts.value > 0,
   onSelect: () => { if (path.value) animated(git.commit(path.value, { amend: true })) },
@@ -797,11 +820,11 @@ const initMenu = computed<MenuItem[]>(() => {
             variant="primary"
             size="sm"
             type="submit"
-            :loading="running('commit')"
+            :loading="running('commit') || (pushesToo && running('push'))"
             :disabled="!canCommit"
             :title="`${commitTitle} (${mod}+Enter)`"
           >
-            {{ commitsAll ? terms.commitAll : terms.commit }}
+            {{ commitLabel }}
           </UiButton>
           <UiMenu v-if="terms.amend || terms.shelves" :items="terms.amend ? commitMenu : shelveMenu" placement="bottom-end" :width="264" :label="t('git.panel.moreCommit')">
             <template #default="{ toggle, open: menuOpen }">
