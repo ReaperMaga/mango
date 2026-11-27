@@ -41,6 +41,8 @@ export const start: Messages['start'] = {
     cloneHintIn: 'Ein Repo von GitHub oder einem anderen Git-Remote nach {place} klonen.',
     remote: 'Remote-Umgebung',
     remoteHint: 'Arbeite in einem Container oder einer VM auf deinem eigenen Server.',
+    settings: 'Einstellungen',
+    settingsHint: 'Agenten, Darstellung, Terminal und Tastenkürzel.',
     hoursAgo: 'vor {n} Stunde | vor {n} Stunden',
     openFailed: '{path} konnte nicht geöffnet werden.',
     openFailedPlain: 'Der Ordner konnte nicht geöffnet werden.',
