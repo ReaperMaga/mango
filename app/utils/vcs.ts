@@ -7,7 +7,7 @@ import type { VcsKind, VcsLock } from '~/types/ipc'
  * a system doesn't have are left out, never imitated.
  */
 export interface VcsTerms {
-  /** Name of the system, for messages. */
+  /** Name of the system, for messages and the label in the Changes header. */
   name: string
   /** Verb on the commit button: "Commit" / "Check in". */
   commit: string
@@ -64,7 +64,7 @@ export interface VcsTerms {
 
 const TERMS: Record<VcsKind, VcsTerms> = {
   git: {
-    name: 'git',
+    name: 'Git',
     get commit() { return t('shell.vcs.git.commit') }, get commitAll() { return t('shell.vcs.git.commitAll') }, get committed() { return t('shell.vcs.git.committed') }, get message() { return t('shell.vcs.git.message') },
     get unit() { return t('shell.vcs.git.unit') }, get units() { return t('shell.vcs.git.units') }, get pull() { return t('shell.vcs.git.pull') }, get worktree() { return t('shell.vcs.git.worktree') },
     count: n => t('shell.vcs.git.count', n), get deleteHint() { return t('git.branches.deleteLocalHint') },

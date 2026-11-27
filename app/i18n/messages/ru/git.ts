@@ -108,6 +108,8 @@ export const git: Messages['git'] = {
     branch: 'Ветка: {name}',
     tracks: 'Отслеживает {name}',
     repository: 'Репозиторий Unity VCS {name}',
+    vcs: 'Система контроля версий: {name}',
+    vcsAt: 'Система контроля версий: {name}, в {root}',
     dismiss: 'Скрыть',
     resolveConflicts: 'Сначала решите {n} конфликт | Сначала решите {n} конфликта | Сначала решите {n} конфликтов',
     lockedBy: '{name}: заблокировал {who}',

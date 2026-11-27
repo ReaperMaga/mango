@@ -108,6 +108,8 @@ export const git: Messages['git'] = {
     branch: 'Branch: {name}',
     tracks: 'Verfolgt {name}',
     repository: 'Unity-VCS-Repository {name}',
+    vcs: 'Versionsverwaltung: {name}',
+    vcsAt: 'Versionsverwaltung: {name}, in {root}',
     dismiss: 'Ausblenden',
     resolveConflicts: 'Zuerst {n} Konflikt lösen | Zuerst {n} Konflikte lösen',
     lockedBy: '{name} ist von {who} gesperrt',

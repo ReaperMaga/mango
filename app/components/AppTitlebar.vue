@@ -15,6 +15,7 @@ import type { ProjectInfo } from '~/types/ipc'
 import { useForge } from '~/stores/forge'
 import { siteName } from '~/utils/forge'
 import { isEnvPath } from '~/utils/envPath'
+import { vcsTerms } from '~/utils/vcs'
 
 const { t } = useI18n()
 const ws = useWorkspace()
@@ -180,6 +181,10 @@ const gitStatus = computed(() => git.status(workdir.value))
 const ahead = computed(() => gitStatus.value?.ahead ?? 0)
 const behind = computed(() => gitStatus.value?.behind ?? 0)
 const changed = computed(() => gitStatus.value?.files.length ?? 0)
+/* Which version control the working copy in view is under, for the tooltip; nothing until it is known. */
+const vcs = computed(() => (gitStatus.value?.isRepo
+  ? gitStatus.value.vcs
+  : workdir.value === ws.activeProjectPath ? ws.activeProject?.vcs ?? null : null))
 const branchTitle = computed(() => {
   const bits = [
     ahead.value ? t('shell.titlebar.toPush', ahead.value) : '',
@@ -187,7 +192,8 @@ const branchTitle = computed(() => {
     changed.value ? t('shell.titlebar.changed', changed.value) : '',
   ].filter(Boolean)
   const name = branch.value ? t('shell.sidebar.branch', { branch: branch.value }) : t('shell.titlebar.branches')
-  return bits.length ? `${name} (${bits.join(', ')})` : name
+  const line = bits.length ? `${name} (${bits.join(', ')})` : name
+  return vcs.value ? `${line}\n${t('git.panel.vcs', { name: vcsTerms(vcs.value).name })}` : line
 })
 </script>
 

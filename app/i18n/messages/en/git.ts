@@ -106,6 +106,8 @@ export const git = {
     branch: 'Branch: {name}',
     tracks: 'Tracks {name}',
     repository: 'Unity VCS repository {name}',
+    vcs: 'Version control: {name}',
+    vcsAt: 'Version control: {name}, at {root}',
     dismiss: 'Dismiss',
     resolveConflicts: 'Resolve {n} conflict first | Resolve {n} conflicts first',
     lockedBy: '{name} is locked by {who}',

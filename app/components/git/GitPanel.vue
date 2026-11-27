@@ -43,6 +43,10 @@ const status = computed(() => repo.value?.status ?? null)
 const isRepo = computed(() => !!status.value?.isRepo)
 /** Words and actions for git or Unity VCS. */
 const terms = computed(() => vcsTerms(status.value?.vcs))
+/** Which version control the folder is under, and where its root is: quiet metadata in the header. */
+const vcsTitle = computed(() => (status.value?.root
+  ? t('git.panel.vcsAt', { name: terms.value.name, root: status.value.root })
+  : t('git.panel.vcs', { name: terms.value.name })))
 const isUnity = computed(() => status.value?.vcs === 'plastic')
 const staged = computed(() => git.stagedFiles(path.value))
 const changes = computed(() => git.changedFiles(path.value))
@@ -587,7 +591,7 @@ async function focusRow(list: ListName, index: number) {
   <section class="gp" :aria-label="t('git.changes')">
     <header class="gp__head">
       <h2 class="gp__title">
-        {{ t('git.changes') }}<span v-if="linkedWorktree" class="gp__wt" :title="t('git.panel.worktreePath', { path: linkedWorktree })"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
+        {{ t('git.changes') }}<span v-if="isRepo" class="gp__vcs" :title="vcsTitle">{{ terms.name }}</span><span v-if="linkedWorktree" class="gp__wt" :title="t('git.panel.worktreePath', { path: linkedWorktree })"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
       </h2>
       <div class="gp__tools">
         <template v-if="isRepo && !terms.remotes">
@@ -996,6 +1000,7 @@ async function focusRow(list: ListName, index: number) {
 }
 .gp__wt svg { width: 12px; height: 12px; flex: none; stroke-width: 1.85; color: var(--accent-ink); }
 .gp__wt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp__vcs { flex: none; font-size: var(--text-2xs); font-weight: 400; color: var(--fg-faint); }
 .gp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
 .gp__sync {
