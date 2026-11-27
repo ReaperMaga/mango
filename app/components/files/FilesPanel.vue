@@ -17,6 +17,8 @@ import { fileManager, useFileActions, type NameEdit } from '~/composables/useFil
 import { companionChange, excludedPathsOf, layoutTree, siblingLookup, type FilesView, type TreeEntry, type TreeNote } from '~/utils/fileTree'
 import type { MenuItem } from '~/types/ui'
 import { pluginMenuItems } from '~/plugin-host/menus'
+import { markFolders } from '~/utils/filesSync'
+import { offsetsOf, piecesOf, scrollToOffset, windowByOffsets } from '~/utils/treeWindow'
 
 /**
  * The Files tool window on the right: the active project's folders as a tree,
@@ -25,7 +27,8 @@ import { pluginMenuItems } from '~/plugin-host/menus'
  * pane, a double-click (or Enter) keeps its tab. Names carry the same git
  * status colours and letters as the Changes view. A right-click (or F2, Delete)
  * creates, renames and deletes (composables/useFileActions.ts). View options (what shows, in
- * which order) are prefs; what a row is, is worked out in utils/fileTree.ts.
+ * which order) are prefs; what a row is, is worked out in utils/fileTree.ts. A long tree (a Unity
+ * project's folders list thousands of entries) is drawn a window at a time (utils/treeWindow.ts).
  */
 
 const { t } = useI18n()
@@ -50,6 +53,7 @@ const KIND_LETTER: Record<Kind, string> = { modified: 'M', added: 'A', untracked
 const RANK: Record<Kind, number> = { modified: 1, added: 2, untracked: 2, conflict: 3 }
 
 const norm = (p: string) => p.replace(/\\/g, '/').replace(/\/+$/, '')
+const rankOf = (kind: Kind) => RANK[kind]
 
 /** Changed files by path relative to the project, and folders that hold changes. */
 const decorations = computed(() => {
@@ -69,14 +73,10 @@ const decorations = computed(() => {
     const code = f.worktree ?? f.index
     if (code === 'D') continue // not on disk, so not in the tree
     const kind: Kind = f.conflicted ? 'conflict' : code === '?' ? 'untracked' : f.index === 'A' ? 'added' : 'modified'
-    const rel = f.path.slice(prefix.length).replace(/\/+$/, '')
+    const rel = f.path.endsWith('/') ? f.path.slice(prefix.length).replace(/\/+$/, '') : f.path.slice(prefix.length)
     fileKinds.set(rel, kind)
-    const parts = rel.split('/')
-    for (let i = 1; i < parts.length; i++) {
-      const dir = parts.slice(0, i).join('/')
-      const had = dirKinds.get(dir)
-      if (!had || RANK[kind] > RANK[had]) dirKinds.set(dir, kind)
-    }
+    // Up the folders only as far as one that holds as much already: tens of thousands of files on Unity.
+    markFolders(dirKinds, rel, kind, rankOf)
   }
   return { fileKinds, dirKinds }
 })
@@ -243,7 +243,100 @@ function focusRow(key: string) {
   select(key)
   const row = entryRows.value.find(r => r.key === key)
   if (row) preloadSoon(row)
+  bringIntoView(key)
   nextTick(() => list.value?.querySelector<HTMLElement>(`[data-path="${CSS.escape(key)}"]`)?.focus())
+}
+
+/* ---------- long trees: drawn a window at a time ---------- */
+
+/** A tree longer than this has only the rows in view (and a few either side) in the DOM. */
+const WINDOW_FROM = 200
+/** Row heights: `.fp__row` and `.fp__note`. The name field's is measured: an error under it makes it taller. */
+const ENTRY_H = 26
+const NOTE_H = 24
+const nameH = ref(ENTRY_H)
+/** A row not drawn keeps its room as a gap. */
+interface GapRow { type: 'gap'; key: string; height: number }
+
+const windowed = computed(() => rows.value.length > WINDOW_FROM)
+/** Where each row starts in the list (and where it ends), when windowed. */
+const tops = computed(() => {
+  const all = rows.value
+  if (!windowed.value) return []
+  const nameHeight = nameH.value
+  return offsetsOf(all.length, (i) => {
+    const r = all[i]!
+    return r.type === 'entry' ? ENTRY_H : r.type === 'note' ? NOTE_H : nameHeight
+  })
+})
+
+/** The row with the keyboard focus (it can differ from the selected one). */
+const focused = ref<string | null>(null)
+function onFocusIn(e: FocusEvent) {
+  focused.value = (e.target as HTMLElement).closest<HTMLElement>('[data-path]')?.dataset.path ?? null
+}
+function onFocusOut(e: FocusEvent) {
+  if (!list.value?.contains(e.relatedTarget as Node | null)) focused.value = null
+}
+/** Drawn wherever they are: the tab stop, the focused row and the name being typed, so scrolling away keeps them. */
+const pinned = computed(() => {
+  if (!windowed.value) return []
+  const keep = new Set([focusKey.value, focused.value].filter(Boolean))
+  const out: number[] = []
+  rows.value.forEach((r, i) => { if (r.type === 'name' || (r.type === 'entry' && keep.has(r.key))) out.push(i) })
+  return out
+})
+
+/** Where the scroller is; read from the DOM, written only when changed. */
+const view = reactive({ scrollTop: 0, height: 0, listTop: 0 })
+function measure() {
+  const el = list.value
+  if (!el) return
+  const set = (key: keyof typeof view, value: number) => { if (view[key] !== value) view[key] = value }
+  set('scrollTop', el.scrollTop)
+  set('height', el.clientHeight)
+  set('listTop', Number.parseFloat(getComputedStyle(el).paddingTop) || 0)
+}
+let frame = 0
+function onScroll() {
+  if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure() })
+}
+let resized: ResizeObserver | undefined
+watch(list, (el) => {
+  resized?.disconnect()
+  if (!el) return
+  measure()
+  ;(resized ??= new ResizeObserver(() => measure())).observe(el)
+}, { flush: 'post' })
+/* The name field's height, while there is one (an error under it makes it taller). */
+onUpdated(() => {
+  if (!editing.value || !windowed.value) return
+  const h = list.value?.querySelector<HTMLElement>('.fnr')?.offsetHeight
+  if (h && h !== nameH.value) nameH.value = h
+})
+onBeforeUnmount(() => {
+  resized?.disconnect()
+  cancelAnimationFrame(frame)
+})
+
+const drawn = computed<(Row | GapRow)[]>(() => {
+  const all = rows.value
+  if (!windowed.value) return all
+  const at = tops.value
+  const range = windowByOffsets({ tops: at, scrollTop: view.scrollTop, viewport: view.height, listTop: view.listTop, overscan: 12 })
+  return piecesOf(at, range, pinned.value).map(p => (p.type === 'gap' ? p : all[p.index]!))
+})
+
+/** Scroll a row into view by arithmetic, so it is drawn before it is focused. */
+function bringIntoView(key: string) {
+  const el = list.value
+  if (!el || !windowed.value) return
+  const index = rows.value.findIndex(r => r.key === key)
+  if (index < 0) return
+  const to = scrollToOffset({ tops: tops.value, index, scrollTop: el.scrollTop, viewport: el.clientHeight, listTop: view.listTop })
+  if (to === null) return
+  el.scrollTop = to
+  measure()
 }
 
 /** Focus the row showing `rel`: its own, or the one it shares with other folders. */
@@ -531,10 +624,13 @@ function titleFor(row: EntryRow) {
       role="tree"
       :aria-label="t('files.tree.label')"
       @keydown="onKey"
+      @focusin="onFocusIn"
+      @focusout="onFocusOut"
+      @scroll.passive="onScroll"
       @animationend="onAnimationEnd"
       @contextmenu.self="openMenu(null, $event)"
     >
-      <template v-for="row in rows" :key="row.key">
+      <template v-for="row in drawn" :key="row.key">
         <div
           v-if="row.type === 'entry'"
           class="fp__row"
@@ -590,6 +686,7 @@ function titleFor(row: EntryRow) {
           @cancel="actions.cancel"
           @edit="actions.clearError"
         />
+        <div v-else-if="row.type === 'gap'" class="fp__gap" :style="{ height: `${row.height}px` }" role="none" aria-hidden="true" @contextmenu.prevent />
         <div v-else class="fp__note" :class="{ 'is-error': row.error }" :style="{ '--depth': row.depth }" role="none" @contextmenu="openMenu(noteFolder(row), $event)">{{ row.text }}</div>
       </template>
     </div>
