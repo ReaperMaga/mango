@@ -191,9 +191,9 @@ export function mockLoreMachineRun(emit: Emit, id: string, m: LoreMachine, actio
   if (action === 'setup') {
     if (a) {
       lines.push(
-        `\x1b[1m==> Lore sign-in for ${a.domain} (Dex 2.46.1 and Caddy 2.11.9)\x1b[0m`,
+        `\x1b[1m==> Lore sign-in for ${a.domain} (Dex 2.45.1 and Caddy 2.11.9)\x1b[0m`,
         'Downloading Caddy 2.11.9',
-        'Downloading Dex 2.46.1',
+        'Downloading Dex 2.45.1',
         ...(a.github ? [`Paste the client secret of the GitHub OAuth app ${a.github.clientId} (it is not shown; Enter when done).`, typed('Client secret')] : []),
         ...(a.passwords && email ? [`Choose the password ${email} signs in to Lore with (it is not shown).`, typed('Enter password'), typed('Confirm password')] : []),
         `Waiting for Let's Encrypt's certificate for ${a.domain} (up to 3 minutes)...`,

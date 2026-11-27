@@ -10,6 +10,7 @@
 //!   a `lores://` server, whose certificate it checks.
 //! - The **same certificate for the Lore server** (QUIC and gRPC), copied from Caddy's store by an
 //!   hourly timer that restarts the server when it changed (a renewal, about every 60 days).
+//! - A **watchdog** timer that restarts Dex when it runs but stops answering (see [`AUTH_PINS`]).
 //!
 //! Every token holder may read and write (Lore's Tier 1 with its default `implicit_actions`): who
 //! gets a token is the whole policy, decided by Dex's user list and the GitHub organisations.
@@ -216,8 +217,15 @@ pub(crate) fn parse_status(out: &str) -> LoreSignInState {
 
 /// Pinned Caddy and Dex, and `auth_get`, which downloads one for this machine into `$auth_tmp/<name>`
 /// and checks it against the sum pinned here.
+///
+/// Dex stays on 2.45: 2.46's refresh grant reads the offline session inside the transaction that
+/// updates the refresh token (`RefreshStore.Rotate` → `refreshConnectorData`), and its SQLite storage
+/// has one connection, so every refresh past the reuse window waits on itself and Dex answers nothing
+/// again until restarted (its memory storage locks the same way). 2.45 reads it before the
+/// transaction. Check that path before moving to a newer Dex. 2.45 opens a database 2.46 migrated
+/// (2.46 only added tables and nullable or defaulted columns).
 pub(crate) const AUTH_PINS: &str = r##"CADDY_V=2.11.9
-DEX_V=2.46.1
+DEX_V=2.45.1
 auth_arch() {
   case "$(uname -m)" in
     x86_64|amd64) echo amd64 ;;
@@ -233,8 +241,8 @@ auth_get() {
     caddy-amd64) sum=5b8cb7faf8726a2028ad96a66e54e6e81e8f361bc6175e5d22bbd997cc5177fb ;;
     caddy-arm64) sum=5e377cff994fc9362a6fcf695c53f226cfca3a3ef85bd3a3687cf252d6310165 ;;
     # The layer of ghcr.io/dexidp/dex:v$DEX_V-distroless that holds /usr/local/bin/dex (static).
-    dex-amd64) sum=e8788f5e250d50b83f54a2e7f5e43c372f7e10b2a1e740d375e449167bb81e6b ;;
-    dex-arm64) sum=76b88bdb5fdacbf79dacbb939ec441359800f6ea97e14468e6843fb2749b6a2b ;;
+    dex-amd64) sum=50666f6432196aeeca92e6cc79c94168e136a0f96974f452af2156caa0307111 ;;
+    dex-arm64) sum=ea7956bd373a0c038ab3bbdfa5a80faaeb716cea0e377e4e877bb9e1ab84aeaf ;;
     *) rm -rf "$auth_tmp"; fail "Mango has no checksum for $1 on $arch." ;;
   esac
   if [ "$1" = caddy ]; then
@@ -270,7 +278,8 @@ auth_get() {
 ///   restarts it (an instance: a machine's own setup does that after it).
 /// - `off`: stop Dex and Caddy and take the Lore settings away (users and certificates are kept).
 /// - `user-add EMAIL` (asks for the password), `user-remove EMAIL`, `users`, `github-secret`.
-/// - `cert-sync [--no-restart]`: the timer's job. `status`: the state, for Mango to read.
+/// - `cert-sync [--no-restart]`: the hourly timer's job. `dex-check`: the watchdog's, every minute.
+///   `status`: the state, for Mango to read.
 ///
 /// The installed `/usr/local/sbin/mango-lore-auth` is this same script (`auth_tool`), for the timer
 /// and for the owner's own use.
@@ -540,6 +549,8 @@ ExecStart=$AUTH_LIB/dex serve $AUTH_ETC/dex.yaml
 NoNewPrivileges=true
 Restart=always
 RestartSec=2
+# A hung Dex never finishes its own minute of graceful shutdown: don't wait for it.
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -584,7 +595,40 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 EOF
+  put "$AUTH_UNITS/lore-auth-dex-check.service" 0644 <<EOF && c=1
+[Unit]
+Description=Lore sign-in: restart Dex when it stops answering (set up by Mango)
+
+[Service]
+Type=oneshot
+ExecStart=$AUTH_TOOL dex-check
+EOF
+  put "$AUTH_UNITS/lore-auth-dex-check.timer" 0644 <<EOF && c=1
+[Unit]
+Description=Lore sign-in: check every minute that Dex answers (set up by Mango)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+EOF
   [ "$c" = 0 ] || systemctl daemon-reload
+}
+
+# The watchdog's job: Dex answers its keys page, or it is restarted. Dex can hang on its own database
+# (one SQLite connection, asked for again inside a transaction: on 2.45 a refresh by a password user
+# who was removed) and then answers nothing, though it still runs. Only a timeout counts: a Dex that
+# is down or starting is systemd's to restart.
+auth_dex_check() {
+  systemctl is-active --quiet lore-auth-dex.service || return 0
+  local rc=0
+  curl -fsS -o /dev/null -m 20 "http://127.0.0.1:$AUTH_DEX_PORT/dex/keys" 2>/dev/null || rc=$?
+  [ "$rc" = 28 ] || return 0
+  echo "Dex did not answer within 20 seconds: restarting it."
+  systemctl restart lore-auth-dex.service
 }
 
 # Caddy's newest certificate for the domain, and its key.
@@ -693,13 +737,13 @@ auth_setup() {
   fi
   auth_render
   auth_units
-  systemctl enable lore-auth-dex.service lore-auth-caddy.service lore-auth-cert.timer >/dev/null 2>&1
+  systemctl enable lore-auth-dex.service lore-auth-caddy.service lore-auth-cert.timer lore-auth-dex-check.timer >/dev/null 2>&1
   auth_port_check
   systemctl restart lore-auth-dex.service
   if [ "$AUTH_RESTART_CADDY" = 1 ] || ! systemctl is-active --quiet lore-auth-caddy.service; then
     systemctl restart lore-auth-caddy.service
   fi
-  systemctl start lore-auth-cert.timer
+  systemctl start lore-auth-cert.timer lore-auth-dex-check.timer
   auth_wait_cert
   auth_cert_sync --no-restart
   auth_lore_toml | put "$AUTH_ETC/lore.toml" 0644 || true
@@ -720,7 +764,7 @@ auth_render() {
 
 auth_off() {
   say "Turning the Lore server's sign-in off"
-  systemctl disable --now lore-auth-caddy.service lore-auth-dex.service lore-auth-cert.timer >/dev/null 2>&1 || true
+  systemctl disable --now lore-auth-caddy.service lore-auth-dex.service lore-auth-cert.timer lore-auth-dex-check.timer >/dev/null 2>&1 || true
   rm -f "$AUTH_ETC/lore.toml"
   [ "${AUTH_APPLY:-0}" = 0 ] || auth_apply_lore
   echo "Sign-in is off: anyone who reaches the server can read and write again. Users, the GitHub secret"
@@ -765,6 +809,7 @@ auth_main() {
       echo "Dex uses the new secret."
       ;;
     cert-sync) auth_cert_sync "${1:-}" ;;
+    dex-check) auth_dex_check ;;
     status)
       if [ -f "$AUTH_ETC/lore.toml" ]; then echo "authOn yes"; else echo "authOn no"; fi
       [ -f "$AUTH_ETC/settings" ] || return 0
@@ -882,6 +927,8 @@ mod tests {
         let tool = String::from_utf8_lossy(&out.stdout).to_string();
         assert!(tool.starts_with("#!/bin/bash\n") && tool.ends_with("auth_main \"$@\"\n"), "{tool}");
         assert!(tool.contains("AUTH_ETC=\"/etc/lore-auth\"") && tool.contains("auth_cert_sync ()") && tool.contains("lore_toml ()"));
+        // The watchdog's timer runs the installed tool, so its check must be in it.
+        assert!(tool.contains("auth_dex_check ()") && tool.contains("AUTH_DEX_PORT=\"41381\""), "{tool}");
         crate::bin::assert_parses("bash", &tool);
         // It runs on its own: the validators answer before anything is touched.
         let out = bash(&tool, &["user-add", "not an email"]).unwrap();

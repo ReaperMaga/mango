@@ -550,9 +550,9 @@ export function createMockEnvs(ctx: MockEnvContext) {
         const s = signIn!
         steps.push(
           [0, head(`Publishing TCP ports 80 and 443 at ${i.lorePublished?.address ?? '0.0.0.0'} (Let's Encrypt and the sign-in pages)`)],
-          [300, head(`Lore sign-in for ${s.domain} (Dex 2.46.1 and Caddy 2.11.9)`)],
+          [300, head(`Lore sign-in for ${s.domain} (Dex 2.45.1 and Caddy 2.11.9)`)],
           [400, 'Downloading Caddy 2.11.9'],
-          [400, 'Downloading Dex 2.46.1'],
+          [400, 'Downloading Dex 2.45.1'],
         )
         if (s.github && (!a?.githubSecret || a.github?.clientId !== s.github.clientId)) {
           steps.push([300, `Paste the client secret of the GitHub OAuth app ${s.github.clientId} (it is not shown; Enter when done).`], [500, asked('Client secret')])

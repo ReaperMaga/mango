@@ -407,7 +407,7 @@ case $ACTION in
       *) echo "Mango's Lore server isn't on this machine: nothing to remove." ;;
     esac
     if [ -f /etc/lore-auth/settings ]; then
-      systemctl disable --now lore-auth-caddy.service lore-auth-dex.service lore-auth-cert.timer >/dev/null 2>&1 || true
+      systemctl disable --now lore-auth-caddy.service lore-auth-dex.service lore-auth-cert.timer lore-auth-dex-check.timer >/dev/null 2>&1 || true
       rm -f /etc/lore-auth/lore.toml
       echo "Stopped its sign-in (Dex and Caddy). Users, certificates and settings stay in /etc/lore-auth and /var/lib/lore-auth."
     fi
