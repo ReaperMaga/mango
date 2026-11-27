@@ -437,7 +437,9 @@ staticClients:
   - id: lore-cli
     name: Lore CLI
     public: true
-    redirectURIs: ["/dex/device/callback"]
+    # Dex's own device callback: 2.45 asks for it as /device/callback, 2.46 with the issuer's path.
+    # A public client with a list takes only what is on it.
+    redirectURIs: ["/device/callback", "/dex/device/callback"]
   # Dex puts client IDs in a token's aud, and the Lore CLI only sends a token to the host its aud
   # names: the scope audience:server:client_id:https://$d adds this one.
   - id: https://$d
