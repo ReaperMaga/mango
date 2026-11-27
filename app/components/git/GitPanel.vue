@@ -32,6 +32,8 @@ import { chatForConflicts, solveConflicts } from '~/composables/solveConflicts'
 const TICK_MS = 4000
 /** A remote project's every read is a few SSH connections: look less often. */
 const REMOTE_POLL_MS = 15000
+/** A focus within this long of the last read reads nothing more. */
+const FOCUS_GAP_MS = 3000
 
 const { t } = useI18n()
 const ws = useWorkspace()
@@ -72,13 +74,22 @@ const reason = (e: unknown) => (typeof e === 'string' ? e : e instanceof Error ?
 function refresh() {
   if (path.value) return git.refresh(path.value)
 }
-function onVisible() {
-  if (document.visibilityState === 'visible') void refresh()
-}
 let poll: ReturnType<typeof setInterval> | undefined
 let lastPoll = 0
+/**
+ * Coming back to the window reads the status again, unless a read is under way or one was just made:
+ * switching windows back and forth would otherwise scan a large working tree each time.
+ */
+function onReturn() {
+  if (!path.value || Date.now() - lastPoll < FOCUS_GAP_MS) return
+  lastPoll = Date.now()
+  git.poll(path.value)
+}
+function onVisible() {
+  if (document.visibilityState === 'visible') onReturn()
+}
 onMounted(() => {
-  window.addEventListener('focus', refresh)
+  window.addEventListener('focus', onReturn)
   document.addEventListener('visibilitychange', onVisible)
   poll = setInterval(() => {
     const every = isEnvPath(path.value) ? Math.max(terms.value.pollMs, REMOTE_POLL_MS) : terms.value.pollMs
@@ -88,7 +99,7 @@ onMounted(() => {
   }, TICK_MS)
 })
 onBeforeUnmount(() => {
-  window.removeEventListener('focus', refresh)
+  window.removeEventListener('focus', onReturn)
   document.removeEventListener('visibilitychange', onVisible)
   clearInterval(poll)
   clearTimeout(noticeTimer)

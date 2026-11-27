@@ -211,7 +211,8 @@ export const useGit = defineStore('git', {
         // background. Unchanged polls cost nothing extra; a read started since this one began is enough.
         const tracking = (st: GitStatus | null | undefined) => st && [st.branch, st.head, st.upstream, st.ahead, st.behind].join('\u0000')
         if (this.branchLists[path] && tracking(before) !== tracking(status)) this.loadBranchList(path, started).catch(() => {})
-        this.reconcileDiffs(path)
+        // The same files as before: only closed rows' diffs go (a pass over every file is 17k strings on Unity).
+        this.reconcileDiffs(path, repo.status !== before)
         const moved = before?.branch !== status.branch || before?.head !== status.head
         await Promise.all([
           ...repo.expanded.map(key => this.loadDiff(path, key)),
@@ -242,8 +243,12 @@ export const useGit = defineStore('git', {
     },
 
     /** Drop open rows and cached diffs for files that are no longer in that list. */
-    reconcileDiffs(path: string) {
+    reconcileDiffs(path: string, filesChanged = true) {
       const repo = this.ensure(path)
+      if (!filesChanged) {
+        for (const key of Object.keys(repo.diffs)) if (!repo.expanded.includes(key)) delete repo.diffs[key]
+        return
+      }
       const live = new Set<string>()
       for (const f of repo.status?.files ?? []) {
         if (f.index && !f.conflicted) live.add(gitFileKey(f.path, true))
@@ -336,7 +341,7 @@ export const useGit = defineStore('git', {
       const repo = this.ensure(path)
       try {
         const list = await call('vcs_locks', { path })
-        if (JSON.stringify(list) !== JSON.stringify(repo.locks)) repo.locks = list
+        if (JSON.stringify(list) !== JSON.stringify(repo.locks)) repo.locks = markRaw(list)
       } catch {
         // Not knowing who holds what is no reason to fail the Changes view; try again on the next refresh.
         locksAt.delete(path)
