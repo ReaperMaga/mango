@@ -41,9 +41,13 @@ const columns = computed(() => (view.narrow
   : `${graphWidth.value}px minmax(0, 1fr)${view.showAuthor ? ' 140px' : ''} 136px 64px 24px`))
 const listHeight = computed(() => (view.commits.length + Number(view.more)) * view.rowHeight)
 
+/** Git can be on no branch (a detached HEAD); Lore always is on one, which reads as "current" until it is known. */
+const canDetach = computed(() => (git.status(props.path)?.vcs ?? 'git') === 'git')
 /** The branch filter as the toolbar says it. */
-const filterName = computed(() =>
-  (view.refFilter === CURRENT_BRANCH ? view.branch ?? t('git.refs.head') : view.refFilter ?? t('git.log.allBranches')))
+const filterName = computed(() => {
+  if (view.refFilter !== CURRENT_BRANCH) return view.refFilter ?? t('git.log.allBranches')
+  return view.branch ?? (canDetach.value ? t('git.refs.head') : t('git.branches.current'))
+})
 const filterIsBranch = computed(() => !!view.refFilter && (view.refFilter !== CURRENT_BRANCH || !!view.branch))
 const filterTitle = computed(() => {
   if (view.refFilter === CURRENT_BRANCH) return view.branch ? t('git.log.showingCurrentNamed', { branch: view.branch }) : t('git.log.showingCurrent')
@@ -160,16 +164,16 @@ const branchItems = computed<MenuItem[]>(() => {
   const current = branchList.value?.current ?? view.branch
   const goTo = (name: string) => ({ label: t('git.log.goTo', { name }), icon: Locate, onSelect: () => void view.goToRef(name) })
   const items: MenuItem[] = [
+    { label: t('git.log.allBranches'), check: 'radio', checked: view.refFilter === null, onSelect: () => void view.setRefFilter(null) },
     {
       label: t('git.branches.current'),
-      aside: current ?? t('git.log.detached'),
+      aside: current ?? (canDetach.value ? t('git.log.detached') : undefined),
       asideMono: !!current,
       check: 'radio',
       checked: view.refFilter === CURRENT_BRANCH,
       action: goTo(current ?? CURRENT_BRANCH),
       onSelect: () => void view.setRefFilter(CURRENT_BRANCH),
     },
-    { label: t('git.log.allBranches'), check: 'radio', checked: view.refFilter === null, onSelect: () => void view.setRefFilter(null) },
   ]
   const groups = [
     { group: t('git.log.localBranches'), list: branchList.value?.local.filter(b => b.name !== current) ?? [] },
@@ -189,9 +193,13 @@ const branchItems = computed<MenuItem[]>(() => {
   return items
 })
 
+/** The author filter, unless the history names nobody (a Lore repository without a server). */
+const offerAuthors = computed(() => !!view.author || !view.commits.length || view.commits.some(c => c.author))
+
 const authorItems = computed<MenuItem[]>(() => {
   const counts = new Map<string, number>()
-  for (const c of view.commits) counts.set(c.author, (counts.get(c.author) ?? 0) + 1)
+  // Lore names no author in a repository without a server.
+  for (const c of view.commits) if (c.author) counts.set(c.author, (counts.get(c.author) ?? 0) + 1)
   const people = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).slice(0, AUTHORS_MAX).map(([name]) => name)
   if (view.author && !people.includes(view.author)) people.unshift(view.author)
   return [
@@ -347,7 +355,7 @@ function onSearchKey(e: KeyboardEvent) {
           <button
             type="button"
             class="gl__filter"
-            :class="{ 'is-set': view.refFilter !== CURRENT_BRANCH, 'is-open': open }"
+            :class="{ 'is-set': view.refFilter !== null, 'is-open': open }"
             :title="filterTitle"
             aria-haspopup="menu"
             :aria-expanded="open"
@@ -360,7 +368,7 @@ function onSearchKey(e: KeyboardEvent) {
         </template>
       </UiMenu>
 
-      <UiMenu class="gl__pick" :items="authorItems" :width="220" :max-width="360" :label="t('git.log.authors')">
+      <UiMenu v-if="offerAuthors" class="gl__pick" :items="authorItems" :width="220" :max-width="360" :label="t('git.log.authors')">
         <template #default="{ toggle, open }">
           <button
             type="button"
@@ -454,7 +462,7 @@ function onSearchKey(e: KeyboardEvent) {
                   <span class="gl__subject" :title="view.showAuthor ? c.subject : `${c.subject}\n${c.author}`">{{ c.subject }}</span>
                   <GitLogRefs v-if="c.refs.length" :refs="c.refs" :max="4" />
                 </span>
-                <span v-if="view.showAuthor" class="gl__cell" :title="`${c.author} <${c.authorEmail}>`">{{ c.author }}</span>
+                <span v-if="view.showAuthor" class="gl__cell" :title="c.authorEmail ? `${c.author} <${c.authorEmail}>` : c.author">{{ c.author }}</span>
                 <span class="gl__cell tabular" :title="fullDateTime(c.time)">{{ longAgo(c.time, now) }}</span>
                 <span class="gl__cell gl__short">{{ c.shortHash }}</span>
               </template>
