@@ -661,9 +661,13 @@ pub async fn env_host_addresses(app: AppHandle, host_id: String) -> Result<EnvHo
 /* ---------- sign-in ---------- */
 
 /// Master side (POSIX sh, after `MASTER_LORE`), in a terminal: the sign-in's ports and `auth_main`
-/// inside the instance. Args: T N LR ACTION S (the instance-side script), then the action's own.
+/// inside the instance. Args: T N LR ACTION S (the instance-side script, `ssh::packed`), then the
+/// action's own.
 const MASTER_AUTH: &str = r##"T=$1 N=$2 LR=$3 ACTION=$4 S=$5
 shift 5
+command -v base64 >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 \
+  || fail "this server has no base64 or gzip, which Mango sends the sign-in script with."
+S=$(printf '%s' "$S" | base64 -d | gzip -dc) || fail "the sign-in script did not arrive whole. Run it again."
 incus info "$T" >/dev/null 2>&1 || fail "$N no longer exists on this server."
 case $ACTION in
   setup)
@@ -712,7 +716,8 @@ fn auth_remote(host: &EnvHost, instance: &str, action: &str, args: &[String]) ->
         instance.to_string(),
         ssh::remote_prefix(host).unwrap_or_default(),
         action.to_string(),
-        inside,
+        // Packed: as it is, it no longer fits a Windows command line.
+        ssh::packed(&inside),
     ];
     v.extend(args.iter().cloned());
     v
@@ -950,7 +955,7 @@ mod tests {
         check("sh", INNER);
         let auth = auth_remote(&host(), "lore", "setup", &[]);
         check("sh", &auth[2]);
-        check("bash", &auth[8]);
+        check("bash", &ssh::unpacked(&auth[8]));
     }
 
     #[test]
@@ -980,8 +985,32 @@ mod tests {
         assert_eq!(&r[3..8], ["mango-lore-auth", "lore", "lore", "", "setup"]);
         assert_eq!(&r[9..], ["lore.example.com", "yes", "Ov23li", "fruit", "ann@example.com"]);
         // Neither script names a value itself.
-        assert!(!r[2].contains("example.com") && !r[8].contains("example.com"));
-        assert!(ssh::line(&r).is_ascii());
+        let inside = ssh::unpacked(&r[8]);
+        assert!(!r[2].contains("example.com") && !inside.contains("example.com"));
+        assert!(inside.contains("auth_main \"$@\"") && inside.contains("auth_dex_check()"));
+    }
+
+    /// Every sign-in action fits a Windows command line (CreateProcess takes 32767 characters):
+    /// 0.12.0's instance-side script, sent as it was, did not ("The filename or extension is too long").
+    #[test]
+    fn sign_in_fits_a_windows_command_line() {
+        let long = "a".repeat(60);
+        let s = LoreSignIn {
+            domain: format!("{long}.example.com"),
+            passwords: true,
+            github: Some(crate::lore_auth::LoreSignInGithub {
+                client_id: long.clone(),
+                orgs: (0..crate::lore_auth::MAX_ORGS).map(|i| format!("{}{i}", "o".repeat(38))).collect(),
+            }),
+        };
+        let email = format!("{long}@{long}.example.com");
+        for action in AUTH_ACTIONS {
+            let sign_in = (action == "setup").then(|| s.clone());
+            let args = auth_args(action, sign_in, Some(&email)).unwrap();
+            let r = auth_remote(&host(), "lore", action, &args);
+            let n = ssh::windows_length(&r);
+            assert!(n < 30_000, "{action}: {n}");
+        }
     }
 
     #[test]

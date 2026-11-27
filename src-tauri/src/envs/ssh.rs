@@ -37,6 +37,38 @@ pub fn quote(s: &str) -> String {
     }
 }
 
+/// A long script made to fit one command line: gzip, then base64 (one line, no quotes to escape).
+/// Windows' CreateProcess takes 32767 characters, and quoting grows a script full of quotes by a
+/// third. The remote side gets it back with `base64 -d | gzip -dc`.
+pub fn packed(script: &str) -> String {
+    use base64::Engine as _;
+    use std::io::Write as _;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    // Writing to a Vec does not fail.
+    gz.write_all(script.as_bytes()).expect("gzip into memory");
+    base64::engine::general_purpose::STANDARD.encode(gz.finish().expect("gzip into memory"))
+}
+
+/// A [`packed`] script, back (tests).
+#[cfg(test)]
+pub fn unpacked(packed: &str) -> String {
+    use base64::Engine as _;
+    use std::io::Read as _;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(packed).unwrap();
+    let mut s = String::new();
+    flate2::read::GzDecoder::new(&bytes[..]).read_to_string(&mut s).unwrap();
+    s
+}
+
+/// How long `argv`, joined into one line for the master, is on a Windows command line (its quoting
+/// escapes '"' and '\'), with room for ssh's own options.
+#[cfg(test)]
+pub fn windows_length(argv: &[String]) -> usize {
+    let l = line(argv);
+    assert!(l.is_ascii(), "keep scripts ASCII: they cross Windows argv conversion");
+    l.len() + l.matches(['"', '\\']).count() + 300
+}
+
 /// Join an argv into one shell line for the master.
 pub fn line(argv: &[String]) -> String {
     argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" ")
@@ -473,6 +505,29 @@ mod tests {
             public_address: None,
             direct: None,
         }
+    }
+
+    /// A packed script comes back whole through the tools a remote side has, and stays one line of
+    /// characters no shell quotes.
+    #[test]
+    fn packed_scripts_unpack_in_a_shell() {
+        use std::io::Write as _;
+        let script = format!("{}echo \"it's 'quoted' \\\\ and $HOME\"\n", crate::lore_auth::functions());
+        let p = packed(&script);
+        assert!(p.chars().all(|c| c.is_ascii_alphanumeric() || "+/=".contains(c)));
+        assert!(p.len() * 2 < script.len(), "{} of {}", p.len(), script.len());
+        assert_eq!(unpacked(&p), script);
+        let Some(sh) = crate::bin::test_shell("sh") else { return eprintln!("no sh found; skipping") };
+        let mut child = std::process::Command::new(sh)
+            .args(["-c", "base64 -d | gzip -dc"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(p.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success());
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), script);
     }
 
     #[test]

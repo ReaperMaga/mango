@@ -41,6 +41,8 @@ sha2 = "0.10"
 # Share links: Ed25519 keys (already in the tree through rustls).
 ring = "0.17"
 base64 = "0.23"
+# Long scripts sent on a command line go gzipped (envs/ssh.rs `packed`; already in the tree).
+flate2 = "1.1"
 # Chat history: SQLite compiled in (no system library to find on Windows or macOS).
 rusqlite = { version = "0.37", features = ["bundled"] }
 # Language servers that leave watching to their client hear of files changed on disk (lsp/watch.rs).

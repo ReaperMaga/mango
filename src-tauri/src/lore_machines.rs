@@ -174,13 +174,16 @@ fn ssh_argv(m: &LoreMachine, mode: ssh::Mode, remote: &[String]) -> Result<Vec<S
     Ok(a)
 }
 
-/// As the SSH user (POSIX sh): hands the root script (`$1`) to bash, as root, with the rest of
-/// the arguments. sudo asks for its password in the terminal when it needs one. It gets the script
+/// As the SSH user (POSIX sh): hands the root script (`$1`, `ssh::packed`) to bash, as root, with
+/// the rest of the arguments. sudo asks for its password in the terminal when it needs one. It gets the script
 /// as a private file, not as an argument: sudo logs its whole command line.
 const RUN_AS_ROOT: &str = r##"set -eu
-S=$1
-shift
 command -v bash >/dev/null 2>&1 || { printf '\nMango: this machine has no bash, which the Lore server setup needs.\n' >&2; exit 1; }
+command -v base64 >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 \
+  || { printf '\nMango: this machine has no base64 or gzip, which Mango sends the setup script with.\n' >&2; exit 1; }
+S=$(printf '%s' "$1" | base64 -d | gzip -dc) \
+  || { printf '\nMango: the setup script did not arrive whole. Run it again.\n' >&2; exit 1; }
+shift
 if [ "$(id -u)" = 0 ]; then exec bash -c "$S" mango-lore "$@"; fi
 if ! command -v sudo >/dev/null 2>&1; then
   printf '\nMango: this needs root on %s, and this account has no sudo. Sign in as root, or install sudo.\n' "$(hostname)" >&2
@@ -442,7 +445,8 @@ fn run_remote(m: &LoreMachine, action: &str, email: &str) -> Vec<String> {
         "-c".into(),
         RUN_AS_ROOT.into(),
         "mango-lore".into(),
-        root_script(),
+        // Packed: as it is, it does not fit a Windows command line.
+        ssh::packed(&root_script()),
         action.into(),
         m.runtime.clone(),
         m.address.clone(),
@@ -660,8 +664,10 @@ mod tests {
         assert_eq!(r[2], RUN_AS_ROOT);
         assert_eq!(&r[5..], ["setup", "auto", "100.64.0.7", "41400", "", "", "", "", ""]);
         // The scripts never name a value from the user.
-        assert!(!r[4].contains("100.64.0.7") && !r[4].contains("41400") && !r[4].contains("build.example"));
-        assert!(r[4].contains(recipes::LORE_IMAGE) && r[4].contains("service_script() {"));
+        let root = ssh::unpacked(&r[4]);
+        assert_eq!(root, root_script());
+        assert!(!root.contains("100.64.0.7") && !root.contains("41400") && !root.contains("build.example"));
+        assert!(root.contains(recipes::LORE_IMAGE) && root.contains("service_script() {"));
 
         let a = ssh_argv(&m, ssh::Mode::Tty, &r).unwrap();
         assert_eq!(a[a.len() - 2], "me@build.example.com");
@@ -680,7 +686,8 @@ mod tests {
         };
         let r = run_remote(&signed, "setup", "ann@example.com");
         assert_eq!(&r[5..], ["setup", "auto", "100.64.0.7", "41400", "lore.example.com", "yes", "Ov23li", "fruit", "ann@example.com"]);
-        assert!(!r[4].contains("lore.example.com") && !r[4].contains("ann@"));
+        let root = ssh::unpacked(&r[4]);
+        assert!(!root.contains("lore.example.com") && !root.contains("ann@"));
 
         // A password: keys are never tried, and the options come before the destination.
         let p = LoreMachine { password: true, ..m };
@@ -688,6 +695,29 @@ mod tests {
         let dest = a.iter().position(|x| x == "me@build.example.com").unwrap();
         let opt = a.iter().position(|x| x == "PubkeyAuthentication=no").unwrap();
         assert!(opt < dest && dest == a.len() - 2);
+    }
+
+    /// Every action fits a Windows command line (CreateProcess takes 32767 characters): the root
+    /// script as it is is longer than that on its own.
+    #[test]
+    fn fits_a_windows_command_line() {
+        let long = "a".repeat(60);
+        let m = LoreMachine {
+            auth: Some(LoreSignIn {
+                domain: format!("{long}.example.com"),
+                passwords: true,
+                github: Some(lore_auth::LoreSignInGithub {
+                    client_id: long.clone(),
+                    orgs: (0..lore_auth::MAX_ORGS).map(|i| format!("{}{i}", "o".repeat(38))).collect(),
+                }),
+            }),
+            ..machine()
+        };
+        let email = format!("{long}@{long}.example.com");
+        for action in ["setup", "remove", "user-add", "user-remove", "github-secret"] {
+            let n = ssh::windows_length(&run_remote(&m, action, &email));
+            assert!(n < 30_000, "{action}: {n}");
+        }
     }
 
     #[test]
