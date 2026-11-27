@@ -20,8 +20,10 @@ const JUMP_CAP = 5000
 /** Rows drawn above and below those in view. */
 const OVERSCAN = 8
 
-/** The branch filter's default: whatever is checked out (git follows HEAD, so a checkout needs no new choice). */
+/** The branch filter's "current branch": whatever is checked out (git follows HEAD, so a checkout needs no new choice; Lore reads it as the working tree's branch). */
 export const CURRENT_BRANCH = 'HEAD'
+/** The branch filter's default, for every folder: all branches (null). */
+const DEFAULT_REFS: string | null = null
 
 /** Under this list width the rows fold into two lines. */
 const NARROW = 520
@@ -60,8 +62,8 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
   const query = ref('')
   const applied = ref({ text: '', author: '' })
   const author = ref('')
-  /** `CURRENT_BRANCH`, null for every branch, or one ref. */
-  const refFilter = ref<string | null>(CURRENT_BRANCH)
+  /** `CURRENT_BRANCH`, null for every branch (the default), or one ref. Not kept: each folder starts at the default. */
+  const refFilter = ref<string | null>(DEFAULT_REFS)
 
   const rootWidth = ref(1000)
   const listWidth = ref(800)
@@ -405,7 +407,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     query.value = ''
     author.value = ''
     applied.value = { text: '', author: '' }
-    refFilter.value = CURRENT_BRANCH
+    refFilter.value = DEFAULT_REFS
     setCommits([], false)
     takeJump()
     if (visible()) void load()

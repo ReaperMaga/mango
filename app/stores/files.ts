@@ -640,6 +640,23 @@ export const useFiles = defineStore('files', {
       else if (!wasOpen) this.preview[projectPath] = id
     },
 
+    /**
+     * Keep a file open without a tab of its own, for an editor that shows it elsewhere (the merge
+     * editor's Result): read like a tab's, saved and reloaded the same way. Returns its tab id.
+     */
+    openUntabbed(projectPath: string, file: string): string {
+      const id = fileTabId(projectPath, file)
+      if (!this.open[id]) {
+        this.open[id] = {
+          projectPath, file, loading: true, error: null, binary: false, tooLarge: false, size: 0, bom: false,
+          disk: null, modifiedMs: 0, hash: null, version: 0, dirty: false, saving: false, saveError: null, conflict: false, closing: false,
+          image: null, view: 'code',
+        }
+        void this._firstRead(id)
+      }
+      return id
+    },
+
     /** Show a line of an open file tab: its editor scrolls there and puts the cursor on it (now, or once it shows the file). */
     revealLine(tabId: string, line: number) {
       if (Number.isFinite(line) && line >= 1) this.lines[tabId] = Math.floor(line)

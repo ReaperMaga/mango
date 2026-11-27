@@ -126,6 +126,12 @@
   --diff-del-bg: oklch(0.66 0.19 22 / 0.12);
   --diff-del-fg: oklch(0.74 0.14 22);
 
+  /* The merge editor's two sides: ripening mango for yours, unripe leaf for theirs. Fixed in every scheme, like the diff. */
+  --merge-ours-bg: oklch(0.74 0.14 55 / 0.12);
+  --merge-ours-current: oklch(0.74 0.14 55 / 0.22);
+  --merge-theirs-bg: oklch(0.70 0.11 var(--hue-leaf) / 0.12);
+  --merge-theirs-current: oklch(0.70 0.11 var(--hue-leaf) / 0.22);
+
   /* File-type tints: the icon of a file tab or tree row, so a language reads at a glance. Marks only, never text. */
   --file-blue: oklch(0.72 0.12 245);
   --file-yellow: oklch(0.84 0.14 95);
@@ -200,6 +206,11 @@
   --diff-add-fg: oklch(0.45 0.12 var(--hue-leaf));
   --diff-del-bg: oklch(0.62 0.19 25 / 0.12);
   --diff-del-fg: oklch(0.50 0.18 25);
+
+  --merge-ours-bg: oklch(0.74 0.15 55 / 0.16);
+  --merge-ours-current: oklch(0.74 0.15 55 / 0.28);
+  --merge-theirs-bg: oklch(0.70 0.12 var(--hue-leaf) / 0.14);
+  --merge-theirs-current: oklch(0.70 0.12 var(--hue-leaf) / 0.26);
 
   --file-blue: oklch(0.55 0.14 250);
   --file-yellow: oklch(0.68 0.15 85);

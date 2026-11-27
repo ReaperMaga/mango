@@ -1,13 +1,15 @@
 import { defineStore } from 'pinia'
+import { markRaw } from 'vue'
 import type { GhItem, GitAhead, GitBranches, GitBranchList, GitCommit, GitFile, GitStatus, GitWorktree, VcsLock, VcsShelve } from '~/types/ipc'
 import { t } from '~/i18n'
 import { call } from '~/composables/useBackend'
 import { useWorkspace } from '~/stores/workspace'
 import { useFiles } from '~/stores/files'
 import { vcsTerms } from '~/utils/vcs'
+import { sameStatus } from '~/utils/rowWindow'
 
 /** The one action that can run at a time. */
-export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve'
+export type GitAction = 'stage' | 'unstage' | 'discard' | 'commit' | 'fetch' | 'pull' | 'push' | 'checkout' | 'init' | 'merge' | 'pr' | 'lock' | 'shelve' | 'abort' | 'continue' | 'skip' | 'take'
 
 export interface GitDiffEntry {
   /** Unified diff text; null until the first load finishes. */
@@ -78,6 +80,9 @@ const LOCK_ACTIONS: GitAction[] = ['lock', 'discard', 'commit', 'checkout']
 /** Actions that leave the working copy's files as they are: open files save first, and go on saving meanwhile. */
 const READ_ACTIONS: GitAction[] = ['stage', 'unstage', 'fetch', 'push', 'pr', 'init']
 
+/** Each lock list by path, for `lockOf`; lists are replaced, never changed in place. */
+const lockMaps = new WeakMap<VcsLock[], Map<string, VcsLock>>()
+
 /* Refreshes are coalesced per project: one running, at most one queued behind it. */
 const running = new Map<string, Promise<void>>()
 const queued = new Map<string, Promise<void>>()
@@ -131,8 +136,14 @@ export const useGit = defineStore('git', {
     /** Unity VCS: the repository's locks; empty until read and for git. */
     locks: s => (path: string | null | undefined): VcsLock[] => (path ? s.repos[path]?.locks ?? [] : []),
     /** Unity VCS: the lock on one file (a path relative to the root), if any. */
-    lockOf: s => (path: string | null | undefined, file: string): VcsLock | null =>
-      (path ? s.repos[path]?.locks?.find(l => l.path === file) ?? null : null),
+    lockOf: s => (path: string | null | undefined, file: string): VcsLock | null => {
+      const list = path ? s.repos[path]?.locks : null
+      if (!list) return null
+      // Asked once per row of the Changes view: look up, don't scan. A new list gets a new map.
+      let byPath = lockMaps.get(list)
+      if (!byPath) lockMaps.set(list, byPath = new Map(list.map(l => [l.path, l])))
+      return byPath.get(file) ?? null
+    },
     /** Whether the branch list of `path` is being read. */
     readingBranchList: s => (path: string | null | undefined): boolean => !!path && (s.branchListReads[path] ?? 0) > 0,
     isBusy: s => (path: string | null | undefined, action?: GitAction) =>
@@ -182,9 +193,14 @@ export const useGit = defineStore('git', {
       try {
         const status = await call('git_status', { path })
         const before = repo.status
-        // Polling mostly returns the same thing; keep the old object so nothing re-renders.
-        if (JSON.stringify(before) !== JSON.stringify(status)) repo.status = status
+        // Polling mostly returns the same thing; keep the old object so nothing re-renders. A status is
+        // only ever replaced, never changed in place, so it stays raw: a Unity project lists tens of
+        // thousands of files, and making each one reactive costs more than everything that reads them.
+        if (!sameStatus(before, status)) repo.status = markRaw(status)
         repo.error = null
+        // A merge that just stopped: its commit message is ready in the box (git's MERGE_MSG, Lore's own).
+        const op = status.operation
+        if (op?.kind === 'merge' && op.message && !before?.operation && !repo.message.trim()) repo.message = op.message
         this.syncProject(path, status)
         if (!status.isRepo) {
           Object.assign(repo, { branches: null, log: [], logHead: undefined, expanded: [], diffs: {}, worktrees: null, vsMain: null, locks: null })
@@ -488,6 +504,30 @@ export const useGit = defineStore('git', {
       })
       await this.loadShelves(path)
       return ok
+    },
+
+    /* ---------- a merge, rebase, cherry-pick or revert in progress ---------- */
+
+    /** Go back to before it started. Destroys the resolutions made so far: the UI asks first. */
+    async abortOperation(path: string) {
+      const ok = await this.run(path, 'abort', () => call('git_operation_abort', { path }))
+      if (ok) this.ensure(path).message = ''
+      return ok
+    },
+    /** A rebase, cherry-pick or revert goes on once its conflicts are resolved. */
+    continueOperation(path: string) {
+      return this.run(path, 'continue', () => call('git_operation_continue', { path }))
+    },
+    /** A rebase leaves out the commit it is applying. */
+    skipOperation(path: string) {
+      return this.run(path, 'skip', () => call('git_operation_skip', { path }))
+    },
+    /**
+     * Take one side of a conflicted file whole (git: into the working tree, to be marked resolved after;
+     * Lore: resolved at once). Open files are saved first and reloaded after.
+     */
+    takeSide(path: string, file: string, side: 'ours' | 'theirs') {
+      return this.run(path, 'take', () => call('git_conflict_take', { path, file, side }))
     },
 
     fetch(path: string) {

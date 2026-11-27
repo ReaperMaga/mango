@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileCode, FileDiff, FolderGit2, GitCommitHorizontal, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
+import { AppWindow, Archive, ArrowDownToLine, ArrowRightToLine, CircleCheck, Columns2, Copy, ExternalLink, FileCode, FileDiff, FolderGit2, GitCommitHorizontal, GitMerge, Globe, ListX, Pin, Plus, RotateCw, Route, Server, SquareTerminal, X, XCircle, PanelRightClose } from 'lucide-vue-next'
 import { useWorkspace, type TerminalTab } from '~/stores/workspace'
 import { vcsTerms } from '~/utils/vcs'
 import { useThreads } from '~/stores/threads'
 import { modLabel } from '~/composables/useShortcuts'
 import { useGit } from '~/stores/git'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isMergeTab, parseMergeTab } from '~/utils/mergeTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { isFileTab, parseFileTab } from '~/utils/fileTabs'
 import { isDecompiledTab, parseDecompiledTab, shortSymbol } from '~/utils/decompiledTabs'
@@ -48,6 +49,8 @@ onMounted(() => (mod.value = modLabel()))
 type Tab =
   | { id: string; kind: 'chat'; title: string; thread: Thread }
   | { id: string; kind: 'diff'; title: string; file: string; staged: boolean }
+  /** A conflicted file in the merge editor. */
+  | { id: string; kind: 'merge'; title: string; file: string }
   | { id: string; kind: 'commit'; title: string; file: string; short: string }
   | { id: string; kind: 'file'; title: string; file: string }
   /** A library's source a language server decompiled (go to definition into a compiled assembly). */
@@ -64,6 +67,8 @@ const tabs = computed<Tab[]>(() => {
   for (const id of threads.visibleTabs) {
     const diff = parseDiffTab(id)
     if (diff) { out.push({ id, kind: 'diff', title: diff.name, file: diff.file, staged: diff.staged }); continue }
+    const merge = parseMergeTab(id)
+    if (merge) { out.push({ id, kind: 'merge', title: merge.name, file: merge.file }); continue }
     const commit = parseCommitDiffTab(id)
     if (commit) { out.push({ id, kind: 'commit', title: `${commit.name} @ ${commit.short}`, file: commit.file, short: commit.short }); continue }
     const file = parseFileTab(id)
@@ -132,6 +137,7 @@ const wtTerm = (projectPath: string) => vcsTerms(ws.openProjects.find(p => p.pat
 function tabTitle(tab: Tab, i: number) {
   const keys = i < 9 ? ` (${mod.value}+${i + 1})` : ''
   if (tab.kind === 'diff') return `${t('shell.tabs.changesIn', { file: tab.file })}${keys}`
+  if (tab.kind === 'merge') return `${t('shell.tabs.mergeOf', { file: tab.file })}${keys}`
   if (tab.kind === 'file') return `${tab.file}${keys}`
   if (tab.kind === 'commit') return `${t('shell.tabs.changesAt', { file: tab.file, commit: tab.short })}${keys}`
   if (tab.kind === 'decompiled') return `${tab.symbol}${keys}
@@ -320,7 +326,7 @@ const tabMenuItems = computed<MenuItem[]>(() => {
     return items
   }
 
-  if (tab.kind === 'commit') {
+  if (tab.kind === 'commit' || tab.kind === 'merge') {
     items.push(
       splitItem,
       { label: t('shell.tabs.copyRelative'), icon: Route, divider: true, onSelect: () => void copyToClipboard(tab.file) },
@@ -435,6 +441,11 @@ function lookOf(tab: { id: string, kind: string, file: string }) {
                 <span class="ca__tab-title">{{ tab.title }}</span>
                 <span v-if="tab.staged" class="ca__tab-note">{{ t('shell.tabs.staged') }}</span>
               </template>
+              <template v-else-if="tab.kind === 'merge'">
+                <GitMerge class="ca__tab-icon" aria-hidden="true" />
+                <span class="ca__tab-title">{{ tab.title }}</span>
+                <span class="ca__tab-note">{{ t('shell.tabs.merge') }}</span>
+              </template>
               <template v-else-if="tab.kind === 'commit'">
                 <GitCommitHorizontal class="ca__tab-icon" aria-hidden="true" />
                 <span class="ca__tab-title">{{ tab.title }}</span>
@@ -505,8 +516,21 @@ function lookOf(tab: { id: string, kind: string, file: string }) {
           @pointerup="onUp"
           @dblclick="split = 0.5"
         />
+        <GitMergePane
+          v-if="isMergeTab(pane.threadId)"
+          :key="pane.threadId"
+          :tab-id="pane.threadId"
+          :pane-id="pane.id"
+          :split="threads.isSplit"
+          :active="threads.activePaneId === pane.id"
+          :style="paneBasis(i)"
+          data-tab-drop="pane"
+          :data-pane-id="pane.id"
+          @mousedown="threads.focusPane(pane.id)"
+          @focusin="threads.focusPane(pane.id)"
+        />
         <GitDiffPane
-          v-if="isDiffTab(pane.threadId)"
+          v-else-if="isDiffTab(pane.threadId)"
           :tab-id="pane.threadId"
           :pane-id="pane.id"
           :split="threads.isSplit"

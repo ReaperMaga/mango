@@ -56,6 +56,8 @@ pub(crate) struct Status {
     pub remote: Remote,
     /// A merge is waiting to be committed ("Pending merge, incoming revision …").
     pub merging: bool,
+    /// The signature of the revision being merged in ("… incoming revision <signature>").
+    pub incoming: Option<String>,
     pub entries: Vec<Entry>,
 }
 
@@ -160,6 +162,7 @@ pub(crate) fn parse_status(text: &str) -> Status {
         }
         if lower.starts_with("pending merge") {
             out.merging = true;
+            out.incoming = signature_after(trimmed, "incoming revision ");
             continue;
         }
         let header = match trimmed {
@@ -193,8 +196,10 @@ pub(crate) struct Revision {
     pub parents: Vec<String>,
     /// The other side of a merge ("Merge" line, `history`).
     pub merge: Option<String>,
-    /// Who made it, when Lore says (0.14 prints no author).
+    /// Who made it (`Creator`), when Lore says: a repository with a server does, an offline one doesn't.
     pub author: String,
+    /// Who committed it (`Committer`); the author when Lore names only one.
+    pub committer: String,
     /// Unix ms.
     pub time: i64,
     pub message: String,
@@ -273,9 +278,14 @@ pub(crate) fn parse_revisions(text: &str) -> Vec<Revision> {
                         r.merge = Some(value.to_string());
                     }
                 }
-                "Author" | "User" | "Owner" | "Committer" => {
+                "Creator" | "Author" | "User" | "Owner" => {
                     if let Some(r) = out.last_mut() {
                         r.author = value.to_string();
+                    }
+                }
+                "Committer" => {
+                    if let Some(r) = out.last_mut() {
+                        r.committer = value.to_string();
                     }
                 }
                 "Date" => {
@@ -296,6 +306,13 @@ pub(crate) fn parse_revisions(text: &str) -> Vec<Revision> {
     }
     finish(&mut out, &mut message);
     out.retain(|r| !r.signature.is_empty());
+    for r in &mut out {
+        if r.author.is_empty() {
+            r.author = r.committer.clone();
+        } else if r.committer.is_empty() {
+            r.committer = r.author.clone();
+        }
+    }
     out
 }
 
@@ -475,6 +492,27 @@ pub(crate) fn committed_merge(text: &str) -> Option<u64> {
     })
 }
 
+/// The 64 hex digits after `marker` in `line`.
+fn signature_after(line: &str, marker: &str) -> Option<String> {
+    let rest = &line[line.find(marker)? + marker.len()..];
+    let sig = rest.split_whitespace().next()?;
+    (sig.len() == 64 && sig.bytes().all(|b| b.is_ascii_hexdigit())).then(|| sig.to_ascii_lowercase())
+}
+
+/// The revision a merge brings in: `Starting merge of branch <id> revision <signature>`.
+pub(crate) fn merge_started(text: &str) -> Option<String> {
+    text.lines().find_map(|l| l.trim().strip_prefix("Starting merge of branch ").and_then(|rest| signature_after(rest, "revision ")))
+}
+
+/// The paths `branch merge resolve` left in conflict because their markers are still there:
+/// `[Warn] Cannot resolve path with conflict markers still present: a.txt` (it exits 0 anyway).
+pub(crate) fn markers_left(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.split_once("Cannot resolve path with conflict markers still present:"))
+        .filter_map(|(_, p)| rel_path(p.trim()).map(|p| p.0))
+        .collect()
+}
+
 /// `Pushed revision 6 -> c04c… to branch yb`: (revision, branch).
 pub(crate) fn pushed(text: &str) -> Option<(u64, String)> {
     text.lines().rev().find_map(|l| {
@@ -563,6 +601,7 @@ M b c.txt (M)
         );
         assert_eq!(s.remote, Remote::Diverged);
         assert!(s.merging);
+        assert_eq!(s.incoming.as_deref(), Some("c12d69655c82f36beb197a6c4a227b06a72eb917d8b86a3bb42f59271486495a"));
         assert_eq!(s.entries[0], Entry { section: Section::Conflict, letter: "M", path: "a.txt".into(), orig: None, dir: false });
         assert_eq!(s.entries[1].path, "b c.txt");
 
@@ -575,6 +614,54 @@ M b c.txt (M)
         assert_eq!((offline.remote, offline.revision, offline.signature), (Remote::Unknown, Some(0), None));
         assert!(offline.entries.is_empty());
         assert_eq!(parse_status("[Error] Repository not found: /tmp\n  at lore/src/call.rs:375:19\n"), Status::default());
+    }
+
+    /// A merge of a branch with conflicts in an offline repository, lore 0.14.0+2389: the merge's
+    /// own output, the status during it (a delete/modify conflict each way, a binary file) and a
+    /// resolve refused while the markers are still in the file.
+    #[test]
+    fn reads_a_merge_in_progress() {
+        let merged = "Starting merge of branch 01a21b6c06947382afbe02c8716cfd1e revision 15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331
+Merged files, 0 updated, 0 deleted, 0 merged, 4 conflicted
+Staged merged repository state d36368a095b20052f939df211e3d5f96472ef992f8da50a3bce2ef2bfb37e4f6
+Files in conflict:
+a.txt
+b.bin
+del.txt
+mod.txt
+";
+        assert_eq!(merge_started(merged).as_deref(), Some("15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331"));
+        assert_eq!(listed_under(merged, "Files in conflict:"), vec!["a.txt", "b.bin", "del.txt", "mod.txt"]);
+        assert_eq!(merge_started("Merged files, 0 updated"), None);
+
+        let s = parse_status(
+            "Repository 01a21b6c05d171e0bf34e062437b217a
+On branch main revision 2 -> f80fcf913a6e1c5f4f98d4fae5b99ce61ac25774dc669493c80b80613fde9af4
+Pending merge, incoming revision 15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331
+Changes staged for commit:
+M b.bin (M)
+Changes in conflict:
+M  a.txt (M)!
+D  del.txt (M)!
+M  mod.txt (M)!
+",
+        );
+        assert!(s.merging);
+        assert_eq!(s.incoming.as_deref(), Some("15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331"));
+        let listed: Vec<(Section, &str)> = s.entries.iter().map(|e| (e.section, e.path.as_str())).collect();
+        assert_eq!(listed, vec![(Section::Staged, "b.bin"), (Section::Conflict, "a.txt"), (Section::Conflict, "del.txt"), (Section::Conflict, "mod.txt")]);
+
+        let refused = "[Warn] Cannot resolve path with conflict markers still present: a.txt
+No conflicts resolved
+";
+        assert_eq!(markers_left(refused), vec!["a.txt"]);
+        assert!(markers_left("Resolved conflicts:
+a.txt
+").is_empty());
+        // A wrong-looking signature is no signature.
+        assert_eq!(parse_status("On branch main revision 2 -> f80f
+Pending merge, incoming revision xyz
+").incoming, None);
     }
 
     #[test]
@@ -601,6 +688,73 @@ Date      : Thu, 26 Nov 2026 13:05:36 +0000
         assert_eq!(revs[0].merge.as_deref(), Some("009e1bdc9b054c8025c40ab4bec3cabb68df87ea506595257978b4f8b0a36b2f"));
         assert_eq!(revs[1].message, "first commit\n\nwith a body: and a colon");
         assert_eq!(revs[1].time, 1_795_698_336_000);
+    }
+
+    /// `lore history -- 5` in a repository with a server: `Creator` and `Committer` lines (lore 0.14.0+2389).
+    #[test]
+    fn reads_history_with_creator() {
+        let text = "Revision  : 1
+Signature : 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:42:17 +0000
+    feat: initialize lore project
+Creator   : reapermaga@gmail.com
+Committer : reapermaga@gmail.com
+";
+        let revs = parse_revisions(text);
+        assert_eq!(revs.len(), 1);
+        let r = &revs[0];
+        assert_eq!((r.number, r.subject(), r.message.as_str()), (1, "feat: initialize lore project".to_string(), "feat: initialize lore project"));
+        assert_eq!((r.author.as_str(), r.committer.as_str()), ("reapermaga@gmail.com", "reapermaga@gmail.com"));
+        assert_eq!(r.signature, "5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd");
+
+        // Only one of them named: it stands for both.
+        let one = parse_revisions("Revision  : 2
+Signature : ab
+Date      : Fri, 27 Nov 2026 04:42:17 +0000
+    x
+Committer : ann@x.io
+");
+        assert_eq!((one[0].author.as_str(), one[0].committer.as_str()), ("ann@x.io", "ann@x.io"));
+
+        // The status beside it.
+        let s = parse_status("Repository 01a21b48859576709452c18853f6a1a9
+On branch main revision 1 -> 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Remote revision 1 -> 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Local branch in sync with remote
+");
+        assert_eq!((s.branch.as_deref(), s.revision, s.remote), (Some("main"), Some(1), Remote::InSync));
+        assert_eq!(s.signature, s.remote_signature);
+    }
+
+    /// `lore history` of an offline repository with a branch off main (lore 0.14.0+2389): no author lines.
+    #[test]
+    fn reads_offline_history() {
+        let text = "Revision  : 4
+Signature : ea38b0082d558ef8aedc681b718d703983021515e694113ef658da583b8c40b8
+Branch    : 01a21b55b4da70b987dc56e967399053
+Date      : Fri, 27 Nov 2026 04:48:05 +0000
+    on feat
+
+Revision  : 3
+Signature : b64c935056af69ac51d0695f778f4fa48362a27efa9b28c5f6930f8d0fe79191
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:48:04 +0000
+    third
+    body line
+
+Revision  : 2
+Signature : 2dbfa251d94f1cae67af62c969e0d6f8c0e230ff6548c6d51c90ee4636f2b60c
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:48:04 +0000
+    second change
+
+";
+        let revs = parse_revisions(text);
+        let rows: Vec<(u64, String, &str)> = revs.iter().map(|r| (r.number, r.subject(), r.author.as_str())).collect();
+        assert_eq!(rows, vec![(4, "on feat".into(), ""), (3, "third".into(), ""), (2, "second change".into(), "")]);
+        assert_eq!(revs[1].message, "third
+body line");
     }
 
     #[test]

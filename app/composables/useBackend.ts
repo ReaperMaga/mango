@@ -2,7 +2,7 @@ import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServe
 import { t } from '~/i18n'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
-import { mockGit } from '~/composables/mockGit'
+import { mockGit, mockLoreInit, mockLoreInitInfo } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate, mockGhRepoLink } from '~/composables/mockGithub'
 import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
@@ -219,6 +219,8 @@ const mock = (() => {
     { path: `${home}/Projects/pulp-ui`, name: 'pulp-ui', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 60 * 26 },
     { path: `${home}/Projects/fruit-stand`, name: 'fruit-stand', isGit: true, vcs: 'plastic', branch: '/main/feature/inventory', lastOpened: now - 1000 * 60 * 60 * 30 },
     { path: `${home}/Projects/notes`, name: 'notes', isGit: false, branch: null, lastOpened: now - 1000 * 60 * 60 * 24 * 6 },
+    // ~20,000 pending changes (mockGit.ts `bigRepo`), for checking that long change lists stay quick.
+    { path: `${home}/Projects/big-level`, name: 'big-level', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 60 * 24 * 9 },
   ]
 
   const remember = (p: ProjectInfo) => {
@@ -416,6 +418,18 @@ const mock = (() => {
       case 'create_project':
         if (args.lore) await mockLoreCreate(args.lore.server, args.lore.repository)
         return remember({ path: `${args.parent.replace(/\/+$/, '')}/${args.name}`, name: args.name, isGit: !!args.gitInit, branch: args.gitInit ? 'main' : null, lastOpened: Date.now() })
+      case 'lore_init_info':
+        if (isEnvPath(args.path)) throw new Error('Lore repositories in environments are made with New project there.')
+        return mockLoreInitInfo(args.path)
+      case 'lore_init': {
+        const info = mockLoreInitInfo(args.path)
+        if (info.vcs === 'lore') throw new Error('This folder is already a Lore repository.')
+        await mockLoreCreate(args.lore.server, args.lore.repository)
+        mockLoreInit(args.path, args.lore.repository, args.ignore)
+        const p = recent.find(r => r.path === args.path)
+        if (p && !info.gitHere) Object.assign(p, { isGit: true, vcs: 'lore', branch: 'main' })
+        return
+      }
       case 'git_clone': {
         const name = args.name || basename(String(args.url)).replace(/\.git$/, '')
         const lines = /^lore:\/\//i.test(String(args.url)) ? mockLoreCloneLines(String(args.url)) : [`Cloning into '${name}'...`, 'remote: Enumerating objects: 1284, done.', 'remote: Counting objects: 100% (1284/1284), done.', 'Receiving objects:  48% (617/1284)', 'Receiving objects: 100% (1284/1284), 2.31 MiB | 9.8 MiB/s, done.', 'Resolving deltas: 100% (702/702), done.']
@@ -461,7 +475,14 @@ const mock = (() => {
         method: args.agent === 'claude' ? 'claude.ai' : null, detail: args.agent === 'claude' ? null : 'Not logged in',
       }
       case 'agent_logout': return
-      case 'setup_check': return setupTools.map(t => ({ ...t }))
+      case 'setup_check': {
+        // Lore's row is the same CLI Settings > Lore shows (`__mangoLoreMissing()` for the missing state).
+        const lore = mockLoreCli()
+        return [...setupTools.map(t => ({ ...t })), {
+          id: 'lore' as const, name: 'Lore', installed: lore.installed, version: lore.installed ? `lore ${lore.version}+2389` : null,
+          path: lore.installed ? lore.path : null, install: lore.install, helpUrl: lore.helpUrl,
+        }]
+      }
       case 'setup_install': {
         const id = newPtyId()
         if (args.tool === 'gh' || args.tool === 'glab') mockHostingInstall(emit, id, args.tool)

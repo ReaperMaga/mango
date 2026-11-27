@@ -394,6 +394,19 @@ export async function mockChatImage(path: string, base: string | null): Promise<
   return { data: b.data, mime: 'image/png', size: b.size, modifiedMs: b.modifiedMs }
 }
 
+/** Browser preview only: put a file "on disk" (null text: a binary one), or take it away (undefined). The mock git's merges use it. */
+export function mockSetFile(root: string, file: string, text: string | null | undefined) {
+  const files = filesOf(root)
+  if (text === undefined) files.delete(file)
+  else files.set(file, { text, modifiedMs: Date.now(), size: text === null ? 2_048 : undefined })
+}
+
+/** Browser preview only: what a file holds "on disk" (null: binary), undefined when it isn't there. */
+export function mockFileText(root: string, file: string): string | null | undefined {
+  const f = filesOf(root).get(file)
+  return f ? f.text : undefined
+}
+
 /** Browser preview only: change a file "on disk", the way an agent would, to try the editor's conflict handling. */
 export function mockTouchFile(root: string, file: string, text: string) {
   const f = filesOf(root).get(file)

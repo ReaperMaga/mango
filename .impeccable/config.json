@@ -8,6 +8,15 @@
         "value": "inter",
         "createdAt": "2026-11-15T16:47:51.796Z",
         "reason": "Mango's own UI face per app/assets/css/tokens.css (--font-ui) and DESIGN.md; the docs AppPreview draws the app, so it must use the same font"
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "app/components/git/GitPanel.vue"
+        ],
+        "createdAt": "2026-11-27T05:25:46.667Z",
+        "reason": "Claude, from code: intentional row collapse added in e0aea1c (#49); the comment above it says the staged and changes lists trade the height so nothing below jumps, and long lists skip it since the perf work"
       }
     ]
   }

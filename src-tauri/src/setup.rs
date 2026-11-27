@@ -132,11 +132,14 @@ fn plan_for(tool: &str, os: Os, has: &dyn Fn(&str) -> bool) -> Option<Plan> {
 const LORE_SH: &str = "curl -fsSL https://raw.githubusercontent.com/EpicGames/lore/main/scripts/install.sh | bash";
 const LORE_PS1: &str = "irm https://raw.githubusercontent.com/EpicGames/lore/main/scripts/install.ps1 | iex";
 
-/// The tools the setup dialog offers: (id, name, binary, page to install by hand).
-const TOOLS: [(&str, &str, &str, &str); 3] = [
+/// The tools the setup dialog offers: (id, name, binary, page to install by hand). Lore is optional
+/// there (only for Lore repositories); Settings > Lore installs it through this same entry, and
+/// `lore_cli` reports it with the same `install_plan`.
+const TOOLS: [(&str, &str, &str, &str); 4] = [
     ("git", "Git", "git", "https://git-scm.com/downloads"),
     ("claude", "Claude Code", "claude", "https://code.claude.com/docs/en/setup"),
     ("codex", "Codex", "codex", "https://github.com/openai/codex"),
+    ("lore", "Lore", "lore", crate::lore_servers::HELP_URL),
 ];
 
 /// The forge CLIs Settings > Git hosting offers (not the setup dialog): same shape as `TOOLS`.
@@ -144,9 +147,6 @@ pub(crate) const HOSTING_TOOLS: [(&str, &str, &str, &str); 2] = [
     ("gh", "GitHub CLI", "gh", "https://cli.github.com"),
     ("glab", "GitLab CLI", "glab", "https://gitlab.com/gitlab-org/cli#installation"),
 ];
-
-/// Version control CLIs Settings offers (Settings > Lore): same shape as `TOOLS`.
-pub(crate) const VCS_TOOLS: [(&str, &str, &str, &str); 1] = [("lore", "Lore CLI", "lore", crate::lore_servers::HELP_URL)];
 
 /// How Mango would install `tool` on this computer, as the UI shows it.
 pub(crate) fn install_plan(tool: &str) -> Option<InstallPlan> {
@@ -209,7 +209,7 @@ fn check(id: &str, name: &str, binary: &str, help_url: &str) -> SetupTool {
 #[tauri::command]
 pub async fn setup_check() -> Result<Vec<SetupTool>, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        // In parallel, so the worst case is one `--version` timeout, not three.
+        // In parallel, so the worst case is one `--version` timeout, not one per tool.
         std::thread::scope(|s| {
             let handles: Vec<_> = TOOLS
                 .iter()
@@ -249,7 +249,6 @@ pub async fn setup_install(
     let name = TOOLS
         .iter()
         .chain(HOSTING_TOOLS.iter())
-        .chain(VCS_TOOLS.iter())
         .find(|t| t.0 == tool)
         .map(|t| t.1)
         .ok_or_else(|| format!("Mango doesn't know how to install \"{tool}\""))?;
@@ -328,7 +327,22 @@ mod tests {
             assert_eq!(p.argv.last().unwrap(), LORE_PS1);
             assert!(plan_for("lore", Os::Mac, &with(&["curl", "bash"])).is_none());
         }
-        assert!(TOOLS.iter().all(|t| t.0 != "lore"), "the setup dialog keeps to what Mango itself needs");
+    }
+
+    #[test]
+    fn lore_is_offered_once() {
+        // Get started and Settings > Lore install it through the one entry, with Epic's installer.
+        assert_eq!(TOOLS.iter().filter(|t| t.0 == "lore").count(), 1);
+        assert!(HOSTING_TOOLS.iter().all(|t| t.0 != "lore"));
+        let lore = TOOLS.iter().find(|t| t.0 == "lore").unwrap();
+        assert_eq!((lore.2, lore.3), ("lore", crate::lore_servers::HELP_URL));
+        // Where Epic has no release (an Intel Mac, Windows on Arm) there is no plan: the dialog shows the download page.
+        if cfg!(target_arch = "x86_64") {
+            assert!(plan_for("lore", Os::Mac, &with(&["curl", "bash", "brew"])).is_none());
+        }
+        if cfg!(target_arch = "aarch64") {
+            assert!(plan_for("lore", Os::Windows, &with(&["powershell"])).is_none());
+        }
     }
 
     #[test]

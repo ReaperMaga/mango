@@ -22,6 +22,8 @@ import { parseTerminalTab } from '~/utils/terminalTabs'
 import { pluginNames, reg, setBuiltinCommands, shown } from '~/plugin-host/registry'
 import { iconComponent } from '~/plugin-host/icons'
 import { vcsTerms } from '~/utils/vcs'
+import { isEnvPath } from '~/utils/envPath'
+import { useLore } from '~/stores/lore'
 
 /**
  * Mod+K command palette: actions, every thread in the open projects, and
@@ -179,6 +181,10 @@ const actions = computed<Item[]>(() => {
       { id: 'project-env', group: 'Actions', label: t('shell.palette.projectEnv'), detail: ws.activeProject.name, icon: FileKey, keywords: 'env dotenv .env file variables secrets keys api key token config environment project settings', run: () => ws.openProjectEnv() },
       { id: 'project-mcp', group: 'Actions', label: t('shell.palette.projectMcp'), detail: ws.activeProject.name, icon: Plug, keywords: 'mcp model context protocol servers tools project unity', run: () => ws.openProjectMcp() },
     )
+    const p = ws.activeProject
+    if (!isEnvPath(p.path) && p.vcs !== 'lore') {
+      items.push({ id: 'lore-init', group: 'Actions', label: t('shell.palette.loreInit'), detail: p.name, icon: FolderGit2, keywords: 'lore epic repository create init version control unity loreignore', run: () => { useLore().initFor = { path: p.path, name: p.name } } })
+    }
   }
   items.push({ id: 'settings-mcp', group: 'Actions', label: t('shell.palette.mcp'), icon: Plug, keywords: 'mcp model context protocol servers tools add server claude codex', run: () => ws.openSettings('mcp') })
   items.push({ id: 'plugins-browse', group: 'Actions', label: t('shell.palette.browsePlugins'), icon: Puzzle, keywords: 'plugins extensions addons catalog install marketplace', run: () => openPlugins({ tab: 'browse' }) })

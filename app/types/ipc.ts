@@ -103,8 +103,8 @@ export interface LspFilesEvent {
 /** A language server ended; sent once, also after `lsp_stop`. */
 export interface LspExitEvent { id: string; code: number | null; stderr: string }
 
-/** Something Mango needs, offered by the setup dialog (`setup_check`). */
-export type SetupToolId = 'git' | 'claude' | 'codex'
+/** Something Mango needs (or, for Lore, can use), offered by the setup dialog (`setup_check`). */
+export type SetupToolId = 'git' | 'claude' | 'codex' | 'lore'
 
 export interface SetupTool {
   id: SetupToolId
@@ -305,6 +305,27 @@ export interface LoreServerCheck {
 /** A new project's Lore repository: on `server` (`lore://host[:port]`), or only in the folder (`server` null). */
 export interface LoreNew { server: string | null; repository: string }
 
+/**
+ * An existing project folder about to become a Lore repository (`lore_init_info`): what it is under now
+ * and the ignore files a `.loreignore` can be made from (`utils/loreIgnore.ts`).
+ */
+export interface LoreInitInfo {
+  /** The version control Mango sees for the folder now (in it or a folder above), if any. */
+  vcs: VcsKind | null
+  vcsRoot: string | null
+  /** `.git` in the folder itself: git keeps winning there, so Mango goes on showing git. */
+  gitHere: boolean
+  /** `.plastic` in the folder itself: Lore wins over Unity VCS, so Mango switches to Lore. */
+  plasticHere: boolean
+  /** `Assets/` and `ProjectSettings/`. */
+  unity: boolean
+  /** It already has a `.loreignore` (never overwritten). */
+  loreignore: boolean
+  gitignore: string | null
+  /** Unity VCS's `ignore.conf`. */
+  plasticIgnore: string | null
+}
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -346,6 +367,58 @@ export interface GitStatus {
   /** Commits on the upstream not here yet (Unity VCS: newer changesets on the branch). */
   behind: number
   files: GitFile[]
+  /**
+   * A merge, rebase, cherry-pick or revert that stopped half way (on conflicts, or a rebase's `edit`);
+   * Lore: a merge waiting to be committed. Null when nothing is in progress, and for Unity VCS.
+   */
+  operation: GitOperation | null
+}
+
+export type GitOperationKind = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+
+export interface GitOperation {
+  kind: GitOperationKind
+  /** The branch the result lands on: merged into, or being rebased. Null when detached. */
+  branch: string | null
+  /** What comes in: the merged branch (or a short hash), a rebase's new base, the picked or reverted commit. */
+  incoming: string | null
+  /** The commit being applied now (rebase, cherry-pick, revert), short hash. */
+  commit: string | null
+  subject: string | null
+  /** Rebase: which of its commits is being applied (from 1), and how many there are. */
+  step: number | null
+  steps: number | null
+  /** The message the commit that finishes it gets (git's `MERGE_MSG` without comments; Lore: "Merge x into y"). */
+  message: string | null
+}
+
+/** One side of a conflicted file (`git_conflict`). */
+export interface GitConflictSide {
+  /** The side has the file at all (it may have deleted it). */
+  present: boolean
+  /** Its text; null when absent, binary or too large. */
+  text: string | null
+}
+
+/**
+ * The sides of a conflicted file. `ours` is the current branch, or for a rebase the branch being rebased
+ * onto (git's stage 2); `theirs` is what comes in, or the commit a rebase is applying (stage 3).
+ * Lore: its `~base`, `~mine` and `~theirs` files beside the conflicted one.
+ */
+export interface GitConflict {
+  base: GitConflictSide
+  ours: GitConflictSide
+  theirs: GitConflictSide
+  /** A side isn't text: only taking one side whole works. */
+  binary: boolean
+  /** A side is larger than the editor opens. */
+  tooLarge: boolean
+}
+
+/** Commit subjects on each side of the operation since the sides met, newest first (`git_conflict_history`). */
+export interface GitConflictHistory {
+  ours: string[]
+  theirs: string[]
 }
 
 /* ---------- history graph (`git_graph`, `git_commit_show`, `git_commit_diff`) ----------
@@ -1485,6 +1558,13 @@ export interface Commands {
   /** mkdir parent/name, optionally `git init`, record as recent. Errors if it exists and is non-empty. */
   /** `lore`: create a Lore repository in the new folder instead (then `gitInit` is ignored). */
   create_project: [{ parent: string; name: string; gitInit: boolean; lore?: LoreNew | null }, ProjectInfo]
+  /** An existing local folder (never `env://`) as Lore sees it, before `lore_init`. */
+  lore_init_info: [{ path: string }, LoreInitInfo]
+  /**
+   * `lore repository create` in an existing local folder; its files stay and show as new. `ignore` is
+   * written first as `.loreignore` (never over one). On failure the folder is left as it was.
+   */
+  lore_init: [{ path: string; lore: LoreNew; ignore: string | null }, void]
   /** `git clone --progress url parent/<name>`; streams `clone://progress` events. */
   git_clone: [{ url: string; parent: string; name: string | null; jobId: string }, ProjectInfo]
   /** Default folder for new projects (~/Projects, created lazily) */
@@ -1529,7 +1609,7 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId | HostingToolId | 'lore'; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
@@ -1657,6 +1737,24 @@ export interface Commands {
   git_merge_preview: [{ path: string; branch: string }, MergePreview]
   /** Rebase the current branch onto `onto`. Returns git's output. */
   git_rebase: [{ path: string; onto: string }, string]
+  /**
+   * Abort the operation in progress (`git merge|rebase|cherry-pick|revert --abort`; Lore: `branch merge abort`).
+   * Destroys the resolutions made so far: the UI asks first. Returns a line to show.
+   */
+  git_operation_abort: [{ path: string }, string]
+  /** Go on with a rebase, cherry-pick or revert once its conflicts are resolved (no editor opens). Lore: refused. */
+  git_operation_continue: [{ path: string }, string]
+  /** Rebase (or cherry-pick): leave out the commit being applied and go on. */
+  git_operation_skip: [{ path: string }, string]
+  /** The sides of a conflicted file, `file` relative to the repository root. */
+  git_conflict: [{ path: string; file: string }, GitConflict]
+  /**
+   * Take one side of a conflicted file whole. Git: written to the working tree (a side that deleted the file
+   * deletes it), still in conflict until marked resolved. Lore: resolved at once (`branch merge resolve mine|theirs`).
+   */
+  git_conflict_take: [{ path: string; file: string; side: 'ours' | 'theirs' }, void]
+  /** Commit subjects on each side of the operation in progress, at most 30 each. Lore and Unity VCS: none. */
+  git_conflict_history: [{ path: string }, GitConflictHistory]
   git_branch_rename: [{ path: string; from: string; to: string }, void]
   /**
    * Without `force`, an unmerged branch is refused with an error containing "not fully merged".

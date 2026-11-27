@@ -5,6 +5,7 @@ import { answerQuestion, interruptRun, isRunning, readAgentContext, releaseAgent
 import { useWorkspace } from '~/stores/workspace'
 import { useModels } from '~/stores/models'
 import { isDiffTab, parseDiffTab } from '~/utils/diffTabs'
+import { isMergeTab, mergeResultTab, parseMergeTab } from '~/utils/mergeTabs'
 import { isCommitDiffTab, parseCommitDiffTab } from '~/utils/commitDiffTabs'
 import { isDecompiledTab, parseDecompiledTab } from '~/utils/decompiledTabs'
 import { useGit } from '~/stores/git'
@@ -638,7 +639,19 @@ export const useThreads = defineStore('threads', {
       }
       const diff = parseDiffTab(id)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
-      if (isFileTab(id)) useFiles().forget(id)
+      // The merge editor's Result is the file's own open copy: it stays while either tab shows it.
+      if (isFileTab(id) && !this.tabs.some(x => x !== id && mergeResultTab(x) === id)) useFiles().forget(id)
+      const result = mergeResultTab(id)
+      if (result && !this.tabs.includes(result)) {
+        const files = useFiles()
+        // Unsaved resolutions are not thrown away: the file's own tab takes the merge tab's place.
+        if (!discard && files.isUnsaved(result)) {
+          this.replaceTab(id, result)
+          files.pin(result)
+          return
+        }
+        files.forget(result)
+      }
       const browser = parseBrowserTab(id)
       if (browser) useBrowser().forget(browser.browserId)
       if (isPluginTab(id)) delete pluginTabs[id]
@@ -727,6 +740,8 @@ export const useThreads = defineStore('threads', {
       for (const p of this.panes) if (p.threadId === old) p.threadId = next
       const diff = parseDiffTab(old)
       if (diff) useGit().closeDiff(diff.projectPath, diff.key)
+      const result = mergeResultTab(old)
+      if (result && result !== next && !this.tabs.includes(result) && !useFiles().isUnsaved(result)) useFiles().forget(result)
     },
 
     focusPane(paneId: string) {
@@ -1606,10 +1621,10 @@ const contextTried = new Set<string>()
 /** Threads from disk: nothing is running after a restart, and older builds stored other model/mode values. */
 /** The folder a diff, file or decompiled source tab was opened from: the project, or a worktree of it. */
 const folderOfTab = (id: string | null | undefined) =>
-  parseDiffTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath ?? parseDecompiledTab(id)?.projectPath
+  parseDiffTab(id)?.projectPath ?? parseMergeTab(id)?.projectPath ?? parseCommitDiffTab(id)?.projectPath ?? parseFileTab(id)?.projectPath ?? parseDecompiledTab(id)?.projectPath
 
 /** A tab that shows something other than a chat: not saved with the layout (but see `isKeptTab`). */
-const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isCommitDiffTab(id) || isFileTab(id) || isDecompiledTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
+const isViewTab = (id: string | null | undefined) => isDiffTab(id) || isMergeTab(id) || isCommitDiffTab(id) || isFileTab(id) || isDecompiledTab(id) || isBrowserTab(id) || isTerminalTab(id) || isPluginTab(id) || isPanelEditorTab(id)
 
 /** A tab the layout saves: a chat, or a plugin's that comes back (`restore`). */
 const isKeptTab = (id: string) => (isPluginTab(id) ? !!pluginTabs[id]?.restore : !isViewTab(id))

@@ -1,4 +1,5 @@
-import type { GitBranches, GitCommit, GitCommitDetail, GitCommitFile, GitFile, GitGraph, GitRef, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitCommitDetail, GitCommitFile, GitConflictHistory, GitFile, GitGraph, GitOperation, GitRef, GitStatus, GitWorktree, LoreInitInfo, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
+import { mockSetFile } from '~/composables/mockFiles'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -14,7 +15,16 @@ interface Change {
   diff: string
   origPath?: string
 }
-interface MockFile { path: string; staged: Change | null; unstaged: Change | null }
+/** A file a merge left in conflict: each side's text (null: binary, or the side has no such file). */
+interface MockConflict { base: string | null; ours: string | null; theirs: string | null; binary?: boolean; theirsGone?: boolean }
+interface MockFile {
+  path: string
+  staged: Change | null
+  unstaged: Change | null
+  conflict?: MockConflict
+  /** Brought in by the merge in progress: gone again when it is aborted. */
+  fromMerge?: boolean
+}
 interface Tracking { upstream: string | null; ahead: number; behind: number }
 interface Repo {
   vcs: VcsKind
@@ -39,6 +49,12 @@ interface Repo {
   merged?: Set<string>
   /** Unity VCS: shelves on the server, with the changes each one holds. */
   shelves?: MockShelve[]
+  /** A merge stopped on conflicts. */
+  operation?: GitOperation | null
+  /** What each side of it did. */
+  mergeHistory?: GitConflictHistory
+  /** Merging this branch stops on conflicts (until a merge of it is committed). */
+  mergeFrom?: string
 }
 interface MockShelve extends VcsShelve { files: MockFile[] }
 
@@ -363,6 +379,30 @@ function cleanRepo(): Repo {
 }
 
 const emptyRepo = (): Repo => ({ vcs: 'git', repository: null, isRepo: false, branch: 'main', branches: {}, files: [], log: [], incoming: [], renames: [] })
+
+/**
+ * `big-level`: a game project with ~20,000 pending changes (a freshly imported Unity level: every asset
+ * and its `.meta`), to see the Changes view stay quick with a list that long.
+ */
+function bigRepo(): Repo {
+  const files: MockFile[] = []
+  const diffOf = (path: string, status: string) => (status === 'D' ? deleted(path, ['%YAML 1.1']) : added(path, ['%YAML 1.1', `guid: ${hex(32)}`]))
+  const kinds = ['Prefabs', 'Materials', 'Textures', 'Scenes', 'Scripts']
+  const ext = ['prefab', 'mat', 'png', 'unity', 'cs']
+  for (let area = 0; area < 40; area++) {
+    for (let k = 0; k < 250; k++) {
+      const kind = k % kinds.length
+      const path = `Assets/Levels/Area${String(area).padStart(2, '0')}/${kinds[kind]}/Piece${String(k).padStart(3, '0')}.${ext[kind]}`
+      for (const p of [path, `${path}.meta`]) {
+        // Most of it staged; every third area still waiting, a few staged files edited again.
+        const change = (status: string): Change => ({ status, diff: diffOf(p, status) })
+        if (area % 3 === 2) files.push({ path: p, staged: null, unstaged: change(k % 17 === 0 ? 'D' : k % 5 === 0 ? 'M' : '?') })
+        else files.push({ path: p, staged: change('A'), unstaged: k % 50 === 0 ? change('M') : null })
+      }
+    }
+  }
+  return { ...cleanRepo(), branches: { main: { upstream: 'origin/main', ahead: 0, behind: 0 } }, files, incoming: [] }
+}
 
 /* ---------- a Unity VCS workspace ---------- */
 
@@ -730,9 +770,10 @@ function repoAt(path: string): Repo {
       if (repos.has(path)) return repos.get(path)!
     }
     const name = baseName(path)
-    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : mangoRepo()
+    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : name === 'big-level' ? bigRepo() : mangoRepo()
     repos.set(path, repo)
     if (name === 'mango' && !linkedTrees.has(path)) seedWorktree(path, repo)
+    if (name === 'orchard-api') seedMerge(repo, path)
   }
   return repo
 }
@@ -744,19 +785,25 @@ const notIn = (r: Repo, base: Repo) => r.log.filter(c => !base.log.some(b => b.h
 
 const tracking = (r: Repo): Tracking => r.branches[r.branch] ?? { upstream: null, ahead: 0, behind: 0 }
 
+/** The same order as `localeCompare`, many times quicker on a long list. */
+const byPath = new Intl.Collator()
+
 function statusOf(r: Repo, path: string): GitStatus {
-  if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, mainRoot: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
+  if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, mainRoot: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [], operation: null }
   const t = tracking(r)
   const files: GitFile[] = r.files
-    .map(f => ({ path: f.path, origPath: f.staged?.origPath ?? f.unstaged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
-    .sort((a, b) => Number(a.worktree === '?') - Number(b.worktree === '?') || a.path.localeCompare(b.path))
+    .map(f => (f.conflict
+      ? { path: f.path, origPath: null, index: null, worktree: 'U', conflicted: true }
+      : { path: f.path, origPath: f.staged?.origPath ?? f.unstaged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
+    .sort((a, b) => Number(a.worktree === '?') - Number(b.worktree === '?') || byPath.compare(a.path, b.path))
   if (r.vcs === 'plastic') {
     // A changeset number for HEAD; "behind" is newer changesets on the branch, known without a fetch.
     const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null
-    return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
+    return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files, operation: null }
   }
-  if (r.detached) return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: null, head: r.detached.slice(0, 7), upstream: null, ahead: 0, behind: 0, files }
-  return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
+  if (r.vcs === 'lore') return { vcs: 'lore', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: null, ahead: 0, behind: 0, files, operation: r.operation ?? null }
+  if (r.detached) return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: null, head: r.detached.slice(0, 7), upstream: null, ahead: 0, behind: 0, files, operation: r.operation ?? null }
+  return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files, operation: r.operation ?? null }
 }
 
 const wanted = (files: string[]) => (f: MockFile) => files.length === 0 || files.includes(f.path)
@@ -764,6 +811,14 @@ const prune = (r: Repo) => { r.files = r.files.filter(f => f.staged || f.unstage
 
 function stage(r: Repo, files: string[]) {
   for (const f of r.files.filter(wanted(files))) {
+    if (f.conflict) {
+      // Staging marks it resolved with whatever is in the working tree.
+      f.conflict = undefined
+      f.staged = { status: 'M', diff: f.unstaged?.diff ?? '' }
+      f.unstaged = null
+      f.fromMerge = true
+      continue
+    }
     if (!f.unstaged) continue
     const u = f.unstaged
     if (!f.staged) f.staged = { status: u.status === '?' ? 'A' : u.status, diff: u.diff, origPath: u.origPath }
@@ -806,7 +861,10 @@ function unstage(r: Repo, files: string[]) {
 }
 
 function discard(r: Repo, files: string[]) {
+  const stuck = r.files.find(f => f.conflict && files.includes(f.path))
+  if (stuck) throw new Error(`${stuck.path} has merge conflicts. Resolve them, or abort the merge, instead of discarding.`)
   for (const f of r.files) {
+    if (f.conflict) continue
     if (files.length === 0) f.unstaged = null
     else if (files.includes(f.path)) {
       // Like the real command: working-tree changes first; a staged-only file goes back to HEAD.
@@ -856,10 +914,13 @@ function commit(r: Repo, message: string, amend: boolean): string {
   const subject = message.trim().split('\n')[0] ?? ''
   if (!subject && !amend) throw new Error('Write a commit message first')
   if (amend && !r.log.length) throw new Error('There is no commit to amend yet.')
-  if (!amend && !r.files.some(f => f.staged)) throw new Error('Nothing is staged. Stage the changes you want in this commit first.')
-  for (const f of r.files) f.staged = null
+  const left = r.files.filter(f => f.conflict).length
+  if (left) throw new Error(`${left} file${left === 1 ? '' : 's'} still ${left === 1 ? 'has' : 'have'} merge conflicts. Resolve and stage ${left === 1 ? 'it' : 'them'} before committing.`)
+  if (!amend && !r.operation && !r.files.some(f => f.staged)) throw new Error('Nothing is staged. Stage the changes you want in this commit first.')
+  for (const f of r.files) { f.staged = null; f.fromMerge = undefined }
   prune(r)
   r.renames = []
+  if (r.operation) { r.operation = null; r.mergeFrom = undefined }
   const t = r.branches[r.branch] ??= { upstream: null, ahead: 0, behind: 0 }
   if (amend) {
     const last = r.log[0]!
@@ -935,6 +996,157 @@ function checkout(r: Repo, branch: string, create: boolean) {
 function checkoutCommit(path: string, r: Repo, hash: string) {
   if (!/^[0-9a-f]{4,64}$/i.test(hash.trim())) throw new Error(`"${hash}" is not a commit hash`)
   r.detached = resolveRev(graphOf(path), hash)
+}
+
+/* ---------- a merge stopped on conflicts (orchard-api) ---------- */
+
+/**
+ * The `orchard-api` project opens mid-merge: `main` merged into `feat/rate-limits` stopped on four
+ * conflicts, one with diff3 markers, one binary and one that `main` deleted. Abort and merging
+ * `main` again from the branch popup bring it back; resolving and committing finishes it.
+ */
+const CONFIG_BASE = `export const config = {
+  port: Number(process.env.PORT ?? 3000),
+  host: '0.0.0.0',
+
+  rateLimit: { windowMs: 60_000, max: 100 },
+
+  logLevel: 'info',
+}
+`
+const CONFIG_OURS = `import { perRouteLimit } from './middleware/limits'
+
+export const config = {
+  port: Number(process.env.PORT ?? 3000),
+  host: '0.0.0.0',
+
+  rateLimit: { windowMs: 60_000, max: 100, maxFor: perRouteLimit },
+
+  logLevel: 'info',
+}
+`
+const CONFIG_THEIRS = `export const config = {
+  port: Number(process.env.PORT ?? 8080),
+  host: '0.0.0.0',
+
+  rateLimit: { windowMs: 30_000, max: 120 },
+
+  logLevel: process.env.LOG_LEVEL ?? 'info',
+}
+`
+const CONFIG_MERGED = `import { perRouteLimit } from './middleware/limits'
+
+export const config = {
+  port: Number(process.env.PORT ?? 8080),
+  host: '0.0.0.0',
+
+<<<<<<< HEAD
+  rateLimit: { windowMs: 60_000, max: 100, maxFor: perRouteLimit },
+||||||| 3f2a91c
+  rateLimit: { windowMs: 60_000, max: 100 },
+=======
+  rateLimit: { windowMs: 30_000, max: 120 },
+>>>>>>> main
+
+  logLevel: process.env.LOG_LEVEL ?? 'info',
+}
+`
+const HEALTH_BASE = `import type { Router } from '../router'
+
+export function healthRoutes(router: Router) {
+  router.get('/health', () => ({ ok: true }))
+  router.get('/ready', async () => ({ ok: await db.ping() }))
+}
+`
+const HEALTH_OURS = `import type { Router } from '../router'
+import { rateLimit } from '../middleware/rateLimit'
+
+export function healthRoutes(router: Router) {
+  router.get('/health', rateLimit({ max: 600 }), () => ({ ok: true }))
+  router.get('/ready', async () => ({ ok: await db.ping() }))
+}
+`
+const HEALTH_THEIRS = `import type { Router } from '../router'
+import { version } from '../version'
+
+export function healthRoutes(router: Router) {
+  router.get('/health', () => ({ ok: true, version }))
+  router.get('/ready', async () => ({ ok: await db.ping() }))
+}
+`
+const HEALTH_MERGED = `import type { Router } from '../router'
+<<<<<<< HEAD
+import { rateLimit } from '../middleware/rateLimit'
+=======
+import { version } from '../version'
+>>>>>>> main
+
+export function healthRoutes(router: Router) {
+<<<<<<< HEAD
+  router.get('/health', rateLimit({ max: 600 }), () => ({ ok: true }))
+=======
+  router.get('/health', () => ({ ok: true, version }))
+>>>>>>> main
+  router.get('/ready', async () => ({ ok: await db.ping() }))
+}
+`
+const THROTTLE = `/** The old fixed-window throttle, kept for the admin routes. */
+export function throttle(max: number, windowMs = 60_000) {
+  const hits = new Map<string, number>()
+  setInterval(() => hits.clear(), windowMs).unref()
+  return (key: string) => (hits.set(key, (hits.get(key) ?? 0) + 1).get(key)! <= max)
+}
+`
+
+interface MergeSeed { path: string; working: string | null | undefined; conflict: MockConflict }
+const ORCHARD_MERGE: MergeSeed[] = [
+  { path: 'src/config.ts', working: CONFIG_MERGED, conflict: { base: CONFIG_BASE, ours: CONFIG_OURS, theirs: CONFIG_THEIRS } },
+  { path: 'src/routes/health.ts', working: HEALTH_MERGED, conflict: { base: HEALTH_BASE, ours: HEALTH_OURS, theirs: HEALTH_THEIRS } },
+  { path: 'assets/logo.png', working: null, conflict: { base: null, ours: null, theirs: null, binary: true } },
+  { path: 'src/legacy/throttle.ts', working: THROTTLE, conflict: { base: THROTTLE.replace('max: number', 'max = 100'), ours: THROTTLE, theirs: null, theirsGone: true } },
+]
+
+/** Start the merge of `main` into the orchard's branch, as git leaves it after stopping. */
+function seedMerge(r: Repo, path: string) {
+  r.operation = { kind: 'merge', branch: r.branch, incoming: 'main', commit: null, subject: null, step: null, steps: null, message: `Merge branch 'main' into ${r.branch}` }
+  r.mergeHistory = {
+    ours: ['Per-route limits with maxFor', 'Sliding-window rate limiter'],
+    theirs: ['Read the log level from LOG_LEVEL', 'Report the version on /health', 'Drop the legacy throttle', 'Serve on 8080 by default'],
+  }
+  r.mergeFrom = 'main'
+  r.files = r.files.filter(f => !f.conflict && !f.fromMerge)
+  r.files.unshift({ path: 'src/server.ts', staged: { status: 'M', diff: `${head('src/server.ts')}@@ -3,3 +3,3 @@\n import { config } from './config'\n-app.listen(3000)\n+app.listen(config.port)\n` }, unstaged: null, fromMerge: true })
+  for (const m of ORCHARD_MERGE) {
+    mockSetFile(path, m.path, m.working)
+    r.files.push({ path: m.path, staged: null, unstaged: { status: 'M', diff: '' }, conflict: { ...m.conflict } })
+  }
+}
+
+/** `git merge --abort`: the files as they were on the branch, the merge's own changes gone. */
+function abortMerge(r: Repo, path: string): string {
+  if (!r.operation) throw new Error('Nothing is in progress here any more: no merge, rebase, cherry-pick or revert.')
+  for (const f of r.files) {
+    if (f.conflict) mockSetFile(path, f.path, f.conflict.binary ? null : f.conflict.ours ?? undefined)
+  }
+  r.files = r.files.filter(f => !f.conflict && !f.fromMerge)
+  r.operation = null
+  return 'Merge aborted. Everything is as it was before it started.'
+}
+
+function conflictOf(r: Repo, file: string) {
+  const c = r.files.find(f => f.path === file)?.conflict
+  if (!c) throw new Error(`${file} is not in conflict any more.`)
+  const side = (text: string | null, gone = false) => ({ present: !gone && (text !== null || !!c.binary), text })
+  return { base: side(c.base, c.base === null && !c.binary), ours: side(c.ours), theirs: side(c.theirs, !!c.theirsGone), binary: !!c.binary, tooLarge: false }
+}
+
+function takeSide(r: Repo, path: string, file: string, side: string) {
+  const c = r.files.find(f => f.path === file)?.conflict
+  if (!c) throw new Error(`${file} is not in conflict any more.`)
+  if (side !== 'ours' && side !== 'theirs') throw new Error(`"${side}" is not a side of a conflict`)
+  if (c.binary) return mockSetFile(path, file, null)
+  const text = side === 'ours' ? c.ours : c.theirs
+  mockSetFile(path, file, side === 'theirs' && c.theirsGone ? undefined : text ?? undefined)
 }
 
 /* ---------- worktrees ---------- */
@@ -1394,6 +1606,41 @@ async function gitCommitDiff(path: string, hash: unknown, file: unknown): Promis
   return f ? commitDiffText(n.hash, f) : ''
 }
 
+const MOCK_IGNORE_CONF = ['Library', 'library', 'Temp', 'temp', 'Logs', 'logs', 'UserSettings', '*.csproj', '*.sln', '*.private', '^*.private.[0-9]+$', '# Generator projects are source', '!**/Generator~/**/*.csproj', '.DS_Store*'].join('\n')
+
+/** `lore_init_info` in the preview: what each seeded project looks like on disk. */
+export function mockLoreInitInfo(path: string): LoreInitInfo {
+  const r = repoAt(path)
+  const unity = r.vcs === 'plastic'
+  return {
+    vcs: r.isRepo ? r.vcs : null,
+    vcsRoot: r.isRepo ? path : null,
+    gitHere: r.isRepo && r.vcs === 'git',
+    plasticHere: unity && r.isRepo,
+    unity,
+    loreignore: false,
+    gitignore: r.isRepo && r.vcs === 'git' ? 'node_modules/\n.output/\n.nuxt/\ndist/\n*.log\n.env\n' : null,
+    plasticIgnore: unity ? MOCK_IGNORE_CONF : null,
+  }
+}
+
+/**
+ * `lore_init` in the preview: the folder becomes a Lore repository whose files are all new (a git
+ * repository stays git, as the backend's detection keeps it).
+ */
+export function mockLoreInit(path: string, repository: string, ignore: string | null) {
+  const r = repoAt(path)
+  if (r.isRepo && r.vcs === 'git') return
+  const files = r.isRepo ? r.files.map(f => f.path) : ['ideas/2026.md', 'todo.md']
+  Object.assign(r, emptyRepo(), {
+    vcs: 'lore',
+    repository,
+    isRepo: true,
+    branches: { main: { upstream: null, ahead: 0, behind: 0 } },
+    files: [...(ignore ? ['.loreignore'] : []), ...files].map(p => ({ path: p, staged: null, unstaged: { status: '?', diff: added(p, ['…']) } })),
+  })
+}
+
 export async function mockGit(cmd: string, args: any): Promise<any> {
   const path = String(args?.path ?? '')
   const r = repoAt(path)
@@ -1542,8 +1789,30 @@ export async function mockGit(cmd: string, args: any): Promise<any> {
       r.branch = local
       return local
     }
+    case 'git_operation_abort': await wait(300); return abortMerge(r, path)
+    case 'git_operation_continue': {
+      if (!r.operation) throw new Error('Nothing is in progress here any more: no merge, rebase, cherry-pick or revert.')
+      await wait(300)
+      commit(r, r.operation.message ?? 'Merge', false)
+      return 'Merge finished.'
+    }
+    case 'git_operation_skip': throw new Error('A merge has no commit to skip. Abort it, or resolve and finish it.')
+    case 'git_conflict': await wait(80); return conflictOf(r, String(args.file ?? ''))
+    case 'git_conflict_take': return takeSide(r, path, String(args.file ?? ''), String(args.side ?? ''))
+    case 'git_conflict_history': return r.operation ? r.mergeHistory ?? { ours: [], theirs: [] } : { ours: [], theirs: [] }
     case 'git_merge': {
       const branch = String(args.branch)
+      if (r.operation) throw new Error('A merge is in progress. Resolve its conflicts and commit it, or abort it from the bar at the top of the Changes view, first.')
+      if (r.mergeFrom === branch) {
+        await wait(500)
+        seedMerge(r, path)
+        throw new Error(`Merge stopped: conflicts in 4 files.
+  assets/logo.png
+  src/config.ts
+  src/legacy/throttle.ts
+  src/routes/health.ts
+Resolve them in the Changes view, or abort from the bar at its top.`)
+      }
       // A branch checked out in another worktree of this repository: its commits really arrive.
       const from = worktreeList(path).map(w => repoAt(w.path)).find(x => x !== r && x.branch === branch)
       if (!from) return `Merged 2 commits from ${branch} into ${r.branch}.\n4 files changed, +38 −11`

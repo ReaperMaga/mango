@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import {
   Archive, ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, CircleAlert, CloudDownload, CloudUpload,
-  FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
+  Bot, FolderGit2, FolderMinus, FolderOpen, GitBranch, GitCompareArrows, GitMerge, GitPullRequestArrow, Lock, LockOpen, Minus, MoreHorizontal, Plus, RefreshCw, SquareTerminal, Undo2, X,
 } from 'lucide-vue-next'
 import type { GitFile, VcsLock } from '~/types/ipc'
 import type { MenuItem } from '~/types/ui'
@@ -20,8 +20,13 @@ import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { lockHolder, lockSummary, resultLines, vcsTerms } from '~/utils/vcs'
+import { rowWindow, scrollToRow, type RowRange } from '~/utils/rowWindow'
 import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
+import { baseName } from '~/utils/paths'
+import { useLore } from '~/stores/lore'
+import { mergeTabFor, openMergeEditor } from '~/composables/mergeEditor'
+import { chatForConflicts, solveConflicts } from '~/composables/solveConflicts'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
@@ -42,6 +47,10 @@ const status = computed(() => repo.value?.status ?? null)
 const isRepo = computed(() => !!status.value?.isRepo)
 /** Words and actions for git or Unity VCS. */
 const terms = computed(() => vcsTerms(status.value?.vcs))
+/** Which version control the folder is under, and where its root is: quiet metadata in the header. */
+const vcsTitle = computed(() => (status.value?.root
+  ? t('git.panel.vcsAt', { name: terms.value.name, root: status.value.root })
+  : t('git.panel.vcs', { name: terms.value.name })))
 const isUnity = computed(() => status.value?.vcs === 'plastic')
 const staged = computed(() => git.stagedFiles(path.value))
 const changes = computed(() => git.changedFiles(path.value))
@@ -49,6 +58,8 @@ const conflicts = computed(() => changes.value.filter(f => f.conflicted).length)
 const discardable = computed(() => changes.value.filter(f => !f.conflicted))
 const newFiles = computed(() => discardable.value.filter(f => f.worktree === '?').length)
 const clean = computed(() => isRepo.value && !staged.value.length && !changes.value.length)
+/** A merge, rebase, cherry-pick or revert waiting half way (the banner over the lists). */
+const operation = computed(() => status.value?.operation ?? null)
 
 const running = (action: GitAction) => git.isBusy(path.value, action)
 /** Staging takes milliseconds; only the slow actions are worth greying controls out for. */
@@ -319,13 +330,14 @@ watch([message, messageBox], async () => {
 
 /** Nothing staged: the button stages everything first, like "Commit all" elsewhere. */
 const commitsAll = computed(() => staged.value.length === 0 && changes.value.length > 0)
-const canCommit = computed(() => !git.busy && !!message.value.trim() && conflicts.value === 0 && (staged.value.length > 0 || changes.value.length > 0))
+const canCommit = computed(() => !git.busy && !!message.value.trim() && conflicts.value === 0 && (staged.value.length > 0 || changes.value.length > 0 || operation.value?.kind === 'merge'))
 /** Unity VCS: files the next checkin takes that someone else has locked. It will likely be refused; warn, don't block. */
 const lockedOut = computed(() => (terms.value.locks
   ? (staged.value.length ? staged.value : changes.value).map(f => lockOf(f.path)).filter((l): l is VcsLock => !!l && !l.mine)
   : []))
-const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title?: string }>(() => {
-  if (conflicts.value) return { text: t('git.panel.resolveConflicts', conflicts.value), warn: true }
+const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; waiting?: boolean; title?: string }>(() => {
+  // Conflicts wait for you (the banner's grade), they are no failure.
+  if (conflicts.value) return { text: t('git.panel.resolveConflicts', conflicts.value), warn: false, waiting: true }
   const out = lockedOut.value
   if (out.length) {
     const first = out[0]!
@@ -337,6 +349,7 @@ const commitHint = computed<{ text: string; warn: boolean; lock?: boolean; title
       title: `${out.map(l => `${l.path}: ${lockSummary(l)}`).join('\n')}\n${t('git.panel.refused')}`,
     }
   }
+  if (operation.value?.kind === 'merge') return { text: t('git.merge.commitHint'), warn: false }
   if (staged.value.length) return { text: t('git.panel.stagedFiles', staged.value.length), warn: false }
   if (changes.value.length) return { text: terms.value.amend ? t('git.panel.stagesAll', changes.value.length) : t('git.panel.checksInAll', changes.value.length), warn: false }
   return { text: isUnity.value ? t('git.panel.nothingToCheckIn') : t('git.panel.nothingToCommit'), warn: false }
@@ -345,7 +358,8 @@ const commitTitle = computed(() => {
   if (isUnity.value) return commitsAll.value ? t('git.panel.stageAndCheckIn') : t('git.panel.checkInStaged')
   return commitsAll.value ? t('git.panel.stageAndCommit') : t('git.panel.commitStaged')
 })
-const showCommit = computed(() => isRepo.value && (!clean.value || !!message.value))
+/** A rebase, cherry-pick or revert makes its own commits (Continue, in the banner). */
+const showCommit = computed(() => isRepo.value && (!operation.value || operation.value.kind === 'merge') && (!clean.value || !!message.value || !!operation.value))
 
 function commit() {
   if (canCommit.value && path.value) animated(git.commit(path.value))
@@ -392,9 +406,14 @@ function animated(work: Promise<unknown>) {
 /* Another chat's folder: its lists replace these without motion. */
 watch(path, () => acting.value.clear(), { flush: 'sync' })
 
-/** Show the file's diff as a tab in the main pane. */
+/** Show the file's diff as a tab in the main pane; a conflicted one opens in the merge editor. */
 function toggle(file: GitFile, isStaged: boolean) {
   if (!path.value) return
+  if (file.conflicted && !isStaged) {
+    git.selected = gitFileKey(file.path, false)
+    openMergeEditor(path.value, file.path)
+    return
+  }
   const key = gitFileKey(file.path, isStaged)
   git.openDiff(path.value, key)
   const threads = useThreads()
@@ -450,8 +469,34 @@ function unlockFile(file: string) {
   if (path.value) void git.unlock(path.value, [file])
 }
 
+/** Whether the merge editor in front shows this conflicted file. */
+function mergeShown(file: string) {
+  return !!path.value && useThreads().activePane.threadId === mergeTabFor(path.value, file)
+}
+
+/** A conflicted row's menu: the merge editor, the agent, one side whole, resolved. */
+function conflictMenu(file: GitFile): MenuItem[] {
+  const at = path.value!
+  const rebase = operation.value?.kind === 'rebase'
+  const chat = chatForConflicts(at)
+  return [
+    { label: t('git.merge.openEditor'), icon: GitMerge, onSelect: () => openMergeEditor(at, file.path) },
+    {
+      label: t('git.merge.solveFile'),
+      icon: Bot,
+      hint: chat ? t('git.merge.solveIn', { chat: chat.title }) : t('git.merge.solveNew'),
+      disabled: !!git.busy,
+      onSelect: () => void solveConflicts(at, [file.path]),
+    },
+    { label: rebase ? t('git.merge.use.onto') : t('git.merge.use.ours'), divider: true, disabled: !!git.busy, onSelect: () => void git.takeSide(at, file.path, 'ours') },
+    { label: rebase ? t('git.merge.use.applied') : t('git.merge.use.theirs'), disabled: !!git.busy, onSelect: () => void git.takeSide(at, file.path, 'theirs') },
+    { label: t('git.merge.markResolved'), icon: Plus, divider: true, hint: t('git.merge.markResolvedHint'), disabled: waiting.value, onSelect: () => stage(file) },
+  ]
+}
+
 /** A file row's context menu: open, stage, and (Unity VCS) lock or release it. */
 function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
+  if (file.conflicted && !isStaged && path.value && status.value?.vcs !== 'plastic') return conflictMenu(file)
   if (!terms.value.locks) return null
   const code = isStaged ? file.index : file.worktree
   const lock = lockOf(file.path)
@@ -481,20 +526,118 @@ function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
   return items
 }
 
+/* ---------- long lists: drawn a window at a time ---------- */
+
+/** A list longer than this has only the rows in view (and a few either side) in the DOM, without row motion. */
+const WINDOW_FROM = 200
+/** A file row's height (`--gf-row-h` in GitFileRow) and the gap between rows. */
+const ROW_H = 28
+const STRIDE = ROW_H + 1
+/**
+ * A long list changes without motion, its rows coming and going as it scrolls, and with no transition
+ * classes at all: each row entering would otherwise cost a style recalculation of its own.
+ */
+const windowed = (count: number) => count > WINDOW_FROM
+
+type ListName = 'staged' | 'changes'
 const scroller = ref<HTMLElement | null>(null)
-/** Up and Down walk the file rows. */
+/** Where the scroller is, and where each list starts inside it; read from the DOM, written only when changed. */
+const view = reactive({ scrollTop: 0, height: 0, staged: 0, changes: 0 })
+const listEl = (list: ListName) => scroller.value?.querySelector<HTMLElement>(`[data-list="${list}"]`) ?? null
+function measure() {
+  const el = scroller.value
+  if (!el) return
+  const set = (key: keyof typeof view, value: number) => { if (view[key] !== value) view[key] = value }
+  set('scrollTop', el.scrollTop)
+  set('height', el.clientHeight)
+  const top = el.getBoundingClientRect().top - el.scrollTop
+  for (const list of ['staged', 'changes'] as const) {
+    const ul = listEl(list)
+    if (ul) set(list, Math.round(ul.getBoundingClientRect().top - top))
+  }
+}
+let frame = 0
+function onScroll() {
+  if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure() })
+}
+let resized: ResizeObserver | undefined
+onMounted(() => {
+  measure()
+  if (scroller.value) (resized = new ResizeObserver(() => measure())).observe(scroller.value)
+})
+// Whatever sits above a list (the other list, a question) may have moved it.
+onUpdated(measure)
+onBeforeUnmount(() => {
+  resized?.disconnect()
+  cancelAnimationFrame(frame)
+})
+
+function rangeOf(list: ListName, count: number, shown: boolean): RowRange {
+  if (!shown) return { start: 0, end: 0 }
+  if (!windowed(count)) return { start: 0, end: count }
+  return rowWindow({ scrollTop: view.scrollTop, viewport: view.height, listTop: view[list], count, stride: STRIDE, overscan: 12 })
+}
+const stagedRange = computed(() => rangeOf('staged', staged.value.length, open.staged))
+const changesRange = computed(() => rangeOf('changes', changes.value.length, open.changes))
+const stagedRows = computed(() => staged.value.slice(stagedRange.value.start, stagedRange.value.end))
+const changesRows = computed(() => changes.value.slice(changesRange.value.start, changesRange.value.end))
+/** The rows not drawn keep their room as padding, so the scrollbar is the whole list's. */
+const padding = (r: RowRange, count: number) => (windowed(count)
+  ? { paddingTop: `${r.start * STRIDE}px`, paddingBottom: `${Math.max(0, count - r.end) * STRIDE}px` }
+  : undefined)
+
+/** Up and Down walk the file rows, across both lists, scrolling the next one into the DOM when it isn't. */
 function onListKey(e: KeyboardEvent) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
   const from = e.target as HTMLElement
-  if (!from.classList?.contains('gf__main') || !scroller.value) return
-  const rows = [...scroller.value.querySelectorAll<HTMLElement>('.gf__main')]
-  const next = rows[rows.indexOf(from) + (e.key === 'ArrowDown' ? 1 : -1)]
-  if (next) {
-    e.preventDefault()
-    next.focus()
+  const at = from.classList?.contains('gf__main') ? from.closest<HTMLElement>('[data-row]')?.dataset.row : undefined
+  if (!at || !scroller.value) return
+  const [list, n] = at.split(':') as [ListName, string]
+  const lists: Array<[ListName, number]> = []
+  if (open.staged && staged.value.length) lists.push(['staged', staged.value.length])
+  if (open.changes && changes.value.length) lists.push(['changes', changes.value.length])
+  const which = lists.findIndex(([name]) => name === list)
+  if (which < 0) return
+  const down = e.key === 'ArrowDown'
+  let index = Number(n) + (down ? 1 : -1)
+  let target = lists[which]!
+  if (index < 0 || index >= target[1]) {
+    const other = lists[which + (down ? 1 : -1)]
+    if (!other) return
+    target = other
+    index = down ? 0 : other[1] - 1
   }
+  e.preventDefault()
+  void focusRow(target[0], index)
+}
+async function focusRow(list: ListName, index: number) {
+  const el = scroller.value
+  const ul = listEl(list)
+  if (!el || !ul) return
+  const listTop = ul.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop
+  const to = scrollToRow({ scrollTop: el.scrollTop, viewport: el.clientHeight, listTop, stride: STRIDE, index, rowHeight: ROW_H })
+  if (to !== null) {
+    el.scrollTop = to
+    measure()
+    await nextTick()
+  }
+  el.querySelector<HTMLElement>(`[data-row="${list}:${index}"] .gf__main`)?.focus()
 }
 
+/** A folder without version control can become a Lore repository instead (local folders only). */
+function createLore() {
+  const at = path.value
+  if (!at || isEnvPath(at)) return
+  useLore().initFor = { path: at, name: at === ws.activeProjectPath ? (ws.activeProject?.name ?? baseName(at)) : baseName(at) }
+}
+
+/** "Initialize repository": which version control to start here. Lore only for folders on this computer. */
+const initMenu = computed<MenuItem[]>(() => {
+  const at = path.value
+  const items: MenuItem[] = [{ label: t('git.panel.initGit'), hint: t('git.panel.initGitHint'), onSelect: () => { if (at) void git.init(at) } }]
+  if (at && !isEnvPath(at)) items.push({ label: t('git.panel.initLore'), hint: t('git.panel.initLoreHint'), onSelect: createLore })
+  return items
+})
 </script>
 
 <template>
@@ -502,7 +645,7 @@ function onListKey(e: KeyboardEvent) {
   <section class="gp" :aria-label="t('git.changes')">
     <header class="gp__head">
       <h2 class="gp__title">
-        {{ t('git.changes') }}<span v-if="linkedWorktree" class="gp__wt" :title="t('git.panel.worktreePath', { path: linkedWorktree })"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
+        {{ t('git.changes') }}<span v-if="isRepo" class="gp__vcs" :title="vcsTitle">{{ terms.name }}</span><span v-if="linkedWorktree" class="gp__wt" :title="t('git.panel.worktreePath', { path: linkedWorktree })"><FolderGit2 aria-hidden="true" /><span class="gp__wt-name">{{ worktreeName(linkedWorktree) }}</span></span>
       </h2>
       <div class="gp__tools">
         <template v-if="isRepo && !terms.remotes">
@@ -611,6 +754,8 @@ function onListKey(e: KeyboardEvent) {
       </template>
     </div>
 
+    <GitMergeBanner v-if="isRepo && path && status && operation" :path="path" :status="status" :operation="operation" />
+
     <div v-if="notice" class="gp__notice" :class="{ 'is-error': notice.error }" :role="notice.error ? 'alert' : 'status'">
       <CircleAlert v-if="notice.error" class="gp__notice-icon" aria-hidden="true" />
       <Check v-else class="gp__notice-icon" aria-hidden="true" />
@@ -633,7 +778,7 @@ function onListKey(e: KeyboardEvent) {
         @keydown="onMessageKey"
       />
       <div class="gp__commit-row">
-        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn, 'is-lock': commitHint.lock }" :title="commitHint.title">
+        <span class="gp__commit-hint" :class="{ 'is-warn': commitHint.warn, 'is-lock': commitHint.lock, 'is-waiting': commitHint.waiting }" :title="commitHint.title">
           <Lock v-if="commitHint.lock" class="gp__hint-icon" aria-hidden="true" />{{ commitHint.text }}
         </span>
         <div class="gp__commit-btns">
@@ -656,7 +801,7 @@ function onListKey(e: KeyboardEvent) {
       </div>
     </form>
 
-    <div ref="scroller" class="gp__scroll" @keydown="onListKey">
+    <div ref="scroller" class="gp__scroll" @keydown="onListKey" @scroll.passive="onScroll">
       <template v-if="isRepo">
         <section v-if="staged.length" class="gp__sec">
           <div class="gp__sec-head">
@@ -669,10 +814,20 @@ function onListKey(e: KeyboardEvent) {
               <UiIconButton size="sm" :label="t('git.panel.unstageAll')" :disabled="waiting" @click="unstageAll"><Minus /></UiIconButton>
             </div>
           </div>
-          <TransitionGroup v-show="open.staged" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
+          <TransitionGroup
+            v-show="open.staged"
+            tag="ul"
+            :name="listMotion"
+            :css="!windowed(staged.length)"
+            class="gp__list gp__files"
+            role="list"
+            data-list="staged"
+            :style="padding(stagedRange, staged.length)"
+          >
             <GitFileRow
-              v-for="f in staged"
+              v-for="(f, i) in stagedRows"
               :key="f.path"
+              :data-row="`staged:${stagedRange.start + i}`"
               :file="f"
               staged
               :expanded="git.isExpanded(path!, gitFileKey(f.path, true))"
@@ -721,13 +876,23 @@ function onListKey(e: KeyboardEvent) {
             </div>
           </div>
 
-          <TransitionGroup v-show="open.changes" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
+          <TransitionGroup
+            v-show="open.changes"
+            tag="ul"
+            :name="listMotion"
+            :css="!windowed(changes.length)"
+            class="gp__list gp__files"
+            role="list"
+            data-list="changes"
+            :style="padding(changesRange, changes.length)"
+          >
             <GitFileRow
-              v-for="f in changes"
+              v-for="(f, i) in changesRows"
               :key="f.path"
+              :data-row="`changes:${changesRange.start + i}`"
               :file="f"
               :staged="false"
-              :expanded="git.isExpanded(path!, gitFileKey(f.path, false))"
+              :expanded="git.isExpanded(path!, gitFileKey(f.path, false)) || (f.conflicted && mergeShown(f.path))"
               :diff="repo?.diffs[gitFileKey(f.path, false)] ?? null"
               :confirming="confirming === gitFileKey(f.path, false)"
               :disabled="waiting"
@@ -814,7 +979,15 @@ function onListKey(e: KeyboardEvent) {
 
       <div v-else-if="status" class="gp__empty">
         <i18n-t keypath="git.panel.notRepo" tag="p" scope="global"><template #name><strong>{{ ws.activeProject?.name ?? t('git.panel.thisFolder') }}</strong></template></i18n-t>
-        <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">{{ t('git.panel.init') }}</UiButton>
+        <div class="gp__empty-actions">
+          <UiMenu :items="initMenu" :width="248" :label="t('git.panel.init')">
+            <template #default="{ toggle: toggleInit, open: initOpen }">
+              <UiButton size="sm" :loading="running('init')" :aria-expanded="initOpen" aria-haspopup="menu" @click="toggleInit">
+                {{ t('git.panel.init') }}<ChevronDown class="gp__init-chev" aria-hidden="true" />
+              </UiButton>
+            </template>
+          </UiMenu>
+        </div>
       </div>
 
       <div v-else-if="repo?.error" class="gp__empty">
@@ -891,6 +1064,7 @@ function onListKey(e: KeyboardEvent) {
 }
 .gp__wt svg { width: 12px; height: 12px; flex: none; stroke-width: 1.85; color: var(--accent-ink); }
 .gp__wt-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gp__vcs { flex: none; font-size: var(--text-2xs); font-weight: 400; color: var(--fg-faint); }
 .gp__tools { flex: none; display: flex; align-items: center; gap: 2px; }
 
 .gp__sync {
@@ -1094,7 +1268,7 @@ function onListKey(e: KeyboardEvent) {
 }
 .gp__commit-hint.is-warn { color: var(--ripe-error-fg); }
 /* Someone else's lock: a word with them, not an error. */
-.gp__commit-hint.is-lock { color: var(--ripe-waiting-fg); }
+.gp__commit-hint.is-lock, .gp__commit-hint.is-waiting { color: var(--ripe-waiting-fg); }
 .gp__hint-icon { width: 12px; height: 12px; margin-right: 4px; vertical-align: -1.5px; stroke-width: 1.85; }
 .gp__commit-btns { flex: none; display: flex; align-items: center; gap: 2px; }
 .gp__commit-btns .gp__commit-more { height: 26px; }
@@ -1223,6 +1397,8 @@ function onListKey(e: KeyboardEvent) {
 .gp__empty { padding: var(--space-4) var(--space-2) var(--space-3) var(--space-1); display: grid; justify-items: start; gap: var(--space-3); }
 .gp__empty p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--fg-subtle); }
 .gp__empty strong { font-weight: 600; color: var(--fg-muted); }
+.gp__empty-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.gp__init-chev { width: 14px; height: 14px; margin-inline: var(--space-1) calc(-1 * var(--space-1)); stroke-width: 2; color: var(--fg-muted); }
 .gp__error {
   width: 100%;
   max-height: 160px;

@@ -133,8 +133,8 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
         <p v-if="detail.body" class="commit__body selectable">{{ detail.body }}</p>
         <dl class="commit__facts">
           <dt>{{ t('git.log.author') }}</dt>
-          <dd class="selectable" :title="`${detail.author} <${detail.authorEmail}>, ${fullDateTime(detail.time)}`">
-            {{ detail.author }}<span class="commit__soft">, {{ fullDateTime(detail.time) }}</span>
+          <dd class="selectable" :title="[detail.authorEmail ? `${detail.author} <${detail.authorEmail}>` : detail.author, fullDateTime(detail.time)].filter(Boolean).join(', ')">
+            {{ detail.author }}<span class="commit__soft">{{ detail.author ? ', ' : '' }}{{ fullDateTime(detail.time) }}</span>
           </dd>
           <template v-if="!sameCommitter">
             <dt>{{ t('git.commit.committer') }}</dt>

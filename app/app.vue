@@ -93,6 +93,7 @@ onBeforeUnmount(() => unlistenJoin?.())
     </main>
     <ProjectNewProjectDialog />
     <ProjectCloneDialog />
+    <ProjectLoreInitDialog />
     <ProjectOpenEnvFolderDialog />
     <SetupGettingStarted />
     <UsageDialog />

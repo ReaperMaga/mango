@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderGit2, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -15,6 +15,8 @@ import type { ProjectInfo } from '~/types/ipc'
 import { useForge } from '~/stores/forge'
 import { siteName } from '~/utils/forge'
 import { isEnvPath } from '~/utils/envPath'
+import { vcsTerms } from '~/utils/vcs'
+import { useLore } from '~/stores/lore'
 
 const { t } = useI18n()
 const ws = useWorkspace()
@@ -170,6 +172,9 @@ const projectItems = computed<MenuItem[]>(() => [
   ...(ws.activeProject
     ? [
         { label: t('shell.titlebar.projectSettings'), icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        ...(!isEnvPath(ws.activeProject.path) && ws.activeProject.vcs !== 'lore'
+          ? [{ label: t('shell.titlebar.loreInit'), icon: FolderGit2, onSelect: () => { const p = ws.activeProject; if (p) useLore().initFor = { path: p.path, name: p.name } } }]
+          : []),
         ...pluginMenuItems('project', { projectPath: ws.activeProject.path }),
       ]
     : []),
@@ -180,6 +185,10 @@ const gitStatus = computed(() => git.status(workdir.value))
 const ahead = computed(() => gitStatus.value?.ahead ?? 0)
 const behind = computed(() => gitStatus.value?.behind ?? 0)
 const changed = computed(() => gitStatus.value?.files.length ?? 0)
+/* Which version control the working copy in view is under, for the tooltip; nothing until it is known. */
+const vcs = computed(() => (gitStatus.value?.isRepo
+  ? gitStatus.value.vcs
+  : workdir.value === ws.activeProjectPath ? ws.activeProject?.vcs ?? null : null))
 const branchTitle = computed(() => {
   const bits = [
     ahead.value ? t('shell.titlebar.toPush', ahead.value) : '',
@@ -187,7 +196,8 @@ const branchTitle = computed(() => {
     changed.value ? t('shell.titlebar.changed', changed.value) : '',
   ].filter(Boolean)
   const name = branch.value ? t('shell.sidebar.branch', { branch: branch.value }) : t('shell.titlebar.branches')
-  return bits.length ? `${name} (${bits.join(', ')})` : name
+  const line = bits.length ? `${name} (${bits.join(', ')})` : name
+  return vcs.value ? `${line}\n${t('git.panel.vcs', { name: vcsTerms(vcs.value).name })}` : line
 })
 </script>
 
