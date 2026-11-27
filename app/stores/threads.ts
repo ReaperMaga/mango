@@ -48,6 +48,8 @@ const isCommand = (text: string) => /^\/[\w.:-]+(\s|$)/.test(text.trim())
 const isClear = (text: string) => /^\/clear\s*$/.test(text.trim())
 /** A turn waits this long for open files to save; a slower save still lands, checked against the disk. */
 const AGENT_SAVE_MS = 10_000
+/** While a chat runs, its `updatedAt` moves at most this often (see `_touch`). */
+const TOUCH_EVERY_MS = 5000
 
 export interface Pane { id: string; threadId: string | null }
 
@@ -201,7 +203,8 @@ export const useThreads = defineStore('threads', {
       let threads: Thread[] = []
       let layout: any = null
       try {
-        ({ threads, layout } = await loadHistory(ownedKeep()))
+        // Loading normalizes them (nothing is running after a restart…); the ones that changed by it are saved.
+        ({ threads, layout } = await loadHistory(ownedKeep(), normalizeLoaded))
         if (!main) layout = null
       } catch (e) {
         console.error('Mango could not read the chat history:', e)
@@ -210,12 +213,12 @@ export const useThreads = defineStore('threads', {
       if (main && !threads.length && !layout) {
         try {
           const old = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
-          if (Array.isArray(old?.threads)) { threads = old.threads; layout = old; migrating = true }
+          if (Array.isArray(old?.threads)) { threads = old.threads.map(normalizeLoaded); layout = old; migrating = true }
         } catch { /* nothing to move */ }
       }
       try {
-        // Anything that was mid-run when the app closed is no longer running.
-        this.threads = threads.map(normalizeLoaded)
+        // Anything that was mid-run when the app closed is no longer running (normalized above).
+        this.threads = threads
         if (layout) {
           // Plugin tabs that come back; their plugins start later (a tab whose plugin is gone closes then).
           const plugins = normalizePluginTabs(layout.pluginTabs)
@@ -254,14 +257,16 @@ export const useThreads = defineStore('threads', {
         adopt: incoming => this._adoptRemote(incoming),
         drop: ids => { for (const id of ids) if (this.byId(id)) this.remove(id) },
       })
-      // Statuses changed by loading (a run cut off by closing the app) are saved too.
-      markChanged()
+      // Statuses changed by loading (a run cut off by closing the app) are saved too (`loadHistory` marked
+      // those); chats moved out of localStorage are all new, which only a sweep sends.
+      markChanged(migrating ? undefined : [])
       if (migrating && await flushHistory()) localStorage.removeItem(LS_KEY)
     },
 
     /**
-     * Save soon (debounced). With chat ids, only those chats are compared; without, every chat is,
-     * which also drops deleted ones. The layout (tabs, panes) is compared every time.
+     * Save soon (debounced). With chat ids, only those chats are compared, and an id whose chat is gone
+     * deletes it; without, every chat is serialised and compared (slow with a large history: name the chats
+     * changed or deleted instead). The layout (tabs, panes) is compared every time.
      */
     persist(ids?: string | string[]) {
       markChanged(ids)
@@ -381,7 +386,7 @@ export const useThreads = defineStore('threads', {
       this.threads.push(...demo)
       for (const t of demo.slice(0, 3)) if (!this.tabs.includes(t.id)) this.tabs.push(t.id)
       this.show(demo[0]!.id)
-      this.persist()
+      this.persist(demo.map(t => t.id))
     },
 
     /**
@@ -793,8 +798,9 @@ export const useThreads = defineStore('threads', {
       const at = ids.indexOf(targetId)
       if (at === -1) return
       ids.splice(where === 'before' ? at : at + 1, 0, id)
-      ids.forEach((x, i) => { const th = this.byId(x); if (th) th.order = i })
-      this.persist()
+      const moved: string[] = []
+      ids.forEach((x, i) => { const th = this.byId(x); if (th && th.order !== i) { th.order = i; moved.push(x) } })
+      this.persist(moved)
     },
     /** Keyboard / menu version of dragging: one place up or down. */
     move(id: string, by: -1 | 1) {
@@ -818,19 +824,22 @@ export const useThreads = defineStore('threads', {
         if (term) this.replaceTab(id, terminalTabId(moved, term.terminalId))
         else this.closeTab(id)
       }
+      const moved: string[] = []
       for (const t of this.threads) {
         const path = movedEnvPath(t.projectPath, hostId, from, to)
         if (path) t.projectPath = path
         const wt = movedEnvPath(t.worktree, hostId, from, to)
         if (wt) t.worktree = wt
+        if (path || wt) moved.push(t.id)
       }
-      this.persist()
+      this.persist(moved)
     },
 
     /** Forget the hand-made order of a project: newest first again. */
     resetOrder(projectPath: string) {
-      for (const t of this.threads) if (t.projectPath === projectPath) delete t.order
-      this.persist()
+      const reset = this.threads.filter(t => t.projectPath === projectPath && t.order !== undefined)
+      for (const t of reset) delete t.order
+      this.persist(reset.map(t => t.id))
     },
 
     /** Set a chat's status by hand: Working, or Settled (the sidebar mark). While an agent runs, the run owns the status.
@@ -882,7 +891,8 @@ export const useThreads = defineStore('threads', {
       for (const x of doomed) { this.closeTab(x); delete this.queue[x]; held.delete(x) }
       this.threads = this.threads.filter(t => !doomed.has(t.id))
       for (const p of this.panes) if (p.threadId && doomed.has(p.threadId)) p.threadId = null
-      this.persist()
+      // The ids of chats gone delete their rows.
+      this.persist([...doomed])
     },
 
     /** `model`: the new agent's model to run (its first one when left out). */
@@ -1412,9 +1422,10 @@ export const useThreads = defineStore('threads', {
       if (interruptRun(id)) return
       stopFlags.add(id)
       this._clearLive(id)
-      for (const c of this.childrenOf(id)) if (c.status === 'running') c.status = 'error'
+      const ended = this.childrenOf(id).filter(c => c.status === 'running')
+      for (const c of ended) c.status = 'error'
       t.status = 'working'
-      this.persist()
+      this.persist([id, ...ended.map(c => c.id)])
     },
 
     /**
@@ -1442,15 +1453,15 @@ export const useThreads = defineStore('threads', {
 
     /** What GitHub or GitLab said about an item, on every chat that links it. */
     _updateLinks(key: string, patch: Partial<Pick<LinkedItem, 'title' | 'state' | 'url' | 'kind'>>) {
-      let changed = false
+      const changed = new Set<string>()
       for (const t of this.threads) {
         const l = t.links?.find(x => x.key === key)
         if (!l) continue
         for (const [k, v] of Object.entries(patch) as Array<[keyof typeof patch, string]>) {
-          if (v !== undefined && l[k] !== v) { (l as Record<string, unknown>)[k] = v; changed = true }
+          if (v !== undefined && l[k] !== v) { (l as Record<string, unknown>)[k] = v; changed.add(t.id) }
         }
       }
-      if (changed) this.persist()
+      if (changed.size) this.persist([...changed])
     },
 
     /**
@@ -1569,11 +1580,19 @@ export const useThreads = defineStore('threads', {
       if (quiet) return
       try { notifyChange(t, before, outcome) } catch { /* a notification never breaks a run */ }
     },
-    /** The chat changed (an agent's output too): note the time, and save it soon. */
+    /**
+     * The chat changed (an agent's output too): note the time, and save it soon. While it runs, output
+     * comes many times a second: the time moves at most every few seconds then (it shows as "2m ago"
+     * and orders lists; the end of the run notes it again), and saving waits for a pause or a while
+     * (`STREAM_MAX_WAIT_MS` in `utils/chatSaves.ts`).
+     */
     _touch(id: string) {
       const t = this.byId(id)
-      if (t) t.updatedAt = Date.now()
-      this.persist(id)
+      if (!t) return
+      const now = Date.now()
+      const streaming = isBusy(t)
+      if (!streaming || now - t.updatedAt >= TOUCH_EVERY_MS || now < t.updatedAt) t.updatedAt = now
+      markChanged(id, streaming)
     },
   },
 })
