@@ -364,6 +364,30 @@ function cleanRepo(): Repo {
 
 const emptyRepo = (): Repo => ({ vcs: 'git', repository: null, isRepo: false, branch: 'main', branches: {}, files: [], log: [], incoming: [], renames: [] })
 
+/**
+ * `big-level`: a game project with ~20,000 pending changes (a freshly imported Unity level: every asset
+ * and its `.meta`), to see the Changes view stay quick with a list that long.
+ */
+function bigRepo(): Repo {
+  const files: MockFile[] = []
+  const diffOf = (path: string, status: string) => (status === 'D' ? deleted(path, ['%YAML 1.1']) : added(path, ['%YAML 1.1', `guid: ${hex(32)}`]))
+  const kinds = ['Prefabs', 'Materials', 'Textures', 'Scenes', 'Scripts']
+  const ext = ['prefab', 'mat', 'png', 'unity', 'cs']
+  for (let area = 0; area < 40; area++) {
+    for (let k = 0; k < 250; k++) {
+      const kind = k % kinds.length
+      const path = `Assets/Levels/Area${String(area).padStart(2, '0')}/${kinds[kind]}/Piece${String(k).padStart(3, '0')}.${ext[kind]}`
+      for (const p of [path, `${path}.meta`]) {
+        // Most of it staged; every third area still waiting, a few staged files edited again.
+        const change = (status: string): Change => ({ status, diff: diffOf(p, status) })
+        if (area % 3 === 2) files.push({ path: p, staged: null, unstaged: change(k % 17 === 0 ? 'D' : k % 5 === 0 ? 'M' : '?') })
+        else files.push({ path: p, staged: change('A'), unstaged: k % 50 === 0 ? change('M') : null })
+      }
+    }
+  }
+  return { ...cleanRepo(), branches: { main: { upstream: 'origin/main', ahead: 0, behind: 0 } }, files, incoming: [] }
+}
+
 /* ---------- a Unity VCS workspace ---------- */
 
 let nextChangeset = 1290
@@ -730,7 +754,7 @@ function repoAt(path: string): Repo {
       if (repos.has(path)) return repos.get(path)!
     }
     const name = baseName(path)
-    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : mangoRepo()
+    repo = name === 'notes' ? emptyRepo() : name === 'pulp-ui' ? cleanRepo() : name === 'orchard-api' ? sideRepo('feat/rate-limits') : name === 'fruit-stand' ? unityRepo() : name === 'big-level' ? bigRepo() : mangoRepo()
     repos.set(path, repo)
     if (name === 'mango' && !linkedTrees.has(path)) seedWorktree(path, repo)
   }
@@ -744,12 +768,15 @@ const notIn = (r: Repo, base: Repo) => r.log.filter(c => !base.log.some(b => b.h
 
 const tracking = (r: Repo): Tracking => r.branches[r.branch] ?? { upstream: null, ahead: 0, behind: 0 }
 
+/** The same order as `localeCompare`, many times quicker on a long list. */
+const byPath = new Intl.Collator()
+
 function statusOf(r: Repo, path: string): GitStatus {
   if (!r.isRepo) return { vcs: 'git', repository: null, isRepo: false, root: null, mainRoot: null, branch: null, head: null, upstream: null, ahead: 0, behind: 0, files: [] }
   const t = tracking(r)
   const files: GitFile[] = r.files
     .map(f => ({ path: f.path, origPath: f.staged?.origPath ?? f.unstaged?.origPath ?? null, index: f.staged?.status ?? null, worktree: f.unstaged?.status ?? null, conflicted: false }))
-    .sort((a, b) => Number(a.worktree === '?') - Number(b.worktree === '?') || a.path.localeCompare(b.path))
+    .sort((a, b) => Number(a.worktree === '?') - Number(b.worktree === '?') || byPath.compare(a.path, b.path))
   if (r.vcs === 'plastic') {
     // A changeset number for HEAD; "behind" is newer changesets on the branch, known without a fetch.
     const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null

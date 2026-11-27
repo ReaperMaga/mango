@@ -20,6 +20,7 @@ import { diffTabId, isDiffTab } from '~/utils/diffTabs'
 import { isMod, modLabel } from '~/composables/useShortcuts'
 import { shortAgo, useNow } from '~/utils/time'
 import { lockHolder, lockSummary, resultLines, vcsTerms } from '~/utils/vcs'
+import { rowWindow, scrollToRow, type RowRange } from '~/utils/rowWindow'
 import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
 
@@ -481,18 +482,102 @@ function fileMenu(file: GitFile, isStaged: boolean): MenuItem[] | null {
   return items
 }
 
+/* ---------- long lists: drawn a window at a time ---------- */
+
+/** A list longer than this has only the rows in view (and a few either side) in the DOM, without row motion. */
+const WINDOW_FROM = 200
+/** A file row's height (`--gf-row-h` in GitFileRow) and the gap between rows. */
+const ROW_H = 28
+const STRIDE = ROW_H + 1
+/**
+ * A long list changes without motion, its rows coming and going as it scrolls, and with no transition
+ * classes at all: each row entering would otherwise cost a style recalculation of its own.
+ */
+const windowed = (count: number) => count > WINDOW_FROM
+
+type ListName = 'staged' | 'changes'
 const scroller = ref<HTMLElement | null>(null)
-/** Up and Down walk the file rows. */
+/** Where the scroller is, and where each list starts inside it; read from the DOM, written only when changed. */
+const view = reactive({ scrollTop: 0, height: 0, staged: 0, changes: 0 })
+const listEl = (list: ListName) => scroller.value?.querySelector<HTMLElement>(`[data-list="${list}"]`) ?? null
+function measure() {
+  const el = scroller.value
+  if (!el) return
+  const set = (key: keyof typeof view, value: number) => { if (view[key] !== value) view[key] = value }
+  set('scrollTop', el.scrollTop)
+  set('height', el.clientHeight)
+  const top = el.getBoundingClientRect().top - el.scrollTop
+  for (const list of ['staged', 'changes'] as const) {
+    const ul = listEl(list)
+    if (ul) set(list, Math.round(ul.getBoundingClientRect().top - top))
+  }
+}
+let frame = 0
+function onScroll() {
+  if (!frame) frame = requestAnimationFrame(() => { frame = 0; measure() })
+}
+let resized: ResizeObserver | undefined
+onMounted(() => {
+  measure()
+  if (scroller.value) (resized = new ResizeObserver(() => measure())).observe(scroller.value)
+})
+// Whatever sits above a list (the other list, a question) may have moved it.
+onUpdated(measure)
+onBeforeUnmount(() => {
+  resized?.disconnect()
+  cancelAnimationFrame(frame)
+})
+
+function rangeOf(list: ListName, count: number, shown: boolean): RowRange {
+  if (!shown) return { start: 0, end: 0 }
+  if (!windowed(count)) return { start: 0, end: count }
+  return rowWindow({ scrollTop: view.scrollTop, viewport: view.height, listTop: view[list], count, stride: STRIDE, overscan: 12 })
+}
+const stagedRange = computed(() => rangeOf('staged', staged.value.length, open.staged))
+const changesRange = computed(() => rangeOf('changes', changes.value.length, open.changes))
+const stagedRows = computed(() => staged.value.slice(stagedRange.value.start, stagedRange.value.end))
+const changesRows = computed(() => changes.value.slice(changesRange.value.start, changesRange.value.end))
+/** The rows not drawn keep their room as padding, so the scrollbar is the whole list's. */
+const padding = (r: RowRange, count: number) => (windowed(count)
+  ? { paddingTop: `${r.start * STRIDE}px`, paddingBottom: `${Math.max(0, count - r.end) * STRIDE}px` }
+  : undefined)
+
+/** Up and Down walk the file rows, across both lists, scrolling the next one into the DOM when it isn't. */
 function onListKey(e: KeyboardEvent) {
   if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
   const from = e.target as HTMLElement
-  if (!from.classList?.contains('gf__main') || !scroller.value) return
-  const rows = [...scroller.value.querySelectorAll<HTMLElement>('.gf__main')]
-  const next = rows[rows.indexOf(from) + (e.key === 'ArrowDown' ? 1 : -1)]
-  if (next) {
-    e.preventDefault()
-    next.focus()
+  const at = from.classList?.contains('gf__main') ? from.closest<HTMLElement>('[data-row]')?.dataset.row : undefined
+  if (!at || !scroller.value) return
+  const [list, n] = at.split(':') as [ListName, string]
+  const lists: Array<[ListName, number]> = []
+  if (open.staged && staged.value.length) lists.push(['staged', staged.value.length])
+  if (open.changes && changes.value.length) lists.push(['changes', changes.value.length])
+  const which = lists.findIndex(([name]) => name === list)
+  if (which < 0) return
+  const down = e.key === 'ArrowDown'
+  let index = Number(n) + (down ? 1 : -1)
+  let target = lists[which]!
+  if (index < 0 || index >= target[1]) {
+    const other = lists[which + (down ? 1 : -1)]
+    if (!other) return
+    target = other
+    index = down ? 0 : other[1] - 1
   }
+  e.preventDefault()
+  void focusRow(target[0], index)
+}
+async function focusRow(list: ListName, index: number) {
+  const el = scroller.value
+  const ul = listEl(list)
+  if (!el || !ul) return
+  const listTop = ul.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop
+  const to = scrollToRow({ scrollTop: el.scrollTop, viewport: el.clientHeight, listTop, stride: STRIDE, index, rowHeight: ROW_H })
+  if (to !== null) {
+    el.scrollTop = to
+    measure()
+    await nextTick()
+  }
+  el.querySelector<HTMLElement>(`[data-row="${list}:${index}"] .gf__main`)?.focus()
 }
 
 </script>
@@ -656,7 +741,7 @@ function onListKey(e: KeyboardEvent) {
       </div>
     </form>
 
-    <div ref="scroller" class="gp__scroll" @keydown="onListKey">
+    <div ref="scroller" class="gp__scroll" @keydown="onListKey" @scroll.passive="onScroll">
       <template v-if="isRepo">
         <section v-if="staged.length" class="gp__sec">
           <div class="gp__sec-head">
@@ -669,10 +754,20 @@ function onListKey(e: KeyboardEvent) {
               <UiIconButton size="sm" :label="t('git.panel.unstageAll')" :disabled="waiting" @click="unstageAll"><Minus /></UiIconButton>
             </div>
           </div>
-          <TransitionGroup v-show="open.staged" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
+          <TransitionGroup
+            v-show="open.staged"
+            tag="ul"
+            :name="listMotion"
+            :css="!windowed(staged.length)"
+            class="gp__list gp__files"
+            role="list"
+            data-list="staged"
+            :style="padding(stagedRange, staged.length)"
+          >
             <GitFileRow
-              v-for="f in staged"
+              v-for="(f, i) in stagedRows"
               :key="f.path"
+              :data-row="`staged:${stagedRange.start + i}`"
               :file="f"
               staged
               :expanded="git.isExpanded(path!, gitFileKey(f.path, true))"
@@ -721,10 +816,20 @@ function onListKey(e: KeyboardEvent) {
             </div>
           </div>
 
-          <TransitionGroup v-show="open.changes" tag="ul" :name="listMotion" class="gp__list gp__files" role="list">
+          <TransitionGroup
+            v-show="open.changes"
+            tag="ul"
+            :name="listMotion"
+            :css="!windowed(changes.length)"
+            class="gp__list gp__files"
+            role="list"
+            data-list="changes"
+            :style="padding(changesRange, changes.length)"
+          >
             <GitFileRow
-              v-for="f in changes"
+              v-for="(f, i) in changesRows"
               :key="f.path"
+              :data-row="`changes:${changesRange.start + i}`"
               :file="f"
               :staged="false"
               :expanded="git.isExpanded(path!, gitFileKey(f.path, false))"

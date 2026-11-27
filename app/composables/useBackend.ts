@@ -219,6 +219,8 @@ const mock = (() => {
     { path: `${home}/Projects/pulp-ui`, name: 'pulp-ui', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 60 * 26 },
     { path: `${home}/Projects/fruit-stand`, name: 'fruit-stand', isGit: true, vcs: 'plastic', branch: '/main/feature/inventory', lastOpened: now - 1000 * 60 * 60 * 30 },
     { path: `${home}/Projects/notes`, name: 'notes', isGit: false, branch: null, lastOpened: now - 1000 * 60 * 60 * 24 * 6 },
+    // ~20,000 pending changes (mockGit.ts `bigRepo`), for checking that long change lists stay quick.
+    { path: `${home}/Projects/big-level`, name: 'big-level', isGit: true, vcs: 'git', branch: 'main', lastOpened: now - 1000 * 60 * 60 * 24 * 9 },
   ]
 
   const remember = (p: ProjectInfo) => {
