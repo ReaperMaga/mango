@@ -29,10 +29,10 @@
 pub(crate) mod locks;
 pub(crate) mod parse;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::git::{
@@ -360,10 +360,16 @@ fn rel_to_root(root: &At, folder: &str, file: &str) -> Result<String, String> {
 // Status
 // ---------------------------------------------------------------------------
 
-/// The pending changes from the last status read, by root, so a diff needs no second scan.
-fn last_status() -> &'static Mutex<HashMap<String, Vec<Entry>>> {
-    static LAST: OnceLock<Mutex<HashMap<String, Vec<Entry>>>> = OnceLock::new();
+/// The pending changes from the last status read, by root, so a diff needs no second scan. Shared,
+/// not copied: a large repository lists tens of thousands of them.
+fn last_status() -> &'static Mutex<HashMap<String, Arc<Vec<Entry>>>> {
+    static LAST: OnceLock<Mutex<HashMap<String, Arc<Vec<Entry>>>>> = OnceLock::new();
     LAST.get_or_init(Default::default)
+}
+
+/// The last status read's entries for `root`, if any (the lock is held only to clone the `Arc`).
+fn cached_entries(root: &At) -> Option<Arc<Vec<Entry>>> {
+    last_status().lock().ok().and_then(|m| m.get(&key(root)).cloned())
 }
 
 fn key(root: &At) -> String {
@@ -376,29 +382,49 @@ fn key(root: &At) -> String {
     }
 }
 
-/// `lore status --scan`, read. Also kept for the diffs that follow.
-fn read_status(root: &At) -> Result<parse::Status, String> {
+/// `lore status --scan`, read. Its entries are also kept for the diffs that follow.
+fn read_status(root: &At) -> Result<(parse::Status, Arc<Vec<Entry>>), String> {
     let out = lore(root).args(["status", "--scan"]).run_ok()?;
-    let parsed = parse::parse_status(&out.text());
+    let mut parsed = parse::parse_status(&out.text());
     if parsed.branch.is_none() && parsed.revision.is_none() {
         return Err(format!("Lore gave no status for {}.\n\n{}", root.shown(), tidy_error(&out.combined())));
     }
+    let entries = Arc::new(std::mem::take(&mut parsed.entries));
     if let Ok(mut map) = last_status().lock() {
-        map.insert(key(root), parsed.entries.clone());
+        map.insert(key(root), entries.clone());
     }
-    Ok(parsed)
+    Ok((parsed, entries))
+}
+
+/// Every folder with something listed under it (of `entries`, or only their files when `files_only`):
+/// each path's ancestors, so a folder is looked up instead of every path being scanned for it.
+fn parents_listed<'a>(entries: impl IntoIterator<Item = &'a Entry>, files_only: bool) -> HashSet<&'a str> {
+    let mut out = HashSet::new();
+    for e in entries {
+        if files_only && e.dir {
+            continue;
+        }
+        let mut path = e.path.as_str();
+        while let Some(cut) = path.rfind('/') {
+            path = &path[..cut];
+            // Already there: so are its own ancestors.
+            if !out.insert(path) {
+                break;
+            }
+        }
+    }
+    out
 }
 
 /// The changes the Changes view lists: a directory is a row of its own only when it is deleted (or
 /// moved) and none of its files are listed; an added directory's files are listed one by one.
 fn files_of(entries: &[Entry]) -> Vec<GitFile> {
-    let mut out: Vec<GitFile> = Vec::new();
+    let parents = parents_listed(entries, false);
+    let mut out: Vec<GitFile> = Vec::with_capacity(entries.len());
+    let mut row: HashMap<&str, usize> = HashMap::with_capacity(entries.len());
     for e in entries {
-        if e.dir {
-            let prefix = format!("{}/", e.path);
-            if !matches!(e.letter, "D" | "R") || entries.iter().any(|o| o.path.starts_with(&prefix)) {
-                continue;
-            }
+        if e.dir && (!matches!(e.letter, "D" | "R") || parents.contains(e.path.as_str())) {
+            continue;
         }
         let (index, worktree, conflicted) = match e.section {
             Section::Staged => (Some(e.letter.to_string()), None, false),
@@ -406,13 +432,15 @@ fn files_of(entries: &[Entry]) -> Vec<GitFile> {
             Section::Untracked => (None, Some("?".to_string()), false),
             Section::Conflict => (None, Some("U".to_string()), true),
         };
-        if let Some(f) = out.iter_mut().find(|f| f.path == e.path) {
+        if let Some(&i) = row.get(e.path.as_str()) {
             // Listed twice (staged and changed again): both sides, as git shows it.
+            let f = &mut out[i];
             f.index = f.index.take().or(index);
             f.worktree = f.worktree.take().or(worktree);
             f.conflicted |= conflicted;
             continue;
         }
+        row.insert(e.path.as_str(), out.len());
         out.push(GitFile { path: e.path.clone(), orig_path: e.orig.clone().filter(|_| e.letter == "R"), index, worktree, conflicted });
     }
     out
@@ -435,7 +463,7 @@ fn ahead_behind(s: &parse::Status) -> (u32, u32) {
     }
 }
 
-pub(crate) fn status_from(root: &At, s: parse::Status) -> GitStatus {
+pub(crate) fn status_from(root: &At, s: &parse::Status, entries: &[Entry]) -> GitStatus {
     let (ahead, behind) = ahead_behind(&s);
     let upstream = match (&s.branch, s.remote) {
         (Some(b), Remote::InSync | Remote::Ahead | Remote::Behind | Remote::Diverged) => Some(format!("{REMOTE}/{b}")),
@@ -452,23 +480,23 @@ pub(crate) fn status_from(root: &At, s: parse::Status) -> GitStatus {
         upstream,
         ahead,
         behind,
-        files: files_of(&s.entries),
+        files: files_of(entries),
     }
 }
 
 pub(crate) fn status(root: &At) -> Result<GitStatus, String> {
     root.check()?;
-    Ok(status_from(root, read_status(root)?))
+    let (s, entries) = read_status(root)?;
+    Ok(status_from(root, &s, &entries))
 }
 
 /// The pending change for `file`, from the last status read (or a new one).
 fn entry_for(root: &At, file: &str) -> Result<Option<Entry>, String> {
-    let cached = last_status().lock().ok().and_then(|m| m.get(&key(root)).cloned());
-    let entries = match cached {
+    let entries = match cached_entries(root) {
         Some(e) => e,
-        None => read_status(root)?.entries,
+        None => read_status(root)?.1,
     };
-    Ok(entries.into_iter().find(|e| e.path == file))
+    Ok(entries.iter().find(|e| e.path == file).cloned())
 }
 
 // ---------------------------------------------------------------------------
@@ -613,16 +641,15 @@ pub(crate) fn stage(root: &At, files: &[String]) -> Result<(), String> {
         lore(root).write().args(["stage", "--scan", "--", "."]).run_ok()?;
         return Ok(());
     }
-    let conflicted: Vec<String> = last_status()
-        .lock()
-        .ok()
-        .and_then(|m| m.get(&key(root)).cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|e| e.section == Section::Conflict && files.contains(&e.path))
-        .map(|e| e.path)
+    let asked: HashSet<&str> = files.iter().map(String::as_str).collect();
+    let conflicted: Vec<String> = cached_entries(root)
+        .iter()
+        .flat_map(|entries| entries.iter())
+        .filter(|e| e.section == Section::Conflict && asked.contains(e.path.as_str()))
+        .map(|e| e.path.clone())
         .collect();
-    let plain: Vec<String> = files.iter().filter(|f| !conflicted.contains(f)).cloned().collect();
+    let resolving: HashSet<&str> = conflicted.iter().map(String::as_str).collect();
+    let plain: Vec<String> = files.iter().filter(|f| !resolving.contains(f.as_str())).cloned().collect();
     for chunk in chunks(&conflicted) {
         lore(root).write().args(["branch", "merge", "resolve", "--"]).args(chunk).run_ok()?;
     }
@@ -640,11 +667,10 @@ pub(crate) fn unstage(root: &At, files: &[String]) -> Result<(), String> {
     }
     // The other half of a move, or it stays behind staged.
     let mut paths: Vec<String> = files.to_vec();
-    if let Ok(map) = last_status().lock() {
-        for e in map.get(&key(root)).into_iter().flatten() {
-            if e.section == Section::Staged && files.contains(&e.path) {
-                paths.extend(e.orig.clone());
-            }
+    let asked: HashSet<&str> = files.iter().map(String::as_str).collect();
+    for e in cached_entries(root).iter().flat_map(|entries| entries.iter()) {
+        if e.section == Section::Staged && asked.contains(e.path.as_str()) {
+            paths.extend(e.orig.clone());
         }
     }
     paths.sort();
@@ -660,13 +686,14 @@ pub(crate) fn unstage(root: &At, files: &[String]) -> Result<(), String> {
 /// empty list means every change that isn't staged; conflicts are never discarded here.
 pub(crate) fn discard(root: &At, files: &[String]) -> Result<(), String> {
     check_paths(files)?;
-    let status = read_status(root)?;
-    let entries = &status.entries;
+    let (_, entries) = read_status(root)?;
+    let asked: HashSet<&str> = files.iter().map(String::as_str).collect();
+    let with_files = parents_listed(entries.iter(), true);
     let targets: Vec<&Entry> = entries
         .iter()
-        .filter(|e| if files.is_empty() { matches!(e.section, Section::Unstaged | Section::Untracked) } else { files.contains(&e.path) })
+        .filter(|e| if files.is_empty() { matches!(e.section, Section::Unstaged | Section::Untracked) } else { asked.contains(e.path.as_str()) })
         // A directory's files are listed (and discarded) one by one, unless only the directory is.
-        .filter(|e| !e.dir || !entries.iter().any(|o| !o.dir && o.path.starts_with(&format!("{}/", e.path))))
+        .filter(|e| !e.dir || !with_files.contains(e.path.as_str()))
         .collect();
     if let Some(e) = targets.iter().find(|e| e.section == Section::Conflict) {
         return Err(format!("{} has merge conflicts. Resolve them, or abort the merge, instead of discarding.", e.path));
@@ -742,8 +769,8 @@ fn amend_message(root: &At, message: &str) -> Result<String, String> {
     if message.is_empty() {
         return Err("Write the new message first: Lore can change only the last revision's message.".into());
     }
-    let s = read_status(root)?;
-    if s.entries.iter().any(|e| e.section == Section::Staged) {
+    let (s, entries) = read_status(root)?;
+    if entries.iter().any(|e| e.section == Section::Staged) {
         return Err("Lore can change only the last revision's message, not its files. Commit the staged changes as a new revision, or unstage them to amend the message.".into());
     }
     if s.revision.unwrap_or(0) == 0 {
@@ -1001,10 +1028,11 @@ pub(crate) fn commit_show(root: &At, hash: &str) -> Result<GitCommitDetail, Stri
         None => (r.message.trim().to_string(), String::new()),
     };
     // A directory is listed without its slash here; it is a directory when other paths sit under it.
+    let parents = parents_listed(&r.changes, false);
     let files = r
         .changes
         .iter()
-        .filter(|e| !e.dir && !r.changes.iter().any(|o| o.path.starts_with(&format!("{}/", e.path))))
+        .filter(|e| !e.dir && !parents.contains(e.path.as_str()))
         .map(|e| GitCommitFile { path: e.path.clone(), old_path: e.orig.clone(), status: e.letter.to_string(), additions: None, deletions: None })
         .collect();
     Ok(GitCommitDetail {
@@ -1171,6 +1199,126 @@ mod tests {
         parse::parse_status(text)
     }
 
+    fn read_text(root: &At, text: &str) -> GitStatus {
+        let s = st(text);
+        status_from(root, &s, &s.entries)
+    }
+
+    fn entry(section: Section, letter: &'static str, path: &str, dir: bool) -> Entry {
+        Entry { section, letter, path: path.into(), orig: None, dir }
+    }
+
+    /// The list as it was worked out before (a scan of every entry per entry), to compare with.
+    fn files_of_slowly(entries: &[Entry]) -> Vec<GitFile> {
+        let mut out: Vec<GitFile> = Vec::new();
+        for e in entries {
+            if e.dir {
+                let prefix = format!("{}/", e.path);
+                if !matches!(e.letter, "D" | "R") || entries.iter().any(|o| o.path.starts_with(&prefix)) {
+                    continue;
+                }
+            }
+            let (index, worktree, conflicted) = match e.section {
+                Section::Staged => (Some(e.letter.to_string()), None, false),
+                Section::Unstaged => (None, Some(e.letter.to_string()), false),
+                Section::Untracked => (None, Some("?".to_string()), false),
+                Section::Conflict => (None, Some("U".to_string()), true),
+            };
+            if let Some(f) = out.iter_mut().find(|f| f.path == e.path) {
+                f.index = f.index.take().or(index);
+                f.worktree = f.worktree.take().or(worktree);
+                f.conflicted |= conflicted;
+                continue;
+            }
+            out.push(GitFile { path: e.path.clone(), orig_path: e.orig.clone().filter(|_| e.letter == "R"), index, worktree, conflicted });
+        }
+        out
+    }
+
+    /// A Unity-sized change list: folders added with their files, some changed again after
+    /// staging, deleted and moved folders with and without files listed, names sharing prefixes.
+    fn big_list(files: usize) -> Vec<Entry> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        let mut folder = 0;
+        while i < files {
+            let dir = format!("Assets/Area{}/Folder{folder}", folder % 7);
+            out.push(entry(Section::Staged, "A", &format!("Assets/Area{}", folder % 7), true));
+            out.push(entry(Section::Staged, "A", &dir, true));
+            for k in 0..15 {
+                let path = format!("{dir}/File{k}.prefab");
+                out.push(entry(Section::Staged, "A", &path, false));
+                out.push(entry(Section::Staged, "A", &format!("{path}.meta"), false));
+                if k % 5 == 0 {
+                    out.push(entry(Section::Unstaged, "M", &path, false));
+                }
+                i += 2;
+            }
+            match folder % 4 {
+                // Deleted with nothing listed under it: a row of its own.
+                0 => out.push(entry(Section::Unstaged, "D", &format!("Gone/Folder{folder}"), true)),
+                // Deleted with its files listed: they are the rows.
+                1 => {
+                    out.push(entry(Section::Unstaged, "D", &format!("Gone/Folder{folder}"), true));
+                    out.push(entry(Section::Unstaged, "D", &format!("Gone/Folder{folder}/a.txt"), false));
+                }
+                // A folder whose name is a prefix of another's, not its parent.
+                2 => out.push(entry(Section::Unstaged, "D", &format!("Gone/Folder{folder}0x"), true)),
+                _ => out.push(Entry {
+                    section: Section::Staged,
+                    letter: "R",
+                    path: format!("Moved/Folder{folder}"),
+                    orig: Some(format!("Old/Folder{folder}")),
+                    dir: true,
+                }),
+            }
+            folder += 1;
+        }
+        out
+    }
+
+    #[test]
+    fn changes_list_matches_the_slow_way() {
+        let entries = big_list(3_000);
+        let fast = files_of(&entries);
+        assert_eq!(fast, files_of_slowly(&entries));
+        // Staged and changed again: one row with both sides.
+        let twice = fast.iter().find(|f| f.path == "Assets/Area0/Folder0/File0.prefab").unwrap();
+        assert_eq!((twice.index.as_deref(), twice.worktree.as_deref()), (Some("A"), Some("M")));
+        assert!(fast.iter().any(|f| f.path == "Gone/Folder0"));
+        assert!(!fast.iter().any(|f| f.path == "Gone/Folder1"));
+        assert!(fast.iter().any(|f| f.path == "Gone/Folder1/a.txt"));
+        assert!(fast.iter().any(|f| f.path == "Gone/Folder20x"));
+        assert!(!fast.iter().any(|f| f.path.starts_with("Assets/Area") && !f.path.contains('.')));
+    }
+
+    #[test]
+    fn a_large_change_list_is_quick() {
+        let entries = big_list(70_000);
+        assert!(entries.len() > 70_000);
+        let started = std::time::Instant::now();
+        let files = files_of(&entries);
+        let took = started.elapsed();
+        let staged = entries.iter().filter(|e| !e.dir && e.section == Section::Staged).count();
+        assert_eq!(files.iter().filter(|f| f.path.starts_with("Assets/")).count(), staged);
+        // The old quadratic way took 3 s here in a release build; this takes milliseconds.
+        assert!(took < std::time::Duration::from_secs(1), "{took:?} for {} entries", entries.len());
+    }
+
+    #[test]
+    fn folders_with_files_listed() {
+        let entries = vec![
+            entry(Section::Unstaged, "D", "a", true),
+            entry(Section::Unstaged, "D", "a/b", true),
+            entry(Section::Unstaged, "D", "a/b/c.txt", false),
+            entry(Section::Unstaged, "D", "ab", true),
+        ];
+        let all = parents_listed(&entries, false);
+        assert!(all.contains("a") && all.contains("a/b") && !all.contains("ab"));
+        let files = parents_listed(&entries[..2], true);
+        assert!(files.is_empty());
+    }
+
     #[test]
     fn changes_list() {
         let s = st("On branch main revision 1 -> 1a3b
@@ -1208,15 +1356,15 @@ M  c.txt (M)!
     #[test]
     fn upstream_and_counts() {
         let root = At::local("/w");
-        let s = status_from(&root, st("On branch main revision 5 -> aa\nRemote revision 3 -> bb\nLocal branch is ahead of remote\n"));
+        let s = read_text(&root, "On branch main revision 5 -> aa\nRemote revision 3 -> bb\nLocal branch is ahead of remote\n");
         assert_eq!((s.vcs, s.upstream.as_deref(), s.ahead, s.behind, s.head.as_deref()), (Vcs::Lore, Some("remote/main"), 2, 0, Some("r5")));
-        let s = status_from(&root, st("On branch main revision 2 -> aa\nRemote revision 2 -> bb\nLocal branch has diverged, synchronize to merge\n"));
+        let s = read_text(&root, "On branch main revision 2 -> aa\nRemote revision 2 -> bb\nLocal branch has diverged, synchronize to merge\n");
         assert_eq!((s.ahead, s.behind), (1, 1));
-        let s = status_from(&root, st("On branch main revision 4 -> aa\nRemote revision 5 -> bb\nLocal branch in sync with remote\n"));
+        let s = read_text(&root, "On branch main revision 4 -> aa\nRemote revision 5 -> bb\nLocal branch in sync with remote\n");
         assert_eq!((s.ahead, s.behind), (0, 1));
-        let s = status_from(&root, st("On branch yb revision 6 -> aa\nRemote branch does not exist\n"));
+        let s = read_text(&root, "On branch yb revision 6 -> aa\nRemote branch does not exist\n");
         assert_eq!((s.upstream, s.ahead, s.behind), (None, 0, 0));
-        let s = status_from(&root, st("On branch main revision 0 -> 0000000000000000000000000000000000000000000000000000000000000000\n"));
+        let s = read_text(&root, "On branch main revision 0 -> 0000000000000000000000000000000000000000000000000000000000000000\n");
         assert_eq!((s.upstream, s.head, s.is_repo), (None, None, true));
     }
 
