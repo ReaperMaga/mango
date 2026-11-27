@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitCommitHorizontal, GitFork, GitGraph, GitPullRequest, Laptop, Tag, MessageSquarePlus, Settings,
+  CircleArrowUp, Columns2, Globe, Download, FlaskConical, Gauge, Folder, FolderOpen, FolderPlus, GitBranch, GitCommitHorizontal, GitFork, GitGraph, GitPullRequest, Laptop, Tag, Workflow, MessageSquarePlus, Settings,
   Bell, Keyboard, FolderCog, FileKey, FilePen, FolderGit2, Files, Link2, Moon, PanelBottom, PanelLeft, PanelTop, Search, Plug, Puzzle, Server, SquareTerminal, Sun, History, AppWindow,
 } from 'lucide-vue-next'
 import type { Component } from 'vue'
@@ -168,6 +168,7 @@ const actions = computed<Item[]>(() => {
       { id: 'git-log.go-to-commit', group: 'Actions', label: t('shell.palette.goToCommit'), detail: t('shell.tools.gitLog'), icon: GitCommitHorizontal, keywords: 'git log hash sha revision branch tag', run: () => useGitLog().goToCommit() },
       ...(!vcsTerms(ws.activeProject?.vcs).forge ? [] : [{ id: 'toggle-links', group: 'Actions' as const, label: forge.providerOf(ws.activeProjectPath) === 'gitlab' ? (ws.toolPanel === 'links' ? t('shell.palette.hideMerges') : t('shell.palette.showMerges')) : (ws.toolPanel === 'links' ? t('shell.palette.hidePulls') : t('shell.palette.showPulls')), icon: GitPullRequest, keys: ws.keyParts('links'), keywords: 'pull request pr merge request mr issue github gitlab linked link', run: () => ws.toggleLinks() }]),
       ...(!vcsTerms(ws.activeProject?.vcs).forge ? [] : [{ id: 'toggle-releases', group: 'Actions' as const, label: ws.toolPanel === 'releases' ? t('shell.palette.hideReleases') : t('shell.palette.showReleases'), icon: Tag, keys: ws.keyParts('releases'), keywords: 'releases github gitlab tags versions builds actions workflow runs pipelines assets download', run: () => ws.toggleReleases() }]),
+      ...(!vcsTerms(ws.activeProject?.vcs).forge ? [] : [{ id: 'toggle-actions', group: 'Actions' as const, label: ws.toolPanel === 'actions' ? t('shell.palette.hideActions') : t('shell.palette.showActions'), icon: Workflow, keys: ws.keyParts('actions'), keywords: 'actions github gitlab ci workflow runs pipelines jobs checks builds rerun cancel', run: () => ws.toggleActions() }]),
       { id: 'toggle-sidebar', group: 'Actions', label: ws.sidebarOpen ? t('shell.sidebar.hide') : t('shell.sidebar.show'), icon: PanelLeft, keys: ws.keyParts('sidebar'), keywords: 'toggle sidebar rail threads', run: () => ws.toggleSidebar() },
       threads.isSplit
         ? { id: 'split', group: 'Actions', label: t('shell.palette.closeSplit'), icon: Columns2, keys: ws.keyParts('split'), keywords: 'split unsplit pane', run: () => threads.closePane(threads.activePaneId) }

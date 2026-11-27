@@ -82,6 +82,7 @@ export function useShortcuts() {
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleLinks() },
     releases: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleReleases() },
+    actions: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleActions() },
     'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.

@@ -46,6 +46,7 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   { id: 'files', get label() { return t('shell.shortcuts.labels.files') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+E' },
   { id: 'links', get label() { return t('shell.shortcuts.labels.links') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+P' },
   { id: 'releases', get label() { return t('shell.shortcuts.labels.releases') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+R' },
+  { id: 'actions', get label() { return t('shell.shortcuts.labels.actions') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+A' },
   { id: 'git-log', get label() { return t('shell.shortcuts.labels.git-log') }, group: 'Layout', scope: 'workspace', key: 'Mod+Alt+9' },
   { id: 'env', get label() { return t('shell.shortcuts.labels.env') }, group: 'Layout', scope: 'workspace', key: 'Mod+Shift+H' },
 

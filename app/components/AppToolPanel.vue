@@ -8,19 +8,20 @@ import PluginToolWindow from '~/plugin-host/ui/PluginToolWindow.vue'
 
 /**
  * The open tool window on the right of the chats: where the project runs, its files,
- * source control, the chat's pull requests and issues, or the project's releases. Owns the width; the panel
+ * source control, the chat's pull requests and issues, the project's releases or its workflow runs. Owns the width; the panel
  * inside owns its own header.
  */
 
 const { t } = useI18n()
 const ws = useWorkspace()
-const labels = computed<Record<string, string>>(() => ({ env: t('shell.tools.env'), files: t('shell.tools.files'), changes: t('shell.tools.changes'), links: t('shell.tools.links'), releases: t('shell.tools.releases') }))
+const labels = computed<Record<string, string>>(() => ({ env: t('shell.tools.env'), files: t('shell.tools.files'), changes: t('shell.tools.changes'), links: t('shell.tools.links'), releases: t('shell.tools.releases'), actions: t('shell.tools.actions') }))
 /** A plugin's tool window, while its plugin runs (see `plugin-host/`). */
 const pluginWin = computed(() => pluginToolWindow(ws.toolPanel))
 /** The Pull requests window is Merge requests for a project on GitLab. */
 const forge = useForge()
 const label = computed(() => pluginWin.value?.title
   ?? (ws.toolPanel === 'links' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.mergeRequests') : null)
+  ?? (ws.toolPanel === 'actions' && forge.providerOf(ws.activeProjectPath) === 'gitlab' ? t('shell.tools.pipelines') : null)
   ?? labels.value[ws.toolPanel ?? 'files'] ?? t('shell.tools.fallback'))
 const root = ref<HTMLElement | null>(null)
 
@@ -52,6 +53,7 @@ function endResize() {
       <FilesPanel v-else-if="ws.toolPanel === 'files'" />
       <LinksPanel v-else-if="ws.toolPanel === 'links'" />
       <ReleasesPanel v-else-if="ws.toolPanel === 'releases'" />
+      <ActionsPanel v-else-if="ws.toolPanel === 'actions'" />
       <PluginToolWindow v-else-if="isPluginRef(ws.toolPanel)" :key="ws.toolPanel" :win="pluginWin" />
       <GitPanel v-else />
     </Transition>
