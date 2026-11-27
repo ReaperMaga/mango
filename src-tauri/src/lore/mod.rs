@@ -817,46 +817,146 @@ pub(crate) fn log(root: &At, limit: u32) -> Result<Vec<GitCommit>, String> {
         .collect())
 }
 
-/// Revisions read when the log is filtered by text (Lore filters nothing itself).
+/// Revisions read (per line of history) when the log is filtered by text (Lore filters nothing itself).
 const SEARCH_DEPTH: u32 = 2000;
 
-/// A page of the log: linear, newest first. `refs` may name one revision (a signature or a number)
-/// or branch to start from; text matches messages and signatures. Lore keeps no authors to filter.
+/// Where one line of the log starts: a branch's latest revision (named, for its label), the
+/// working tree's (`spec: None`, what `lore history` reads with no revision), or one revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Start {
+    branch: Option<String>,
+    spec: Option<String>,
+}
+
+/// A revision as the UI names it: `r12`, `12` or a signature.
+fn is_revision(rev: &str) -> bool {
+    rev.strip_prefix('r').unwrap_or(rev).parse::<u64>().is_ok() || (rev.len() == 64 && rev.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// The starts for `refs`: none is every local branch (each its own line of history, as git's "all
+/// branches"), `HEAD` the working tree's branch (Lore has no HEAD), anything else a branch or revision.
+fn starts(refs: &[&str], current: Option<&str>, local: impl FnOnce() -> Vec<String>) -> Result<Vec<Start>, String> {
+    let here = || Start { branch: current.map(String::from), spec: None };
+    let branch = |name: &str| -> Result<Start, String> {
+        if Some(name) == current {
+            return Ok(here());
+        }
+        Ok(Start { branch: Some(safe_branch(name)?.to_string()), spec: Some(revision_spec(name)?) })
+    };
+    let mut out: Vec<Start> = Vec::new();
+    if refs.is_empty() {
+        out.push(here());
+        out.extend(local().iter().filter(|n| Some(n.as_str()) != current).filter_map(|n| branch(n).ok()));
+        return Ok(out);
+    }
+    for r in refs {
+        let start = if *r == "HEAD" {
+            here()
+        } else if is_revision(r) {
+            Start { branch: None, spec: Some(revision_spec(r)?) }
+        } else {
+            // The server's side of a branch (`remote/main`) reads as the branch.
+            branch(r.strip_prefix(&format!("{REMOTE}/")).unwrap_or(r))?
+        };
+        if !out.contains(&start) {
+            out.push(start);
+        }
+    }
+    Ok(out)
+}
+
+/// One revision of the merged log: its parents and the branches whose latest it is.
+type Line = (Revision, Vec<String>, Vec<String>);
+
+/// Several lines of history as one list, newest first: by revision number (one more than its
+/// parent's highest, so a child always comes before its parents), then date. A revision's parent is
+/// the next one on its line, and a merge's other side its second parent. Also says whether any line
+/// was cut short at `read`.
+fn merge_lines(lines: Vec<(Start, Vec<Revision>)>, read: u32) -> (Vec<Line>, bool) {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut all: Vec<Line> = Vec::new();
+    let mut cut = false;
+    for (start, revs) in lines {
+        cut |= revs.len() >= read as usize;
+        for (i, r) in revs.iter().enumerate() {
+            let at = *seen.entry(r.signature.clone()).or_insert_with(|| {
+                let mut parents: Vec<String> = revs.get(i + 1).map(|p| p.signature.clone()).into_iter().collect();
+                parents.extend(r.merge.clone().filter(|m| !parents.contains(m)));
+                all.push((r.clone(), parents, Vec::new()));
+                all.len() - 1
+            });
+            if let (0, Some(b)) = (i, &start.branch) {
+                if !all[at].2.contains(b) {
+                    all[at].2.push(b.clone());
+                }
+            }
+        }
+    }
+    all.sort_by(|a, b| b.0.number.cmp(&a.0.number).then(b.0.time.cmp(&a.0.time)));
+    (all, cut)
+}
+
+/// A page of the log, newest first. `refs` empty is every local branch; otherwise branches (`remote/x`
+/// reads as `x`), `HEAD` (the working tree's) or revisions. Text matches messages and revisions, author
+/// the creator. Lore can't filter by file.
 pub(crate) fn graph(root: &At, q: &GraphQuery) -> Result<GitGraph, String> {
-    if q.paths.as_ref().is_some_and(|p| !p.is_empty()) {
+    if q.paths.iter().flatten().any(|p| !p.trim().is_empty()) {
         return unsupported("Filtering the log by file");
     }
     let status = parse::parse_status(&lore(root).args(["status", "--revision-only"]).run_ok()?.text());
-    let from = match q.refs.as_deref().unwrap_or_default() {
-        [] => None,
-        [one] => Some(revision_spec(one)?),
-        _ => return unsupported("Showing several branches in one log"),
-    };
+    let refs: Vec<&str> = q.refs.iter().flatten().map(|r| r.trim()).filter(|r| !r.is_empty()).collect();
+    // `branch list` is local; without it the current branch's line alone.
+    let starts = starts(&refs, status.branch.as_deref(), || read_branches(root).map(|b| b.local).unwrap_or_default())?;
     let text = q.text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_lowercase);
     let author = q.author.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(str::to_lowercase);
     let filtered = text.is_some() || author.is_some();
-    let want = q.skip.saturating_add(q.limit.clamp(1, 1000));
+    let limit = q.limit.clamp(1, 1000);
+    let want = q.skip.saturating_add(limit);
     let read = if filtered { SEARCH_DEPTH } else { want.saturating_add(1) };
-    let revs = history(root, read, from.as_deref())?;
-    let parent_of: HashMap<String, String> =
-        revs.windows(2).map(|w| (w[0].signature.clone(), w[1].signature.clone())).collect();
-    let kept: Vec<&Revision> = revs
+    // One `lore history` per line, side by side: each is a process, or an SSH round trip.
+    let answers: Vec<(Start, Result<Vec<Revision>, String>)> = std::thread::scope(|s| {
+        let running: Vec<_> = starts
+            .into_iter()
+            .map(|start| {
+                let spec = start.spec.clone();
+                (start, s.spawn(move || history(root, read, spec.as_deref())))
+            })
+            .collect();
+        running
+            .into_iter()
+            .map(|(start, h)| (start, h.join().unwrap_or_else(|_| Err("Reading Lore's history failed.".to_string()))))
+            .collect()
+    });
+    // A line that can't be read fails the log when it was the only one asked for, and is left out otherwise.
+    let only = answers.len() == 1;
+    let mut lines = Vec::new();
+    for (start, revs) in answers {
+        match revs {
+            Ok(revs) => lines.push((start, revs)),
+            Err(e) if only => return Err(e),
+            Err(_) => {}
+        }
+    }
+    let (all, cut) = merge_lines(lines, read);
+    let kept: Vec<&Line> = all
         .iter()
-        .filter(|r| text.as_ref().is_none_or(|t| r.message.to_lowercase().contains(t) || r.signature.starts_with(t.as_str()) || r.short() == *t))
-        .filter(|r| author.as_ref().is_none_or(|a| r.author.to_lowercase().contains(a)))
+        .filter(|(r, ..)| text.as_ref().is_none_or(|t| r.message.to_lowercase().contains(t) || r.signature.starts_with(t.as_str()) || r.short() == *t))
+        .filter(|(r, ..)| author.as_ref().is_none_or(|a| r.author.to_lowercase().contains(a)))
         .collect();
-    let more = kept.len() > want as usize || (!filtered && revs.len() > want as usize);
+    let more = kept.len() > want as usize || (!filtered && cut);
     let commits = kept
         .into_iter()
         .skip(q.skip as usize)
-        .take(q.limit.clamp(1, 1000) as usize)
-        .map(|r| {
-            let mut refs = Vec::new();
-            if let (Some(b), Some(sig)) = (&status.branch, &status.signature) {
-                if *sig == r.signature {
-                    refs.push(GitRef { name: b.clone(), kind: GitRefKind::Branch, current: true });
-                }
-            }
+        .take(limit as usize)
+        .map(|(r, parents, branches)| {
+            let mut refs: Vec<GitRef> = branches
+                .iter()
+                .map(|b| GitRef {
+                    name: b.clone(),
+                    kind: GitRefKind::Branch,
+                    current: status.branch.as_ref() == Some(b) && status.signature.as_ref() == Some(&r.signature),
+                })
+                .collect();
             if let (Some(b), Some(sig)) = (&status.branch, &status.remote_signature) {
                 if *sig == r.signature {
                     refs.push(GitRef { name: format!("{REMOTE}/{b}"), kind: GitRefKind::Remote, current: false });
@@ -865,7 +965,7 @@ pub(crate) fn graph(root: &At, q: &GraphQuery) -> Result<GitGraph, String> {
             GitGraphCommit {
                 hash: r.signature.clone(),
                 short_hash: r.short(),
-                parents: parent_of.get(&r.signature).cloned().into_iter().collect(),
+                parents: parents.clone(),
                 subject: r.subject(),
                 author: r.author.clone(),
                 author_email: String::new(),
@@ -916,7 +1016,7 @@ pub(crate) fn commit_show(root: &At, hash: &str) -> Result<GitCommitDetail, Stri
         author: r.author.clone(),
         author_email: String::new(),
         time: r.time,
-        committer: r.author.clone(),
+        committer: r.committer.clone(),
         commit_time: r.time,
         refs: Vec::new(),
         files,
@@ -1159,6 +1259,150 @@ M  c.txt (M)!
         assert_eq!(probe_root(&out("lore /home/agent/game\n")).as_deref(), Some("/home/agent/game"));
         assert_eq!(probe_root(&out("")), None);
         assert_eq!(probe_root(&out("lore relative\n")), None);
+    }
+
+    #[test]
+    fn log_starts() {
+        let none = || -> Vec<String> { panic!("the branch list is read only for every branch") };
+        let at = |b: Option<&str>, s: Option<&str>| Start { branch: b.map(String::from), spec: s.map(String::from) };
+        // The log's own "current branch": Lore has no HEAD, it is the working tree's line.
+        assert_eq!(starts(&["HEAD"], Some("main"), none).unwrap(), vec![at(Some("main"), None)]);
+        assert_eq!(starts(&["main", "remote/main", "HEAD"], Some("main"), none).unwrap(), vec![at(Some("main"), None)]);
+        assert_eq!(
+            starts(&["remote/feat/x", "r3", &"a".repeat(64)], Some("main"), none).unwrap(),
+            vec![at(Some("feat/x"), Some("feat/x@LATEST")), at(None, Some("3")), at(None, Some(&"a".repeat(64)))]
+        );
+        assert!(starts(&["-x"], Some("main"), none).is_err());
+        // Every branch: the current one first, read where the working tree is.
+        let all = starts(&[], Some("main"), || vec!["feat".into(), "main".into(), "bad name".into()]).unwrap();
+        assert_eq!(all, vec![at(Some("main"), None), at(Some("feat"), Some("feat@LATEST"))]);
+        assert_eq!(starts(&[], None, Vec::new).unwrap(), vec![at(None, None)]);
+    }
+
+    #[test]
+    fn log_lines_merge() {
+        let rev = |n: u64, sig: &str, merge: Option<&str>| Revision {
+            number: n,
+            signature: sig.into(),
+            merge: merge.map(String::from),
+            time: n as i64,
+            ..Default::default()
+        };
+        let main = Start { branch: Some("main".into()), spec: None };
+        let feat = Start { branch: Some("feat".into()), spec: Some("feat@LATEST".into()) };
+        // main: m5 (merging f4) m3 m2 m1; feat: f4 m3 m2 m1.
+        let (all, cut) = merge_lines(
+            vec![
+                (main, vec![rev(5, "m5", Some("f4")), rev(3, "m3", None), rev(2, "m2", None), rev(1, "m1", None)]),
+                (feat, vec![rev(4, "f4", None), rev(3, "m3", None), rev(2, "m2", None)]),
+            ],
+            4,
+        );
+        let rows: Vec<(&str, Vec<&str>, Vec<&str>)> = all
+            .iter()
+            .map(|(r, p, b)| (r.signature.as_str(), p.iter().map(String::as_str).collect(), b.iter().map(String::as_str).collect()))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("m5", vec!["m3", "f4"], vec!["main"]),
+                ("f4", vec!["m3"], vec!["feat"]),
+                ("m3", vec!["m2"], vec![]),
+                ("m2", vec!["m1"], vec![]),
+                ("m1", vec![], vec![]),
+            ]
+        );
+        assert!(cut, "main's line filled the read");
+    }
+
+    /// The Git log against a real `lore` in an offline scratch repository (no server needed):
+    /// `cargo test --lib lore::tests::real_lore_log -- --ignored --nocapture`. With
+    /// `MANGO_LORE_LOG_REPO` set to an existing repository it also reads that one's log (read only).
+    #[test]
+    #[ignore]
+    fn real_lore_log() {
+        let all = |root: &At, text: Option<&str>, refs: Option<Vec<String>>, skip: u32, limit: u32| {
+            graph(root, &GraphQuery { refs, skip, limit, text: text.map(String::from), author: None, paths: None })
+        };
+        if let Ok(repo) = std::env::var("MANGO_LORE_LOG_REPO") {
+            let root = At::local(&repo);
+            for refs in [None, Some(vec!["HEAD".to_string()])] {
+                let g = all(&root, None, refs.clone(), 0, 50).unwrap();
+                println!("{repo} {refs:?}: branch {:?}, head {:?}", g.branch, g.head);
+                for c in &g.commits {
+                    println!("  {} {} {} {:?}", c.short_hash, c.subject, c.author, c.refs.iter().map(|r| &r.name).collect::<Vec<_>>());
+                }
+                assert!(g.branch.is_some() && !g.commits.is_empty());
+            }
+            let first = all(&root, None, None, 0, 1).unwrap().commits.remove(0);
+            let detail = commit_show(&root, &first.hash).unwrap();
+            println!("{} files in {}", detail.files.len(), detail.short_hash);
+            if let Some(f) = detail.files.iter().find(|f| f.status != "D") {
+                println!("diff of {}: {} bytes", f.path, commit_diff(&root, &first.hash, &f.path).unwrap().len());
+            }
+        }
+
+        let id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        let dir = std::env::temp_dir().join(format!("mango-lore-log-{id}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let root = At::local(&dir);
+        lore(&root).args(["repository", "create", "--offline", "--"]).arg(format!("log-{id}")).run_ok().unwrap();
+        let commit_all = |msg: &str| {
+            lore(&root).args(["stage", "--scan", "--", "."]).run_ok().unwrap();
+            commit(&root, msg, false).unwrap()
+        };
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        assert_eq!(commit_all("first: add a"), "r1");
+        std::fs::write(dir.join("a.txt"), "a\nb\n").unwrap();
+        commit_all("second change");
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("d").join("c.txt"), "c\n").unwrap();
+        commit_all("third\n\nbody line");
+        branch_create(&root, "feat-x", None, true).unwrap();
+        std::fs::write(dir.join("x.txt"), "x\n").unwrap();
+        commit_all("on feat");
+        checkout(&root, "main", false).unwrap();
+        std::fs::write(dir.join("a.txt"), "a\nb\nmain\n").unwrap();
+        commit_all("main moves on");
+
+        let subjects = |g: &GitGraph| g.commits.iter().map(|c| c.subject.clone()).collect::<Vec<_>>();
+        // Every branch (the default), and the current one (`HEAD`).
+        let g = all(&root, None, None, 0, 50).unwrap();
+        println!("{:#?}", g.commits.iter().map(|c| (&c.short_hash, &c.subject, &c.parents, &c.refs)).collect::<Vec<_>>());
+        assert_eq!(g.branch.as_deref(), Some("main"));
+        let mut got = subjects(&g);
+        got.sort();
+        assert_eq!(got, vec!["first: add a", "main moves on", "on feat", "second change", "third"]);
+        assert_eq!(g.commits[4].subject, "first: add a");
+        assert!(g.commits.iter().any(|c| c.subject == "on feat" && c.refs.iter().any(|r| r.name == "feat-x" && !r.current)));
+        assert!(g.commits.iter().any(|c| c.subject == "main moves on" && c.refs.iter().any(|r| r.name == "main" && r.current)));
+        let third = g.commits.iter().find(|c| c.subject == "third").unwrap().hash.clone();
+        assert!(g.commits.iter().filter(|c| c.parents == vec![third.clone()]).count() == 2, "both branches start at the third");
+        assert!(!g.more);
+        let head = all(&root, None, Some(vec!["HEAD".into()]), 0, 50).unwrap();
+        assert_eq!(subjects(&head), vec!["main moves on", "third", "second change", "first: add a"]);
+        let feat = all(&root, None, Some(vec!["feat-x".into()]), 0, 50).unwrap();
+        assert_eq!(subjects(&feat)[0], "on feat");
+        assert!(all(&root, None, Some(vec!["no-such".into()]), 0, 50).is_err());
+
+        // Pages, and search.
+        let p1 = all(&root, None, None, 0, 2).unwrap();
+        let p2 = all(&root, None, None, 2, 2).unwrap();
+        let p3 = all(&root, None, None, 4, 2).unwrap();
+        assert!(p1.more && p2.more && !p3.more);
+        assert_eq!([subjects(&p1), subjects(&p2), subjects(&p3)].concat(), subjects(&g));
+        assert_eq!(subjects(&all(&root, Some("BODY"), None, 0, 50).unwrap()), vec!["third"]);
+        assert_eq!(subjects(&all(&root, Some("r1"), None, 0, 50).unwrap()), vec!["first: add a"]);
+
+        // A revision's files and a file's diff.
+        let detail = commit_show(&root, &third).unwrap();
+        assert_eq!((detail.subject.as_str(), detail.body.as_str()), ("third", "body line"));
+        assert_eq!(detail.files.iter().map(|f| (f.path.as_str(), f.status.as_str())).collect::<Vec<_>>(), vec![("d/c.txt", "A")]);
+        assert!(commit_diff(&root, &third, "d/c.txt").unwrap().contains("+c"));
+        let second = g.commits.iter().find(|c| c.subject == "second change").unwrap().hash.clone();
+        assert!(commit_diff(&root, &second, "a.txt").unwrap().contains("+b"));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Drives a real `lore` against a throwaway repository on a server: set `MANGO_LORE_SERVER`

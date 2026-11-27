@@ -193,8 +193,10 @@ pub(crate) struct Revision {
     pub parents: Vec<String>,
     /// The other side of a merge ("Merge" line, `history`).
     pub merge: Option<String>,
-    /// Who made it, when Lore says (0.14 prints no author).
+    /// Who made it (`Creator`), when Lore says: a repository with a server does, an offline one doesn't.
     pub author: String,
+    /// Who committed it (`Committer`); the author when Lore names only one.
+    pub committer: String,
     /// Unix ms.
     pub time: i64,
     pub message: String,
@@ -273,9 +275,14 @@ pub(crate) fn parse_revisions(text: &str) -> Vec<Revision> {
                         r.merge = Some(value.to_string());
                     }
                 }
-                "Author" | "User" | "Owner" | "Committer" => {
+                "Creator" | "Author" | "User" | "Owner" => {
                     if let Some(r) = out.last_mut() {
                         r.author = value.to_string();
+                    }
+                }
+                "Committer" => {
+                    if let Some(r) = out.last_mut() {
+                        r.committer = value.to_string();
                     }
                 }
                 "Date" => {
@@ -296,6 +303,13 @@ pub(crate) fn parse_revisions(text: &str) -> Vec<Revision> {
     }
     finish(&mut out, &mut message);
     out.retain(|r| !r.signature.is_empty());
+    for r in &mut out {
+        if r.author.is_empty() {
+            r.author = r.committer.clone();
+        } else if r.committer.is_empty() {
+            r.committer = r.author.clone();
+        }
+    }
     out
 }
 
@@ -601,6 +615,73 @@ Date      : Thu, 26 Nov 2026 13:05:36 +0000
         assert_eq!(revs[0].merge.as_deref(), Some("009e1bdc9b054c8025c40ab4bec3cabb68df87ea506595257978b4f8b0a36b2f"));
         assert_eq!(revs[1].message, "first commit\n\nwith a body: and a colon");
         assert_eq!(revs[1].time, 1_795_698_336_000);
+    }
+
+    /// `lore history -- 5` in a repository with a server: `Creator` and `Committer` lines (lore 0.14.0+2389).
+    #[test]
+    fn reads_history_with_creator() {
+        let text = "Revision  : 1
+Signature : 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:42:17 +0000
+    feat: initialize lore project
+Creator   : reapermaga@gmail.com
+Committer : reapermaga@gmail.com
+";
+        let revs = parse_revisions(text);
+        assert_eq!(revs.len(), 1);
+        let r = &revs[0];
+        assert_eq!((r.number, r.subject(), r.message.as_str()), (1, "feat: initialize lore project".to_string(), "feat: initialize lore project"));
+        assert_eq!((r.author.as_str(), r.committer.as_str()), ("reapermaga@gmail.com", "reapermaga@gmail.com"));
+        assert_eq!(r.signature, "5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd");
+
+        // Only one of them named: it stands for both.
+        let one = parse_revisions("Revision  : 2
+Signature : ab
+Date      : Fri, 27 Nov 2026 04:42:17 +0000
+    x
+Committer : ann@x.io
+");
+        assert_eq!((one[0].author.as_str(), one[0].committer.as_str()), ("ann@x.io", "ann@x.io"));
+
+        // The status beside it.
+        let s = parse_status("Repository 01a21b48859576709452c18853f6a1a9
+On branch main revision 1 -> 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Remote revision 1 -> 5ed752ec8de0659c99bb5b6217352afaac9ed5651162f099e7cd86a833d736fd
+Local branch in sync with remote
+");
+        assert_eq!((s.branch.as_deref(), s.revision, s.remote), (Some("main"), Some(1), Remote::InSync));
+        assert_eq!(s.signature, s.remote_signature);
+    }
+
+    /// `lore history` of an offline repository with a branch off main (lore 0.14.0+2389): no author lines.
+    #[test]
+    fn reads_offline_history() {
+        let text = "Revision  : 4
+Signature : ea38b0082d558ef8aedc681b718d703983021515e694113ef658da583b8c40b8
+Branch    : 01a21b55b4da70b987dc56e967399053
+Date      : Fri, 27 Nov 2026 04:48:05 +0000
+    on feat
+
+Revision  : 3
+Signature : b64c935056af69ac51d0695f778f4fa48362a27efa9b28c5f6930f8d0fe79191
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:48:04 +0000
+    third
+    body line
+
+Revision  : 2
+Signature : 2dbfa251d94f1cae67af62c969e0d6f8c0e230ff6548c6d51c90ee4636f2b60c
+Branch    : e726318bbc3fd75ac8733a7e030cc35b
+Date      : Fri, 27 Nov 2026 04:48:04 +0000
+    second change
+
+";
+        let revs = parse_revisions(text);
+        let rows: Vec<(u64, String, &str)> = revs.iter().map(|r| (r.number, r.subject(), r.author.as_str())).collect();
+        assert_eq!(rows, vec![(4, "on feat".into(), ""), (3, "third".into(), ""), (2, "second change".into(), "")]);
+        assert_eq!(revs[1].message, "third
+body line");
     }
 
     #[test]
