@@ -56,10 +56,10 @@ const took = computed(() => {
   const r = props.run
   if (!active.value) {
     const d = runDuration(r)
-    return d === null ? null : t('actions.took', { took: formatDuration(d) })
+    return d === null ? null : formatDuration(d)
   }
   const start = Date.parse(r.startedAt ?? r.createdAt)
-  return Number.isFinite(start) ? t('actions.runningFor', { took: formatDuration(Math.max(0, now.value - start)) }) : null
+  return Number.isFinite(start) ? formatDuration(Math.max(0, now.value - start)) : null
 })
 /** About when a running run ends, from how long the last good ones of its workflow took. */
 const eta = computed(() => {
@@ -111,11 +111,12 @@ function jobTook(j: GhRunJob): string | null {
         <dd><code class="ar__chip" :title="run.headSha">{{ run.headSha.slice(0, 7) }}</code></dd>
       </div>
       <div class="ar__fact">
-        <dt>{{ t('releases.fact.workflow') }}</dt>
-        <dd>
-          <span class="ar__soft">{{ t('actions.startedBy', { event: eventWord, ago }) }}</span>
-          <span v-if="took" class="ar__soft tabular" :class="{ 'is-running': active }">· {{ took }}</span>
-        </dd>
+        <dt>{{ t('actions.fact.started') }}</dt>
+        <dd><span class="ar__soft">{{ eventWord }} · {{ ago }}</span></dd>
+      </div>
+      <div v-if="took" class="ar__fact">
+        <dt>{{ active ? t('actions.fact.running') : t('actions.fact.took') }}</dt>
+        <dd><span class="ar__soft tabular" :class="{ 'is-running': active }">{{ took }}</span></dd>
       </div>
     </dl>
     <p v-if="eta" class="ar__eta">{{ eta }}</p>
@@ -182,7 +183,7 @@ function jobTook(j: GhRunJob): string | null {
 .ar__meta strong { font-weight: 560; color: var(--fg-muted); }
 
 .ar__facts { display: grid; gap: 4px; margin: var(--space-1) 0 0; padding: var(--space-2) 0; border-block: 1px solid var(--line-soft); }
-.ar__fact { display: grid; grid-template-columns: 64px 1fr; align-items: center; gap: var(--space-2); min-height: 22px; font-size: var(--text-xs); }
+.ar__fact { display: grid; grid-template-columns: 72px 1fr; align-items: center; gap: var(--space-2); min-height: 22px; font-size: var(--text-xs); }
 .ar__fact dt { color: var(--fg-faint); }
 .ar__fact dd { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; color: var(--fg-muted); }
 .ar__chip {

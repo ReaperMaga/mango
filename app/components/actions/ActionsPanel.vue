@@ -272,9 +272,18 @@ const backLabel = computed(() => (run.value ? `#${run.value.number}` : ''))
         </div>
         <UiMenu v-if="workflows.length > 1" :items="workflowItems" placement="bottom-end" :width="220" :max-width="320" :label="t('actions.workflow')">
           <template #default="{ open: menuOpen, toggle }">
-            <button type="button" class="ap__flow" :class="{ 'is-open': menuOpen, 'is-set': workflowName }" :aria-expanded="menuOpen" aria-haspopup="menu" @click="toggle">
+            <button
+              type="button"
+              class="ap__flow"
+              :class="{ 'is-open': menuOpen, 'is-set': workflowName }"
+              :aria-expanded="menuOpen"
+              aria-haspopup="menu"
+              :aria-label="`${t('actions.workflow')}: ${workflowName ?? t('actions.allWorkflows')}`"
+              :title="workflowName ?? t('actions.allWorkflows')"
+              @click="toggle"
+            >
               <ListFilter aria-hidden="true" />
-              <span>{{ workflowName ?? t('actions.allWorkflows') }}</span>
+              <span v-if="workflowName">{{ workflowName }}</span>
               <ChevronDown class="ap__flow-chev" aria-hidden="true" />
             </button>
           </template>

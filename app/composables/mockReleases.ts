@@ -31,6 +31,8 @@ interface MockRun {
   jobs: MockJob[]
   attempt: number
   cancelledAt: number | null
+  /** When its latest attempt started (GitHub moves `run_started_at` on a re-run). */
+  restartedAt?: number
 }
 
 const stories = new Map<string, { at: number; runs: Map<number, MockRun>; ci: Map<number, MockRun> }>()
@@ -132,7 +134,7 @@ function toRun(run: MockRun, now: number): GhRun {
   return {
     id: run.id, workflowId: run.workflow?.id ?? RELEASE_FLOW, workflow: run.workflow?.name ?? 'Release', title: run.title, event: run.event,
     headBranch: run.branch, headSha: run.sha, state, url: `${BASE}/actions/runs/${run.id}`,
-    number: run.id - 8960, attempt: run.attempt, createdAt: iso(run.start), startedAt: iso(run.start),
+    number: run.id - 8960, attempt: run.attempt, createdAt: iso(run.start), startedAt: iso(run.restartedAt ?? run.start),
     updatedAt: iso(state === 'pending' || state === 'queued' ? now : Math.max(...ends, run.start)),
   }
 }
@@ -329,6 +331,7 @@ export function mockGhRunAction(path: string, id: number, action: GhRunAction) {
   const before = runJobs(run, now).map(j => j.state)
   const again = now - run.start + 2_000
   run.attempt++
+  run.restartedAt = now
   run.cancelledAt = null
   run.jobs = run.jobs.map((j, i) => (action === 'rerun-failed' && before[i] === 'success')
     ? j
