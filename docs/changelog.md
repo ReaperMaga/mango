@@ -2,6 +2,13 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.13.0
+
+### New
+
+- An Actions tool window shows the project's recent GitHub Actions runs or GitLab pipelines, for all branches or the current one, with each run's jobs.
+- The commit button can commit and push in one step: pick Commit or Commit and push from its menu (git and Lore), and Mango remembers the choice.
+
 ## 0.12.3
 
 ### Performance
