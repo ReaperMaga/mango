@@ -475,7 +475,14 @@ const mock = (() => {
         method: args.agent === 'claude' ? 'claude.ai' : null, detail: args.agent === 'claude' ? null : 'Not logged in',
       }
       case 'agent_logout': return
-      case 'setup_check': return setupTools.map(t => ({ ...t }))
+      case 'setup_check': {
+        // Lore's row is the same CLI Settings > Lore shows (`__mangoLoreMissing()` for the missing state).
+        const lore = mockLoreCli()
+        return [...setupTools.map(t => ({ ...t })), {
+          id: 'lore' as const, name: 'Lore', installed: lore.installed, version: lore.installed ? `lore ${lore.version}+2389` : null,
+          path: lore.installed ? lore.path : null, install: lore.install, helpUrl: lore.helpUrl,
+        }]
+      }
       case 'setup_install': {
         const id = newPtyId()
         if (args.tool === 'gh' || args.tool === 'glab') mockHostingInstall(emit, id, args.tool)

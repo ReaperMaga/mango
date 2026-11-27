@@ -5,20 +5,24 @@ import type { AgentId } from '~/types/chat'
 import { call, openExternal } from '~/composables/useBackend'
 import { AGENT_CLI, copyToClipboard, shortVersion } from '~/utils/agentCli'
 import { useWorkspace } from '~/stores/workspace'
+import { useLore } from '~/stores/lore'
 import LoginTerminal from '~/components/settings/LoginTerminal.vue'
 
 /**
  * "Get started": shown on the first launch, and from the palette or Settings
- * later. Lists the agent CLIs and git, installs what is missing with each
+ * later. Lists the agent CLIs, git and (optional) Lore, installs what is missing with each
  * vendor's own installer (picked by the backend, run in a terminal here so the
  * user can follow it and answer its prompts), then signs in to the agents.
  */
 const { t } = useI18n()
 const ws = useWorkspace()
+const lore = useLore()
 const open = computed(() => ws.dialog === 'setup')
 
-const ORDER: SetupToolId[] = ['claude', 'codex', 'git']
-const isAgent = (id: SetupToolId): id is AgentId => id !== 'git'
+const ORDER: SetupToolId[] = ['claude', 'codex', 'git', 'lore']
+const isAgent = (id: SetupToolId): id is AgentId => id === 'claude' || id === 'codex'
+/** Only for some projects: missing, it reads as a choice, not a gap. */
+const isOptional = (id: SetupToolId) => id === 'lore'
 const isWindows = /Win/.test(navigator.platform)
 const modKey = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 
@@ -113,8 +117,10 @@ async function onExit(code: number | null) {
   await refresh()
   if (job.value !== j) return
   const now = tools.value?.find(f => f.id === j.tool.id)
-  const bin = isAgent(j.tool.id) ? AGENT_CLI[j.tool.id]?.bin ?? j.tool.name : 'git'
+  const bin = isAgent(j.tool.id) ? AGENT_CLI[j.tool.id]?.bin ?? j.tool.name : j.tool.id
   if (j.kind === 'install') {
+    // Settings > Lore and the New project dialog read the CLI from the Lore store: tell them too.
+    if (j.tool.id === 'lore' && lore.cli) lore.loadCli()
     if (now?.installed) return finish()
     j.note = code === 0
       ? t('start.setup.installedNotFound', { bin })
@@ -201,6 +207,7 @@ function close() {
             <div class="tool__head">
               <h3 class="tool__name">{{ tool.name }}</h3>
               <span v-if="tool.version" class="tool__version tabular" :title="tool.path ?? undefined">{{ shortVersion(tool.version) }}</span>
+              <span v-if="isOptional(tool.id)" class="tool__tag">{{ t('start.setup.optional') }}</span>
             </div>
             <p class="tool__state" role="status">
               <span v-if="stateOf(tool) === 'checking'" class="tool__word">{{ t('agents.cli.checkingSignIn') }}</span>
@@ -378,6 +385,14 @@ function close() {
   color: var(--fg);
 }
 .tool__version { font-size: var(--text-xs); color: var(--fg-subtle); }
+.tool__tag {
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  color: var(--fg-subtle);
+}
 .tool__state {
   display: flex;
   gap: var(--space-2);

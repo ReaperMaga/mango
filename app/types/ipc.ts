@@ -103,8 +103,8 @@ export interface LspFilesEvent {
 /** A language server ended; sent once, also after `lsp_stop`. */
 export interface LspExitEvent { id: string; code: number | null; stderr: string }
 
-/** Something Mango needs, offered by the setup dialog (`setup_check`). */
-export type SetupToolId = 'git' | 'claude' | 'codex'
+/** Something Mango needs (or, for Lore, can use), offered by the setup dialog (`setup_check`). */
+export type SetupToolId = 'git' | 'claude' | 'codex' | 'lore'
 
 export interface SetupTool {
   id: SetupToolId
@@ -1557,7 +1557,7 @@ export interface Commands {
    * Run the installer of one tool in a PTY (the backend picks the command). Returns the pty id;
    * output and the exit code arrive as `pty://data` / `pty://exit`, and `pty_write` / `pty_kill` work on it.
    */
-  setup_install: [{ tool: SetupToolId | HostingToolId | 'lore'; cols: number; rows: number }, string]
+  setup_install: [{ tool: SetupToolId | HostingToolId; cols: number; rows: number }, string]
   agent_logout: [{ agent: 'claude' | 'codex' }, void]
 
   /** gh and glab: installed or not, and the hosts each is signed in to. Signed-in glab servers join `gitlab_hosts`. */
