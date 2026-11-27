@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.12.2
+
+### Fixes
+
+- On Windows, a Lore server's sign-in actions (set up, add or remove a user, the GitHub secret, turn off) and the actions on a Lore server on an SSH machine start again: they failed with "The filename or extension is too long" before reaching the server.
+
 ## 0.12.1
 
 ### Fixes
