@@ -23,6 +23,8 @@ import { lockHolder, lockSummary, resultLines, vcsTerms } from '~/utils/vcs'
 import { rowWindow, scrollToRow, type RowRange } from '~/utils/rowWindow'
 import { isEnvPath } from '~/utils/envPath'
 import { worktreeName } from '~/utils/worktrees'
+import { baseName } from '~/utils/paths'
+import { useLore } from '~/stores/lore'
 
 /** How often the poll timer looks; each system says how often it is worth reading (`pollMs`). */
 const TICK_MS = 4000
@@ -584,6 +586,12 @@ async function focusRow(list: ListName, index: number) {
   el.querySelector<HTMLElement>(`[data-row="${list}:${index}"] .gf__main`)?.focus()
 }
 
+/** A folder without version control can become a Lore repository instead (local folders only). */
+function createLore() {
+  const at = path.value
+  if (!at || isEnvPath(at)) return
+  useLore().initFor = { path: at, name: at === ws.activeProjectPath ? (ws.activeProject?.name ?? baseName(at)) : baseName(at) }
+}
 </script>
 
 <template>
@@ -923,7 +931,10 @@ async function focusRow(list: ListName, index: number) {
 
       <div v-else-if="status" class="gp__empty">
         <i18n-t keypath="git.panel.notRepo" tag="p" scope="global"><template #name><strong>{{ ws.activeProject?.name ?? t('git.panel.thisFolder') }}</strong></template></i18n-t>
-        <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">{{ t('git.panel.init') }}</UiButton>
+        <div class="gp__empty-actions">
+          <UiButton size="sm" :loading="running('init')" @click="path && git.init(path)">{{ t('git.panel.init') }}</UiButton>
+          <UiButton v-if="path && !isEnvPath(path)" size="sm" variant="ghost" @click="createLore">{{ t('git.panel.loreInit') }}</UiButton>
+        </div>
       </div>
 
       <div v-else-if="repo?.error" class="gp__empty">
@@ -1333,6 +1344,7 @@ async function focusRow(list: ListName, index: number) {
 .gp__empty { padding: var(--space-4) var(--space-2) var(--space-3) var(--space-1); display: grid; justify-items: start; gap: var(--space-3); }
 .gp__empty p { margin: 0; font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--fg-subtle); }
 .gp__empty strong { font-weight: 600; color: var(--fg-muted); }
+.gp__empty-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .gp__error {
   width: 100%;
   max-height: 160px;

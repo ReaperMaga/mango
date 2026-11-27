@@ -31,6 +31,8 @@ export const useLore = defineStore('lore', {
     checks: {} as Record<string, LoreCheckState>,
     /** The set-up dialog (a Lore server on a machine over SSH): a new one, or changing `server`. */
     machineDialog: null as { server: LoreServer | null } | null,
+    /** "Create Lore repository" for an existing local project folder: the dialog, open for `path`. */
+    initFor: null as { path: string; name: string } | null,
   }),
 
   actions: {

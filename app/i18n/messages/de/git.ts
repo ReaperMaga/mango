@@ -160,6 +160,7 @@ export const git: Messages['git'] = {
     notRepo: '{name} ist noch kein Git-Repository.',
     thisFolder: 'Dieser Ordner',
     init: 'Repository initialisieren',
+    loreInit: 'Lore-Repository anlegen …',
     couldNotRead: 'Dieses Repository konnte nicht gelesen werden.',
     readingRepo: 'Repository wird gelesen …',
     removeTitle: 'Worktree entfernen',

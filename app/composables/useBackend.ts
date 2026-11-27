@@ -2,7 +2,7 @@ import type { Commands, Events, ProjectInfo, AgentInfo, AttachmentInfo, LspServe
 import { t } from '~/i18n'
 import { attachmentKind, mimeFromName } from '~/utils/attachments'
 import { baseName } from '~/utils/paths'
-import { mockGit } from '~/composables/mockGit'
+import { mockGit, mockLoreInit, mockLoreInitInfo } from '~/composables/mockGit'
 import { mockBaseFile, mockChatImage, mockFiles } from '~/composables/mockFiles'
 import { mockGhItem, mockGhJob, mockGhMerge, mockGhOpenItems, mockGhPrCreate, mockGhRepoLink } from '~/composables/mockGithub'
 import { mockGhReleases, mockGhRun, mockGhRunAction, mockGhTagRun } from '~/composables/mockReleases'
@@ -418,6 +418,18 @@ const mock = (() => {
       case 'create_project':
         if (args.lore) await mockLoreCreate(args.lore.server, args.lore.repository)
         return remember({ path: `${args.parent.replace(/\/+$/, '')}/${args.name}`, name: args.name, isGit: !!args.gitInit, branch: args.gitInit ? 'main' : null, lastOpened: Date.now() })
+      case 'lore_init_info':
+        if (isEnvPath(args.path)) throw new Error('Lore repositories in environments are made with New project there.')
+        return mockLoreInitInfo(args.path)
+      case 'lore_init': {
+        const info = mockLoreInitInfo(args.path)
+        if (info.vcs === 'lore') throw new Error('This folder is already a Lore repository.')
+        await mockLoreCreate(args.lore.server, args.lore.repository)
+        mockLoreInit(args.path, args.lore.repository, args.ignore)
+        const p = recent.find(r => r.path === args.path)
+        if (p && !info.gitHere) Object.assign(p, { isGit: true, vcs: 'lore', branch: 'main' })
+        return
+      }
       case 'git_clone': {
         const name = args.name || basename(String(args.url)).replace(/\.git$/, '')
         const lines = /^lore:\/\//i.test(String(args.url)) ? mockLoreCloneLines(String(args.url)) : [`Cloning into '${name}'...`, 'remote: Enumerating objects: 1284, done.', 'remote: Counting objects: 100% (1284/1284), done.', 'Receiving objects:  48% (617/1284)', 'Receiving objects: 100% (1284/1284), 2.31 MiB | 9.8 MiB/s, done.', 'Resolving deltas: 100% (702/702), done.']

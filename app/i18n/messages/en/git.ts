@@ -158,6 +158,7 @@ export const git = {
     notRepo: '{name} isn\'t a git repository yet.',
     thisFolder: 'This folder',
     init: 'Initialize repository',
+    loreInit: 'Create Lore repository…',
     couldNotRead: 'Couldn\'t read this repository.',
     readingRepo: 'Reading repository…',
     removeTitle: 'Remove worktree',

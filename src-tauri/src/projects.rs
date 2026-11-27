@@ -11,6 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::git::Vcs;
+
 const MAX_RECENT: usize = 30;
 const RECENT_FILE: &str = "recent-projects.json";
 /// How many trailing stderr lines to include in a failed clone's error.
@@ -401,6 +403,147 @@ pub async fn create_project(
     .await
 }
 
+// ---------------------------------------------------------------------------
+// A Lore repository in an existing project folder
+// ---------------------------------------------------------------------------
+
+/// The largest ignore file Mango reads or writes for Lore.
+const IGNORE_CAP: u64 = 256 * 1024;
+
+/// What `lore_init` needs to know about a folder before it asks: what it is under now, and the
+/// ignore files a `.loreignore` could be made from (`utils/loreIgnore.ts` converts them).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoreInitInfo {
+    /// The version control Mango sees for the folder now (this folder or one above), if any.
+    pub vcs: Option<Vcs>,
+    /// Where that one's root is.
+    pub vcs_root: Option<String>,
+    /// `.git` in the folder itself: git keeps winning there, so Mango goes on showing git.
+    pub git_here: bool,
+    /// `.plastic` in the folder itself: Lore will win over Unity VCS there.
+    pub plastic_here: bool,
+    /// `Assets/` and `ProjectSettings/`: a Unity project.
+    pub unity: bool,
+    /// The folder already has a `.loreignore` (never overwritten).
+    pub loreignore: bool,
+    pub gitignore: Option<String>,
+    /// Unity VCS's `ignore.conf`.
+    pub plastic_ignore: Option<String>,
+}
+
+/// A small text file, or None when it is missing, too big or not text.
+fn read_small(path: &Path) -> Option<String> {
+    let meta = fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > IGNORE_CAP {
+        return None;
+    }
+    let text = String::from_utf8(fs::read(path).ok()?).ok()?;
+    Some(text.trim_start_matches('\u{feff}').to_string())
+}
+
+fn local_folder(path: &str) -> Result<PathBuf, String> {
+    if crate::envs::parse_env_path(path).is_some() {
+        return Err("Lore repositories in environments are made with New project there.".into());
+    }
+    let dir = normalize(path)?;
+    if !dir.is_dir() {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    Ok(dir)
+}
+
+fn lore_init_info_at(dir: &Path) -> LoreInitInfo {
+    let (vcs, root) = match crate::vcs::detect_on_disk(dir) {
+        Some((v, r)) => (Some(v), Some(path_string(&r))),
+        None => (None, None),
+    };
+    LoreInitInfo {
+        vcs,
+        vcs_root: root,
+        git_here: dir.join(".git").exists(),
+        plastic_here: dir.join(".plastic").is_dir(),
+        unity: dir.join("Assets").is_dir() && dir.join("ProjectSettings").is_dir(),
+        loreignore: dir.join(".loreignore").exists(),
+        gitignore: read_small(&dir.join(".gitignore")),
+        plastic_ignore: read_small(&dir.join("ignore.conf")),
+    }
+}
+
+/// Why Lore would refuse `ignore` (and then fail `lore status` for the whole repository), or None.
+/// Mirrors `loreIgnoreProblem` in `utils/loreIgnore.ts`.
+fn ignore_problem(ignore: &str) -> Option<String> {
+    if ignore.len() as u64 > IGNORE_CAP {
+        return Some("The ignore file is too large.".into());
+    }
+    if ignore.contains('\0') {
+        return Some("The ignore file holds a NUL character.".into());
+    }
+    ignore.lines().enumerate().find_map(|(i, l)| {
+        let rule = l.trim();
+        let rest = rule.strip_prefix('!')?.trim_start();
+        rest.starts_with("**").then(|| {
+            format!("Line {} of the ignore file, {rule}, is an exception that starts with **, which Lore refuses. Remove it or anchor it.", i + 1)
+        })
+    })
+}
+
+#[tauri::command]
+pub async fn lore_init_info(path: String) -> Result<LoreInitInfo, String> {
+    blocking(move || Ok(lore_init_info_at(&local_folder(&path)?))).await
+}
+
+/// `.loreignore` (when given) and then `lore repository create` in an existing folder. Its files stay as
+/// they are and show as new. On failure the folder is left as it was.
+fn lore_init_at(dir: &Path, lore: &LoreNew, ignore: Option<&str>) -> Result<(), String> {
+    lore_target(lore)?;
+    if let Some((Vcs::Lore, root)) = crate::vcs::detect_on_disk(dir) {
+        return Err(if root == dir {
+            "This folder is already a Lore repository.".into()
+        } else {
+            format!("This folder is already inside the Lore repository at {}.", root.display())
+        });
+    }
+    let meta = dir.join(".lore");
+    if meta.exists() {
+        return Err("This folder already has a .lore folder.".into());
+    }
+    let ignore = ignore.filter(|s| !s.trim().is_empty());
+    let ignore_path = dir.join(".loreignore");
+    if let Some(text) = ignore {
+        if let Some(problem) = ignore_problem(text) {
+            return Err(problem);
+        }
+        // `create_new`: an ignore file that is there is never replaced.
+        let mut f = fs::OpenOptions::new().write(true).create_new(true).open(&ignore_path).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                "This folder already has a .loreignore; Mango leaves it as it is.".to_string()
+            } else {
+                format!("Could not write {}: {e}", ignore_path.display())
+            }
+        })?;
+        let text = if text.ends_with('\n') { text.to_string() } else { format!("{text}\n") };
+        if let Err(e) = std::io::Write::write_all(&mut f, text.as_bytes()) {
+            drop(f);
+            let _ = fs::remove_file(&ignore_path);
+            return Err(format!("Could not write {}: {e}", ignore_path.display()));
+        }
+    }
+    if let Err(e) = lore_create(dir, lore) {
+        let _ = fs::remove_dir_all(&meta);
+        if ignore.is_some() {
+            let _ = fs::remove_file(&ignore_path);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn lore_init(path: String, lore: LoreNew, ignore: Option<String>) -> Result<(), String> {
+    blocking(move || lore_init_at(&local_folder(&path)?, &lore, ignore.as_deref())).await
+}
+
 #[tauri::command]
 pub async fn git_clone(
     app: AppHandle,
@@ -711,6 +854,101 @@ mod tests {
         println!("unreachable: {e}");
         assert!(e.contains("did not answer"), "{e}");
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mango-{tag}-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn ignore_files_lore_refuses() {
+        assert_eq!(ignore_problem("Library\n!keep.txt\n!a/**/b\n# !**/c\n"), None);
+        let e = ignore_problem("a\n  !**/Gen/**/*.csproj\n").unwrap();
+        assert!(e.starts_with("Line 2 ") && e.contains("!**/Gen"), "{e}");
+        assert!(ignore_problem("! **/x").is_some());
+        assert!(ignore_problem("a\0b").is_some());
+        assert!(ignore_problem(&"x".repeat(IGNORE_CAP as usize + 1)).is_some());
+    }
+
+    #[test]
+    fn lore_init_reads_the_folder() {
+        let dir = scratch("lore-info");
+        let info = lore_init_info_at(&dir);
+        assert!(info.vcs.is_none() && !info.unity && !info.git_here && !info.loreignore && info.gitignore.is_none());
+        fs::create_dir_all(dir.join("Assets")).unwrap();
+        fs::create_dir_all(dir.join("ProjectSettings")).unwrap();
+        fs::create_dir_all(dir.join(".plastic")).unwrap();
+        fs::write(dir.join("ignore.conf"), "\u{feff}Library\n").unwrap();
+        fs::write(dir.join(".gitignore"), "node_modules/\n").unwrap();
+        let info = lore_init_info_at(&dir);
+        assert_eq!(info.vcs, Some(Vcs::Plastic));
+        assert!(info.unity && info.plastic_here && !info.git_here);
+        assert_eq!(info.plastic_ignore.as_deref(), Some("Library\n"));
+        assert_eq!(info.gitignore.as_deref(), Some("node_modules/\n"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn lore_init_refuses_without_touching_the_folder() {
+        let dir = scratch("lore-refuse");
+        let offline = LoreNew { server: None, repository: "ok".into() };
+        // A bad name or ignore file: refused before anything is written.
+        assert!(lore_init_at(&dir, &LoreNew { server: None, repository: "-bad".into() }, Some("x")).is_err());
+        assert!(lore_init_at(&dir, &offline, Some("!**/x")).is_err());
+        assert!(!dir.join(".loreignore").exists() && !dir.join(".lore").exists());
+        // An ignore file that is there is never replaced.
+        fs::write(dir.join(".loreignore"), "mine\n").unwrap();
+        let e = lore_init_at(&dir, &offline, Some("theirs")).unwrap_err();
+        assert!(e.contains(".loreignore"), "{e}");
+        assert_eq!(fs::read_to_string(dir.join(".loreignore")).unwrap(), "mine\n");
+        // Already a Lore repository, here or above.
+        fs::create_dir_all(dir.join(".lore")).unwrap();
+        assert!(lore_init_at(&dir, &offline, None).unwrap_err().contains("already a Lore repository"));
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        assert!(lore_init_at(&dir.join("sub"), &offline, None).unwrap_err().contains("inside the Lore repository"));
+        assert!(local_folder("env://h/i/dir").is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Against the real `lore` CLI, offline only (no server, nothing spent):
+    /// `cargo test real_lore_init -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_lore_init() {
+        let dir = scratch("lore-init");
+        fs::create_dir_all(dir.join(".plastic")).unwrap();
+        fs::create_dir_all(dir.join("Library")).unwrap();
+        fs::write(dir.join("Library/cache.bin"), "x").unwrap();
+        fs::write(dir.join("keep.txt"), "kept").unwrap();
+        fs::write(dir.join(".plastic/p"), "x").unwrap();
+        let name = format!("mango-init-{}", uuid::Uuid::new_v4().simple());
+        lore_init_at(&dir, &LoreNew { server: None, repository: name }, Some(".plastic/\n/Library/")).unwrap();
+        assert!(dir.join(".lore").is_dir());
+        assert_eq!(fs::read_to_string(dir.join(".loreignore")).unwrap(), ".plastic/\n/Library/\n");
+        assert_eq!(fs::read_to_string(dir.join("keep.txt")).unwrap(), "kept");
+        // Lore now wins over Unity VCS in the same folder.
+        assert_eq!(crate::vcs::detect_on_disk(&dir).map(|d| d.0), Some(Vcs::Lore));
+        let bin = crate::lore_servers::find().unwrap();
+        let mut cmd = crate::lore_servers::command(&bin);
+        cmd.args(["-P", "--non-interactive", "status", "--scan"]).current_dir(&dir);
+        let out = cmd.output().unwrap();
+        let said = String::from_utf8_lossy(&out.stdout);
+        println!("{said}");
+        assert!(out.status.success());
+        assert!(said.contains("keep.txt") && said.contains(".loreignore"));
+        assert!(!said.contains("Library") && !said.contains(".plastic"));
+        // Again: refused, and the folder keeps its repository.
+        assert!(lore_init_at(&dir, &LoreNew { server: None, repository: "again".into() }, None).is_err());
+        assert!(dir.join(".lore").is_dir());
+        // A server that does not answer: nothing is left behind, the ignore file included.
+        let other = scratch("lore-init-fail");
+        let e = lore_init_at(&other, &LoreNew { server: Some("lore://127.0.0.1:1".into()), repository: "x".into() }, Some("a")).unwrap_err();
+        println!("unreachable: {e}");
+        assert!(!other.join(".lore").exists() && !other.join(".loreignore").exists());
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&other).unwrap();
     }
 
     #[test]

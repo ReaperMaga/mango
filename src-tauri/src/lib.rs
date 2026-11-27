@@ -104,6 +104,8 @@ pub fn run() {
             projects::open_project,
             projects::forget_project,
             projects::create_project,
+            projects::lore_init_info,
+            projects::lore_init,
             projects::git_clone,
             projects::default_projects_dir,
             plugins::plugins_list,

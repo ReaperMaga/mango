@@ -305,6 +305,27 @@ export interface LoreServerCheck {
 /** A new project's Lore repository: on `server` (`lore://host[:port]`), or only in the folder (`server` null). */
 export interface LoreNew { server: string | null; repository: string }
 
+/**
+ * An existing project folder about to become a Lore repository (`lore_init_info`): what it is under now
+ * and the ignore files a `.loreignore` can be made from (`utils/loreIgnore.ts`).
+ */
+export interface LoreInitInfo {
+  /** The version control Mango sees for the folder now (in it or a folder above), if any. */
+  vcs: VcsKind | null
+  vcsRoot: string | null
+  /** `.git` in the folder itself: git keeps winning there, so Mango goes on showing git. */
+  gitHere: boolean
+  /** `.plastic` in the folder itself: Lore wins over Unity VCS, so Mango switches to Lore. */
+  plasticHere: boolean
+  /** `Assets/` and `ProjectSettings/`. */
+  unity: boolean
+  /** It already has a `.loreignore` (never overwritten). */
+  loreignore: boolean
+  gitignore: string | null
+  /** Unity VCS's `ignore.conf`. */
+  plasticIgnore: string | null
+}
+
 /* ---------- source control ----------
  * The `git_*` commands serve git repositories and Unity VCS workspaces alike:
  * the backend works out which one a folder is and answers in these shapes.
@@ -1485,6 +1506,13 @@ export interface Commands {
   /** mkdir parent/name, optionally `git init`, record as recent. Errors if it exists and is non-empty. */
   /** `lore`: create a Lore repository in the new folder instead (then `gitInit` is ignored). */
   create_project: [{ parent: string; name: string; gitInit: boolean; lore?: LoreNew | null }, ProjectInfo]
+  /** An existing local folder (never `env://`) as Lore sees it, before `lore_init`. */
+  lore_init_info: [{ path: string }, LoreInitInfo]
+  /**
+   * `lore repository create` in an existing local folder; its files stay and show as new. `ignore` is
+   * written first as `.loreignore` (never over one). On failure the folder is left as it was.
+   */
+  lore_init: [{ path: string; lore: LoreNew; ignore: string | null }, void]
   /** `git clone --progress url parent/<name>`; streams `clone://progress` events. */
   git_clone: [{ url: string; parent: string; name: string | null; jobId: string }, ProjectInfo]
   /** Default folder for new projects (~/Projects, created lazily) */

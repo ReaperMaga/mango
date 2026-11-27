@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import PluginStatusItems from '~/plugin-host/ui/PluginStatusItems.vue'
 import { pluginMenuItems } from '~/plugin-host/menus'
-import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
+import { AppWindow, ChevronDown, Copy, Undo2, FolderCog, FolderGit2, FolderOpen, FolderPlus, GitBranch, GitFork, Github, Gitlab, MapPin, Minus, PanelLeftOpen, Search, Server, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useEnvironments } from '~/stores/environments'
 import { useThreads } from '~/stores/threads'
@@ -16,6 +16,7 @@ import { useForge } from '~/stores/forge'
 import { siteName } from '~/utils/forge'
 import { isEnvPath } from '~/utils/envPath'
 import { vcsTerms } from '~/utils/vcs'
+import { useLore } from '~/stores/lore'
 
 const { t } = useI18n()
 const ws = useWorkspace()
@@ -171,6 +172,9 @@ const projectItems = computed<MenuItem[]>(() => [
   ...(ws.activeProject
     ? [
         { label: t('shell.titlebar.projectSettings'), icon: FolderCog, divider: true, onSelect: () => ws.openSettings('projects') },
+        ...(!isEnvPath(ws.activeProject.path) && ws.activeProject.vcs !== 'lore'
+          ? [{ label: t('shell.titlebar.loreInit'), icon: FolderGit2, onSelect: () => { const p = ws.activeProject; if (p) useLore().initFor = { path: p.path, name: p.name } } }]
+          : []),
         ...pluginMenuItems('project', { projectPath: ws.activeProject.path }),
       ]
     : []),

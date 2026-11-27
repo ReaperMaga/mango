@@ -1,4 +1,4 @@
-import type { GitBranches, GitCommit, GitCommitDetail, GitCommitFile, GitFile, GitGraph, GitRef, GitStatus, GitWorktree, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
+import type { GitBranches, GitCommit, GitCommitDetail, GitCommitFile, GitFile, GitGraph, GitRef, GitStatus, GitWorktree, LoreInitInfo, MergePreview, VcsKind, VcsLock, VcsShelve } from '~/types/ipc'
 
 /**
  * In-memory git for the browser preview (no Tauri). Implements the `git_*`
@@ -782,6 +782,7 @@ function statusOf(r: Repo, path: string): GitStatus {
     const head = r.log[0]?.shortHash.replace(/^cs:/, '') ?? null
     return { vcs: 'plastic', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head, upstream: null, ahead: 0, behind: r.incoming.length, files }
   }
+  if (r.vcs === 'lore') return { vcs: 'lore', repository: r.repository, isRepo: true, root: path, mainRoot: null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: null, ahead: 0, behind: 0, files }
   if (r.detached) return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: null, head: r.detached.slice(0, 7), upstream: null, ahead: 0, behind: 0, files }
   return { vcs: 'git', repository: null, isRepo: true, root: path, mainRoot: linkedTrees.get(path) ?? null, branch: r.branch, head: r.log[0]?.shortHash ?? null, upstream: t.upstream, ahead: t.ahead, behind: t.behind, files }
 }
@@ -1419,6 +1420,41 @@ async function gitCommitDiff(path: string, hash: unknown, file: unknown): Promis
   const { n } = commitNode(path, hash)
   const f = n.files.find(x => x.path === String(file ?? ''))
   return f ? commitDiffText(n.hash, f) : ''
+}
+
+const MOCK_IGNORE_CONF = ['Library', 'library', 'Temp', 'temp', 'Logs', 'logs', 'UserSettings', '*.csproj', '*.sln', '*.private', '^*.private.[0-9]+$', '# Generator projects are source', '!**/Generator~/**/*.csproj', '.DS_Store*'].join('\n')
+
+/** `lore_init_info` in the preview: what each seeded project looks like on disk. */
+export function mockLoreInitInfo(path: string): LoreInitInfo {
+  const r = repoAt(path)
+  const unity = r.vcs === 'plastic'
+  return {
+    vcs: r.isRepo ? r.vcs : null,
+    vcsRoot: r.isRepo ? path : null,
+    gitHere: r.isRepo && r.vcs === 'git',
+    plasticHere: unity && r.isRepo,
+    unity,
+    loreignore: false,
+    gitignore: r.isRepo && r.vcs === 'git' ? 'node_modules/\n.output/\n.nuxt/\ndist/\n*.log\n.env\n' : null,
+    plasticIgnore: unity ? MOCK_IGNORE_CONF : null,
+  }
+}
+
+/**
+ * `lore_init` in the preview: the folder becomes a Lore repository whose files are all new (a git
+ * repository stays git, as the backend's detection keeps it).
+ */
+export function mockLoreInit(path: string, repository: string, ignore: string | null) {
+  const r = repoAt(path)
+  if (r.isRepo && r.vcs === 'git') return
+  const files = r.isRepo ? r.files.map(f => f.path) : ['ideas/2026.md', 'todo.md']
+  Object.assign(r, emptyRepo(), {
+    vcs: 'lore',
+    repository,
+    isRepo: true,
+    branches: { main: { upstream: null, ahead: 0, behind: 0 } },
+    files: [...(ignore ? ['.loreignore'] : []), ...files].map(p => ({ path: p, staged: null, unstaged: { status: '?', diff: added(p, ['…']) } })),
+  })
 }
 
 export async function mockGit(cmd: string, args: any): Promise<any> {
