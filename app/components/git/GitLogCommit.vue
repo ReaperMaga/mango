@@ -5,6 +5,7 @@ import { gitLogError, useGitLog } from '~/stores/gitLog'
 import { useThreads } from '~/stores/threads'
 import { commitDiffTabId } from '~/utils/commitDiffTabs'
 import { fullDateTime } from '~/utils/time'
+import { rowWindow, scrollToRow } from '~/utils/rowWindow'
 
 /** The commit selected in the Git log: its message, facts and changed files. A file opens its diff in a tab. */
 const props = defineProps<{
@@ -35,6 +36,7 @@ const error = ref('')
 const loading = ref(false)
 const active = ref<string | null>(null)
 const fileList = ref<HTMLElement | null>(null)
+const scroller = ref<HTMLElement | null>(null)
 const listId = useId()
 
 let token = 0
@@ -85,6 +87,67 @@ const sameCommitter = computed(() => {
 const dirOf = (file: string) => file.slice(0, file.lastIndexOf('/') + 1)
 const nameOf = (file: string) => file.slice(file.lastIndexOf('/') + 1)
 const activeIndex = computed(() => detail.value?.files.findIndex(f => f.path === active.value) ?? -1)
+const clickHint = computed(() => t('git.commit.clickToOpen'))
+const binaryLabel = computed(() => t('git.commit.binary'))
+
+/* ---------- a long file list is drawn a window at a time (a Unity commit can hold tens of thousands) ---------- */
+
+const WINDOW_FROM = 200
+/** A row's height (`.commit__file`) and the 1px gap between rows. */
+const ROW_H = 26
+const STRIDE = ROW_H + 1
+/** The list's own top padding (`.commit__files`). */
+const LIST_PAD = 2
+const windowed = computed(() => (detail.value?.files.length ?? 0) > WINDOW_FROM)
+/** Where the scroller is and where the list starts inside it; written only when changed. */
+const view = reactive({ scrollTop: 0, height: 0, listTop: 0 })
+function measure() {
+  const el = scroller.value
+  if (!el) return
+  const set = (key: keyof typeof view, value: number) => { if (view[key] !== value) view[key] = value }
+  set('scrollTop', el.scrollTop)
+  set('height', el.clientHeight)
+  if (fileList.value) set('listTop', Math.round(fileList.value.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop + LIST_PAD))
+}
+let frame = 0
+function onScroll() {
+  if (windowed.value && !frame) frame = requestAnimationFrame(() => { frame = 0; measure() })
+}
+let resized: ResizeObserver | undefined
+onMounted(() => {
+  if (scroller.value) (resized = new ResizeObserver(() => measure())).observe(scroller.value)
+})
+// The head above the list (subject, body) changes with the commit.
+watch(detail, () => void nextTick(measure), { flush: 'post' })
+onBeforeUnmount(() => {
+  resized?.disconnect()
+  cancelAnimationFrame(frame)
+})
+
+const range = computed(() => {
+  const count = detail.value?.files.length ?? 0
+  if (!windowed.value) return { start: 0, end: count }
+  return rowWindow({ scrollTop: view.scrollTop, viewport: view.height, listTop: view.listTop, count, stride: STRIDE, overscan: 12 })
+})
+/** The rows in the DOM, each with its index in the whole list and its path split once. */
+const rows = computed(() => {
+  const files = detail.value?.files ?? []
+  const { start, end } = range.value
+  const out: Array<{ f: GitCommitFile; i: number; dir: string; name: string }> = []
+  for (let i = start; i < end; i++) {
+    const f = files[i]!
+    out.push({ f, i, dir: dirOf(f.path), name: nameOf(f.path) })
+  }
+  return out
+})
+/** The active row is in the DOM (scrolled away from in a long list, it is not): only then can the list point at it. */
+const activeDrawn = computed(() => activeIndex.value >= range.value.start && activeIndex.value < range.value.end)
+/** The rows not drawn keep their room as padding, so the scrollbar is the whole list's. */
+const padding = computed(() => {
+  if (!windowed.value) return undefined
+  const count = detail.value?.files.length ?? 0
+  return { paddingTop: `${LIST_PAD + range.value.start * STRIDE}px`, paddingBottom: `${LIST_PAD + Math.max(0, count - range.value.end) * STRIDE}px` }
+})
 
 function openDiff(file: GitCommitFile) {
   if (!detail.value) return
@@ -110,6 +173,13 @@ function onFilesKey(e: KeyboardEvent) {
   }
   e.preventDefault()
   active.value = files[next]?.path ?? null
+  const el = scroller.value
+  if (windowed.value && el) {
+    // The row may not be in the DOM yet: scroll by arithmetic, and the window follows.
+    const to = scrollToRow({ scrollTop: el.scrollTop, viewport: el.clientHeight, listTop: view.listTop, stride: STRIDE, index: next, rowHeight: ROW_H })
+    if (to !== null) el.scrollTop = to
+    return
+  }
   void nextTick(() => fileList.value?.querySelector('.is-selected')?.scrollIntoView({ block: 'nearest' }))
 }
 
@@ -117,7 +187,7 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
 </script>
 
 <template>
-  <div class="commit" :class="{ 'is-stale': loading && detail }" :aria-busy="loading || undefined">
+  <div ref="scroller" class="commit" :class="{ 'is-stale': loading && detail }" :aria-busy="loading || undefined" @scroll.passive="onScroll">
     <UiButton v-if="back" size="sm" variant="ghost" class="commit__back" @click="emit('back')"><ArrowLeft />{{ t('git.commit.backToLog') }}</UiButton>
 
     <div v-if="error" class="commit__error" role="alert">
@@ -167,11 +237,12 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
         role="listbox"
         tabindex="0"
         :aria-label="t('git.commit.files')"
-        :aria-activedescendant="activeIndex >= 0 ? `${listId}-${activeIndex}` : undefined"
+        :aria-activedescendant="activeDrawn ? `${listId}-${activeIndex}` : undefined"
+        :style="padding"
         @keydown="onFilesKey"
       >
         <div
-          v-for="(f, i) in detail.files"
+          v-for="{ f, i, dir, name } in rows"
           :id="`${listId}-${i}`"
           :key="f.path"
           class="commit__file"
@@ -184,10 +255,10 @@ defineExpose({ focusFiles: () => fileList.value?.focus({ preventScroll: true }) 
           <span class="commit__status" :class="`is-${f.status[0]}`" :title="statusNames[f.status.charAt(0)] ?? f.status">{{ f.status[0] }}</span>
           <span class="commit__path">
             <!-- The bdi keeps "docs/" reading left to right inside the box that truncates from the left. -->
-            <span v-if="dirOf(f.path)" class="commit__dir"><bdi>{{ dirOf(f.path) }}</bdi></span>
-            <span class="commit__name">{{ nameOf(f.path) }}</span>
+            <span v-if="dir" class="commit__dir"><bdi>{{ dir }}</bdi></span>
+            <span class="commit__name">{{ name }}</span>
           </span>
-          <span v-if="f.additions === null" class="commit__binary">{{ t('git.commit.binary') }}</span>
+          <span v-if="f.additions === null" class="commit__binary">{{ binaryLabel }}</span>
           <span v-else class="commit__counts tabular">
             <span v-if="f.additions" class="commit__add">+{{ f.additions }}</span>
             <span v-if="f.deletions" class="commit__del">−{{ f.deletions }}</span>

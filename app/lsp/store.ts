@@ -11,6 +11,7 @@ import { useThreads } from '~/stores/threads'
 import { useWindows } from '~/stores/windows'
 import { sameFolder } from '~/utils/autoSave'
 import { isEnvPath } from '~/utils/envPath'
+import { focusGate } from '~/utils/focusGate'
 
 /** What was last seen of a folder servers could run in (`lsp_folder`). */
 interface Folder {
@@ -206,7 +207,8 @@ export const useLanguageServers = defineStore('languageServers', {
           return [prefs?.languageServers, prefs?.languageServersFolder, git.status(path)?.head]
         })].join('\n')
       }).join('\0'), checkAll, { immediate: true })
-      window.addEventListener('focus', checkAll)
+      // Alt-tabbing back and forth looks again at most every few seconds (the last focus still counts).
+      window.addEventListener('focus', focusGate(checkAll))
       window.addEventListener('mango:files-changed', checkAll)
       // What is installed depends on whose folders don't count.
       watch(() => this.openRoots().join('\0'), () => { if (this.servers || this.loading) void this.load(true) })

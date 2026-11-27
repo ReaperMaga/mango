@@ -13,6 +13,7 @@ import { NOT_SAVED, disposeEditorModel, editorModel, moveEditorModel } from '~/u
 import { imageKind, imageMime } from '~/utils/imageFiles'
 import { isWithin, movedPath, nameOf, parentOf, pathIn } from '~/utils/fileOps'
 import { requiredSuffixes } from '~/plugin-host/fileHooks'
+import { sameEntries } from '~/utils/filesSync'
 import { SplitError, companionsOf, removeTogether, renameTogether, type Folder, type Move } from '~/utils/companions'
 
 /**
@@ -263,7 +264,8 @@ export const useFiles = defineStore('files', {
       const asked = Date.now()
       try {
         const got = await call('fs_list_dir', { root: projectPath, dir, ahead })
-        state.entries = got.entries
+        // Mostly the same as before (a refresh): keep it, so the tree is not laid out, decorated and drawn again.
+        if (!sameEntries(state.entries, got.entries)) state.entries = got.entries
         state.truncated = got.truncated
         state.error = null
         state.readAt = asked
@@ -295,7 +297,8 @@ export const useFiles = defineStore('files', {
         tree.dirs[sub.dir] = { ...newDir(), entries: sub.entries, readAt: asked }
         return
       }
-      Object.assign(had, { entries: sub.entries, truncated: false, error: null, readAt: asked })
+      Object.assign(had, { truncated: false, error: null, readAt: asked })
+      if (!sameEntries(had.entries, sub.entries)) had.entries = sub.entries
     },
 
     /**

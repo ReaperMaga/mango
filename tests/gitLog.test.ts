@@ -6,7 +6,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { LANE_COLORS, createLaneLayout, fileInFolder, looksLikeHash, parseLogQuery, sortGitRefs } from '../app/utils/gitLog.ts'
+import { LANE_COLORS, createLaneLayout, fileInFolder, looksLikeHash, parseLogQuery, sameCommits, sortGitRefs } from '../app/utils/gitLog.ts'
 import { GIT_LOG_TAB, builtInPluginNote, seedBuiltInTabs } from '../app/utils/builtIns.ts'
 import { commitDiffTabId, isCommitDiffTab, parseCommitDiffTab } from '../app/utils/commitDiffTabs.ts'
 import { isDiffTab } from '../app/utils/diffTabs.ts'
@@ -212,4 +212,14 @@ test('the new default never takes a key the user gave to something else', () => 
   // Every other default is as it was, and no two actions share one.
   const defaults = resolveBindings({})
   for (const s of SHORTCUTS) assert.equal(refuse(defaults[s.id]!, s.id, defaults), null, s.id)
+})
+
+test('a re-read with the same commits and refs is the same list', () => {
+  const ref = (name: string, current = false) => ({ name, kind: 'branch' as const, current })
+  const a = [{ hash: 'b', refs: [ref('main', true)] }, { hash: 'a', refs: [] }]
+  assert.equal(sameCommits(a, [{ hash: 'b', refs: [ref('main', true)] }, { hash: 'a', refs: [] }]), true)
+  assert.equal(sameCommits(a, [{ hash: 'c', refs: [ref('main', true)] }, ...a]), false, 'a new commit')
+  assert.equal(sameCommits(a, [{ hash: 'b', refs: [] }, { hash: 'a', refs: [ref('main', true)] }]), false, 'a branch moved')
+  assert.equal(sameCommits(a, [{ hash: 'b', refs: [ref('main')] }, { hash: 'a', refs: [] }]), false, 'checked out elsewhere')
+  assert.equal(sameCommits(a, a.slice(0, 1)), false)
 })

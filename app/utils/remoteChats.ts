@@ -195,11 +195,11 @@ export function attachRemoteChats(s: RemoteSource) {
   if (state.put.length || Object.keys(state.remove).length) schedule()
 }
 
-/** Chats saved locally just now (`chatHistory.ts`): the remote projects' ones go to their environment. */
-export function noteSaved(changed: Thread[], removed: { id: string; projectPath: string }[]) {
+/** Chats saved locally just now (`chatHistory.ts`), with the JSON saved: the remote projects' ones go to their environment. */
+export function noteSaved(changed: { t: Thread; json: string }[], removed: { id: string; projectPath: string }[]) {
   let any = false
-  for (const t of changed) {
-    if (!envOf(t.projectPath) || sent.get(t.id) === JSON.stringify(t)) continue
+  for (const { t, json } of changed) {
+    if (!envOf(t.projectPath) || sent.get(t.id) === json) continue
     if (!state.put.includes(t.id)) state.put.push(t.id)
     any = true
   }

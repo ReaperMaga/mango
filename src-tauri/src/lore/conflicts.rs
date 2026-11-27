@@ -46,7 +46,7 @@ pub(crate) fn learn_name(root: &At, s: &parse::Status) {
     let number = lore(root)
         .args(["revision", "info", "--"])
         .arg(sig)
-        .run()
+        .run_local()
         .ok()
         .filter(Output::ok)
         .and_then(|out| parse::parse_revisions(&out.text()).first().map(|r| r.number));

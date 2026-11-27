@@ -4,7 +4,7 @@ import { formatLocale, t } from '~/i18n'
 import { call } from '~/composables/useBackend'
 import { gitLogError, useGitLog } from '~/stores/gitLog'
 import { useGit } from '~/stores/git'
-import { createLaneLayout, looksLikeHash, parseLogQuery, type GraphRow } from '~/utils/gitLog'
+import { createLaneLayout, looksLikeHash, parseLogQuery, sameCommits, type GraphRow } from '~/utils/gitLog'
 import { vcsTerms } from '~/utils/vcs'
 
 /*
@@ -152,7 +152,9 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
     if (keeping) refreshing.value = true
     else phase.value = 'loading'
     try {
-      const status = await call('git_status', { path: folder })
+      // The git store's last read is enough to know what the folder is: a fresh one is a whole working-tree
+      // scan (a Unity project's is seconds), and the Changes view keeps it current anyway.
+      const status = git.status(folder) ?? await call('git_status', { path: folder })
       if (mine !== token) return
       if (!status.isRepo || !vcsTerms(status.vcs).log) {
         phase.value = status.isRepo ? 'unity' : 'notRepo'
@@ -175,7 +177,10 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
       const at = Math.floor(top / rowHeight.value)
       const anchor = keeping && top >= rowHeight.value / 2 ? commits.value[at]?.hash : undefined
       const offset = top - at * rowHeight.value
-      setCommits(list, hasMore)
+      // A refresh that found nothing new (a focus, an agent's turn) leaves everything on screen as it is.
+      const same = keeping && sameCommits(commits.value, list)
+      if (same) more.value = hasMore && list.length > 0
+      else setCommits(list, hasMore)
       phase.value = 'ready'
       if (!keeping) {
         if (!index.value.has(selected.value ?? '')) selected.value = list[0]?.hash ?? null
@@ -184,6 +189,7 @@ export function useGitLogView({ path, visible, root, scroller }: Options) {
       await nextTick()
       if (mine !== token) return
       if (!keeping) setScroll(0)
+      else if (same) { /* nothing moved */ }
       else if (anchor && index.value.has(anchor)) setScroll(index.value.get(anchor)! * rowHeight.value + offset)
       refreshing.value = false
       if (pendingJump) {

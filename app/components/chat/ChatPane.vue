@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { Directive } from 'vue'
 import { ArrowDown, ChevronDown, ChevronUp, CornerLeftUp, List, Pin, Search, Square, X } from 'lucide-vue-next'
 import { useWorkspace } from '~/stores/workspace'
 import { useThreads, type Pane } from '~/stores/threads'
@@ -104,12 +105,36 @@ const contentSig = computed(() => {
   const len = lastPart && 'text' in lastPart ? lastPart.text.length : 0
   return `${chat.id}:${chat.messages.length}:${last?.parts.length ?? 0}:${len}:${chat.status}`
 })
+/** Smooth scrolling, unless motion is reduced (Settings > Appearance, or the system's setting). */
+const glide = (): ScrollBehavior => (motionMs(1) < 0.5 ? 'auto' : 'smooth')
+/** Following the output: straight to the end, at most once a frame (a smooth scroll per streamed piece only fights itself). */
+let frame = 0
+function followEnd() {
+  if (frame) return
+  frame = requestAnimationFrame(() => {
+    frame = 0
+    const el = scroller.value
+    if (el && pinned.value && el.scrollHeight - el.scrollTop - el.clientHeight > 1) el.scrollTop = el.scrollHeight
+  })
+}
+onBeforeUnmount(() => cancelAnimationFrame(frame))
 watch(contentSig, async (sig, old) => {
-  const switched = sig.split(':')[0] !== old?.split(':')[0]
+  const [id, count] = sig.split(':')
+  const [oldId, oldCount] = old?.split(':') ?? []
+  const switched = id !== oldId
   if (!pinned.value && !switched) return
   await nextTick()
-  scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: switched ? 'auto' : 'smooth' })
-  if (switched) pinned.value = true
+  const el = scroller.value
+  if (!el) return
+  if (switched) {
+    pinned.value = true
+    el.scrollTop = el.scrollHeight
+  } else if (count !== oldCount) {
+    // A new message (yours, or the reply starting): glide down to it.
+    el.scrollTo({ top: el.scrollHeight, behavior: glide() })
+  } else {
+    followEnd()
+  }
 }, { flush: 'post', immediate: true })
 
 /* Keep the newest output in view when the pane itself changes size (terminal opens, split, window resize). */
@@ -157,7 +182,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKey))
 
 function toLatest() {
   pinned.value = true
-  scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: 'smooth' })
+  scroller.value?.scrollTo({ top: scroller.value.scrollHeight, behavior: glide() })
+}
+
+/*
+ * Messages the chat had when it was shown are simply there; only the ones that arrive after rise into place.
+ * Each new one animates itself as it mounts, so the list never measures all of its rows on a re-render
+ * (as a TransitionGroup does).
+ */
+let present = new Set<string>()
+watch(() => thread.value?.id, () => { present = new Set(thread.value?.messages.map(m => m.id) ?? []) }, { immediate: true })
+const vRise: Directive<HTMLElement, boolean> = {
+  mounted(el, { value }) {
+    if (value) el.animate([{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: motionMs(DUR.med), easing: EASE_OUT })
+  },
 }
 
 /** Whether a day mark goes above message `i`: the first one, and each time the day changes. */
@@ -173,7 +211,7 @@ function newDay(i: number) {
 function reveal(el: Element | null | undefined, block: ScrollLogicalPosition = 'start') {
   if (!el) return
   pinned.value = false
-  el.scrollIntoView({ block, behavior: 'smooth' })
+  el.scrollIntoView({ block, behavior: glide() })
 }
 function jumpTo(messageId: string) {
   const el = scroller.value?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`)
@@ -344,17 +382,16 @@ onBeforeUnmount(unpaint)
               <template #project><code>{{ ws.activeProject?.name }}</code></template>
             </i18n-t>
           </div>
-          <!-- Keyed by chat: opening one shows its history at once, only messages that arrive after rise in. -->
-          <TransitionGroup :key="thread.id" name="msg">
-            <template v-for="(m, i) in thread.messages" :key="m.id">
-              <p v-if="newDay(i)" :key="`day-${m.id}`" class="pane__day tabular">{{ dayLabel(m.createdAt) }}</p>
-              <ChatMessage
-                :message="m"
-                :thread="thread"
-                :last="i === thread.messages.length - 1"
-              />
-            </template>
-          </TransitionGroup>
+          <!-- Opening a chat shows its history at once; only messages that arrive after rise in (v-rise). -->
+          <template v-for="(m, i) in thread.messages" :key="m.id">
+            <p v-if="newDay(i)" v-rise="!present.has(m.id)" class="pane__day tabular">{{ dayLabel(m.createdAt) }}</p>
+            <ChatMessage
+              v-rise="!present.has(m.id)"
+              :message="m"
+              :thread="thread"
+              :last="i === thread.messages.length - 1"
+            />
+          </template>
           <Transition name="msg">
             <ChatWorking v-if="busy" :thread="thread" />
           </Transition>
@@ -598,7 +635,7 @@ onBeforeUnmount(unpaint)
 }
 .pane__hello span { color: var(--fg); }
 
-/* A message that arrives rises into place. Nothing on leave: a cleared chat should just be clear. */
+/* The working line rises into place like a new message (v-rise). Nothing on leave: a cleared chat should just be clear. */
 .msg-enter-active { transition: opacity var(--dur-med) var(--ease-out), transform var(--dur-med) var(--ease-out); }
 .msg-enter-from { opacity: 0; transform: translateY(6px); }
 </style>

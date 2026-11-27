@@ -7,35 +7,47 @@
 //!
 //! Which locks are the user's: a server without sign-in names no owner (`<unknown>`), so every
 //! lock there is the user's own; otherwise the owner is compared with the identities the CLI
-//! has stored (`lore auth list`). Proven against lore 0.14.0 with sign-in off only.
+//! has stored (`lore auth list`, asked beside every query). Proven against lore 0.14.0 with sign-in off only.
 
 use crate::git::{chunks, clean_rel, env_batch, At, Output, LOCAL_TIMEOUT};
 use crate::vcs::VcsLock;
 
-use super::{explain, lore, missing_in_env, parse};
+use super::{explain, lore, missing_in_env, parse, remember_identities};
 
 /// The owner Lore prints when the server identifies nobody.
 const NOBODY: &str = "<unknown>";
 
 pub(crate) fn locks(root: &At) -> Result<Vec<VcsLock>, String> {
     let query = lore(root).args(["lock", "query"]);
-    let who = lore(root).args(["auth", "list"]);
-    // One round trip in an environment.
-    let (list, me): (Output, Option<Output>) = match root {
+    // Who the user is (`auth list`) is asked each time, beside the query: it costs nothing next to the
+    // server's round trip, and a sign-in or sign-out shows at once.
+    let (list, me): (Output, String) = match root {
+        // One round trip in an environment.
         At::Env(e) => {
+            let who = lore(root).args(["auth", "list"]);
             let mut outs = env_batch(e, false, &[(query.words(), 1 << 20), (who.words(), 64 * 1024)], LOCAL_TIMEOUT)?;
             if let Some(missing) = outs.iter().find_map(|o| missing_in_env(e, o)) {
                 return Err(missing);
             }
-            let me = outs.pop();
+            let me = remember_identities(root, outs.pop().as_ref());
             (outs.pop().ok_or("lore gave no answer")?, me)
         }
-        At::Local(_) => (query.run()?, who.run().ok()),
+        // Side by side: the query waits on the server, `auth list` doesn't.
+        At::Local(_) => {
+            let (list, me) = std::thread::scope(|s| {
+                let me = s.spawn(|| {
+                    let out = lore(root).args(["auth", "list"]).run().ok();
+                    remember_identities(root, out.as_ref())
+                });
+                let list = query.run();
+                (list, me.join().unwrap_or_default())
+            });
+            (list?, me)
+        }
     };
     if !list.ok() {
         return Err(explain(&list));
     }
-    let me = me.filter(Output::ok).map(|o| o.text()).unwrap_or_default();
     Ok(parse::parse_locks(&list.text())
         .into_iter()
         .map(|(path, owner)| VcsLock {

@@ -124,3 +124,14 @@ export function fileInFolder(folder: string, root: string, file: string): string
   const below = `${dir.slice(top.length + 1)}/`
   return key(file).startsWith(key(below)) ? file.slice(below.length) : null
 }
+
+const sameRefs = (a: readonly GitRef[], b: readonly GitRef[]) =>
+  a.length === b.length && a.every((r, i) => r.name === b[i]!.name && r.kind === b[i]!.kind && r.current === b[i]!.current)
+
+/**
+ * Whether a re-read of the log says the same as the list on screen: the same commits, in order, with the
+ * same refs. A commit's hash fixes everything else about it. Then the list, its lanes and the details stay.
+ */
+export function sameCommits(a: readonly { hash: string; refs: readonly GitRef[] }[], b: readonly { hash: string; refs: readonly GitRef[] }[]): boolean {
+  return a.length === b.length && a.every((c, i) => c.hash === b[i]!.hash && sameRefs(c.refs, b[i]!.refs))
+}

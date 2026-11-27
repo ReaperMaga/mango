@@ -64,16 +64,80 @@ const md = new Marked({
   },
 })
 
-const html = computed(() => {
+/*
+ * While a reply streams its text grows a little at a time. Parsing and re-rendering all of it on every piece
+ * costs the whole reply each time, so the renders are coalesced to one per STREAM_MS (always the latest text),
+ * and only the blocks that changed are replaced in the page: the paragraphs already written keep their nodes
+ * (and a selection in them). Once the reply is complete it is rendered at once, exactly, in full.
+ */
+const STREAM_MS = 80
+const source = ref(props.text)
+let pending: ReturnType<typeof setTimeout> | undefined
+let renderedAt = 0
+function takeText() {
+  pending = undefined
+  renderedAt = performance.now()
+  source.value = props.text
+}
+watch(() => [props.text, !!props.streaming] as const, ([text, streaming]) => {
+  if (!streaming) {
+    clearTimeout(pending)
+    pending = undefined
+    source.value = text
+    return
+  }
+  if (pending) return // the render already planned takes the latest text
+  const wait = renderedAt + STREAM_MS - performance.now()
+  if (wait <= 0) takeText()
+  else pending = setTimeout(takeText, wait)
+})
+
+/** The reply as HTML: one string per top-level block while it streams, the whole of it in one once it is complete. */
+const html = computed<string[]>(() => {
   shown = []
   blocks = []
   // Read here so a renderer coming or going re-renders the reply.
   void pluginReg.codeBlocks.length
-  return md.parse(props.text) as string
+  if (!props.streaming) return [md.parse(source.value) as string]
+  return md.lexer(source.value).map(token => md.parser([token]) as string)
 })
 
-/* Plugin views into their placeholders, after each render (v-html replaced the old ones). */
+/* The HTML into the page: what v-html would do, but block by block while streaming. */
 const root = ref<HTMLElement | null>(null)
+/** What each block of the last streaming render put into the page. */
+let placed: Array<{ html: string; nodes: Node[] }> = []
+/** The page holds a complete render (one string), not blocks. */
+let whole: string | null = null
+function paint() {
+  const el = root.value
+  if (!el) return
+  const next = html.value
+  if (!props.streaming) {
+    // Complete: the whole reply, exactly as it parses.
+    if (whole !== next[0]) el.innerHTML = next[0] ?? ''
+    whole = next[0] ?? ''
+    placed = []
+    return
+  }
+  if (whole !== null) {
+    el.textContent = ''
+    whole = null
+  }
+  // Blocks that did not change keep their nodes; from the first that did, the rest is replaced.
+  let same = 0
+  while (same < placed.length && same < next.length && placed[same]!.html === next[same]) same++
+  for (const block of placed.slice(same)) for (const n of block.nodes) n.parentNode?.removeChild(n)
+  placed.length = same
+  const scratch = document.createElement('template')
+  for (const piece of next.slice(same)) {
+    scratch.innerHTML = piece
+    const nodes = [...scratch.content.childNodes]
+    el.append(scratch.content)
+    placed.push({ html: piece, nodes })
+  }
+}
+
+/* Plugin views into their placeholders, after each render (the page's HTML replaced the old ones). */
 const appContext = getCurrentInstance()?.appContext ?? null
 let filled: HTMLElement[] = []
 function unmountBlocks() {
@@ -91,9 +155,17 @@ function mountBlocks() {
     filled.push(el)
   }
 }
-watch(html, mountBlocks, { flush: 'post' })
-onMounted(mountBlocks)
-onBeforeUnmount(unmountBlocks)
+function update() {
+  unmountBlocks()
+  paint()
+  mountBlocks()
+}
+watch(html, update, { flush: 'post' })
+onMounted(update)
+onBeforeUnmount(() => {
+  clearTimeout(pending)
+  unmountBlocks()
+})
 
 function onClick(e: MouseEvent) {
   const copy = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-copy]')
@@ -114,7 +186,8 @@ function onClick(e: MouseEvent) {
 </script>
 
 <template>
-  <div ref="root" class="md selectable" :class="{ 'is-streaming': streaming }" @click="onClick" v-html="html" />
+  <!-- Filled by paint(): the agent's text as escaped, sanitised HTML (see the renderer above), as v-html would. -->
+  <div ref="root" class="md selectable" :class="{ 'is-streaming': streaming }" @click="onClick" />
 </template>
 
 <style scoped>

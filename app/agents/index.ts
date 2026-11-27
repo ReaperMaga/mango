@@ -215,7 +215,7 @@ const MAX_TOOL_IMAGES = 8
  * Keeps the images a tool produced: the bytes go to the attachment store (so the chat
  * history holds only a path and a small preview), then they appear on the tool's row.
  */
-async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }>, images: ToolImage[], remote = false) {
+async function keepToolImages(store: Store, threadId: string, part: Extract<Part, { type: 'tool' }>, images: ToolImage[], remote = false) {
   for (const img of images) {
     // A file the CLI saved in a remote environment is not on this computer's disk.
     if (remote && !img.data) continue
@@ -232,7 +232,7 @@ async function keepToolImages(store: Store, part: Extract<Part, { type: 'tool' }
       } else continue
       const thumb = await makeThumb(info.mime, data)
       ;(part.images ??= []).push({ ...info, thumb })
-      store.persist()
+      store.persist(threadId)
     } catch { /* an image that can't be kept is left out; the row still says what happened */ }
   }
 }
@@ -490,7 +490,7 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
-        if (e.images?.length) void keepToolImages(store, part, e.images, !!place.remote)
+        if (e.images?.length) void keepToolImages(store, to.threadId, part, e.images, !!place.remote)
         break
       }
       case 'tool-end': {
@@ -501,10 +501,11 @@ export async function runAgentTurn(store: Store, threadId: string, text: string,
         if (e.summary !== undefined) part.summary = e.summary
         if (e.output !== undefined) part.output = e.output
         if (e.diff !== undefined) part.diff = e.diff
-        if (e.images?.length) void keepToolImages(store, part, e.images, !!place.remote)
+        if (e.images?.length) void keepToolImages(store, to.threadId, part, e.images, !!place.remote)
         // `gh pr create` and the like: the new pull request or issue belongs to this chat.
         store._linkCreated(to.threadId, part)
-        store.persist(to.threadId)
+        // Output as it comes: saved with the rest of the stream (the end of the turn saves at once).
+        store._touch(to.threadId)
         break
       }
       case 'subagent-start': {

@@ -1,13 +1,15 @@
 import { call } from '~/composables/useBackend'
 import type { Thread } from '~/types/chat'
-import type { ChatRow } from '~/types/ipc'
+import { createSaves, saveDelay, type SaveSource } from '~/utils/chatSaves'
 import { noteSaved } from '~/utils/remoteChats'
 
 /**
  * Saving chats to the chat history database (`chats_load` / `chats_save`, a SQLite file in the
  * app data folder). Saves are debounced and incremental: only chats marked changed are
- * serialised, and only the ones whose JSON actually differs from the last save are sent.
- * A sweep (no id given) compares every chat, and is the only thing that deletes rows.
+ * serialised, and only the ones whose JSON actually differs from the last save are sent
+ * (`chatSaves.ts` keeps a fingerprint of each, not a copy). A marked chat that is gone is deleted.
+ * A sweep (no id given) compares every chat and deletes the rows of chats gone: it serialises the
+ * whole history, so it is only for when the chats cannot be named.
  * Remote projects' chats saved here also go to their environment (`remoteChats.ts`).
  *
  * With several windows (`utils/windows.ts`) each one knows only the chats it holds: it loads those
@@ -16,30 +18,15 @@ import { noteSaved } from '~/utils/remoteChats'
  * given a `layout` saves one (the main window).
  */
 
-const DEBOUNCE_MS = 400
-/** While an agent streams, changes keep coming: save at least this often anyway. */
-const MAX_WAIT_MS = 2000
-
-interface Source {
-  threads: () => Thread[]
-  byId: (id: string) => Thread | null
-  /** The layout to save (tabs, panes…): compared as JSON, so it can be rebuilt each time. None: never saved. */
-  layout?: () => unknown
-}
-
 /** Which saved chats this window takes (all of them, `all`, are given to find a chat's parents). */
 export type Keep = (t: Thread, all: Thread[]) => boolean
 
-/** Each saved chat's JSON as last sent: what a save compares against. */
-const saved = new Map<string, string>()
-/** Each saved chat's project: where a deleted one was. */
-const savedProject = new Map<string, string>()
-let savedLayout: string | null = null
-const dirty = new Set<string>()
-let sweep = false
-let source: Source | null = null
+const saves = createSaves()
+let source: SaveSource | null = null
 let timer: ReturnType<typeof setTimeout> | null = null
 let firstChangeAt = 0
+/** Something other than an agent's streamed output is pending: it saves soon. */
+let urgent = false
 let queue: Promise<boolean> = Promise.resolve(true)
 let reported = false
 
@@ -55,24 +42,43 @@ function parseRows(rows: string[]): { t: Thread; json: string }[] {
   return out
 }
 
-/** Take these rows as this window's: from now on they are compared, saved and deleted here. */
-function remember(rows: { t: Thread; json: string }[], keep?: Keep): Thread[] {
+/**
+ * Take these rows as this window's: from now on they are compared, saved and deleted here.
+ * With `normalize`, the chats come back as it makes them, and the ones it changed are saved.
+ */
+function remember(rows: { t: Thread; json: string }[], keep?: Keep, normalize?: (t: Thread) => Thread): Thread[] {
   const all = rows.map(r => r.t)
   const out: Thread[] = []
   for (const { t, json } of rows) {
     if (keep && !keep(t, all)) continue
-    out.push(t)
-    saved.set(t.id, json)
-    savedProject.set(t.id, t.projectPath)
+    const kept = normalize ? normalize(t) : t
+    saves.remember(t, json, normalize ? kept : undefined)
+    out.push(kept)
   }
+  settleSoon()
   return out
 }
 
-/** The saved chats this window takes (`keep`; all when not given) and the layout. Remembers what is on disk. */
-export async function loadHistory(keep?: Keep): Promise<{ threads: Thread[]; layout: unknown }> {
+let settling = false
+/** Fingerprint the rows just loaded a little at a time, so their JSON can go and loading is not held up. */
+function settleSoon() {
+  if (settling) return
+  settling = true
+  const step = () => {
+    if (saves.settle(12)) setTimeout(step, 30)
+    else settling = false
+  }
+  setTimeout(step, 1000)
+}
+
+/**
+ * The saved chats this window takes (`keep`; all when not given) and the layout. Remembers what is on disk.
+ * With `normalize`, chats come back normalized, and the ones that changed by it are saved once saving starts.
+ */
+export async function loadHistory(keep?: Keep, normalize?: (t: Thread) => Thread): Promise<{ threads: Thread[]; layout: unknown }> {
   const snap = await call('chats_load', {})
-  const threads = remember(parseRows(snap.threads), keep)
-  savedLayout = snap.ui
+  const threads = remember(parseRows(snap.threads), keep, normalize)
+  saves.setLayout(snap.ui)
   let layout: unknown = null
   try { layout = snap.ui ? JSON.parse(snap.ui) : null } catch { /* default layout */ }
   return { threads, layout }
@@ -84,16 +90,16 @@ export async function loadHistory(keep?: Keep): Promise<{ threads: Thread[]; lay
  */
 export async function loadMoreHistory(keep: Keep): Promise<Thread[]> {
   const snap = await call('chats_load', {})
-  return remember(parseRows(snap.threads).filter(r => !saved.has(r.t.id)), keep)
+  return remember(parseRows(snap.threads).filter(r => !saves.has(r.t.id)), keep)
 }
 
 /** These chats now belong to another window: stop comparing and saving them here (they are not deleted). */
 export function forgetHistory(ids: Iterable<string>) {
-  for (const id of ids) { saved.delete(id); savedProject.delete(id); dirty.delete(id) }
+  saves.forget(ids)
 }
 
 /** Start saving. Nothing is saved before this, so a save can never overwrite what was not loaded yet. */
-export function attachHistory(s: Source) {
+export function attachHistory(s: SaveSource) {
   source = s
   if (typeof window !== 'undefined') {
     // Closing or reloading: send what is pending (the backend finishes it even if the page goes).
@@ -102,70 +108,38 @@ export function attachHistory(s: Source) {
   }
 }
 
-/** Something changed: these chats (none given: compare all of them, and drop deleted ones), and the layout. */
-export function markChanged(ids?: string | string[]) {
-  if (ids === undefined) sweep = true
-  else for (const id of Array.isArray(ids) ? ids : [ids]) dirty.add(id)
+/**
+ * Something changed: these chats (a deleted one included), or, none given, every chat (which also
+ * drops deleted ones); and the layout. `streaming`: an agent's output as it comes, which saves less
+ * often (see `STREAM_MAX_WAIT_MS`); anything else pending saves at the usual pace.
+ */
+export function markChanged(ids?: string | string[], streaming = false) {
+  saves.mark(ids)
   if (!source) return
   const now = Date.now()
-  if (!timer) firstChangeAt = now
+  if (!timer) { firstChangeAt = now; urgent = false }
   else clearTimeout(timer)
-  const wait = Math.max(0, Math.min(DEBOUNCE_MS, firstChangeAt + MAX_WAIT_MS - now))
-  timer = setTimeout(() => { void flushHistory() }, wait)
+  if (!streaming) urgent = true
+  timer = setTimeout(() => { void flushHistory() }, saveDelay(now, firstChangeAt, urgent))
 }
 
 /** Save what is pending now. Resolves true when everything up to now is on disk. */
 export function flushHistory(): Promise<boolean> {
   if (timer) { clearTimeout(timer); timer = null }
   if (!source) return queue
-  const batch = collect(source)
+  const batch = saves.collect(source)
   if (batch) {
-    queue = queue.then(() => call('chats_save', batch).then(
+    if (batch.changed.length || batch.remove.length) noteSaved(batch.changed, batch.remove)
+    const { upsert, ui } = batch
+    queue = queue.then(() => call('chats_save', { upsert, remove: batch.remove.map(r => r.id), ui }).then(
       () => true,
       (e) => {
         // Make the next save send all of it again rather than lose it.
-        for (const r of batch.upsert) saved.delete(r.id)
-        for (const id of batch.remove) saved.set(id, '')
-        savedLayout = null
-        sweep = true
+        saves.failed(batch)
         if (!reported) { reported = true; console.error('Mango could not save the chat history:', e) }
         return false
       },
     ))
   }
   return queue
-}
-
-function collect(s: Source): { upsert: ChatRow[]; remove: string[]; ui: string | null } | null {
-  const upsert: ChatRow[] = []
-  const remove: string[] = []
-  const changed: Thread[] = []
-  const consider = (t: Thread) => {
-    const json = JSON.stringify(t)
-    if (saved.get(t.id) === json) return
-    saved.set(t.id, json)
-    savedProject.set(t.id, t.projectPath)
-    changed.push(t)
-    upsert.push({ id: t.id, projectPath: t.projectPath, updatedAt: t.updatedAt, data: json })
-  }
-  if (sweep) {
-    const present = new Set<string>()
-    for (const t of s.threads()) { present.add(t.id); consider(t) }
-    for (const id of saved.keys()) if (!present.has(id)) remove.push(id)
-  } else {
-    for (const id of dirty) {
-      const t = s.byId(id)
-      if (t) consider(t)
-      else if (saved.has(id)) remove.push(id)
-    }
-  }
-  const removed = remove.map(id => ({ id, projectPath: savedProject.get(id) ?? '' }))
-  for (const id of remove) { saved.delete(id); savedProject.delete(id) }
-  if (changed.length || removed.length) noteSaved(changed, removed)
-  sweep = false
-  dirty.clear()
-  const layout = s.layout ? JSON.stringify(s.layout()) : null
-  const ui = layout === null || layout === savedLayout ? null : layout
-  if (ui !== null) savedLayout = ui
-  return upsert.length || remove.length || ui !== null ? { upsert, remove, ui } : null
 }

@@ -11,6 +11,11 @@
 //! How the ideas map:
 //! - status is `lore status --scan`: without `--scan` only files already marked dirty show. The
 //!   scan walks the whole working tree, once per refresh of the Changes view;
+//! - reads of what the local copy holds (status, branch list, history, revision info, a revision's
+//!   diff) run `--offline`: online each costs a round trip to the server (~1 s). What only the server
+//!   knows (where its copy of the branch is) is asked once per minute, in the background, and at once
+//!   after anything that talks to it or moves the branch (`with_upstream`). Offline, `lore` prints
+//!   identities where online it prints names: they are named here (`read_revisions`);
 //! - staging is Lore's own (`stage`/`unstage`); a staged path commits with what is on disk at
 //!   commit time. Staging a conflicted path resolves it (`branch merge resolve`), as in git;
 //! - commit is `lore commit`; amend is `lore revision amend`, which changes only the message
@@ -33,8 +38,9 @@ pub(crate) mod parse;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::git::{
     chunks, clean_rel, finish_diff, lossy, remove_untracked_at, run_process, safe_hash, At, EnvAt, GitBranchList, GitBranches,
@@ -129,10 +135,14 @@ impl Lore<'_> {
         self.cap = bytes;
         self
     }
-    /// Work without the server (`--offline`), for a repository that has none.
+    /// Work without the server (`--offline`): for a repository that has none, and for reads of what
+    /// the local copy already holds (no round trip to the server, ~1 s each).
     fn offline(mut self) -> Self {
         self.args.insert(0, "--offline".into());
         self
+    }
+    fn copy(&self) -> Self {
+        Lore { at: self.at, args: self.args.clone(), cap: self.cap, timeout: self.timeout, login: self.login }
     }
     /// The command line, `lore` first.
     pub(crate) fn words(&self) -> Vec<String> {
@@ -176,10 +186,31 @@ impl Lore<'_> {
         }
     }
 
+    /// A read from the local copy (`--offline`); the server is asked only when the local copy can't
+    /// answer (a branch only the server has, file data never downloaded: "Address not found").
+    fn run_local(self) -> Result<Output, String> {
+        let online = self.copy();
+        let out = self.offline().run()?;
+        if out.ok() || out.truncated {
+            return Ok(out);
+        }
+        online.run()
+    }
+
+    /// [`Lore::run_local`], with a failure turned into a readable error.
+    fn run_ok_local(self) -> Result<Output, String> {
+        let out = self.run_local()?;
+        if out.ok() {
+            Ok(out)
+        } else {
+            Err(explain(&out))
+        }
+    }
+
     /// [`Lore::run_ok`], once more with `--offline` when the repository has no server (Lore refuses
     /// a merge or an archive there otherwise).
     fn run_ok_offline_too(self) -> Result<Output, String> {
-        let again = Lore { at: self.at, args: self.args.clone(), cap: self.cap, timeout: self.timeout, login: self.login };
+        let again = self.copy();
         let out = self.run()?;
         if out.ok() {
             return Ok(out);
@@ -383,13 +414,156 @@ fn key(root: &At) -> String {
     }
 }
 
-/// `lore status --scan`, read. Its entries are also kept for the diffs that follow.
+/// What only the server knows about the branch (where its copy is, which way they differ), from
+/// the last time it was asked, by root. Asking costs a round trip to the server (~1 s), so the
+/// status the Changes view polls reads the local copy (`--offline`) and takes these from here.
+#[derive(Debug, Clone)]
+struct Upstream {
+    /// The branch and revision the working tree was at when the server was asked: it is asked again,
+    /// there and then, once either moves (a commit, sync or switch, here or in a terminal).
+    branch: Option<String>,
+    local: Option<String>,
+    remote_revision: Option<u64>,
+    remote_signature: Option<String>,
+    remote: Remote,
+    at: Instant,
+}
+
+/// How long the server's answer is used as it is; after that it is asked again in the background
+/// (the status meanwhile shows the last answer).
+const UPSTREAM_TTL: Duration = Duration::from_secs(60);
+
+fn upstreams() -> &'static Mutex<HashMap<String, Upstream>> {
+    static UP: OnceLock<Mutex<HashMap<String, Upstream>>> = OnceLock::new();
+    UP.get_or_init(Default::default)
+}
+
+/// The roots whose server is being asked in the background (one question at a time each).
+fn asking() -> &'static Mutex<HashSet<String>> {
+    static ASKING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    ASKING.get_or_init(Default::default)
+}
+
+/// Moves on whenever an answer is forgotten, so one asked before it (a slow read racing a push) is not kept.
+static UPSTREAM_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Forget the server's answer for `root`: after anything that talks to the server or moves the
+/// branch (commit, amend, pull, push, switch, branch create, merge, archive), the next status asks again.
+pub(crate) fn forget_upstream(root: &At) {
+    UPSTREAM_EPOCH.fetch_add(1, Ordering::SeqCst);
+    if let Ok(mut map) = upstreams().lock() {
+        map.remove(&key(root));
+    }
+}
+
+fn cached_upstream(root: &At) -> Option<Upstream> {
+    upstreams().lock().ok()?.get(&key(root)).cloned()
+}
+
+/// Ask the server where the branch is (`status --revision-only`, online). None when it didn't answer.
+fn ask_server(root: &At) -> Option<parse::Status> {
+    let out = lore(root).args(["status", "--revision-only"]).run().ok().filter(Output::ok)?;
+    Some(parse::parse_status(&out.text())).filter(|s| s.branch.is_some())
+}
+
+/// Keep the server's answer (`online`; None when it didn't answer, kept as "no word from the server"
+/// so an unreachable one isn't waited for on every poll) for the working tree `here`. Not kept when
+/// an answer was forgotten since `epoch`: it may predate a push.
+fn remember_upstream(root: &At, online: Option<&parse::Status>, here: &parse::Status, epoch: u64) -> Upstream {
+    let u = match online {
+        Some(o) => Upstream {
+            branch: o.branch.clone(),
+            local: o.signature.clone(),
+            remote_revision: o.remote_revision,
+            remote_signature: o.remote_signature.clone(),
+            remote: o.remote,
+            at: Instant::now(),
+        },
+        None => Upstream {
+            branch: here.branch.clone(),
+            local: here.signature.clone(),
+            remote_revision: None,
+            remote_signature: None,
+            remote: Remote::Unknown,
+            at: Instant::now(),
+        },
+    };
+    if UPSTREAM_EPOCH.load(Ordering::SeqCst) == epoch {
+        if let Ok(mut map) = upstreams().lock() {
+            map.insert(key(root), u.clone());
+        }
+    }
+    u
+}
+
+/// Ask the server again without making anyone wait: the answer lands in the cache for the next read.
+fn ask_later(root: &At, last: &Upstream) {
+    let k = key(root);
+    let first = asking().lock().map(|mut set| set.insert(k.clone())).unwrap_or(false);
+    if !first {
+        return;
+    }
+    let root = root.clone();
+    let here = parse::Status { branch: last.branch.clone(), signature: last.local.clone(), ..Default::default() };
+    std::thread::spawn(move || {
+        let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
+        let online = ask_server(&root);
+        remember_upstream(&root, online.as_ref(), &here, epoch);
+        if let Ok(mut set) = asking().lock() {
+            set.remove(&k);
+        }
+    });
+}
+
+/// Fill in what the server knows (`s` was read offline): the answer `asked` just now, the cached one
+/// while the working tree hasn't moved (asked again in the background once it is a minute old), or
+/// a new one, asked here.
+fn with_upstream(root: &At, s: &mut parse::Status, asked: Option<(Option<parse::Status>, u64)>) {
+    let u = match asked {
+        Some((online, epoch)) => remember_upstream(root, online.as_ref(), s, epoch),
+        None => match cached_upstream(root) {
+            Some(u) if u.branch == s.branch && u.local == s.signature => {
+                if u.at.elapsed() >= UPSTREAM_TTL {
+                    ask_later(root, &u);
+                }
+                u
+            }
+            _ => {
+                let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
+                let online = ask_server(root);
+                remember_upstream(root, online.as_ref(), s, epoch)
+            }
+        },
+    };
+    // Offline, Lore says nothing of the server; anything it did say stands.
+    if s.remote == Remote::Unknown && s.remote_revision.is_none() {
+        s.remote_revision = u.remote_revision;
+        s.remote_signature = u.remote_signature;
+        s.remote = u.remote;
+    }
+}
+
+/// `lore status --scan` of the local copy (`--offline`), with what the server knows from
+/// [`with_upstream`]. Its entries are also kept for the diffs that follow.
 fn read_status(root: &At) -> Result<(parse::Status, Arc<Vec<Entry>>), String> {
-    let out = lore(root).args(["status", "--scan"]).run_ok()?;
+    let scan = || lore(root).args(["status", "--scan"]).run_ok_local();
+    let (out, asked) = if cached_upstream(root).is_some() {
+        (scan()?, None)
+    } else {
+        // Nothing known of the server yet: ask it beside the scan rather than after it.
+        let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
+        let (out, online) = std::thread::scope(|sc| {
+            let server = sc.spawn(|| ask_server(root));
+            let out = scan();
+            (out, server.join().ok().flatten())
+        });
+        (out?, Some((online, epoch)))
+    };
     let mut parsed = parse::parse_status(&out.text());
     if parsed.branch.is_none() && parsed.revision.is_none() {
         return Err(format!("Lore gave no status for {}.\n\n{}", root.shown(), tidy_error(&out.combined())));
     }
+    with_upstream(root, &mut parsed, asked);
     let entries = Arc::new(std::mem::take(&mut parsed.entries));
     if let Ok(mut map) = last_status().lock() {
         map.insert(key(root), entries.clone());
@@ -766,7 +940,9 @@ pub(crate) fn commit(root: &At, message: &str, amend: bool) -> Result<String, St
     if message.is_empty() {
         return Err("Write a commit message first".into());
     }
-    let out = lore(root).slow().args(["commit", "--"]).arg(message).run()?;
+    let out = lore(root).slow().args(["commit", "--"]).arg(message).run();
+    forget_upstream(root);
+    let out = out?;
     if !out.ok() {
         if out.combined().contains("Nothing staged for commit") {
             return Err("Nothing is staged. Stage the changes you want in this commit first.".into());
@@ -782,6 +958,8 @@ fn amend_message(root: &At, message: &str) -> Result<String, String> {
     if message.is_empty() {
         return Err("Write the new message first: Lore can change only the last revision's message.".into());
     }
+    // Whether the revision is on the server yet: asked now, not taken from a cached answer.
+    forget_upstream(root);
     let (s, entries) = read_status(root)?;
     if entries.iter().any(|e| e.section == Section::Staged) {
         return Err("Lore can change only the last revision's message, not its files. Commit the staged changes as a new revision, or unstage them to amend the message.".into());
@@ -792,14 +970,21 @@ fn amend_message(root: &At, message: &str) -> Result<String, String> {
     if matches!(s.remote, Remote::InSync | Remote::Behind) && s.remote_revision.is_some_and(|r| r >= s.revision.unwrap_or(0)) {
         return Err("The last revision is already on the server, so it can't be amended. Commit a new revision instead.".into());
     }
-    let out = lore(root).write().args(["revision", "amend", "--"]).arg(message).run_ok()?;
-    Ok(made(&out))
+    let out = lore(root).write().args(["revision", "amend", "--"]).arg(message).run_ok();
+    forget_upstream(root);
+    Ok(made(&out?))
 }
 
-/// Lore has no fetch: ask the server where the branch is, which the status then shows.
+/// Lore has no fetch: ask the server where the branch is, which the status then shows (the answer
+/// is kept for it).
 pub(crate) fn fetch(root: &At) -> Result<String, String> {
+    forget_upstream(root);
+    let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
     let out = lore(root).slow().args(["status", "--revision-only"]).run_ok()?;
     let s = parse::parse_status(&out.text());
+    if s.branch.is_some() {
+        remember_upstream(root, Some(&s), &s, epoch);
+    }
     if s.remote == Remote::Unknown {
         return Err(explain_text(
             "Lore didn't say where the server's copy of this branch is: the repository has no server, or it didn't answer.".into(),
@@ -811,8 +996,9 @@ pub(crate) fn fetch(root: &At) -> Result<String, String> {
 /// Pull is `lore sync`: up to the server's latest revision of the branch, merging when the branch
 /// diverged (conflicts stay in the Changes view). Empty when there was nothing to do.
 pub(crate) fn pull(root: &At) -> Result<String, String> {
-    let out = lore(root).slow().arg("sync").run_ok()?;
-    let text = out.combined();
+    let out = lore(root).slow().arg("sync").run_ok();
+    forget_upstream(root);
+    let text = out?.combined();
     if text.contains("could not read remote revision") {
         return Err(explain_text(format!(
             "Couldn't reach the Lore server, so nothing was pulled.\n\n{}",
@@ -830,8 +1016,9 @@ pub(crate) fn pull(root: &At) -> Result<String, String> {
 
 /// `lore push`: sends the branch's new revisions, and publishes a branch the server doesn't have.
 pub(crate) fn push(root: &At) -> Result<String, String> {
-    let out = lore(root).slow().arg("push").run_ok()?;
-    Ok(match parse::pushed(&out.text()) {
+    let out = lore(root).slow().arg("push").run_ok();
+    forget_upstream(root);
+    Ok(match parse::pushed(&out?.text()) {
         Some((n, branch)) => format!("Pushed r{n} to {branch}."),
         None => String::new(),
     })
@@ -841,13 +1028,150 @@ pub(crate) fn push(root: &At) -> Result<String, String> {
 // History
 // ---------------------------------------------------------------------------
 
-fn history(root: &At, count: u32, from: Option<&str>) -> Result<Vec<Revision>, String> {
-    let mut cmd = lore(root).arg("history");
-    if let Some(from) = from {
-        cmd = cmd.args(["--revision", from]);
+/// Names for the identities offline `lore` prints where online it prints a name (`Creator`,
+/// `Committer`): learned from `lore auth list` and from the server's answers. Identities are the
+/// server's, so this isn't per repository.
+fn known_names() -> &'static Mutex<HashMap<String, String>> {
+    static NAMES: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    NAMES.get_or_init(Default::default)
+}
+
+/// When the server last failed to name someone, by root: it isn't asked again for a minute.
+fn names_failed() -> &'static Mutex<HashMap<String, Instant>> {
+    static FAILED: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+    FAILED.get_or_init(Default::default)
+}
+
+/// `who` as offline `lore` printed it, as a name; None when it isn't known.
+fn name_of(who: &str) -> Option<String> {
+    if who.is_empty() {
+        return Some(String::new());
     }
-    let out = cmd.arg("--").arg(count.max(1).to_string()).run_ok()?;
-    Ok(parse::parse_revisions(&out.text()))
+    if let Some(name) = known_names().lock().ok().and_then(|m| m.get(who).cloned()) {
+        return Some(name);
+    }
+    parse::dex_user(who)
+}
+
+/// Name the authors and committers of revisions read offline; false when someone is left unknown
+/// (then as Lore printed them).
+fn name_revisions(revs: &mut [Revision]) -> bool {
+    let mut all = true;
+    for r in revs.iter_mut() {
+        for who in [&mut r.author, &mut r.committer] {
+            match name_of(who) {
+                Some(name) => *who = name,
+                None => all = false,
+            }
+        }
+    }
+    all
+}
+
+/// Learn names from the same revisions read offline (`raw`) and online.
+fn learn_names(raw: &[Revision], online: &[Revision]) {
+    let by_sig: HashMap<&str, &Revision> = online.iter().map(|r| (r.signature.as_str(), r)).collect();
+    let Ok(mut names) = known_names().lock() else { return };
+    for r in raw {
+        let Some(o) = by_sig.get(r.signature.as_str()) else { continue };
+        for (id, name) in [(&r.author, &o.author), (&r.committer, &o.committer)] {
+            if !id.is_empty() && !name.is_empty() {
+                names.insert(id.clone(), name.clone());
+            }
+        }
+    }
+}
+
+/// Revisions (`history`, `revision info`) from the local copy, named. The server is asked (as it
+/// always was before) only when the local copy can't answer, or names someone not known here yet.
+fn read_revisions(root: &At, args: &[String]) -> Result<Vec<Revision>, String> {
+    let out = lore(root).args(args).offline().run()?;
+    if !out.ok() {
+        return Ok(parse::parse_revisions(&lore(root).args(args).run_ok()?.text()));
+    }
+    let raw = parse::parse_revisions(&out.text());
+    let mut named = raw.clone();
+    if name_revisions(&mut named) {
+        return Ok(named);
+    }
+    // The user's own identity is local (`auth list`); others only the server can name.
+    identities(root);
+    named = raw.clone();
+    let k = key(root);
+    let failed_lately = names_failed().lock().ok().and_then(|m| m.get(&k).copied()).is_some_and(|t| t.elapsed() < UPSTREAM_TTL);
+    if name_revisions(&mut named) || failed_lately {
+        return Ok(named);
+    }
+    match lore(root).args(args).run_ok() {
+        Ok(out) => {
+            let online = parse::parse_revisions(&out.text());
+            learn_names(&raw, &online);
+            Ok(online)
+        }
+        Err(_) => {
+            if let Ok(mut m) = names_failed().lock() {
+                m.insert(k, Instant::now());
+            }
+            Ok(named)
+        }
+    }
+}
+
+/// What `lore auth list` said (the identities the CLI holds), by root, for ten minutes: it changes
+/// only with a sign-in or out. Its users' names are learned for [`name_of`].
+fn identity_cache() -> &'static Mutex<HashMap<String, (Instant, String)>> {
+    static WHO: OnceLock<Mutex<HashMap<String, (Instant, String)>>> = OnceLock::new();
+    WHO.get_or_init(Default::default)
+}
+
+const IDENTITY_TTL: Duration = Duration::from_secs(600);
+
+/// The cached `lore auth list` text for `root`, while fresh.
+pub(crate) fn cached_identities(root: &At) -> Option<String> {
+    let map = identity_cache().lock().ok()?;
+    let (at, text) = map.get(&key(root))?;
+    (at.elapsed() < IDENTITY_TTL).then(|| text.clone())
+}
+
+/// Keep what `lore auth list` printed. A failure or nobody signed in is not kept: the next read asks again.
+pub(crate) fn remember_identities(root: &At, out: Option<&Output>) -> String {
+    let text = out.filter(|o| o.ok()).map(Output::text).unwrap_or_default();
+    if let Ok(mut names) = known_names().lock() {
+        for (id, name) in parse::auth_users(&text) {
+            names.insert(id, name);
+        }
+    }
+    if !text.trim().is_empty() {
+        if let Ok(mut map) = identity_cache().lock() {
+            map.insert(key(root), (Instant::now(), text.clone()));
+        }
+    }
+    text
+}
+
+/// Forget every kept `lore auth list`: a sign-in or sign-out changes who the user is.
+pub(crate) fn forget_identities() {
+    if let Ok(mut map) = identity_cache().lock() {
+        map.clear();
+    }
+}
+
+/// `lore auth list` for `root`, cached or read now.
+pub(crate) fn identities(root: &At) -> String {
+    if let Some(text) = cached_identities(root) {
+        return text;
+    }
+    let out = lore(root).args(["auth", "list"]).run().ok();
+    remember_identities(root, out.as_ref())
+}
+
+fn history(root: &At, count: u32, from: Option<&str>) -> Result<Vec<Revision>, String> {
+    let mut args: Vec<String> = vec!["history".into()];
+    if let Some(from) = from {
+        args.extend(["--revision".to_string(), from.to_string()]);
+    }
+    args.extend(["--".to_string(), count.max(1).to_string()]);
+    read_revisions(root, &args)
 }
 
 pub(crate) fn log(root: &At, limit: u32) -> Result<Vec<GitCommit>, String> {
@@ -943,10 +1267,13 @@ pub(crate) fn graph(root: &At, q: &GraphQuery) -> Result<GitGraph, String> {
     if q.paths.iter().flatten().any(|p| !p.trim().is_empty()) {
         return unsupported("Filtering the log by file");
     }
-    let status = parse::parse_status(&lore(root).args(["status", "--revision-only"]).run_ok()?.text());
+    // The working tree's branch and revision are local; the server's copy (the `remote/x` label) is
+    // what the status last heard from it.
+    let mut status = parse::parse_status(&lore(root).args(["status", "--revision-only"]).run_ok_local()?.text());
+    with_upstream(root, &mut status, None);
     let refs: Vec<&str> = q.refs.iter().flatten().map(|r| r.trim()).filter(|r| !r.is_empty()).collect();
     // `branch list` is local; without it the current branch's line alone.
-    let starts = starts(&refs, status.branch.as_deref(), || read_branches(root).map(|b| b.local).unwrap_or_default())?;
+    let starts = starts(&refs, status.branch.as_deref(), || read_branches(root, false).map(|b| b.local).unwrap_or_default())?;
     let text = q.text.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_lowercase);
     let author = q.author.as_deref().map(str::trim).filter(|a| !a.is_empty()).map(str::to_lowercase);
     let filtered = text.is_some() || author.is_some();
@@ -1034,8 +1361,9 @@ fn revision_spec(rev: &str) -> Result<String, String> {
 /// One revision with its full message and the files it changed.
 pub(crate) fn commit_show(root: &At, hash: &str) -> Result<GitCommitDetail, String> {
     let sig = safe_signature(hash)?;
-    let out = lore(root).args(["revision", "info", "--delta", "--"]).arg(sig).run_ok()?;
-    let r = parse::parse_revisions(&out.text()).into_iter().next().ok_or_else(|| format!("Lore has no revision {sig}"))?;
+    let args: Vec<String> = ["revision", "info", "--delta", "--", sig].map(String::from).to_vec();
+    let r = read_revisions(root, &args)?.into_iter().next().ok_or_else(|| format!("Lore has no revision {sig}"))?;
+    remember_parent(&r);
     let (subject, body) = match r.message.split_once('\n') {
         Some((s, b)) => (s.trim().to_string(), b.trim().to_string()),
         None => (r.message.trim().to_string(), String::new()),
@@ -1064,18 +1392,49 @@ pub(crate) fn commit_show(root: &At, hash: &str) -> Result<GitCommitDetail, Stri
     })
 }
 
+/// Each revision's first parent (None: the first revision), learned when it was shown, so a file's
+/// diff needs no `revision info` of its own. Revisions never change.
+fn parents() -> &'static Mutex<HashMap<String, Option<String>>> {
+    static PARENTS: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
+    PARENTS.get_or_init(Default::default)
+}
+
+fn remember_parent(r: &Revision) {
+    if let Ok(mut map) = parents().lock() {
+        if map.len() > 4096 {
+            map.clear();
+        }
+        map.insert(r.signature.clone(), r.parents.first().cloned());
+    }
+}
+
+fn known_parent(sig: &str) -> Option<Option<String>> {
+    parents().lock().ok()?.get(sig).cloned()
+}
+
 /// One file of a revision against its first parent.
 pub(crate) fn commit_diff(root: &At, hash: &str, file: &str) -> Result<String, String> {
     let sig = safe_signature(hash)?;
     let file = clean_rel(file)?;
-    let info = lore(root).args(["revision", "info", "--"]).arg(sig).run_ok()?;
-    let parent = parse::parse_revisions(&info.text()).into_iter().next().and_then(|r| r.parents.into_iter().next());
+    // Known from showing the revision; otherwise read from the local copy.
+    let parent = match known_parent(sig) {
+        Some(p) => p,
+        None => {
+            let info = lore(root).args(["revision", "info", "--"]).arg(sig).run_ok_local()?;
+            let r = parse::parse_revisions(&info.text()).into_iter().next();
+            if let Some(r) = &r {
+                remember_parent(r);
+            }
+            r.and_then(|r| r.parents.into_iter().next())
+        }
+    };
     let Some(parent) = parent else {
         // The first revision: everything in it is new.
         let new = content_at(root, file, Some(sig), DIFF_INPUT_CAP)?;
         return Ok(cap_diff(crate::plastic::unified_diff(None, Some(file), None, new.as_deref())));
     };
-    let out = lore(root).cap(DIFF_CAP * 2).args(["diff", "--source", &parent, "--target", sig, "--"]).arg(file).run()?;
+    // From the local copy when it holds both sides; the server sends what it doesn't ("Address not found").
+    let out = lore(root).cap(DIFF_CAP * 2).args(["diff", "--source", &parent, "--target", sig, "--"]).arg(file).run_local()?;
     if !out.ok() && !out.truncated {
         return Err(explain(&out));
     }
@@ -1086,19 +1445,23 @@ pub(crate) fn commit_diff(root: &At, hash: &str, file: &str) -> Result<String, S
 // Branches
 // ---------------------------------------------------------------------------
 
-fn read_branches(root: &At) -> Result<parse::Branches, String> {
-    Ok(parse::parse_branches(&lore(root).args(["branch", "list"]).run_ok()?.text()))
+/// `lore branch list`. Its local branches come from the local copy (`--offline`, which lists no
+/// remote ones); `server` asks the server too, for the branches only it has.
+fn read_branches(root: &At, server: bool) -> Result<parse::Branches, String> {
+    let cmd = lore(root).args(["branch", "list"]);
+    let out = if server { cmd.run_ok()? } else { cmd.run_ok_local()? };
+    Ok(parse::parse_branches(&out.text()))
 }
 
 pub(crate) fn branches(root: &At) -> Result<GitBranches, String> {
-    let b = read_branches(root)?;
+    let b = read_branches(root, false)?;
     let mut local = b.local;
     local.sort();
     Ok(GitBranches { current: b.current, local })
 }
 
 pub(crate) fn branch_list(root: &At) -> Result<GitBranchList, String> {
-    let b = read_branches(root)?;
+    let b = read_branches(root, true)?;
     let local = b
         .local
         .iter()
@@ -1124,8 +1487,9 @@ pub(crate) fn branch_list(root: &At) -> Result<GitBranchList, String> {
 
 fn switch(root: &At, branch: &str) -> Result<(), String> {
     let branch = safe_branch(branch)?;
-    lore(root).slow().args(["branch", "switch", "--"]).arg(branch).run_ok()?;
-    Ok(())
+    let out = lore(root).slow().args(["branch", "switch", "--"]).arg(branch).run_ok();
+    forget_upstream(root);
+    out.map(|_| ())
 }
 
 pub(crate) fn checkout(root: &At, branch: &str, create: bool) -> Result<(), String> {
@@ -1139,8 +1503,9 @@ pub(crate) fn checkout(root: &At, branch: &str, create: bool) -> Result<(), Stri
 /// Bring the working tree to one revision of its branch (`lore sync <signature>`).
 pub(crate) fn checkout_commit(root: &At, hash: &str) -> Result<(), String> {
     let sig = safe_signature(hash)?;
-    lore(root).slow().args(["sync", "--"]).arg(sig).run_ok()?;
-    Ok(())
+    let out = lore(root).slow().args(["sync", "--"]).arg(sig).run_ok();
+    forget_upstream(root);
+    out.map(|_| ())
 }
 
 /// A branch on the server: switching to it makes it local. Returns its name.
@@ -1156,7 +1521,7 @@ pub(crate) fn checkout_remote(root: &At, branch: &str) -> Result<String, String>
 /// goes back to its branch afterwards.
 pub(crate) fn branch_create(root: &At, name: &str, from: Option<&str>, checkout: bool) -> Result<(), String> {
     let name = safe_branch(name)?;
-    let status = parse::parse_status(&lore(root).args(["status", "--revision-only"]).run_ok()?.text());
+    let status = parse::parse_status(&lore(root).args(["status", "--revision-only"]).run_ok_local()?.text());
     let home = status.branch.clone();
     match from.map(str::trim).filter(|f| !f.is_empty()) {
         None => {}
@@ -1165,7 +1530,9 @@ pub(crate) fn branch_create(root: &At, name: &str, from: Option<&str>, checkout:
         Some(f) if f.len() == 64 && f.bytes().all(|b| b.is_ascii_hexdigit()) => checkout_commit(root, f)?,
         Some(f) => switch(root, f)?,
     }
-    lore(root).write().args(["branch", "create", "--"]).arg(name).run_ok_offline_too()?;
+    let made = lore(root).write().args(["branch", "create", "--"]).arg(name).run_ok_offline_too();
+    forget_upstream(root);
+    made?;
     if !checkout {
         if let Some(home) = home {
             switch(root, &home)?;
@@ -1177,8 +1544,9 @@ pub(crate) fn branch_create(root: &At, name: &str, from: Option<&str>, checkout:
 /// `lore branch merge`: Lore commits a clean merge itself; conflicts stay for the Changes view.
 pub(crate) fn merge(root: &At, branch: &str) -> Result<String, String> {
     let branch = safe_branch(branch)?;
-    let out = lore(root).slow().args(["branch", "merge", "--"]).arg(branch).run_ok_offline_too()?;
-    let text = out.text();
+    let out = lore(root).slow().args(["branch", "merge", "--"]).arg(branch).run_ok_offline_too();
+    forget_upstream(root);
+    let text = out?.text();
     conflicts::remember_merge(&text, branch);
     let conflicts = parse::listed_under(&text, "Files in conflict:");
     if !conflicts.is_empty() {
@@ -1198,11 +1566,12 @@ pub(crate) fn merge(root: &At, branch: &str) -> Result<String, String> {
 /// revisions are kept.
 pub(crate) fn branch_delete(root: &At, branch: &str) -> Result<Option<String>, String> {
     let branch = safe_branch(branch)?;
-    if read_branches(root)?.current.as_deref() == Some(branch) {
+    if read_branches(root, false)?.current.as_deref() == Some(branch) {
         return Err(format!("{branch} is the branch you are on. Switch to another branch before deleting it."));
     }
-    lore(root).slow().args(["branch", "archive", "--"]).arg(branch).run_ok_offline_too()?;
-    Ok(None)
+    let out = lore(root).slow().args(["branch", "archive", "--"]).arg(branch).run_ok_offline_too();
+    forget_upstream(root);
+    out.map(|_| None)
 }
 
 #[cfg(test)]
@@ -1383,6 +1752,29 @@ M  c.txt (M)!
     }
 
     #[test]
+    fn the_servers_answer_is_kept() {
+        let root = At::local("/nowhere/mango-upstream-test");
+        let online = st("On branch main revision 4 -> aa\nRemote revision 3 -> bb\nLocal branch is ahead of remote\n");
+        let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
+        remember_upstream(&root, Some(&online), &online, epoch);
+        // An offline read of the same working tree takes the kept answer, without asking.
+        let mut here = st("On branch main revision 4 -> aa\n");
+        with_upstream(&root, &mut here, None);
+        assert_eq!((here.remote, here.remote_revision, here.remote_signature.as_deref()), (Remote::Ahead, Some(3), Some("bb")));
+        assert_eq!(status_from(&root, &here, &[]).ahead, 1);
+        // Forgotten (a push): an answer asked before it is not kept.
+        forget_upstream(&root);
+        remember_upstream(&root, Some(&online), &online, epoch);
+        assert!(cached_upstream(&root).is_none());
+        // A server that didn't answer is kept as no word, for the working tree it was asked for.
+        let epoch = UPSTREAM_EPOCH.load(Ordering::SeqCst);
+        remember_upstream(&root, None, &here, epoch);
+        let u = cached_upstream(&root).unwrap();
+        assert_eq!((u.remote, u.branch.as_deref(), u.local.as_deref()), (Remote::Unknown, Some("main"), Some("aa")));
+        forget_upstream(&root);
+    }
+
+    #[test]
     fn names_and_paths() {
         assert_eq!(safe_branch(" feat/x-1 ").unwrap(), "feat/x-1");
         for bad in ["", "-x", "/x", "x/", "a b", "a..b", "a@1", "a:b", "a//b", "x\u{1}"] {
@@ -1488,6 +1880,34 @@ M  c.txt (M)!
         };
         if let Ok(repo) = std::env::var("MANGO_LORE_LOG_REPO") {
             let root = At::local(&repo);
+            // What a poll costs: the first status asks the server beside the local scan, later ones
+            // only scan (the server's answer is kept), and the log and locks read locally.
+            let timed = |what: &str, f: &dyn Fn() -> String| {
+                let t = std::time::Instant::now();
+                let said = f();
+                println!("{what}: {:?} {said}", t.elapsed());
+            };
+            let show = |s: GitStatus| format!("{:?} {:?} upstream {:?} +{} -{} {} files", s.branch, s.head, s.upstream, s.ahead, s.behind, s.files.len());
+            timed("status, first", &|| show(status(&root).unwrap()));
+            let first = status(&root).unwrap();
+            timed("status, cached", &|| show(status(&root).unwrap()));
+            let q = GraphQuery { refs: None, skip: 0, limit: 50, text: None, author: None, paths: None };
+            timed("log", &|| format!("{} commits", graph(&root, &q).unwrap().commits.len()));
+            timed("log again", &|| format!("{} commits", graph(&root, &q).unwrap().commits.len()));
+            timed("locks", &|| format!("{:?}", locks::locks(&root).map(|l| l.len())));
+            timed("locks again", &|| format!("{:?}", locks::locks(&root).map(|l| l.len())));
+            // A minute old: the status doesn't wait, the server is asked in the background.
+            upstreams().lock().unwrap().get_mut(&key(&root)).unwrap().at -= UPSTREAM_TTL;
+            timed("status, stale", &|| show(status(&root).unwrap()));
+            let waited = std::time::Instant::now();
+            while asking().lock().unwrap().contains(&key(&root)) && waited.elapsed() < Duration::from_secs(30) {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            println!("asked again in the background: {:?}", waited.elapsed());
+            assert!(cached_upstream(&root).unwrap().at.elapsed() < UPSTREAM_TTL);
+            forget_upstream(&root);
+            let online = status(&root).unwrap();
+            assert_eq!((first.upstream, first.ahead, first.behind), (online.upstream, online.ahead, online.behind));
             for refs in [None, Some(vec!["HEAD".to_string()])] {
                 let g = all(&root, None, refs.clone(), 0, 50).unwrap();
                 println!("{repo} {refs:?}: branch {:?}, head {:?}", g.branch, g.head);
@@ -1497,10 +1917,12 @@ M  c.txt (M)!
                 assert!(g.branch.is_some() && !g.commits.is_empty());
             }
             let first = all(&root, None, None, 0, 1).unwrap().commits.remove(0);
+            let t = std::time::Instant::now();
             let detail = commit_show(&root, &first.hash).unwrap();
-            println!("{} files in {}", detail.files.len(), detail.short_hash);
-            if let Some(f) = detail.files.iter().find(|f| f.status != "D") {
-                println!("diff of {}: {} bytes", f.path, commit_diff(&root, &first.hash, &f.path).unwrap().len());
+            println!("{} files in {} by {}: {:?}", detail.files.len(), detail.short_hash, detail.author, t.elapsed());
+            for f in detail.files.iter().filter(|f| f.status != "D").take(3) {
+                let t = std::time::Instant::now();
+                println!("diff of {}: {} bytes, {:?}", f.path, commit_diff(&root, &first.hash, &f.path).unwrap().len(), t.elapsed());
             }
         }
 

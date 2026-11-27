@@ -12,8 +12,11 @@ import { browserTabId, hostOf, isBlank, isLocalDevUrl, parseBrowserTab } from '~
  * webview (src-tauri/src/browser.rs) laid over the main window where its tab's pane is,
  * created with the tab and kept until the tab closes, so a page keeps its state while
  * another tab is in front. Native views are drawn above all HTML: this store moves them
- * with their panes every frame and hides them whenever their tab is not on screen or a
- * menu, dialog or other layer floats over the workspace (composables/useOverlay.ts).
+ * with their panes and hides them whenever their tab is not on screen or a menu, dialog,
+ * resize drag or other layer floats over the workspace (composables/useOverlay.ts). It looks
+ * when something says the panes may have moved (a placeholder resized, the window resized,
+ * a tab attached or detached, a layer opened or closed, a page loaded), not every frame, so
+ * the page can idle; while a page shows, a slow check catches a pane that only moved.
  *
  * An agent's browser tools (an MCP server Mango runs per chat) drive the same webviews;
  * the first call in a chat with no browser asks for one (`browser://agent-open`).
@@ -48,6 +51,12 @@ const sent = new Map<string, string>()
 const sending = new Set<string>()
 let lastBounds: BrowserBounds = { x: 0, y: 0, width: 800, height: 600 }
 let frame = 0
+/** The slow check while a page shows: a pane can move without changing size (nothing else tells). */
+let slow: ReturnType<typeof setTimeout> | undefined
+const SLOW_CHECK_MS = 250
+/** Placeholders resizing (split drags, panels opening, the terminal growing, the window resized). */
+let resized: ResizeObserver | null = null
+const observer = () => (resized ??= typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => kick()))
 /** Set once `init` has run: webviews are created only after the reset that starts it. */
 let started: Promise<void> | null = null
 
@@ -85,7 +94,10 @@ export const useBrowser = defineStore('browser', {
         if (s.loading) b.error = undefined
       })
       await on('browser://agent-open', ({ id, threadId, url }) => this._agentOpen(id, threadId, url))
-      watch(overlayOpen, kick)
+      watch(overlayOpen, () => kick())
+      // A page loading, a blank tab getting its first page, a failure: whether a webview shows at all.
+      watch(() => Object.values(this.browsers).map(b => `${b.id}\0${isBlank(b.url)}\0${!!b.error}`).join('\n'), () => kick())
+      if (typeof window !== 'undefined') window.addEventListener('resize', () => kick())
       // A project closed in the window: its browsers go with it.
       const ws = useWorkspace()
       watch(() => ws.openProjects.map(p => p.path), (paths) => {
@@ -112,7 +124,7 @@ export const useBrowser = defineStore('browser', {
         this.browsers[id] = { id, projectPath, url, title: '', loading: !isBlank(url), reloads: 0, ...(opts.threadId ? { threadId: opts.threadId } : {}) }
         const created = this.init().then(() => call('browser_open', { id, url, bounds: lastBounds, visible: false, projectPath }))
         ready.set(id, created)
-        created.then(kick, (e) => {
+        created.then(() => kick(), (e) => {
           const b = this.browsers[id]
           if (b) { b.error = errorText(e); b.loading = false }
         })
@@ -193,6 +205,7 @@ export const useBrowser = defineStore('browser', {
     forget(id: string) {
       if (!this.browsers[id]) return
       delete this.browsers[id]
+      unobserve(id)
       hosts.delete(id)
       sent.delete(id)
       const created = ready.get(id)
@@ -202,11 +215,16 @@ export const useBrowser = defineStore('browser', {
 
     /** A pane shows the browser: its webview follows `el` until `detach`. */
     attach(id: string, el: HTMLElement) {
+      if (hosts.get(id) !== el) unobserve(id)
       hosts.set(id, el)
+      observer()?.observe(el)
       kick()
     },
     detach(id: string, el: HTMLElement) {
-      if (hosts.get(id) === el) hosts.delete(id)
+      if (hosts.get(id) === el) {
+        unobserve(id)
+        hosts.delete(id)
+      }
       kick()
     },
 
@@ -233,15 +251,24 @@ function safeOrigin(url: string) {
 
 /* ---------- keeping the native webviews over their panes ---------- */
 
-/** Look again on the next frame (and every frame while a browser is on screen). */
+/** Stop following a browser's placeholder, unless another browser shows in it too. */
+function unobserve(id: string) {
+  const el = hosts.get(id)
+  if (el && ![...hosts].some(([other, at]) => other !== id && at === el)) resized?.unobserve(el)
+}
+
+/** Look again on the next frame. */
 function kick() {
   if (!frame && typeof window !== 'undefined') frame = requestAnimationFrame(sync)
 }
 
 function sync() {
   frame = 0
+  clearTimeout(slow)
+  slow = undefined
   if (!isTauri()) return
   const store = useBrowser()
+  let shown = false
   for (const b of Object.values(store.browsers)) {
     const el = hosts.get(b.id)
     let want = 'hidden'
@@ -252,12 +279,13 @@ function sync() {
       if (bounds.width >= 2 && bounds.height >= 2) {
         want = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
         lastBounds = bounds
+        shown = true
       }
     }
     if (sent.get(b.id) !== want) void send(b.id, want, bounds)
   }
-  // Panes move without telling anyone (split drags, panels sliding in, the terminal growing): keep looking.
-  if (hosts.size) frame = requestAnimationFrame(sync)
+  // Resizes, layers and tabs say so (above); a pane that only moved does not: look now and then while one shows.
+  if (shown) slow = setTimeout(kick, SLOW_CHECK_MS)
 }
 
 /** One call at a time per webview, so a quick hide-then-show cannot arrive the wrong way round. */

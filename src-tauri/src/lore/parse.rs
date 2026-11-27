@@ -394,6 +394,39 @@ pub(crate) fn parse_branches(text: &str) -> Branches {
     out
 }
 
+/// The users `lore auth list` names (`  User: ann@x.io (<identity>)`), as (identity, name).
+pub(crate) fn auth_users(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .filter_map(|line| {
+            let rest = line.trim().strip_prefix("User:")?.trim();
+            let (name, id) = rest.rsplit_once(" (")?;
+            let (name, id) = (name.trim(), id.strip_suffix(')')?.trim());
+            (!name.is_empty() && !id.is_empty() && !id.contains(char::is_whitespace)).then(|| (id.to_string(), name.to_string()))
+        })
+        .collect()
+}
+
+/// The user inside an identity offline `lore` prints in place of a name (`Creator`): a Dex subject,
+/// base64url of a small protobuf whose field 1 is the user's id in its connector and field 2 the
+/// connector. Only an id that is an email (Dex's password users, as Mango sets them up) is a name.
+pub(crate) fn dex_user(id: &str) -> Option<String> {
+    use base64::Engine as _;
+    let id = id.trim().trim_end_matches('=');
+    if id.is_empty() || id.len() > 512 {
+        return None;
+    }
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(id).ok()?;
+    let rest = bytes.strip_prefix(&[0x0a])?;
+    let (&len, rest) = rest.split_first()?;
+    let len = len as usize;
+    if len >= 0x80 || rest.len() <= len || rest[len] != 0x12 {
+        return None;
+    }
+    let user = std::str::from_utf8(&rest[..len]).ok()?;
+    let fine = user.contains('@') && !user.starts_with('@') && !user.chars().any(|c| c.is_whitespace() || c.is_control());
+    fine.then(|| user.to_string())
+}
+
 /// One lock from `lore lock query`: path and owner.
 pub(crate) fn parse_locks(text: &str) -> Vec<(String, String)> {
     text.lines()
@@ -583,6 +616,67 @@ Tracked changes: 5 added, 1 modified, 2 deleted
                 (Section::Untracked, "A", "ü b.txt", None, false),
             ]
         );
+    }
+
+    /// `lore --offline status --scan` and `--revision-only` in a repository with a server (lore
+    /// 0.14.0+2389): no "Remote revision" or "Local branch …" line, the rest as online.
+    #[test]
+    fn reads_offline_status() {
+        let scan = parse_status(
+            "Repository 01a21b48859576709452c18853f6a1a9
+On branch main revision 2 -> 355b3a1071989b7f0e72d3408e1f2d1eb4ff9f08dad5c4cabb8d705eb0542111
+No tracked changes
+",
+        );
+        assert_eq!((scan.branch.as_deref(), scan.revision), (Some("main"), Some(2)));
+        assert_eq!(scan.signature.as_deref(), Some("355b3a1071989b7f0e72d3408e1f2d1eb4ff9f08dad5c4cabb8d705eb0542111"));
+        assert_eq!((scan.remote, scan.remote_revision, scan.remote_signature.as_deref()), (Remote::Unknown, None, None));
+        assert!(scan.entries.is_empty() && !scan.merging);
+        let rev_only = parse_status(
+            "Repository 01a21b48859576709452c18853f6a1a9
+On branch main revision 2 -> 355b3a1071989b7f0e72d3408e1f2d1eb4ff9f08dad5c4cabb8d705eb0542111
+",
+        );
+        assert_eq!((rev_only.branch, rev_only.signature), (scan.branch.clone(), scan.signature.clone()));
+        // With changes (an offline repository; the same lines).
+        let changed = parse_status(
+            "Repository 01a21d162c5676ffa7e8fddb2de102b6
+On branch main revision 1 -> fb5dda652dd628bcb9455ac6101aefbcf3ca0806c68cd1d3b8a13294c359b0a1
+Changes not staged for commit:
+M a.txt
+Untracked files:
+A n.txt
+Tracked changes: 1 added, 1 modified
+",
+        );
+        let rows: Vec<(Section, &str, &str)> = changed.entries.iter().map(|e| (e.section, e.letter, e.path.as_str())).collect();
+        assert_eq!(rows, vec![(Section::Unstaged, "M", "a.txt"), (Section::Untracked, "A", "n.txt")]);
+        assert_eq!(changed.remote, Remote::Unknown);
+    }
+
+    /// `lore auth list` (lore 0.14.0+2389), and the identity offline `history` prints for that user.
+    #[test]
+    fn reads_identities() {
+        let text = "Auth URL: oidc+https://lore.example.org/dex
+  User: ann@example.org (Cg9hbm5AZXhhbXBsZS5vcmcSBWxvY2Fs)
+  Domains: lore.example.org, lore.example.org
+  Expires: Fri, 27 Nov 2026 13:08:39 +0000
+Auth URL: oidc+https://lore.example.org/dex
+  Resource: 01a21b48859576709452c18853f6a1a9
+  User: ann@example.org (Cg9hbm5AZXhhbXBsZS5vcmcSBWxvY2Fs)
+";
+        let users = auth_users(text);
+        assert_eq!(users.len(), 2);
+        assert_eq!(users[0], ("Cg9hbm5AZXhhbXBsZS5vcmcSBWxvY2Fs".to_string(), "ann@example.org".to_string()));
+        assert!(auth_users("User: nobody\nUser:  (x)\n").is_empty());
+        // The real one from the server above: `\n\x14reapermaga@gmail.com\x12\x05local`.
+        assert_eq!(dex_user("ChRyZWFwZXJtYWdhQGdtYWlsLmNvbRIFbG9jYWw").as_deref(), Some("reapermaga@gmail.com"));
+        assert_eq!(dex_user("Cg9hbm5AZXhhbXBsZS5vcmcSBWxvY2Fs").as_deref(), Some("ann@example.org"));
+        // A GitHub user's id is a number: not a name. Neither is anything else.
+        assert_eq!(dex_user("CgcxMjM0NTY3EgZnaXRodWI"), None);
+        for other in ["", "ann@example.org", "reapermaga@gmail.com", "@@@", "ChQ", &"A".repeat(600)] {
+            assert_eq!(dex_user(other), None, "{other}");
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { useWorkspace } from '~/stores/workspace'
 import { useReleases } from '~/stores/releases'
 import { vcsTerms } from '~/utils/vcs'
+import { focusGate } from '~/utils/focusGate'
 
 /**
  * Keeps the active project's releases current for the Releases button on the tool stripe and the
@@ -45,10 +46,13 @@ export function useReleaseWatch() {
   watch(open, (o) => { if (o) readNow() })
   const list = computed(() => (path.value ? releases.lists[path.value] : undefined))
   watch(() => `${path.value}|${list.value?.loading}|${list.value?.fetchedAt}|${open.value}|${mark.value}`, schedule, { immediate: true })
-  onMounted(() => window.addEventListener('focus', readNow))
+  // A failed read is tried again on focus: alt-tabbing back and forth does so at most every few seconds.
+  const onFocus = focusGate(readNow)
+  onMounted(() => window.addEventListener('focus', onFocus))
   onBeforeUnmount(() => {
     clearTimeout(timer)
-    window.removeEventListener('focus', readNow)
+    onFocus.cancel()
+    window.removeEventListener('focus', onFocus)
   })
 
   return { path, mark }
