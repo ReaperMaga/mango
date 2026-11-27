@@ -2,7 +2,8 @@
 //! them, read through the GitHub CLI (`gh`) like the pull requests in `github.rs`. A project on a
 //! GitLab server gets the same from its releases and pipelines (`gitlab_releases.rs`). `gh` owns the
 //! sign-in; Mango never sees a token. Which run belongs to which release is worked out by the
-//! frontend (`app/utils/releaseRuns.ts`) from what is read here.
+//! frontend (`app/utils/releaseRuns.ts`) from what is read here. The Actions tool window lists the
+//! same runs on their own (`gh_runs`) and shares the run, job and action commands.
 
 use std::process::Command;
 
@@ -113,6 +114,21 @@ pub struct GhReleases {
     pub releases: Vec<GhRelease>,
     pub runs: Vec<GhRun>,
 }
+
+/// A repository's recent workflow runs, newest first, for the Actions tool window (`gh_runs`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GhRunList {
+    /// "github", or "gitlab" for a project on a GitLab server (pipelines).
+    pub provider: &'static str,
+    pub host: String,
+    pub owner: String,
+    pub repo: String,
+    pub runs: Vec<GhRun>,
+}
+
+/// Runs the Actions window lists at most.
+const MAX_RUNS: u32 = 100;
 
 struct Repo {
     host: String,
@@ -246,6 +262,19 @@ fn releases(r: Repo, count: u32) -> Result<GhReleases, String> {
     Ok(GhReleases { provider: Provider::GitHub.id(), host: r.host, owner: r.owner, repo: r.repo, releases, runs })
 }
 
+/// The repository's recent runs, newest first; only a branch's when `branch` names one.
+fn runs(r: Repo, branch: Option<&str>, count: u32) -> Result<GhRunList, String> {
+    let branch = branch.map(crate::git::safe_ref).transpose()?;
+    let mut cmd = api(&r, "actions/runs");
+    // `-f` sends the value as a plain string (never a file), as a query parameter with GET.
+    cmd.args(["-X", "GET", "-F"]).arg(format!("per_page={}", count.clamp(1, MAX_RUNS)));
+    if let Some(b) = branch {
+        cmd.arg("-f").arg(format!("branch={b}"));
+    }
+    let v = run_json(cmd).map_err(|e| not_found(e, &format!("repository {}/{}", r.owner, r.repo)))?;
+    Ok(GhRunList { provider: Provider::GitHub.id(), host: r.host, owner: r.owner, repo: r.repo, runs: runs_from_json(&v) })
+}
+
 fn jobs_of(r: &Repo, run: GhRun) -> Result<GhRunDetail, String> {
     let v = run_json(api(r, &format!("actions/runs/{}/jobs?per_page=100", run.id)))
         .map_err(|e| not_found(e, &format!("workflow run {}", run.id)))?;
@@ -312,6 +341,20 @@ pub async fn gh_releases(app: AppHandle, path: String, count: u32) -> Result<GhR
     blocking(move || match gitlab_of(&app, &path) {
         Some(f) => gitlab_releases::releases(&GlabAt::of(&app, &path)?, f, count),
         None => releases(repo_of(&app, &path)?, count),
+    })
+    .await
+}
+
+/// The recent workflow runs (GitLab: pipelines) of the project at `path`, newest first, up to
+/// `count`; only those of `branch` when it names one.
+#[tauri::command]
+pub async fn gh_runs(app: AppHandle, path: String, branch: Option<String>, count: u32) -> Result<GhRunList, String> {
+    blocking(move || {
+        let branch = branch.as_deref().map(str::trim).filter(|b| !b.is_empty());
+        match gitlab_of(&app, &path) {
+            Some(f) => gitlab_releases::runs(&GlabAt::of(&app, &path)?, f, branch, count.clamp(1, MAX_RUNS)),
+            None => runs(repo_of(&app, &path)?, branch, count),
+        }
     })
     .await
 }
@@ -428,6 +471,12 @@ mod tests {
         let r = Repo { host: "github.com".into(), owner: "acme".into(), repo: "app".into() };
         assert!(run_action(r, 1, "delete").unwrap_err().contains("Unknown action"));
         assert!(check_id(0).is_err());
+    }
+
+    #[test]
+    fn refuses_unsafe_branches_before_asking_github() {
+        let r = Repo { host: "github.com".into(), owner: "acme".into(), repo: "app".into() };
+        assert!(runs(r, Some("--upload-pack=x"), 20).is_err());
     }
 
     #[test]

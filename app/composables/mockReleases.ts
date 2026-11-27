@@ -1,9 +1,9 @@
-import type { GhAsset, GhRelease, GhReleases, GhRun, GhRunAction, GhRunDetail, GhRunJob, GhRunState } from '~/types/ipc'
+import type { GhAsset, GhRelease, GhReleases, GhRun, GhRunAction, GhRunDetail, GhRunJob, GhRunList, GhRunState } from '~/types/ipc'
 import { aliasMockJob, isGitlabMock, registerMockJob } from '~/composables/mockGithub'
 import { baseName } from '~/utils/paths'
 
 /**
- * Releases for the browser preview (`pnpm dev`), told as a small story that plays out while you
+ * Releases and workflow runs for the browser preview (`pnpm dev`), told as a small story that plays out while you
  * watch: v0.1.29 is being built (draft, jobs finishing one by one, files appearing as each platform
  * uploads, published at the end), a trial build of the release workflow on main fails its Windows
  * job (re-run it), and older releases sit below. Job logs come from mockGithub's `gh_job`.
@@ -21,7 +21,9 @@ const MIN = 60_000
 interface MockJob { name: string; from: number; to: number; fails: boolean; platform?: 'win' | 'mac-arm' | 'mac-x64' | 'linux' }
 interface MockRun {
   id: number
-  event: 'push' | 'workflow_dispatch'
+  /** The workflow, when it is not the release workflow (the Actions window's CI runs). */
+  workflow?: { id: number; name: string }
+  event: 'push' | 'workflow_dispatch' | 'pull_request' | 'schedule'
   branch: string
   sha: string
   title: string
@@ -31,7 +33,7 @@ interface MockRun {
   cancelledAt: number | null
 }
 
-const stories = new Map<string, { at: number; runs: Map<number, MockRun> }>()
+const stories = new Map<string, { at: number; runs: Map<number, MockRun>; ci: Map<number, MockRun> }>()
 
 function story(path: string) {
   let s = stories.get(path)
@@ -59,9 +61,31 @@ function story(path: string) {
       { name: 'Build (Windows x64)', from: 5_000, to: 30_000, fails: true },
     ],
   })
-  s = { at, runs }
+  s = { at, runs, ci: ciRuns(at) }
   stories.set(path, s)
   return s
+}
+
+/**
+ * The Actions window's other runs: CI on main building right now, a pull request whose tests failed
+ * (re-run it), and finished runs of other workflows further down.
+ */
+function ciRuns(at: number): Map<number, MockRun> {
+  const CI = { id: 301, name: 'CI' }
+  const checks = (fails: boolean): MockJob[] => [
+    { name: 'Typecheck', from: 0, to: 14_000, fails: false },
+    { name: 'Unit tests', from: 0, to: 26_000, fails },
+    { name: 'Rust (Linux)', from: 0, to: 55_000, fails: false },
+    { name: 'Rust (Windows check)', from: 0, to: 48_000, fails: false },
+  ]
+  const list: MockRun[] = [
+    { id: 9101, workflow: CI, event: 'push', branch: 'main', sha: '609baba5d1c0e2f3a4b5c6d7e8f90a1b2c3d4e5f', title: 'feat: open settings from the welcome screen (#131)', start: at - 12_000, attempt: 1, cancelledAt: null, jobs: checks(false) },
+    { id: 9102, workflow: CI, event: 'pull_request', branch: 'feat/link-picker', sha: '7a2c9e1f0b3d4c5e6f7a8b9c0d1e2f3a4b5c6d7e', title: 'feat(links): pick an open pull request or issue to link', start: at - 38 * MIN, attempt: 1, cancelledAt: null, jobs: checks(true) },
+    { id: 9103, workflow: { id: 302, name: 'Docs' }, event: 'push', branch: 'main', sha: 'cd997df0a1b2c3d4e5f60718293a4b5c6d7e8f90', title: 'chore(release): v0.11.0', start: at - 2 * 60 * MIN, attempt: 1, cancelledAt: null, jobs: [{ name: 'Build site', from: 0, to: 70_000, fails: false }, { name: 'Deploy', from: 70_000, to: 95_000, fails: false }] },
+    { id: 9104, workflow: CI, event: 'push', branch: 'main', sha: 'd3f3a53e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c', title: 'feat: resolve merge conflicts in a merge editor and work smoothly with Lore (#130)', start: at - 3 * 60 * MIN, attempt: 1, cancelledAt: null, jobs: checks(false) },
+    { id: 9105, workflow: { id: 303, name: 'CodeQL' }, event: 'schedule', branch: 'main', sha: '13dad07a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e', title: 'CodeQL', start: at - 26 * 60 * MIN, attempt: 1, cancelledAt: null, jobs: [{ name: 'Analyze (javascript-typescript)', from: 0, to: 4 * MIN, fails: false }, { name: 'Analyze (rust)', from: 0, to: 7 * MIN, fails: false }] },
+  ]
+  return new Map(list.map(r => [r.id, r]))
 }
 
 const iso = (ms: number) => new Date(ms).toISOString()
@@ -106,7 +130,7 @@ function toRun(run: MockRun, now: number): GhRun {
   const state = runState(jobs)
   const ends = jobs.map(j => (j.completedAt ? Date.parse(j.completedAt) : 0))
   return {
-    id: run.id, workflowId: RELEASE_FLOW, workflow: 'Release', title: run.title, event: run.event,
+    id: run.id, workflowId: run.workflow?.id ?? RELEASE_FLOW, workflow: run.workflow?.name ?? 'Release', title: run.title, event: run.event,
     headBranch: run.branch, headSha: run.sha, state, url: `${BASE}/actions/runs/${run.id}`,
     number: run.id - 8960, attempt: run.attempt, createdAt: iso(run.start), startedAt: iso(run.start),
     updatedAt: iso(state === 'pending' || state === 'queued' ? now : Math.max(...ends, run.start)),
@@ -264,9 +288,25 @@ function githubTagRun(path: string, tag: string): GhRunDetail | null {
   return { run, jobs }
 }
 
+/** The Actions window's list: CI runs and the release story's runs, newest first, a branch's only when asked. */
+export function mockGhRuns(path: string, branch: string | null, count: number): GhRunList {
+  const s = story(path)
+  const now = Date.now()
+  let runs = [...s.ci.values(), ...s.runs.values()].map(r => toRun(r, now))
+  for (let n = 1; n <= 6; n++) runs.push(pastRun(n, s.at))
+  if (branch) runs = runs.filter(r => r.headBranch === branch)
+  runs.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+  runs = runs.slice(0, count)
+  if (!isGitlabMock(path)) return { provider: 'github', host: 'github.com', owner: OWNER, repo: REPO, runs }
+  return { provider: 'gitlab', host: 'gitlab.com', owner: 'acme/backend', repo: baseName(path), runs: runs.map(r => glRun(path, r)) }
+}
+
 export function mockGhRun(path: string, id: number): GhRunDetail {
   const s = story(path)
-  const run = s.runs.get(id)
+  const run = s.runs.get(id) ?? s.ci.get(id)
+  // An older release's finished run, as its tag reads it.
+  const past = !run && id > 8000 && id <= 8012 ? githubTagRun(path, `v0.1.${29 - (id - 8000)}`) : null
+  if (past) return isGitlabMock(path) ? glDetail(path, past)! : past
   if (!run) throw new Error(`GitHub has no workflow run ${id}, or the account gh is signed in with cannot see it.`)
   const now = Date.now()
   const detail = { run: toRun(run, now), jobs: runJobs(run, now) }
@@ -275,7 +315,7 @@ export function mockGhRun(path: string, id: number): GhRunDetail {
 
 export function mockGhRunAction(path: string, id: number, action: GhRunAction) {
   const s = story(path)
-  const run = s.runs.get(id)
+  const run = s.runs.get(id) ?? s.ci.get(id)
   if (!run) throw new Error(`GitHub has no workflow run ${id}, or the account gh is signed in with cannot see it.`)
   const now = Date.now()
   const state = toRun(run, now).state

@@ -883,6 +883,15 @@ export interface GhReleases {
 
 export type GhRunAction = 'rerun-failed' | 'rerun' | 'cancel'
 
+/** A repository's recent workflow runs (GitLab: pipelines), newest first (`gh_runs`, the Actions tool window). */
+export interface GhRunList {
+  provider: ForgeProvider
+  host: string
+  owner: string
+  repo: string
+  runs: GhRun[]
+}
+
 /* ---------- project files (the Files view and the editor) ----------
  * Paths are relative to the project folder, with forward slashes; the backend
  * refuses anything that leads outside it.
@@ -1842,6 +1851,11 @@ export interface Commands {
    * `count` (at most 100), with the repository's 50 most recent workflow runs.
    */
   gh_releases: [{ path: string; count: number }, GhReleases]
+  /**
+   * The recent workflow runs (GitLab: pipelines) of the project at `path`, newest first, up to `count`
+   * (at most 100); only those of `branch` when it names one.
+   */
+  gh_runs: [{ path: string; branch: string | null; count: number }, GhRunList]
   /** The newest workflow run for a release's tag (its push, or its publishing), with its jobs; null when none ran. */
   gh_tag_run: [{ path: string; tag: string }, GhRunDetail | null]
   /** A workflow run by id, with its jobs. */
