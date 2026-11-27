@@ -90,6 +90,9 @@ export function buildConflictPrompt(input: ConflictPromptInput): string {
     'Remove all conflict markers (`<<<<<<<`, `|||||||`, `=======`, `>>>>>>>`) and keep the file\'s existing formatting and line endings.',
     'If the project has a build, type check or tests that run quickly, run them to check the result.',
     `Do not stage files, mark conflicts resolved, commit, ${op?.kind === 'rebase' || op?.kind === 'cherry-pick' || op?.kind === 'revert' ? `continue or abort the ${op.kind}` : 'abort or finish the merge'}, reset, check out files or switch branches${vcs === 'lore' ? ' (no `lore branch merge resolve`, `lore stage` or `lore commit`)' : ''}. I'll review the result and do that myself.`,
+    ...(vcs === 'lore'
+      ? ['Leave the `~base`, `~mine` and `~theirs` copies Lore keeps next to each conflicted file (e.g. `a.txt~mine`): they are the merge\'s sides, and Lore removes them itself when the merge is committed.']
+      : []),
     `Finish with a short summary per file of what you chose and why.`,
   ]
   parts.push(rules.map(r => `- ${r}`).join('\n'))

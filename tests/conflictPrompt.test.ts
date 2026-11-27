@@ -57,6 +57,7 @@ test('Lore: no history, and its own commands named', () => {
   assert.match(text, /with Lore/)
   assert.doesNotMatch(text, /did since/)
   assert.match(text, /no `lore branch merge resolve`, `lore stage` or `lore commit`/)
+  assert.match(text, /Leave the `~base`, `~mine` and `~theirs` copies/)
 })
 
 test('long lists are capped, subjects kept on one line', () => {
