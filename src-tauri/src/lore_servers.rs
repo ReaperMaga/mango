@@ -936,6 +936,7 @@ pub async fn lore_login(
     let server = parse_server_url(&url)?;
     let bin = find().ok_or(MISSING)?;
     let argv = login_argv(&bin.to_string_lossy(), &server);
+    crate::lore::forget_identities();
     crate::pty::start(app, &state, None, cols, rows, Some(argv), &[("NO_COLOR", "1")])
 }
 
@@ -947,6 +948,7 @@ pub async fn lore_logout(url: String) -> Result<(), String> {
         let bin = find().ok_or(MISSING)?;
         let probe = Probe::new(&server)?;
         let out = run(&bin, &logout_argv(&probe.path()), PROBE_TIMEOUT)?;
+        crate::lore::forget_identities();
         if out.ok() {
             Ok(())
         } else {
