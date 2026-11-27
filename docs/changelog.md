@@ -2,6 +2,16 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.12.0
+
+### New
+
+- Open settings from the welcome screen.
+
+### Fixes
+
+- A Lore server's sign-in no longer stops answering after a token refresh (`lore login` failed with exit code 28). Mango now installs Dex 2.45.1 and a watchdog that restarts Dex if it hangs; to update a server, open its sign-in and choose Change…, then Apply.
+
 ## 0.11.0
 
 ### New
