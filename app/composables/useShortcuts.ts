@@ -6,6 +6,7 @@ import { useFiles } from '~/stores/files'
 import { isFileTab } from '~/utils/fileTabs'
 import { useBrowser } from '~/stores/browser'
 import { useGitLog } from '~/stores/gitLog'
+import { useForge } from '~/stores/forge'
 import { useWindows } from '~/stores/windows'
 import { pickFolder } from '~/composables/useBackend'
 import { projectWhere } from '~/composables/envProjects'
@@ -82,7 +83,7 @@ export function useShortcuts() {
     files: () => { if (ws.hasProject) ws.toggleFiles() },
     links: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleLinks() },
     releases: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleReleases() },
-    actions: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge) ws.toggleActions() },
+    actions: () => { if (ws.hasProject && vcsTerms(ws.activeProject?.vcs).forge && useForge().connected(ws.activeProjectPath)) ws.toggleActions() },
     'git-log': () => { if (ws.hasProject) useGitLog().open() },
     env: () => { if (ws.hasProject) ws.toggleEnv() },
     // Never the browser's "save page"; only a file tab has something to save.

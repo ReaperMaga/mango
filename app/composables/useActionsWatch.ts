@@ -2,12 +2,14 @@ import { useWorkspace } from '~/stores/workspace'
 import { useActions } from '~/stores/actions'
 import { useReleases } from '~/stores/releases'
 import { useGit } from '~/stores/git'
+import { useForge } from '~/stores/forge'
 import { useThreads } from '~/stores/threads'
 import { actionsMark } from '~/utils/actionRuns'
 import { vcsTerms } from '~/utils/vcs'
 
 /**
- * Keeps the active project's workflow runs current for the Actions button on the tool stripe and
+ * Shows the Actions button only for a project whose git remotes name a GitHub (or GitLab) repository,
+ * and keeps the active project's workflow runs current for the Actions button on the tool stripe and
  * the tool window. Nothing is read until the window is first opened for a project (the button's mark
  * falls back on the runs the Releases window read). Then: on open and when the app gets focus (at
  * most every 20 seconds), every 10 seconds while a run goes with the window open and every 30
@@ -20,8 +22,17 @@ export function useActionsWatch() {
   const releases = useReleases()
   const git = useGit()
   const threads = useThreads()
+  const forge = useForge()
 
-  const path = computed(() => (ws.activeProjectPath && vcsTerms(ws.activeProject?.vcs).forge ? ws.activeProjectPath : null))
+  /** The git project in view, whatever its remotes say. */
+  const project = computed(() => (ws.activeProjectPath && vcsTerms(ws.activeProject?.vcs).forge ? ws.activeProjectPath : null))
+  watch(project, p => forge.ensure(p), { immediate: true })
+  /** The project, only while its remotes name a GitHub (or GitLab) repository: no button or window otherwise. */
+  const path = computed(() => (forge.connected(project.value) ? project.value : null))
+  // The window open for a project that has no such repository (another project came to the front, a remote went): put it away.
+  watch(() => [ws.toolPanel, project.value, project.value ? project.value in forge.links : false, path.value] as const, ([tool, p, read, connected]) => {
+    if (tool === 'actions' && p && read && !connected) ws.closeTool()
+  }, { immediate: true })
   /** The branch the user is looking at (the active chat's worktree, or the project). */
   const branch = computed(() => git.status(threads.workdir ?? ws.activeProjectPath)?.branch ?? null)
   /** The list shown: all runs, or the branch's. */

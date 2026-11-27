@@ -569,7 +569,8 @@ const mock = (() => {
       }
       case 'gh_item': await new Promise(r => setTimeout(r, 450)); return mockGhItem(args.path, args.reference)
       case 'gh_open_items': await new Promise(r => setTimeout(r, 600)); return mockGhOpenItems(args.path)
-      case 'gh_repo_link': await new Promise(r => setTimeout(r, 150)); return mockGhRepoLink(args.path)
+      // As the backend: no repository behind a folder that is not a git repository.
+      case 'gh_repo_link': await new Promise(r => setTimeout(r, 150)); return (await mockGit('git_status', { path: args.path })).isRepo ? mockGhRepoLink(args.path) : null
       case 'gh_merge': await new Promise(r => setTimeout(r, 900)); return mockGhMerge(args.path, args.reference, args.method, args.headSha)
       case 'gh_job': await new Promise(r => setTimeout(r, 350)); return mockGhJob(args.url)
       case 'gh_releases': await new Promise(r => setTimeout(r, 650)); return mockGhReleases(args.path, args.count)

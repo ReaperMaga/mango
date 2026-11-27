@@ -35,16 +35,21 @@ const git = useGit()
 const threads = useThreads()
 const now = useNow(1000)
 
-const noForge = computed(() => (vcsTerms(ws.activeProject?.vcs).forge ? null : t('actions.noForge')))
-const path = computed(() => (noForge.value ? null : ws.activeProjectPath))
+const forge = useForge()
+watch(() => ws.activeProjectPath, p => forge.ensure(p), { immediate: true })
+/** Only a project whose remotes name a GitHub (or GitLab) repository has runs to show. */
+const noForge = computed(() => {
+  const p = ws.activeProjectPath
+  if (!vcsTerms(ws.activeProject?.vcs).forge || (p && p in forge.links && !forge.connected(p))) return t('actions.noForge')
+  return null
+})
+const path = computed(() => (noForge.value || !forge.connected(ws.activeProjectPath) ? null : ws.activeProjectPath))
 const branch = computed(() => git.status(threads.workdir ?? ws.activeProjectPath)?.branch ?? null)
 const shownBranch = computed(() => (actions.scope === 'branch' ? branch.value : null))
 const needsBranch = computed(() => actions.scope === 'branch' && !branch.value)
 const list = computed(() => (needsBranch.value ? undefined : actions.list(path.value, shownBranch.value)))
 const data = computed(() => list.value?.data ?? null)
 
-const forge = useForge()
-watch(path, p => forge.ensure(p), { immediate: true })
 const provider = computed(() => data.value?.provider ?? forge.providerOf(path.value))
 const site = computed(() => siteName(provider.value, data.value?.host))
 const title = computed(() => t(`actions.title.${provider.value}`))
