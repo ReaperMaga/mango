@@ -603,6 +603,7 @@ pub(crate) fn status(root: &Path) -> Result<GitStatus, String> {
         ahead: 0,
         behind,
         files,
+        operation: None,
     })
 }
 

@@ -56,6 +56,8 @@ pub(crate) struct Status {
     pub remote: Remote,
     /// A merge is waiting to be committed ("Pending merge, incoming revision …").
     pub merging: bool,
+    /// The signature of the revision being merged in ("… incoming revision <signature>").
+    pub incoming: Option<String>,
     pub entries: Vec<Entry>,
 }
 
@@ -160,6 +162,7 @@ pub(crate) fn parse_status(text: &str) -> Status {
         }
         if lower.starts_with("pending merge") {
             out.merging = true;
+            out.incoming = signature_after(trimmed, "incoming revision ");
             continue;
         }
         let header = match trimmed {
@@ -489,6 +492,27 @@ pub(crate) fn committed_merge(text: &str) -> Option<u64> {
     })
 }
 
+/// The 64 hex digits after `marker` in `line`.
+fn signature_after(line: &str, marker: &str) -> Option<String> {
+    let rest = &line[line.find(marker)? + marker.len()..];
+    let sig = rest.split_whitespace().next()?;
+    (sig.len() == 64 && sig.bytes().all(|b| b.is_ascii_hexdigit())).then(|| sig.to_ascii_lowercase())
+}
+
+/// The revision a merge brings in: `Starting merge of branch <id> revision <signature>`.
+pub(crate) fn merge_started(text: &str) -> Option<String> {
+    text.lines().find_map(|l| l.trim().strip_prefix("Starting merge of branch ").and_then(|rest| signature_after(rest, "revision ")))
+}
+
+/// The paths `branch merge resolve` left in conflict because their markers are still there:
+/// `[Warn] Cannot resolve path with conflict markers still present: a.txt` (it exits 0 anyway).
+pub(crate) fn markers_left(text: &str) -> Vec<String> {
+    text.lines()
+        .filter_map(|l| l.split_once("Cannot resolve path with conflict markers still present:"))
+        .filter_map(|(_, p)| rel_path(p.trim()).map(|p| p.0))
+        .collect()
+}
+
 /// `Pushed revision 6 -> c04c… to branch yb`: (revision, branch).
 pub(crate) fn pushed(text: &str) -> Option<(u64, String)> {
     text.lines().rev().find_map(|l| {
@@ -577,6 +601,7 @@ M b c.txt (M)
         );
         assert_eq!(s.remote, Remote::Diverged);
         assert!(s.merging);
+        assert_eq!(s.incoming.as_deref(), Some("c12d69655c82f36beb197a6c4a227b06a72eb917d8b86a3bb42f59271486495a"));
         assert_eq!(s.entries[0], Entry { section: Section::Conflict, letter: "M", path: "a.txt".into(), orig: None, dir: false });
         assert_eq!(s.entries[1].path, "b c.txt");
 
@@ -589,6 +614,54 @@ M b c.txt (M)
         assert_eq!((offline.remote, offline.revision, offline.signature), (Remote::Unknown, Some(0), None));
         assert!(offline.entries.is_empty());
         assert_eq!(parse_status("[Error] Repository not found: /tmp\n  at lore/src/call.rs:375:19\n"), Status::default());
+    }
+
+    /// A merge of a branch with conflicts in an offline repository, lore 0.14.0+2389: the merge's
+    /// own output, the status during it (a delete/modify conflict each way, a binary file) and a
+    /// resolve refused while the markers are still in the file.
+    #[test]
+    fn reads_a_merge_in_progress() {
+        let merged = "Starting merge of branch 01a21b6c06947382afbe02c8716cfd1e revision 15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331
+Merged files, 0 updated, 0 deleted, 0 merged, 4 conflicted
+Staged merged repository state d36368a095b20052f939df211e3d5f96472ef992f8da50a3bce2ef2bfb37e4f6
+Files in conflict:
+a.txt
+b.bin
+del.txt
+mod.txt
+";
+        assert_eq!(merge_started(merged).as_deref(), Some("15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331"));
+        assert_eq!(listed_under(merged, "Files in conflict:"), vec!["a.txt", "b.bin", "del.txt", "mod.txt"]);
+        assert_eq!(merge_started("Merged files, 0 updated"), None);
+
+        let s = parse_status(
+            "Repository 01a21b6c05d171e0bf34e062437b217a
+On branch main revision 2 -> f80fcf913a6e1c5f4f98d4fae5b99ce61ac25774dc669493c80b80613fde9af4
+Pending merge, incoming revision 15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331
+Changes staged for commit:
+M b.bin (M)
+Changes in conflict:
+M  a.txt (M)!
+D  del.txt (M)!
+M  mod.txt (M)!
+",
+        );
+        assert!(s.merging);
+        assert_eq!(s.incoming.as_deref(), Some("15b818e4eadf9897f99e24e727ed7db2cdd2ef008fff891410d54806aba49331"));
+        let listed: Vec<(Section, &str)> = s.entries.iter().map(|e| (e.section, e.path.as_str())).collect();
+        assert_eq!(listed, vec![(Section::Staged, "b.bin"), (Section::Conflict, "a.txt"), (Section::Conflict, "del.txt"), (Section::Conflict, "mod.txt")]);
+
+        let refused = "[Warn] Cannot resolve path with conflict markers still present: a.txt
+No conflicts resolved
+";
+        assert_eq!(markers_left(refused), vec!["a.txt"]);
+        assert!(markers_left("Resolved conflicts:
+a.txt
+").is_empty());
+        // A wrong-looking signature is no signature.
+        assert_eq!(parse_status("On branch main revision 2 -> f80f
+Pending merge, incoming revision xyz
+").incoming, None);
     }
 
     #[test]

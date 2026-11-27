@@ -16,6 +16,10 @@ use serde::{Deserialize, Serialize};
 use crate::envs::ssh::{self, Mode};
 use crate::envs::{self, EnvHost};
 
+mod operation;
+pub(crate) use operation::{GitConflict, GitConflictHistory, GitConflictSide, GitOperation};
+pub(crate) use operation::{abort as operation_abort, conflict_of, history as conflict_history, proceed as operation_continue, skip as operation_skip, take as conflict_take};
+
 /// Local commands finish in milliseconds; this only catches a stuck process.
 pub(crate) const LOCAL_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fetch, pull, push, and commit (hooks may run a test suite).
@@ -73,6 +77,8 @@ pub struct GitStatus {
     pub ahead: u32,
     pub behind: u32,
     pub files: Vec<GitFile>,
+    /// A merge, rebase, cherry-pick or revert that stopped half way (Lore: a merge waiting to be committed).
+    pub operation: Option<GitOperation>,
 }
 
 /// One working tree of a repository, from `git worktree list`.
@@ -1274,6 +1280,8 @@ struct Located {
     head: Option<String>,
     /// For a linked worktree, the main working tree's root.
     main_root: Option<String>,
+    /// The git folder (`.git`, or a linked worktree's), absolute, forward slashes.
+    git_dir: String,
 }
 
 /// The work tree containing `dir`, the short hash of its HEAD (when it has a
@@ -1309,7 +1317,7 @@ fn located(dir: &At, out: &Output) -> Result<Option<Located>, String> {
         At::Local(p) => p.to_string_lossy().into_owned(),
         At::Env(e) => e.dir.clone(),
     };
-    Ok(Some(Located { root: root.to_string(), head, main_root: main_root_of(&cwd, common, git_dir) }))
+    Ok(Some(Located { root: root.to_string(), head, main_root: main_root_of(&cwd, common, git_dir), git_dir: resolve_path(&cwd, git_dir) }))
 }
 
 /// Whether a path git printed is absolute (`/x`, `C:/x`, `\\server\x`).
@@ -1457,35 +1465,51 @@ pub(crate) type Probe<'a> = (&'a [String], &'a dyn Fn(&Output) -> bool);
 /// installed there is no error.
 pub(crate) fn status_probing(at: &At, probe: Option<Probe<'_>>) -> Result<(GitStatus, Option<Output>), String> {
     at.check()?;
-    // Both at once: one round trip to an environment. Outside a work tree status just fails.
+    // All at once: one round trip to an environment. Outside a work tree status just fails.
     let cmds = vec![locate_cmd(at), status_cmd(at, true)];
-    let (where_, status, probed) = match (at, probe) {
-        (At::Env(e), Some((words, wins))) => {
-            let mut outs = run_env_words(e, &cmds, &[(words.to_vec(), 64 * 1024)])?;
-            let probed = outs.pop().ok_or("git gave no answer")?;
-            if wins(&probed) {
-                return Ok((GitStatus::default(), Some(probed)));
+    let (where_, status, state, probed) = match at {
+        At::Env(e) => {
+            // In an environment the merge or rebase state comes in the same call (`operation::STATE`).
+            let mut extra = vec![(operation::state_words(), 512 * 1024)];
+            if let Some((words, _)) = probe {
+                extra.push((words.to_vec(), 64 * 1024));
             }
+            let mut outs = run_env_words(e, &cmds, &extra)?;
+            let probed = match probe {
+                Some((_, wins)) => {
+                    let probed = outs.pop().ok_or("git gave no answer")?;
+                    if wins(&probed) {
+                        return Ok((GitStatus::default(), Some(probed)));
+                    }
+                    Some(probed)
+                }
+                None => None,
+            };
             if let Some(missing) = outs.iter().find_map(|o| e.git_missing(o)) {
                 return Err(missing);
             }
-            let [w, s]: [Output; 2] = outs.try_into().map_err(|_| "git gave no answer")?;
-            (w, s, Some(probed))
+            let [w, s, st]: [Output; 3] = outs.try_into().map_err(|_| "git gave no answer")?;
+            (w, s, Some(st), probed)
         }
-        _ => {
+        At::Local(_) => {
             let [w, s]: [Output; 2] = run_all(cmds)?.try_into().map_err(|_| "git gave no answer")?;
-            (w, s, None)
+            (w, s, None, None)
         }
     };
     let found = located(at, &where_)?;
     remember_root(at, found.as_ref().map(|f| f.root.as_str()));
-    let Some(Located { root, head, main_root }) = found else {
+    let Some(Located { root, head, main_root, git_dir }) = found else {
         return Ok((GitStatus::default(), probed));
     };
     if !status.ok() {
         return Err(status.error("git status"));
     }
     let parsed = parse_status(&status.stdout);
+    let files = match state {
+        Some(out) => operation::parse_state(&out.stdout),
+        None => operation::read_local(&at.moved(root.clone()), Path::new(&git_dir)),
+    };
+    let op = operation::parse_operation(&files, parsed.branch.as_deref(), parsed.upstream.as_deref());
     Ok((
         GitStatus {
             vcs: Vcs::Git,
@@ -1503,6 +1527,7 @@ pub(crate) fn status_probing(at: &At, probe: Option<Probe<'_>>) -> Result<(GitSt
             ahead: parsed.ahead,
             behind: parsed.behind,
             files: parsed.files,
+            operation: op,
         },
         probed,
     ))
@@ -2148,7 +2173,7 @@ pub(crate) fn pull(at: &At) -> Result<String, String> {
         let shown: Vec<String> = conflicted.iter().take(12).map(|p| format!("  {p}")).collect();
         let more = conflicted.len().saturating_sub(shown.len());
         return Err(format!(
-            "Pull stopped: merge conflicts in {} file{}.\n{}{}\nResolve them and commit, or run `git merge --abort` to go back.",
+            "Pull stopped: merge conflicts in {} file{}.\n{}{}\nResolve them in the Changes view and commit, or abort from the bar at its top.",
             conflicted.len(),
             if conflicted.len() == 1 { "" } else { "s" },
             shown.join("\n"),
@@ -2525,22 +2550,8 @@ pub(crate) fn checkout_remote(at: &At, branch: &str) -> Result<String, String> {
 }
 
 /// What to tell the user when a merge or rebase stopped on conflicts.
-fn conflict_report(root: &At, what: &str, abort: &str) -> Option<String> {
-    let conflicted: Vec<String> = read_status(root, false)
-        .map(|s| s.files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect())
-        .unwrap_or_default();
-    if conflicted.is_empty() {
-        return None;
-    }
-    let shown: Vec<String> = conflicted.iter().take(12).map(|p| format!("  {p}")).collect();
-    let more = conflicted.len().saturating_sub(shown.len());
-    Some(format!(
-        "{what} stopped: conflicts in {} file{}.\n{}{}\nResolve them in the Changes view, or run `{abort}` in the terminal to go back.",
-        conflicted.len(),
-        if conflicted.len() == 1 { "" } else { "s" },
-        shown.join("\n"),
-        if more > 0 { format!("\n  …and {more} more") } else { String::new() },
-    ))
+fn conflict_report(root: &At, what: &str) -> Option<String> {
+    operation::stopped_on_conflicts(root, what)
 }
 
 /// Merge `branch` into the current branch.
@@ -2562,7 +2573,7 @@ pub(crate) fn merge(at: &At, branch: &str) -> Result<String, String> {
             _ => format!("Merged {branch} into {current}."),
         });
     }
-    Err(conflict_report(&root, "Merge", "git merge --abort").unwrap_or_else(|| out.error("git merge")))
+    Err(conflict_report(&root, "Merge").unwrap_or_else(|| out.error("git merge")))
 }
 
 /// Rebase the current branch onto `onto`.
@@ -2587,7 +2598,7 @@ pub(crate) fn rebase(at: &At, onto: &str) -> Result<String, String> {
             _ => format!("Rebased {current} onto {onto}."),
         });
     }
-    Err(conflict_report(&root, "Rebase", "git rebase --abort").unwrap_or_else(|| out.error("git rebase")))
+    Err(conflict_report(&root, "Rebase").unwrap_or_else(|| out.error("git rebase")))
 }
 
 pub(crate) fn branch_rename(at: &At, from: &str, to: &str) -> Result<(), String> {
@@ -4354,5 +4365,164 @@ worktree /r/app.worktrees/d y\0HEAD abcdef1abcdef1abcdef1abcdef1abcdef1abcde\0de
         assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 4));
         let g = query(&|q| q.refs = Some(vec!["HEAD".into()])).unwrap();
         assert_eq!((g.head, g.branch.as_deref(), g.commits.len()), (None, Some("fresh"), 0));
+    }
+
+    /// Two branches that both changed `a.txt` and `b.bin`; `del.txt` deleted on main and changed
+    /// on the branch, `mod.txt` the other way round. The branch has two commits.
+    fn conflicting() -> (Scratch, String) {
+        let s = Scratch::repo();
+        s.write("a.txt", "one\ntwo\nthree\n");
+        fs::write(s.0.join("b.bin"), [0u8, 1]).unwrap();
+        s.write("del.txt", "gone\n");
+        s.write("mod.txt", "mod\n");
+        s.git(&["add", "-A"]);
+        s.git(&["commit", "-qm", "base"]);
+        let main = status_of(&s.at()).unwrap().branch.unwrap();
+        s.git(&["checkout", "-qb", "feature/x"]);
+        s.write("a.txt", "one\nTWO-feat\nthree\n");
+        fs::write(s.0.join("b.bin"), [0u8, 2]).unwrap();
+        s.write("del.txt", "gone-feat\n");
+        s.git(&["rm", "-q", "mod.txt"]);
+        s.git(&["commit", "-qam", "feat one"]);
+        s.write("k.txt", "extra\n");
+        s.git(&["add", "k.txt"]);
+        s.git(&["commit", "-qm", "feat two"]);
+        s.git(&["checkout", "-q", &main]);
+        s.write("a.txt", "one\ntwo-main\nthree\n");
+        fs::write(s.0.join("b.bin"), [0u8, 3]).unwrap();
+        s.git(&["rm", "-q", "del.txt"]);
+        s.write("mod.txt", "mod-main\n");
+        s.git(&["commit", "-qam", "main change"]);
+        (s, main)
+    }
+
+    #[test]
+    fn a_merge_with_conflicts_against_a_real_repository() {
+        if !have_git() {
+            return;
+        }
+        let (s, main) = conflicting();
+        assert_eq!(status_of(&s.at()).unwrap().operation, None);
+        let err = merge(&s.at(), "feature/x").unwrap_err();
+        assert!(err.contains("Merge stopped: conflicts in 4 files") && err.contains("abort from the bar"), "{err}");
+
+        let st = status_of(&s.at()).unwrap();
+        let op = st.operation.clone().unwrap();
+        assert_eq!((op.kind, op.branch.as_deref(), op.incoming.as_deref()), ("merge", Some(main.as_str()), Some("feature/x")));
+        assert_eq!(op.message.as_deref(), Some("Merge branch 'feature/x'"));
+        assert_eq!(st.files.iter().filter(|f| f.conflicted).count(), 4);
+
+        // The sides: text, binary, and a side that deleted the file.
+        let a = conflict_of(&s.at(), "a.txt").unwrap();
+        assert_eq!(
+            (a.base.text.as_deref(), a.ours.text.as_deref(), a.theirs.text.as_deref()),
+            (Some("one\ntwo\nthree\n"), Some("one\ntwo-main\nthree\n"), Some("one\nTWO-feat\nthree\n"))
+        );
+        assert!(!a.binary && !a.too_large);
+        let b = conflict_of(&s.at(), "b.bin").unwrap();
+        assert!(b.binary && b.ours.present && b.ours.text.is_none());
+        let d = conflict_of(&s.at(), "del.txt").unwrap();
+        assert!(!d.ours.present && d.theirs.present && d.base.present);
+        let m = conflict_of(&s.at(), "mod.txt").unwrap();
+        assert!(m.ours.present && !m.theirs.present);
+        assert!(conflict_of(&s.at(), "k.txt").is_err());
+
+        // What each side did since they met.
+        let h = conflict_history(&s.at(), 30).unwrap();
+        assert_eq!((h.ours, h.theirs), (vec!["main change".to_string()], vec!["feat two".to_string(), "feat one".to_string()]));
+
+        // Taking a side whole leaves it for the user to mark resolved; a deleting side deletes.
+        conflict_take(&s.at(), "a.txt", "theirs").unwrap();
+        assert_eq!(s.read("a.txt").as_deref(), Some("one\nTWO-feat\nthree\n"));
+        conflict_take(&s.at(), "mod.txt", "theirs").unwrap();
+        assert!(s.read("mod.txt").is_none());
+        conflict_take(&s.at(), "b.bin", "ours").unwrap();
+        assert_eq!(fs::read(s.0.join("b.bin")).unwrap(), vec![0u8, 3]);
+        assert!(conflict_take(&s.at(), "a.txt", "mine").is_err());
+        assert!(status_of(&s.at()).unwrap().files.iter().any(|f| f.path == "a.txt" && f.conflicted));
+        stage(&s.at(), &["a.txt".into(), "mod.txt".into(), "b.bin".into()]).unwrap();
+        // Continue waits for the rest.
+        let left = operation_continue(&s.at()).unwrap_err();
+        assert!(left.contains("1 file still has conflicts"), "{left}");
+
+        // Abort puts it all back.
+        assert!(operation_abort(&s.at()).unwrap().starts_with("Merge aborted"));
+        let st = status_of(&s.at()).unwrap();
+        assert!(st.operation.is_none() && st.files.is_empty(), "{:?}", st.files);
+        assert!(operation_abort(&s.at()).is_err());
+
+        // Merge again and finish it with a commit.
+        merge(&s.at(), "feature/x").unwrap_err();
+        for f in ["a.txt", "b.bin", "del.txt", "mod.txt"] {
+            conflict_take(&s.at(), f, "ours").unwrap();
+        }
+        stage(&s.at(), &[]).unwrap();
+        commit(&s.at(), "Merge branch 'feature/x'", false).unwrap();
+        assert!(status_of(&s.at()).unwrap().operation.is_none());
+    }
+
+    #[test]
+    fn a_rebase_cherry_pick_and_revert_against_a_real_repository() {
+        if !have_git() {
+            return;
+        }
+        let (s, main) = conflicting();
+        let feat_one = s.git(&["log", "-1", "--format=%H", "feature/x~1"]).line();
+        s.git(&["checkout", "-q", "feature/x"]);
+        assert!(rebase(&s.at(), &main).unwrap_err().contains("Rebase stopped"));
+        let op = status_of(&s.at()).unwrap().operation.unwrap();
+        assert_eq!((op.kind, op.branch.as_deref(), op.incoming.as_deref()), ("rebase", Some("feature/x"), Some(main.as_str())));
+        assert_eq!((op.step, op.steps, op.subject.as_deref()), (Some(1), Some(2), Some("feat one")));
+        assert_eq!(op.commit.as_ref().map(String::len), Some(7));
+        // Ours is the new base, theirs the commits being applied.
+        let a = conflict_of(&s.at(), "a.txt").unwrap();
+        assert_eq!((a.ours.text.as_deref(), a.theirs.text.as_deref()), (Some("one\ntwo-main\nthree\n"), Some("one\nTWO-feat\nthree\n")));
+        let h = conflict_history(&s.at(), 30).unwrap();
+        assert_eq!((h.ours, h.theirs), (vec!["main change".to_string()], vec!["feat two".to_string(), "feat one".to_string()]));
+
+        assert!(operation_continue(&s.at()).unwrap_err().contains("still have conflicts"));
+        for f in ["a.txt", "b.bin", "del.txt", "mod.txt"] {
+            conflict_take(&s.at(), f, "theirs").unwrap();
+        }
+        stage(&s.at(), &[]).unwrap();
+        // No editor waits: the second commit applies cleanly and the rebase ends.
+        let done = operation_continue(&s.at()).unwrap();
+        assert!(done.starts_with("Rebase finished"), "{done}");
+        let st = status_of(&s.at()).unwrap();
+        assert!(st.operation.is_none());
+        assert_eq!(st.branch.as_deref(), Some("feature/x"));
+        let subjects = |n: u32| log(&s.at(), n).unwrap().into_iter().map(|c| c.subject).collect::<Vec<_>>();
+        assert_eq!(subjects(5), vec!["feat two", "feat one", "main change", "base"]);
+
+        // Skip: rebase the original commits again, leaving out the one that conflicts.
+        s.git(&["reset", "-q", "--hard", "ORIG_HEAD"]);
+        rebase(&s.at(), &main).unwrap_err();
+        let skipped = operation_skip(&s.at()).unwrap();
+        assert!(skipped.starts_with("Rebase finished"), "{skipped}");
+        assert_eq!(subjects(5), vec!["feat two", "main change", "base"]);
+
+        // Cherry-pick: in progress, then aborted.
+        s.git(&["checkout", "-q", &main]);
+        assert!(!git(&s.at()).args(["cherry-pick", &feat_one]).run().unwrap().ok());
+        let op = status_of(&s.at()).unwrap().operation.unwrap();
+        assert_eq!((op.kind, op.subject.as_deref()), ("cherry-pick", Some("feat one")));
+        assert_eq!(conflict_history(&s.at(), 30).unwrap().theirs, vec!["feat one".to_string()]);
+        assert!(operation_abort(&s.at()).unwrap().starts_with("Cherry-pick aborted"));
+        assert!(status_of(&s.at()).unwrap().operation.is_none());
+
+        // Revert: a later commit on the same line makes reverting an older one conflict.
+        s.write("a.txt", "one\ntwo-again\nthree\n");
+        s.git(&["commit", "-qam", "again"]);
+        assert!(!git(&s.at()).args(["revert", "--no-edit", "HEAD~1"]).run().unwrap().ok());
+        let op = status_of(&s.at()).unwrap().operation.unwrap();
+        assert_eq!((op.kind, op.subject.as_deref()), ("revert", Some("Revert \"main change\"")));
+        let left: Vec<String> = status_of(&s.at()).unwrap().files.into_iter().filter(|f| f.conflicted).map(|f| f.path).collect();
+        for f in &left {
+            conflict_take(&s.at(), f, "ours").unwrap();
+        }
+        stage(&s.at(), &[]).unwrap();
+        let done = operation_continue(&s.at()).unwrap();
+        assert!(done.starts_with("Revert finished"), "{done}");
+        assert_eq!(subjects(1), vec!["Revert \"main change\""]);
     }
 }

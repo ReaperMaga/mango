@@ -311,6 +311,50 @@ pub async fn git_rebase(app: AppHandle, path: String, onto: String) -> Result<St
     dispatch!(app, path, git(at) => git::rebase(&at, &onto), plastic(_root) => plastic::unsupported("Rebase"), lore(_root) => lore::unsupported("Rebase"))
 }
 
+/// Unity VCS refuses merges with conflicts, so nothing is ever half way there.
+const NO_PLASTIC_OPERATION: &str = "Unity VCS workspaces never stop half way through a merge here; resolve conflicts in the Unity Version Control app.";
+
+/// Abort the merge, rebase, cherry-pick or revert in progress (Lore: the merge). Destroys the
+/// resolutions made so far: the UI asks first.
+#[tauri::command]
+pub async fn git_operation_abort(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::operation_abort(&at), plastic(_root) => Err(NO_PLASTIC_OPERATION.into()), lore(root) => lore::conflicts::abort(&root))
+}
+
+/// Go on with the rebase, cherry-pick or revert in progress once its conflicts are resolved; no editor opens.
+#[tauri::command]
+pub async fn git_operation_continue(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::operation_continue(&at), plastic(_root) => Err(NO_PLASTIC_OPERATION.into()),
+        lore(_root) => Err("A Lore merge goes on by committing it.".into()))
+}
+
+/// Leave out the commit a rebase (or cherry-pick) is applying and go on with the next.
+#[tauri::command]
+pub async fn git_operation_skip(app: AppHandle, path: String) -> Result<String, String> {
+    dispatch!(app, path, git(at) => git::operation_skip(&at), plastic(_root) => Err(NO_PLASTIC_OPERATION.into()), lore(_root) => lore::unsupported("Skipping a commit"))
+}
+
+/// The base, ours and theirs of a conflicted file (relative to the repository root), for the merge editor.
+#[tauri::command]
+pub async fn git_conflict(app: AppHandle, path: String, file: String) -> Result<git::GitConflict, String> {
+    dispatch!(app, path, git(at) => git::conflict_of(&at, &file), plastic(_root) => Err(NO_PLASTIC_OPERATION.into()), lore(root) => lore::conflicts::conflict_of(&root, &file))
+}
+
+/// Take one side ("ours" or "theirs") of a conflicted file whole. Git: into the working tree, still
+/// in conflict until marked resolved; Lore resolves it at once.
+#[tauri::command]
+pub async fn git_conflict_take(app: AppHandle, path: String, file: String, side: String) -> Result<(), String> {
+    dispatch!(app, path, git(at) => git::conflict_take(&at, &file, &side), plastic(_root) => Err(NO_PLASTIC_OPERATION.into()),
+        lore(root) => lore::conflicts::take(&root, &file, &side))
+}
+
+/// The commit subjects on each side of the operation in progress since the sides met (git only;
+/// Lore: none). At most 30 each.
+#[tauri::command]
+pub async fn git_conflict_history(app: AppHandle, path: String) -> Result<git::GitConflictHistory, String> {
+    dispatch!(app, path, git(at) => git::conflict_history(&at, 30), plastic(_root) => Ok(Default::default()), lore(_root) => Ok(Default::default()))
+}
+
 #[tauri::command]
 pub async fn git_branch_rename(app: AppHandle, path: String, from: String, to: String) -> Result<(), String> {
     dispatch!(app, path, git(at) => git::branch_rename(&at, &from, &to), plastic(root) => plastic::branch_rename(&root, &from, &to),

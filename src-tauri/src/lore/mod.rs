@@ -26,6 +26,7 @@
 //! - locks (`locks.rs`) are `lore lock`;
 //! - no rebase, rename, linked worktrees, stash, pull requests or releases.
 
+pub(crate) mod conflicts;
 pub(crate) mod locks;
 pub(crate) mod parse;
 
@@ -242,7 +243,7 @@ pub(crate) fn explain_text(detail: String) -> String {
     } else if has(&["unable to sync when there is a staged state", "cannot merge with staged state"]) {
         "Lore can't do this while changes are staged. Commit or unstage them first."
     } else if has(&["a merge is already in progress"]) {
-        "A merge is in progress. Resolve its conflicts and commit it (or abort it in a terminal: `lore branch merge abort`) first."
+        "A merge is in progress. Resolve its conflicts and commit it, or abort it from the bar at the top of the Changes view, first."
     } else if has(&["repository not found"]) {
         "This folder isn't in a Lore repository any more."
     } else {
@@ -481,12 +482,14 @@ pub(crate) fn status_from(root: &At, s: &parse::Status, entries: &[Entry]) -> Gi
         ahead,
         behind,
         files: files_of(entries),
+        operation: conflicts::operation(s),
     }
 }
 
 pub(crate) fn status(root: &At) -> Result<GitStatus, String> {
     root.check()?;
     let (s, entries) = read_status(root)?;
+    conflicts::learn_name(root, &s);
     Ok(status_from(root, &s, &entries))
 }
 
@@ -650,11 +653,21 @@ pub(crate) fn stage(root: &At, files: &[String]) -> Result<(), String> {
         .collect();
     let resolving: HashSet<&str> = conflicted.iter().map(String::as_str).collect();
     let plain: Vec<String> = files.iter().filter(|f| !resolving.contains(f.as_str())).cloned().collect();
+    let mut left: Vec<String> = Vec::new();
     for chunk in chunks(&conflicted) {
-        lore(root).write().args(["branch", "merge", "resolve", "--"]).args(chunk).run_ok()?;
+        let out = lore(root).write().args(["branch", "merge", "resolve", "--"]).args(chunk).run_ok()?;
+        // Lore refuses a file that still has conflict markers, and exits 0 all the same.
+        left.extend(parse::markers_left(&out.combined()));
     }
     for chunk in chunks(&plain) {
         lore(root).write().args(["stage", "--"]).args(chunk).run_ok()?;
+    }
+    if let Some(first) = left.first() {
+        return Err(if left.len() == 1 {
+            format!("{first} still has conflict markers, so Lore keeps it in conflict. Remove them (or take one side whole), then mark it resolved.")
+        } else {
+            format!("{} files still have conflict markers, so Lore keeps them in conflict: {}. Remove them (or take one side whole), then mark them resolved.", left.len(), left.join(", "))
+        });
     }
     Ok(())
 }
@@ -1166,10 +1179,11 @@ pub(crate) fn merge(root: &At, branch: &str) -> Result<String, String> {
     let branch = safe_branch(branch)?;
     let out = lore(root).slow().args(["branch", "merge", "--"]).arg(branch).run_ok_offline_too()?;
     let text = out.text();
+    conflicts::remember_merge(&text, branch);
     let conflicts = parse::listed_under(&text, "Files in conflict:");
     if !conflicts.is_empty() {
         return Ok(format!(
-            "Merged {branch} with conflicts in {} file{}. Resolve them, stage them, then commit the merge.",
+            "Merged {branch} with conflicts in {} file{}. Resolve them in the Changes view, then commit the merge.",
             conflicts.len(),
             if conflicts.len() == 1 { "" } else { "s" }
         ));
