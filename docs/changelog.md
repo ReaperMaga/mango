@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.12.1
+
+### Fixes
+
+- `lore login` finishes again on a Lore server whose sign-in was set up or changed with 0.12.0: the sign-in page said "Unregistered redirect_uri". To repair such a server, open its sign-in and choose Change…, then Apply.
+
 ## 0.12.0
 
 ### New
