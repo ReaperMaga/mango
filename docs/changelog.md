@@ -2,6 +2,12 @@
 
 All notable changes to Mango. Versions follow [semantic versioning](https://semver.org); installers for each version are on its [GitHub release](https://github.com/ReaperMaga/mango/releases).
 
+## 0.13.1
+
+### Fixes
+
+- Fetch and Update now drop remote branches that were deleted on the remote (merged pull requests, say): they no longer stay listed under Remote.
+
 ## 0.13.0
 
 ### New
