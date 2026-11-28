@@ -2081,13 +2081,14 @@ fn describe_behind(status: &ParsedStatus) -> Option<String> {
 }
 
 /// The fetch runs in one batch with the reads around it ([`run_all`]): in an environment that is
-/// one SSH call instead of five. Without a remote git refuses the fetch by itself.
+/// one SSH call instead of five. Without a remote git refuses the fetch by itself. `--prune` drops
+/// the remote-tracking branches deleted on the remote, or they stay listed under Remote forever.
 pub(crate) fn fetch(at: &At) -> Result<String, String> {
     let root = require_root(at)?;
     let [names, before, out, after, status]: [Output; 5] = run_all(vec![
         remotes_cmd(&root),
         remote_refs_cmd(&root),
-        git(&root).slow().arg("fetch"),
+        git(&root).slow().args(["fetch", "--prune"]),
         remote_refs_cmd(&root),
         status_cmd(&root, false),
     ])?
@@ -2118,7 +2119,7 @@ pub(crate) fn pull(at: &At) -> Result<String, String> {
     let [names, before, out, after]: [Output; 4] = run_all(vec![
         remotes_cmd(&root),
         status_cmd(&root, false),
-        git(&root).slow().arg("pull"),
+        git(&root).slow().args(["pull", "--prune"]),
         status_cmd(&root, false),
     ])?
     .try_into()
@@ -3162,6 +3163,11 @@ mod tests {
         assert_eq!(fetch(path).unwrap(), format!("Fetched. Nothing new on the remote.\n{behind}"));
         assert_eq!(pull(path).unwrap(), "Pulled 1 commit into main.\n1 file changed, +1");
         assert_eq!(pull(path).unwrap(), "main is already up to date with origin/main.");
+
+        // A branch deleted on the remote leaves the Remote list on the next fetch.
+        sh(&other, &["push", "-q", "origin", "--delete", "feature/x"]);
+        assert_eq!(fetch(path).unwrap(), "Fetched: 1 branch removed.");
+        assert!(!branch_list(path).unwrap().remote.iter().any(|b| b.name == "origin/feature/x"));
 
         checkout(path, "spike", false).unwrap();
         assert_eq!(rebase(path, "main").unwrap(), "Rebased spike onto main.\nPicked up 2 commits from main.");
